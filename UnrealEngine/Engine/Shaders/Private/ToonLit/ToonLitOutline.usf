@@ -19,11 +19,10 @@ half InverseLerpClamp(half From, half To, half Value)
 float GetCameraFOV()
 {
 	//https://answers.unity.com/questions/770838/how-can-i-extract-the-fov-information-from-the-pro.html
-	float T = View.ClipToView[0][0];//ResolveView().TranslatedWorldToClip[1][1];
+	float T = View.ClipToView[0][0];//T = ResolveView().TranslatedWorldToClip[1][1];
 	float RadianToDegree = 57.295799f;//180.0f / 3.1415f;
-	float Fov = atan(T) * 2.0f * RadianToDegree;
-	return Fov;
-	//return View.FieldOfViewWideAngles;
+	float Fov = atan(T/*1.0f / T*/) * 2.0f * RadianToDegree;
+	return Fov;//return View.FieldOfViewWideAngles;
 }
 
 float ApplyOutlineDistanceFadeOut(float InputMulFix)
@@ -120,17 +119,22 @@ void MainVS(
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
 	WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
 
+	// Expand along WorldNormal
 	WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth);
+
+	// WorldToClip
 	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
 	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
 
 	// [Remap ZOffset value]
 	// Flip read value so default black area = apply ZOffset, because usually outline mask texture are using this format(black = hide outline)
-	float OutlineZOffsetWeight = 1 - 1;// From Model's UV2
+	float OutlineZOffsetWeight = 1 - 0;// From Model's UV2
 	OutlineZOffsetWeight = InverseLerpClamp(OutlineZOffsetMaskRemapStart, OutlineZOffsetMaskRemapEnd, OutlineZOffsetWeight);
 	
 	// [Apply ZOffset, Use remapped value as ZOffset]
-	Output.Position = GetNewClipPosWithZOffset(Output.Position, OutlineZOffset * OutlineZOffsetWeight);// + 0.03f if IsFace
+	//Output.Position = GetNewClipPosWithZOffset(Output.Position, OutlineZOffset * OutlineZOffsetWeight);// + 0.03f if IsFace
+
+	// Interpolants
 	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 }
 #endif // VERTEXSHADER

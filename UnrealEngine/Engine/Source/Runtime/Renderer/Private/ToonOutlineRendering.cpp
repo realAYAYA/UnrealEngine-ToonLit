@@ -24,8 +24,8 @@ FToonOutlineMeshPassProcessor::FToonOutlineMeshPassProcessor(
 	//PassDrawRenderState.SetViewUniformBuffer(Scene->UniformBuffers.ViewUniformBuffer);
 	if (PassDrawRenderState.GetDepthStencilState() == nullptr)
 		PassDrawRenderState.SetDepthStencilState(TStaticDepthStencilState<false, CF_NotEqual>().GetRHI());
-	//if (PassDrawRenderState.GetBlendState() == nullptr)
-	//PassDrawRenderState.SetBlendState(TStaticBlendState<>().GetRHI());
+	if (PassDrawRenderState.GetBlendState() == nullptr)
+		PassDrawRenderState.SetBlendState(TStaticBlendState<>().GetRHI());
 }
 
 void FToonOutlineMeshPassProcessor::AddMeshBatch(

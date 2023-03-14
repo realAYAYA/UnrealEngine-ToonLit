@@ -81,6 +81,12 @@ float3 GatherRadiance(float CompositeAlpha, float3 TranslatedWorldPosition, floa
 
 float3 ReflectionEnvironment(FGBufferData GBuffer, float AmbientOcclusion, float2 BufferUV, float2 ScreenPosition, float4 SvPosition, float3 BentNormal, float3 SpecularColor)
 {
+	// Change-begin
+	// Discard ReflectionEnvironment for ToonLit
+	if( GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		return float3(0.0f, 0.0f, 0.0f);
+	// Change-end
+	
 	float4 Color = float4(0, 0, 0, 1);
 
 	float IndirectIrradiance = GBuffer.IndirectIrradiance;

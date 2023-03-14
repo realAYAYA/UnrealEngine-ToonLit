@@ -1115,7 +1115,14 @@ void FPixelShaderInOut_MainPS(
 #if !STRATA_ENABLED || STRATA_INLINE_SINGLELAYERWATER
 
 	// So that the following code can still use DiffuseColor and SpecularColor.
-	GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
+	// Change-begin
+	// Discard the Effect of Metallic for SpecularColor
+	BRANCH
+	if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+		GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, 0.0f);
+	else
+		GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
+	// Change-end
 
 #if MATERIAL_NORMAL_CURVATURE_TO_ROUGHNESS
 	// Curvature-to-roughness uses derivatives of the WorldVertexNormal, which is incompatible with centroid interpolation because

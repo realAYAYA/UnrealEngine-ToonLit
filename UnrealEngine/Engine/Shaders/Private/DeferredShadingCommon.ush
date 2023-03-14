@@ -937,7 +937,14 @@ FGBufferData DecodeGBufferData(
 
 	// derived from BaseColor, Metalness, Specular
 	{
-		GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
+		// Change-begin
+		// Discard the Effect of Metallic for Toon's SpecularColor
+		BRANCH
+		if (GBuffer.ShadingModelID == SHADINGMODELID_TOON_LIT || GBuffer.ShadingModelID == SHADINGMODELID_TOON_HAIR)
+			GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, 0.0f);
+		else
+			GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
+		// Change-end
 
 		if (UseSubsurfaceProfile(GBuffer.ShadingModelID))
 		{
