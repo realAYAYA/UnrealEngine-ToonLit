@@ -489,19 +489,19 @@ class UMaterialInstance : public UMaterialInterface
 
 	/** ToonOutlineWidth */
 	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineWidth;
+	float OutlineWidth = 1.0f;
 
 	/**  */
 	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineZOffset;
+	float OutlineZOffset = 0.0001f;
 	
 	/**  */
 	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineZOffsetMaskRemapStart;
+	float OutlineZOffsetMaskRemapStart = 0.0f;
 
 	/**  */
 	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineZOffsetMaskRemapEnd;
+	float OutlineZOffsetMaskRemapEnd = 1.0f;
 
 	/** Custom Outline Color, Alpha is Blend Value */
 	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)

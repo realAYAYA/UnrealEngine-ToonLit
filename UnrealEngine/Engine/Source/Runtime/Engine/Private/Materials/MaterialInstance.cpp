@@ -2030,7 +2030,7 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 	else
 	{
 		OutlineWidth = Parent->GetOutlineWidth();
-		BasePropertyOverrides.bUseToonOutline = OutlineWidth;
+		BasePropertyOverrides.OutlineWidth = OutlineWidth;
 	}
 
 	if (BasePropertyOverrides.bOverride_OutlineZOffset)
