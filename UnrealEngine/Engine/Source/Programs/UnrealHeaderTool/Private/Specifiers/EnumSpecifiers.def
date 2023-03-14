@@ -1,0 +1,4 @@
+// ENUM_SPECIFIER(Enum)
+//
+// Must be listed such that the strings are in lexicographical order!
+ENUM_SPECIFIER(Flags)

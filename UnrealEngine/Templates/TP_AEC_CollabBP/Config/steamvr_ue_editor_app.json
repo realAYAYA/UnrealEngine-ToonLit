@@ -1,0 +1,18 @@
+{
+	"source": "UE",
+	"applications": [
+		{
+			"app_key": "application.generated.ue.tp_collaborativebp-14766387.ue4editor.exe",
+			"launch_type": "url",
+			"url": "steam://launch/",
+			"action_manifest_path": "C:/Projects/426_m/Templates/TP_CollaborativeBP/Config/SteamVRBindings/steamvr_manifest.json",
+			"strings":
+			{
+				"en_us":
+				{
+					"name": "TP_CollaborativeBP-14766387 [UE Editor]"
+				}
+			}
+		}
+	]
+}

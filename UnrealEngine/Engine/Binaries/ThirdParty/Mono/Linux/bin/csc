@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /Library/Frameworks/Mono.framework/Versions/5.16.0/bin/mono --gc-params=nursery-size=64m $MONO_OPTIONS /Library/Frameworks/Mono.framework/Versions/5.16.0/lib/mono/4.5/csc.exe "$@"

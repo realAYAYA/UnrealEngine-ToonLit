@@ -1,0 +1,63 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../../Engine/Build/Graph/Schema.xsd" >
+
+	<Option Name="PreflightChange" DefaultValue="" Description="Preflight changelist number"/>
+	<Option Name="Configuration" DefaultValue="release" Description="Configuration to build"/>
+	
+	<Property Name="EngineDir" Value="$(RootDir)/Engine"/>
+
+	<Property Name="Version" Value="$(EngineMajorVersion).$(EngineMinorVersion).$(EnginePatchVersion)"/>
+	<Property Name="InformationalVersion" Value="$(Version)-$(Change)"/>
+	<Property Name="InformationalVersion" Value="$(InformationalVersion)-PF-$(PreflightChange)" If="'$(PreflightChange)' != ''"/>
+	<Property Name="VersionArguments" Value="/p:Version=$(Version).0 /p:InformationalVersion=$(InformationalVersion)"/>
+
+	<Agent Name="HordeServer" Type="Win64_Docker">
+		<Property Name="StagingDir" Value="$(RootDir)/Engine/Saved/Horde.Build"/>
+		
+		<Node Name="Build HordeServer">
+			<!-- Tag all the files that need to be staged to build -->
+			<Property Name="StagePaths">
+				Engine/Binaries/DotNET/EpicGames.Perforce.Native/...
+				Engine/Source/Programs/Shared/...
+				Engine/Source/Programs/Horde/...
+				Engine/Source/Programs/AutomationTool/AutomationUtils/Matchers/...
+				Engine/Source/Programs/UnrealBuildTool/Matchers/...
+				Engine/Source/ThirdParty/Perforce/...
+			</Property>
+			<Tag Files="$(StagePaths)" Except=".../.vs/...;.../.git/...;.../bin/...;.../obj/..." With="#InputFiles"/>
+
+			<!-- Build the Docker image and publish it -->
+			<Docker-Build BaseDir="Engine" Files="#InputFiles" Tag="hordeserver-public" DockerFile="Engine/Source/Programs/Horde/Horde.Build/Dockerfile" Arguments="--build-arg msbuild_args=&quot;$(VersionArguments)&quot;"/>
+		</Node>
+	</Agent>
+
+	<Agent Name="HordeStorage" Type="Linux">
+		<Property Name="ComposeFile" Value="$(RootDir)/Engine/Source/Programs/Horde/HordeStorage/Composes/docker-compose-tests.yml"/>
+		<Node Name="Test HordeStorage">
+			<!-- Make sure to run docker compose down after the build no matter what, also copy the logs to AutomationTool logs so we get the logs in Horde -->
+			<WriteTextFile File="$(RootDir)/Cleanup.sh" Text="docker-compose -f $(ComposeFile) logs --no-color > $(RootDir)/Engine/Programs/AutomationTool/Saved/Logs/docker-compose-logs.txt"/>
+			<WriteTextFile File="$(RootDir)/Cleanup.sh" Append="true" Text="docker-compose -f $(ComposeFile) down"/>
+
+			<Docker-Compose-Up File="$(ComposeFile)"/>
+
+			<!-- Sleep a while to let scylla finish starting up before we execute the tests -->
+			<Spawn Exe="/bin/bash" Arguments="-c 'sleep 60'" />
+
+			<!-- Run the unit tests, and override the dotnet sdk used to the global one for the machine rather then what is in the sync, to allow us to use newer versions then the rest of the engine has migrated to -->
+			<DotNet Arguments="test Engine/Source/Programs/Horde/HordeStorage/Horde.Storage.sln -l console;verbosity=normal" DotNetPath="/usr/share/dotnet/dotnet"/>
+		</Node>
+
+		<Node Name="Build HordeStorage" Requires="Test HordeStorage">
+			<!-- Tag all the files that need to be staged to build -->
+			<Property Name="StagePaths">
+				Engine/Source/Programs/Shared/...
+				Engine/Source/Programs/Horde/HordeStorage/...
+			</Property>
+			<Tag Files="$(StagePaths)" Except=".../.vs/...;.../.git/...;.../bin/...;.../obj/..." With="#InputFiles"/>
+
+			<!-- Build the Docker images -->
+			<Docker-Build BaseDir="Engine/Source" Files="#InputFiles" Tag="horde_storage:$(InformationalVersion)" DockerFile="Engine/Source/Programs/Horde/HordeStorage/dockerfile" Arguments="--build-arg Project=Horde.Storage" Environment="UE_P4_CHANGELIST=(Change)"/>
+			<Docker-Build BaseDir="Engine/Source" Files="#InputFiles" Tag="callisto:$(InformationalVersion)" DockerFile="Engine/Source/Programs/Horde/HordeStorage/dockerfile" Arguments="--build-arg Project=Callisto" Environment="UE_P4_CHANGELIST=(Change)" />
+		</Node>
+	</Agent>
+</BuildGraph>

@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1.0,
+	"VersionName": "1.0",
+	"FriendlyName": "Datasmith glTF Importer",
+	"Description": "An importer for Khronos glTF 3D models.",
+	"Category": "Importers",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Modules": [
+		{
+			"Name": "DatasmithGLTFTranslator",
+			"Type": "Runtime"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "DatasmithImporter",
+			"Enabled": true
+		},
+		{
+			"Name": "GLTFImporter",
+			"Enabled": true
+		}
+	]
+}

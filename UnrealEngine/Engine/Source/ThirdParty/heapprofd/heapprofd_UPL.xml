@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--heapprofd plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- init section is always evaluated once per architecture -->
+  <init>
+    <log text="heapprofd init"/>
+    <setBool result="bSupported" value="false"/>
+    <isArch arch="arm64-v8a">
+      <setBool result="bSupported" value="true"/>
+    </isArch>
+    <if condition="bSupported">
+      <false>
+        <log text="Unsupported architecture: $S(Architecture)"/>
+      </false>
+    </if>
+  </init>
+
+  <!-- optional files or directories to copy to Intermediate/Android/APK -->
+  <resourceCopies>
+    <if condition="bSupported">
+      <true>
+        <copyFile src="$S(AbsPluginDir)/$S(Architecture)/libheapprofd_standalone_client.so"
+					dst="$S(BuildDir)/libs/$S(Architecture)/libheapprofd_standalone_client.so" />
+        <log text="Copying heapprofd_standalone_client.so"/>
+      </true>
+    </if>
+  </resourceCopies>
+</root>

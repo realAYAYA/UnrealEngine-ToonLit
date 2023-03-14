@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<html>
+<head>
+	<title>ROBOMERGE</title>
+
+	<meta property="og:title" content="RoboMerge"/>
+	<meta property="og:type" content="website"/>
+	<meta property="og:image" content="https://robomerge.epicgames.net/img/r-large.png">
+	<meta property="og:url" content="https://robomerge.epicgames.net"/>
+	<meta property="og:description" content="Control panel for the Epic Games RoboMerge service"/>
+
+	<link rel="icon" href="/img/robo-r.png" type="image/png">
+	<link rel="stylesheet" href="/css/bootstrap.min.css">
+	<link rel="stylesheet" href="/css/table.css">
+	<link rel="stylesheet" href="/css/main.css">
+	<link rel="stylesheet" href="/css/fontawesome.5.9.0.all.min.css">
+
+	<script src="/js/jquery-3.4.1.min.js"></script>
+	<script src="/js/bootstrap.bundle.min.js"></script>
+
+	<script src="/js/boilerplate.js"></script>
+	<script src="/js/hpcc-wasm-index.min.js"></script>
+	<script src="/js/flow.js"></script>
+	<script src="/js/main.js"></script>
+	<script language="javascript">
+		// Mutex variable for disabling updateBranchList() on a global timer
+		let pauseRefresh = false
+
+		function refreshAll() {
+			const alreadyPending = (typeof updateBranchesPending === "boolean") && updateBranchesPending
+			if (!pauseRefresh && !alreadyPending) {
+				pauseRefresh = true
+				updateBranchList()
+				pauseRefresh = false
+			} else {
+				//console.log('DEBUG: Not refreshing branch list due to open dropdown')
+			}
+		}
+
+		function pauseAutoRefresh() {
+			log('Pausing auto refresh of branch list')
+			pauseRefresh = true
+		}
+
+		function resumeAutoRefresh() {
+			log('Resuming auto refresh of branch list')
+			pauseRefresh = false
+		}
+	</script>
+</head>
+<body>
+	<div id="branchList"></div>
+
+	<div id="graph-key-template" class="graph-key initiallyHidden">Branch paths
+		<table>
+			<tr title="Changes are automatically merged">
+				<td class="arrow auto-merge-arrow"></td>
+				<td class="arrow-label">Auto merge</td>
+			</tr>
+			<tr title="Only changes with relevant #robomerge tags are merged">
+				<td class="arrow on-request-arrow"></td>
+				<td class="arrow-label">Merge on request</td>
+			</tr>
+			<tr title="Like merge on request, but will refuse to integrate .uasset or .umap files">
+				<td class="arrow block-assets-arrow"></td>
+				<td class="arrow-label">Block assets</td>
+			</tr>
+			<tr title="Branches to merge by default, ignored if any branches or other tags specified">
+				<td class="arrow default-flow-arrow"></td>
+				<td class="arrow-label">Default flow</td>
+			</tr>
+		</table>
+	</div>
+
+	<ul id="context-menu" class="dropdown-menu">
+		<li><a href="#">Select all</a></li>
+	</ul>
+
+	<div id="error" class="alert alert-danger"></div>
+
+	<script>
+		updateBranchList()
+
+		$('body').one("branchListUpdated", function () {
+			gRefreshTimer = setInterval(refreshAll, 10 * 1000);
+
+		})
+	</script>
+
+</body>
+
+</html>

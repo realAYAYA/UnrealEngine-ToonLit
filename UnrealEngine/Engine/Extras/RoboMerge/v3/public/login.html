@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ROBOMERGE - sign in</title>
+
+  <meta property="og:title" content="RoboMerge"/>
+  <meta property="og:type" content="website"/>
+  <meta property="og:image" content="https://robomerge.epicgames.net/img/r-large.png">
+  <meta property="og:url" content="https://robomerge.epicgames.net"/>
+  <meta property="og:description" content="Control panel for the Epic Games RoboMerge service"/>
+
+
+<link rel="icon" href="/img/robo-r.png" type="image/png">
+<link rel="stylesheet" href="/css/fontawesome.5.9.0.all.min.css">
+<link rel="stylesheet" href="/css/bootstrap.min.css">
+<link rel="stylesheet" href="/css/login.css">
+<link rel="stylesheet" href="/css/main.css">
+
+<script src="/js/jquery-3.4.1.min.js"></script>
+<script src="/js/bootstrap.bundle.min.js"></script>
+
+<script src="/js/boilerplate.js"></script>
+<script src="/js/login.js"></script>
+</head>
+<body>
+
+<div class="login-form">
+  <form class="">
+    <div id="login-error" class="alert alert-danger initiallyHidden">Invalid username or password!</div>
+
+    <div class="text-center"><img src="/img/epic.png"><br><br>Please sign in with your Epic credentials.</div>
+    <br>
+    <div class="form-group">
+      <input type="text" name="user" class="form-control" placeholder="Username" required="required">
+    </div>
+    <div class="form-group">
+      <input type="password" name="password" class="form-control" placeholder="Password" required="required">
+    </div>
+    <div class="form-group">
+      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    </div>
+  </form>
+</div>
+
+</body>
+</html>

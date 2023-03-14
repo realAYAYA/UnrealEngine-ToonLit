@@ -1,0 +1,756 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define SUPPORT_CONTACT_SHADOWS 0
+#define USE_HAIR_LIGHTING 0
+
+// Additional rewiring to make DeferredShadingCommon happy
+#define PreIntegratedGF				ReflectionStruct.PreIntegratedGF
+#define PreIntegratedGFSampler		GlobalBilinearClampedSampler
+
+#include "../Strata/StrataEvaluation.ush"
+
+#include "../SceneData.ush"
+#include "../RayTracing/RayTracingCommon.ush"
+#include "../RayTracing/RayTracingDeferredMaterials.ush"
+#if !COMPUTESHADER
+#include "../RayTracing/RayTracingDeferredShadingCommon.ush"
+#include "../RayTracing/RayTracingLightingCommon.ush"
+#endif
+#include "LumenHardwareRayTracingPayloadCommon.ush"
+#include "LumenHardwareRayTracingPipelineCommon.ush"
+
+#if !COMPUTESHADER
+#include "LumenHardwareRayTracingPlatformCommon.ush"
+#endif
+
+#if COMPUTESHADER
+#include "../RayTracing/TraceRayInline.ush"
+#endif
+
+float3 CalcPrevTranslatedWorldPositionFromGPUSceneInstanceIndex(float3 TranslatedWorldPosition, uint GPUSceneInstanceIndex)
+{
+	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(GPUSceneInstanceIndex, View.InstanceSceneDataSOAStride);
+
+	FLWCVector3 WorldPosition = LWCSubtract(LWCPromote(TranslatedWorldPosition), PrimaryView.PreViewTranslation);
+	float3 LocalPosition = LWCMultiply(WorldPosition, InstanceSceneData.WorldToLocal);
+	FLWCVector3 PrevWorldPosition = LWCMultiply(LocalPosition, InstanceSceneData.PrevLocalToWorld);
+	return LWCToFloat(LWCAdd(PrevWorldPosition, PrimaryView.PreViewTranslation));
+}
+
+#ifndef ENABLE_NEAR_FIELD_TRACING
+#define ENABLE_NEAR_FIELD_TRACING 1
+#endif // ENABLE_NEAR_FIELD_TRACING
+
+#ifndef LUMEN_HARDWARE_INLINE_RAYTRACING
+#define LUMEN_HARDWARE_INLINE_RAYTRACING 0
+#endif
+
+// Helper macro to set common entry point for passes that have both inline (CS) and non-inline (RGS) version.
+// Given "name" it will create "nameCS" entry point for compute and "nameRGS" for raygen shader.
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+
+#define LUMEN_HARDWARE_RAY_TRACING_ENTRY(name)\
+void name##_INTERNAL(uint3 DispatchThreadIndex, uint3 DispatchGroupId, uint DispatchGroupIndex);\
+[numthreads(INLINE_RAY_TRACING_THREAD_GROUP_SIZE_X, INLINE_RAY_TRACING_THREAD_GROUP_SIZE_Y, 1)]\
+void name##CS(uint3 DispatchThreadIndex : SV_DispatchThreadID, uint3 DispatchGroupId : SV_GroupID, uint DispatchGroupIndex : SV_GroupIndex) {\
+	name##_INTERNAL(DispatchThreadIndex, DispatchGroupId, DispatchGroupIndex);}\
+void name##_INTERNAL(uint3 DispatchThreadIndex, uint3 DispatchGroupId, uint DispatchGroupIndex)
+
+#else // LUMEN_HARDWARE_RAYTRACING
+
+#define LUMEN_HARDWARE_RAY_TRACING_ENTRY(name)\
+void name##_INTERNAL(uint3 DispatchThreadIndex, uint3 DispatchGroupId, uint DispatchGroupIndex);\
+RAY_TRACING_ENTRY_RAYGEN(name##RGS){\
+name##_INTERNAL(DispatchRaysIndex(), DispatchRaysIndex(), 0);}\
+void name##_INTERNAL(uint3 DispatchThreadIndex, uint3 DispatchGroupId, uint DispatchGroupIndex)
+
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+// Lighting modes
+#define LIGHTING_FROM_SURFACE_CACHE 0
+#define EVALUATE_MATERIAL 1
+#define EVALUATE_MATERIAL_AND_DIRECT_LIGHTING 2
+#define EVALUATE_MATERIAL_AND_DIRECT_LIGHTING_AND_SKY_LIGHTING 3
+
+uint GetAtlasId(int Mode)
+{
+	uint AtlasId = FINAL_LIGHTING_ATLAS_ID;
+	if (Mode == EVALUATE_MATERIAL)
+	{
+		AtlasId = IRRADIANCE_ATLAS_ID;
+	}
+	else if (Mode == EVALUATE_MATERIAL_AND_DIRECT_LIGHTING)
+	{
+		AtlasId = INDIRECT_IRRADIANCE_ATLAS_ID;
+	}
+	return AtlasId;
+}
+
+float CalcDitheredDistance(uint2 TraceCoord, float StartDistance, float EndDistance)
+{
+	const float Dither = InterleavedGradientNoise(TraceCoord, View.StateFrameIndexMod8);
+	float DitheredDistance = lerp(StartDistance, EndDistance, Dither);
+	return DitheredDistance;
+}
+
+struct FHitGroupRootConstants
+{
+	uint BaseInstanceIndex;
+	uint UserData;
+};
+
+struct FRayTracedLightingContext
+{
+	RaytracingAccelerationStructure TLAS;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+	StructuredBuffer<FHitGroupRootConstants> HitGroupData;
+	StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+	FRayCone RayCone;
+	uint2 TraceCoord;
+	uint LinearCoord;
+	uint InstanceMask;
+	uint MaxTraversalIterations; // Max ray tracing traversal iterations on supported platforms
+	float FarFieldMaxTraceDistance;
+	float3 FarFieldReferencePos;
+
+	// Any hit shading
+	bool bAlphaMasking;
+	uint TranslucentSkipCountMax;
+
+	uint CullingMode;
+	bool bHiResSurface;	// Whether to sample high res surface cache data or low res always resident pages
+	bool bAcceptFirstHitAndEndSearch;
+	bool bSkipClosestHitShader;
+	bool bCalculateHitVelocity;
+	bool bUseBookmark;
+};
+
+FRayTracedLightingContext CreateRayTracedLightingContext(
+	in RaytracingAccelerationStructure TLAS,
+	in FRayCone RayCone,
+	in uint2 TraceCoord,
+	in uint LinearCoord,
+	in uint CullingMode,
+	in int TranslucentSkipCountMax,
+	uint MaxTraversalIterations,
+	bool bHiResSurface
+)
+{
+	FRayTracedLightingContext Context;
+	Context.TLAS = TLAS;
+	Context.RayCone = RayCone;
+	Context.TraceCoord = TraceCoord;
+	Context.LinearCoord = LinearCoord;
+	Context.InstanceMask = RAY_TRACING_MASK_OPAQUE;
+	Context.TranslucentSkipCountMax = TranslucentSkipCountMax;
+	Context.bAlphaMasking = false;
+	Context.FarFieldMaxTraceDistance = -1.0;
+	Context.FarFieldReferencePos = 0;
+	Context.MaxTraversalIterations = MaxTraversalIterations;
+	Context.CullingMode = CullingMode;
+	Context.bHiResSurface = bHiResSurface;
+	Context.bAcceptFirstHitAndEndSearch = false;
+	Context.bSkipClosestHitShader = false;
+	Context.bCalculateHitVelocity = false;
+	Context.bUseBookmark = false;
+	return Context;
+}
+
+FRayTracedLightingContext CreateRayTracedLightingContext(
+	in RaytracingAccelerationStructure TLAS,
+	in FRayCone RayCone,
+	in uint2 TraceCoord,
+	in uint LinearCoord,
+	in uint CullingMode,
+	in int TranslucentSkipCountMax,
+	uint MaxTraversalIterations
+)
+{
+	bool bHiResSurface = false;
+	return CreateRayTracedLightingContext(TLAS, RayCone, TraceCoord, LinearCoord, CullingMode, TranslucentSkipCountMax, MaxTraversalIterations, bHiResSurface);
+}
+
+struct FLumenMinimalRayResult
+{
+	bool bHit;
+	bool bCompleted;
+	bool bTranslucent;
+	bool bTwoSided;
+
+	uint MaterialShaderIndex;
+	uint SceneInstanceIndex;
+	float HitT;
+	float3 HitNormal;
+
+	FLumenRayHitBookmark Bookmark;
+};
+
+FLumenMinimalRayResult InitLumenMinimalRayResult()
+{
+	FLumenMinimalRayResult MinimalRayResult = (FLumenMinimalRayResult)0;
+	MinimalRayResult.bHit = false;
+	MinimalRayResult.bCompleted = true;
+	return MinimalRayResult;
+}
+
+struct FRayTracedLightingResult
+{
+	bool bIsHit;
+	bool bIsCompleted; // Was ray tracing completed or stopped due to reaching MaxTraversalIterations
+	bool bIsFarField;
+	bool bHitTwoSided;
+	float TraceHitDistance;
+
+	bool bIsRadianceCompleted; // Is radiance computation completed or do we need a fallback shading pass
+	float3 Radiance;
+
+	float3 WorldVelocity;
+	bool bValidSurfaceCache;
+	uint MaterialShaderIndex;
+	FLumenRayHitBookmark Bookmark;
+};
+
+FRayTracedLightingResult CreateRayTracedLightingResult()
+{
+	FRayTracedLightingResult Result;
+	Result.bIsHit = false;
+	Result.bIsCompleted = true;
+	Result.bIsFarField = false;
+	Result.bHitTwoSided = false;
+	Result.TraceHitDistance = 0;
+	Result.bIsRadianceCompleted = true;
+	Result.Radiance = 0;
+	Result.WorldVelocity = 0;
+	Result.bValidSurfaceCache = false;
+	Result.MaterialShaderIndex = RAY_TRACING_DEFERRED_MATERIAL_KEY_INVALID;
+	Result.Bookmark.PackedData[0] = 0xFFFFFFFF;
+	Result.Bookmark.PackedData[1] = 0xFFFFFFFF;
+
+	return Result;
+}
+
+FRayTracedLightingResult CreateRayTracedLightingResult(
+	FRayDesc Ray,
+	FRayTracedLightingContext Context,
+	FLumenMinimalRayResult MinimalRayResult,
+	FSurfaceCacheSample SurfaceCacheSample)
+{
+	FRayTracedLightingResult Result = CreateRayTracedLightingResult();
+	Result.TraceHitDistance = Ray.TMax;
+	Result.bIsHit = MinimalRayResult.bHit;
+	Result.bIsCompleted = MinimalRayResult.bCompleted;
+	Result.bIsFarField = Context.InstanceMask == RAY_TRACING_MASK_FAR_FIELD;
+	Result.bHitTwoSided = MinimalRayResult.bTwoSided;
+
+	if (MinimalRayResult.bHit)
+	{
+		Result.TraceHitDistance = MinimalRayResult.HitT;
+		Result.MaterialShaderIndex = MinimalRayResult.MaterialShaderIndex;
+		Result.Bookmark = MinimalRayResult.Bookmark;
+		Result.bIsRadianceCompleted = SurfaceCacheSample.bValid;
+		Result.Radiance = SurfaceCacheSample.Lighting;
+	}
+
+	if (MinimalRayResult.bHit && Context.bCalculateHitVelocity)
+	{
+		float3 TranslatedWorldPosition = Ray.Origin + Ray.Direction * MinimalRayResult.HitT;
+		Result.WorldVelocity = TranslatedWorldPosition - CalcPrevTranslatedWorldPositionFromGPUSceneInstanceIndex(TranslatedWorldPosition, MinimalRayResult.SceneInstanceIndex);
+	}
+
+	// Force a black hit when reached max iterations without hitting anything
+	if (!Result.bIsHit && !Result.bIsCompleted)
+	{
+		Result.bIsHit = true;
+		Result.TraceHitDistance = Ray.TMax;
+		Result.bIsRadianceCompleted = true;
+		Result.Radiance = float3(0.0f, 0.0f, 0.0f);
+	}
+
+	return Result;
+}
+
+#if !COMPUTESHADER
+bool TraceLumenHitLightingRay(
+	in FRayDesc Ray,
+	inout FRayTracedLightingContext Context,
+	inout FLumenRayHitBookmark Bookmark,
+	inout FPackedMaterialClosestHitPayload Payload
+)
+{
+	uint RayFlags = 0;
+	if (Context.bUseBookmark)
+	{
+		TraceLumenShadingRay(Context.TLAS, RayFlags, Context.InstanceMask, RAY_TRACING_SHADER_SLOT_MATERIAL, RAY_TRACING_NUM_SHADER_SLOTS, 0, Ray.GetNativeDesc(), Bookmark, Payload);
+	}
+	else
+	{
+		TraceLumenShadingRay(Context.TLAS, RayFlags, Context.InstanceMask, RAY_TRACING_SHADER_SLOT_MATERIAL, RAY_TRACING_NUM_SHADER_SLOTS, 0, Ray.GetNativeDesc(), Payload);
+	}
+	return Payload.IsHit();
+}
+#endif // !COMPUTESHADER
+
+FLumenMinimalRayResult TraceLumenMinimalRay(
+	FRayDesc Ray,
+	inout FRayTracedLightingContext Context)
+{
+	FLumenMinimalPayload Payload = (FLumenMinimalPayload)0;
+	FLumenMinimalRayResult MinimalRayResult = InitLumenMinimalRayResult();
+
+	uint RayFlags = RAY_FLAG_FORCE_OPAQUE;
+	RayFlags |= Context.CullingMode;
+	RayFlags |= Context.bAcceptFirstHitAndEndSearch ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0;
+	RayFlags |= Context.bSkipClosestHitShader ? RAY_FLAG_SKIP_CLOSEST_HIT_SHADER : 0;
+
+	#if LUMEN_HARDWARE_INLINE_RAYTRACING
+	{
+		FTraceRayInlineContext TraceRayInlineContext = CreateTraceRayInlineContext();
+		TraceRayInlineContext.MaxIterations = Context.MaxTraversalIterations;
+		FTraceRayInlineResult TraceResult = TraceRayInline(Context.TLAS, RayFlags, Context.InstanceMask, Ray.GetNativeDesc(), TraceRayInlineContext);
+		if (TraceResult.IsHit())
+		{
+			Payload.HitT = TraceResult.HitT;
+
+			const int Primitive = TraceResult.InstanceID;
+			Payload.SetPrimitiveIndex(Primitive);
+
+			// Our SBTs always have 2 slots per material. Therefore InstanceContributionToHitGroupIndex has a RAY_TRACING_NUM_SHADER_SLOTS multiplier.
+			// But because we only encode 1 material into LumenHardwareRayTracingHitDataBuffer we want to get actual material index.
+			uint InstanceContributionIndex = TraceResult.InstanceContributionToHitGroupIndex / RAY_TRACING_NUM_SHADER_SLOTS;
+			uint HitGroupIndex = TraceResult.GeometryIndex + InstanceContributionIndex;
+
+			FHitGroupRootConstants HitData = Context.HitGroupData[HitGroupIndex];
+
+			const int PrimitiveInstanceIndex = TraceResult.InstanceIndex - HitData.BaseInstanceIndex;
+			Payload.SetInstanceIndex(PrimitiveInstanceIndex);
+
+			uint MaterialShaderIndex = HitData.UserData & 0x3FFFFFFF;
+			Payload.SetMaterialShaderIndex(MaterialShaderIndex);
+
+			uint bIsTranslucent = (HitData.UserData >> 31) & 0x1;
+			Payload.SetIsTranslucent(bIsTranslucent);
+
+			uint bIsTwoSided = (HitData.UserData >> 30) & 0x1;
+			Payload.SetIsTwoSided(bIsTwoSided);
+
+#if PLATFORM_SUPPORTS_INLINE_RAY_TRACING_TRIANGLE_ATTRIBUTES
+			FTriangleBaseAttributes Attributes = LoadInlineRayTracingTriangleAttributes(
+				Context.RayTracingSceneMetadata,
+				TraceResult.InstanceContributionToHitGroupIndex,
+				RAY_TRACING_NUM_SHADER_SLOTS,
+				TraceResult.GeometryIndex,
+				TraceResult.PrimitiveIndex
+			);
+
+			float3 LocalNormal = cross(Attributes.LocalPositions[2] - Attributes.LocalPositions[0], Attributes.LocalPositions[1] - Attributes.LocalPositions[0]);
+			float3 WorldNormal = normalize(mul((float3x3)TraceResult.ObjectToWorld3x4, LocalNormal));
+#else
+			float3 WorldNormal = TraceResult.WorldGeometryNormal;
+#endif // PLATFORM_SUPPORTS_INLINE_RAY_TRACING_TRIANGLE_ATTRIBUTES
+			Payload.SetWorldNormal(WorldNormal);
+
+			MinimalRayResult.Bookmark.PackedData = TraceResult.Bookmark;
+		}
+		else
+		{
+			Payload.SetMiss();
+		}
+		MinimalRayResult.bCompleted = TraceResult.bIsCompleted;
+	}
+	#else
+	{
+		TraceLumenRay(Context.TLAS, RayFlags, Context.InstanceMask, RAY_TRACING_SHADER_SLOT_MATERIAL, RAY_TRACING_NUM_SHADER_SLOTS, 0, Ray.GetNativeDesc(), Payload, MinimalRayResult.Bookmark);
+	}
+	#endif
+
+	MinimalRayResult.bHit = Payload.IsHit();
+	if (MinimalRayResult.bHit)
+	{
+		MinimalRayResult.bTranslucent = Payload.IsTranslucent();
+		MinimalRayResult.bTwoSided = Payload.IsTwoSided();
+		MinimalRayResult.HitNormal = Payload.GetWorldNormal();
+		MinimalRayResult.HitT = Payload.HitT;
+		MinimalRayResult.SceneInstanceIndex = GetGPUSceneInstanceIndex(Payload.GetPrimitiveIndex(), Payload.GetInstanceIndex());
+		MinimalRayResult.MaterialShaderIndex = Payload.GetMaterialShaderIndex();
+	}
+	return MinimalRayResult;
+}
+
+FSurfaceCacheSample CalculateSurfaceCacheLighting(
+	in FRayDesc Ray,
+	in FRayTracedLightingContext Context,
+	float3 RayHitTranslatedWorldPosition,
+	float3 RayHitWorldNormal,
+	float HitDistance,
+	uint SceneInstanceIndex,
+	float3 DiffuseColor,
+	int LightingMode
+)
+{
+	float InterpolateRadius = tan(Context.RayCone.SpreadAngle) * HitDistance;
+	// Mode and AtlasId enums are coupled
+	uint AtlasId = GetAtlasId(LightingMode);
+	// FarField proxies are less accurate
+	float SurfaceCacheBias = (Context.InstanceMask == RAY_TRACING_MASK_FAR_FIELD) ? 1000.0f : 20.0f;
+
+	const uint MeshCardsIndex = GetMeshCardsIndexFromSceneInstanceIndex(SceneInstanceIndex);
+
+	FSurfaceCacheSample SurfaceCacheSample = SampleLumenMeshCards(
+		Context.TraceCoord,
+		MeshCardsIndex,
+		RayHitTranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation), // LUMEN_LWC_TODO
+		RayHitWorldNormal,
+		InterpolateRadius,
+		SurfaceCacheBias,
+		Context.bHiResSurface,
+		AtlasId
+	);
+
+	// Apply shading when evaluating the material
+	if (LightingMode != LIGHTING_FROM_SURFACE_CACHE)
+	{
+		SurfaceCacheSample.Lighting *= Diffuse_Lambert(DiffuseColor);
+	}
+
+	return SurfaceCacheSample;
+}
+
+FSurfaceCacheSample SampleLumenMinimalRayHit(
+	FRayDesc Ray,
+	FRayTracedLightingContext Context,
+	FLumenMinimalRayResult MinimalRayResult)
+{
+	float3 RayHitWorldNormal = MinimalRayResult.HitNormal;
+	float3 RayHitTranslatedWorldPosition = Ray.Origin + Ray.Direction * MinimalRayResult.HitT;
+	float3 DiffuseColor = 0;
+	FSurfaceCacheSample SurfaceCacheSample = CalculateSurfaceCacheLighting(
+		Ray,
+		Context,
+		RayHitTranslatedWorldPosition,
+		RayHitWorldNormal,
+		MinimalRayResult.HitT,
+		MinimalRayResult.SceneInstanceIndex,
+		DiffuseColor,
+		LIGHTING_FROM_SURFACE_CACHE);
+
+	// The Surface Cache lighting was computed using the front face, don't leak to the backface
+	if (dot(Ray.Direction, MinimalRayResult.HitNormal) > 0 && !MinimalRayResult.bTwoSided)
+	{
+		SurfaceCacheSample.Lighting = 0.0f;
+		SurfaceCacheSample.bValid = false;
+	}
+
+	return SurfaceCacheSample;
+}
+
+#if !COMPUTESHADER
+bool TraceDeferredMaterialRay(
+	in FRayDesc Ray,
+	inout FRayTracedLightingContext Context,
+	inout FDeferredMaterialPayload DeferredMaterialPayload
+)
+{
+	DeferredMaterialPayload = (FDeferredMaterialPayload)0;
+	DeferredMaterialPayload.SortKey = RAY_TRACING_DEFERRED_MATERIAL_KEY_RAY_MISS;
+	DeferredMaterialPayload.PixelCoordinates = (Context.TraceCoord.y << 16) | Context.TraceCoord.x;
+
+	uint RayFlags = RAY_FLAG_FORCE_OPAQUE;
+	RayFlags |= Context.CullingMode;
+
+	FRayIntersectionBookmark Bookmark = (FRayIntersectionBookmark)0;
+	TraceDeferredMaterialGatherRay(Context.TLAS, RayFlags, Context.InstanceMask, Ray.GetNativeDesc(), Bookmark, DeferredMaterialPayload);
+
+	return DeferredMaterialPayload.IsHit();
+}
+
+float3 CalculateDirectLighting(
+	in FRayDesc Ray,
+	in FRayTracedLightingContext Context,
+	inout FPackedMaterialClosestHitPayload Payload,
+	float3 RayHitTranslatedWorldPosition,
+	float3 RayHitWorldNormal
+)
+{
+	RandomSequence RandSequence;
+	uint SampleOffset = 0;
+	RandomSequence_Initialize(RandSequence, Context.LinearCoord, View.StateFrameIndex + SampleOffset * 16);
+	float MaxNormalBias = 0.05;
+	uint ReflectedShadowsType = 2;
+	bool bShouldDoDirectLighting = true;
+	bool bShouldDoEmissiveAndIndirectLighting = false;
+	bool bTopLayerRayTraceSkyLightContribution = false;
+	bool bDecoupleSampleGeneration = false;
+
+	float3 DirectLighting = 0.0f;
+	AccumulateResults(
+		Payload,
+		RayHitTranslatedWorldPosition,
+		Ray.Direction,
+		Context.TLAS,
+		RandSequence,
+		Context.TraceCoord,
+		MaxNormalBias,
+		ReflectedShadowsType,
+		bShouldDoDirectLighting,
+		bShouldDoEmissiveAndIndirectLighting,
+		bTopLayerRayTraceSkyLightContribution,
+		bDecoupleSampleGeneration,
+		Context.RayCone,
+		DirectLighting);
+	return DirectLighting;
+}
+
+float3 GetDirectionalAlbedo(inout FPackedMaterialClosestHitPayload PackedPayload, in FRayDesc Ray)
+#if STRATA_ENABLED
+{
+	float3 Out = 0;
+
+	const float3 V = -Ray.Direction;
+	const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+
+	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(0, 0, 0);
+	FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(PackedPayload.StrataData, StrataAddressing, PackedPayload.StrataData);
+
+	Strata_for(uint BSDFIndex = 0, BSDFIndex < StrataPixelHeader.BSDFCount, ++BSDFIndex)
+	{
+		FStrataBSDF BSDF = UnpackStrataBSDF(PackedPayload.StrataData, StrataAddressing, StrataPixelHeader);
+
+		// Create the BSDF context
+		FStrataBSDFContext StrataBSDFContext = StrataCreateBSDFContext(StrataPixelHeader, BSDF, StrataAddressing, V);
+		const float3 BSDFThroughput = LuminanceWeight(StrataBSDFContext, BSDF);
+
+		// Evaluate environment lighting
+		FStrataEnvLightResult StrataEnvLight = StrataEvaluateForEnvLight(StrataBSDFContext, true /*bEnableSpecular*/, Settings);
+
+		Out += BSDFThroughput * StrataEnvLight.DiffuseWeight;
+		Out += BSDFThroughput * StrataEnvLight.SpecularWeight;
+	}
+
+	return Out;
+}
+#else
+{
+	return PackedPayload.GetDiffuseColor();
+}
+#endif // STRATA_ENABLED
+
+float3 CalculateRayTracedLighting(
+	in FRayDesc Ray,
+	in FRayTracedLightingContext Context,
+	inout FPackedMaterialClosestHitPayload Payload,
+	float HitDistance,
+	uint SceneInstanceIndex,
+	int LightingMode
+)
+{
+	// Apply emissive material
+	float3 Radiance = Payload.GetRadiance() * Payload.GetOpacity();
+
+	float3 RayHitWorldNormal = Payload.GetWorldNormal();
+
+	float3 RayHitTranslatedWorldPosition = Ray.Origin + Ray.Direction * HitDistance;
+	if (LightingMode >= EVALUATE_MATERIAL_AND_DIRECT_LIGHTING)
+	{
+		Radiance += CalculateDirectLighting(Ray, Context, Payload, RayHitTranslatedWorldPosition, RayHitWorldNormal);
+	}
+	
+	float3 DiffuseColor = GetDirectionalAlbedo(Payload, Ray);
+
+	if (LightingMode == EVALUATE_MATERIAL_AND_DIRECT_LIGHTING_AND_SKY_LIGHTING)
+	{
+		// STRATA_TODO: this path is not supported yet, as PackedPayload does not have space for indirect irradiance
+		Radiance += DiffuseColor * Payload.GetIndirectIrradiance();
+	}
+	else
+	{
+		// STRATA_TODO: current when HWRT is enabled, this part will crash with Strata enabled when running Lumen scene visualization. 
+		// It seems to be related to cards data not be properly bound at shader compilation but it is unclear why as all seems correct.
+		#if ENABLE_VISUALIZE_MODE && STRATA_ENABLED
+		FSurfaceCacheSample SurfaceCacheSample = InitSurfaceCacheSample();
+		#else
+		FSurfaceCacheSample SurfaceCacheSample = CalculateSurfaceCacheLighting(Ray, Context, RayHitTranslatedWorldPosition, RayHitWorldNormal, HitDistance, SceneInstanceIndex, DiffuseColor, LightingMode);
+		#endif
+
+		// The Surface Cache lighting was computed using the front face, don't leak to the backface
+		if (dot(Ray.Direction, RayHitWorldNormal) <= 0 || (Payload.GetFlags() | RAY_TRACING_PAYLOAD_OUTPUT_FLAG_TWO_SIDED))
+		{
+			Radiance += SurfaceCacheSample.Lighting;
+		}
+	}
+	return Radiance;
+}
+
+FRayTracedLightingResult TraceAndCalculateRayTracedLighting(
+	in FRayDesc Ray,
+	in FRayTracedLightingContext Context,
+	int LightingMode,
+	inout FLumenRayHitBookmark Bookmark
+)
+{
+	FRayTracedLightingResult Result = CreateRayTracedLightingResult();
+	Result.TraceHitDistance = Ray.TMax;
+
+	uint RayFlags = 0;
+
+	FPackedMaterialClosestHitPayload Payload = (FPackedMaterialClosestHitPayload)0;
+	Payload.SetLumenPayload();
+	Payload.SetIgnoreTranslucentMaterials();
+	if (LightingMode == LIGHTING_FROM_SURFACE_CACHE)
+	{
+		Payload.SetMinimalPayloadMode();
+	}
+	else if (LightingMode == EVALUATE_MATERIAL_AND_DIRECT_LIGHTING_AND_SKY_LIGHTING)
+	{
+		Payload.SetEnableSkyLightContribution();
+	}
+
+	// Permute ray origin if tracing against far-field
+	float3 RayOrigin = Ray.Origin;
+	Ray.Origin += Context.InstanceMask == RAY_TRACING_MASK_FAR_FIELD ? Context.FarFieldReferencePos : 0.0;
+	TraceLumenHitLightingRay(Ray, Context, Bookmark, Payload);
+
+	Ray.Origin = RayOrigin;
+	Result.bIsHit = Payload.IsHit();
+	if (Result.bIsHit)
+	{
+		uint SceneInstanceIndex = Payload.GetSceneInstanceIndex();
+		Result.TraceHitDistance = Payload.HitT;
+		Result.Radiance = CalculateRayTracedLighting(Ray, Context, Payload, Result.TraceHitDistance, SceneInstanceIndex, LightingMode);
+	}
+
+	return Result;
+}
+
+FRayTracedLightingResult TraceAndCalculateRayTracedLighting(
+	in FRayDesc Ray,
+	inout FRayTracedLightingContext Context,
+	int LightingMode
+)
+{
+	Context.bUseBookmark = false;
+	FLumenRayHitBookmark Bookmark;
+	return TraceAndCalculateRayTracedLighting(Ray, Context, LightingMode, Bookmark);
+}
+
+#endif // !COMPUTESHADER
+
+/**
+ * Returns whether hit occurred based on the surface cache properties
+ */
+bool SurfaceCacheAnyHitShader(FRayDesc Ray, FRayTracedLightingContext Context, FLumenMinimalRayResult MinimalRayResult)
+{
+	if (MinimalRayResult.bHit && MinimalRayResult.bCompleted && Context.TranslucentSkipCountMax > 0)
+	{
+		if (MinimalRayResult.bTranslucent)
+		{
+			return false;
+		}
+		
+		if (Context.bAlphaMasking)
+		{
+			FSurfaceCacheSample SurfaceCacheSample = SampleLumenMinimalRayHit(Ray, Context, MinimalRayResult);
+			if (SurfaceCacheSample.bValid)
+			{
+				return SurfaceCacheSample.Opacity >= 0.5f;
+			}
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Trace ray without using any material shaders
+ * Optionally handle alpha masking through surface cache
+ */
+FRayTracedLightingResult TraceSurfaceCacheRay(
+	FRayDesc Ray,
+	FRayTracedLightingContext Context)
+{
+	FLumenMinimalRayResult MinimalRayResult = TraceLumenMinimalRay(Ray, Context);
+
+	// Emulate any hit shader by casting multiple rays
+	BRANCH
+	if (!SurfaceCacheAnyHitShader(Ray, Context, MinimalRayResult))
+	{
+		for (uint TranslucentSkipCount = 0; TranslucentSkipCount < Context.TranslucentSkipCountMax; ++TranslucentSkipCount)
+		{
+			float Epsilon = 0.01;
+			Ray.TMin = MinimalRayResult.HitT + Epsilon;
+			MinimalRayResult = TraceLumenMinimalRay(Ray, Context);
+
+			if (TranslucentSkipCount + 1 < Context.TranslucentSkipCountMax)
+			{
+				if (SurfaceCacheAnyHitShader(Ray, Context, MinimalRayResult))
+				{
+					break;
+				}
+			}
+		}
+	}
+
+	FSurfaceCacheSample SurfaceCacheSample = InitSurfaceCacheSample();
+	if (MinimalRayResult.bHit && MinimalRayResult.bCompleted)
+	{
+		SurfaceCacheSample = SampleLumenMinimalRayHit(Ray, Context, MinimalRayResult);
+	}
+
+	return CreateRayTracedLightingResult(Ray, Context, MinimalRayResult, SurfaceCacheSample);
+}
+
+/**
+ * Trace far field ray without using any material shaders
+ */
+FRayTracedLightingResult TraceSurfaceCacheFarFieldRay(
+	FRayDesc Ray,
+	FRayTracedLightingContext Context)
+{
+	float3 NonRebasedRayOrigin = Ray.Origin;
+
+	Ray.Origin += Context.FarFieldReferencePos;
+	Ray.TMin = Ray.TMax;
+	Ray.TMax = Context.FarFieldMaxTraceDistance;
+	Context.InstanceMask = RAY_TRACING_MASK_FAR_FIELD;
+
+	FLumenMinimalRayResult MinimalRayResult = TraceLumenMinimalRay(Ray, Context);
+
+	Ray.Origin = NonRebasedRayOrigin;
+
+	FSurfaceCacheSample SurfaceCacheSample = InitSurfaceCacheSample();
+	if (MinimalRayResult.bHit)
+	{
+		SurfaceCacheSample = SampleLumenMinimalRayHit(Ray, Context, MinimalRayResult);
+	}
+
+	return CreateRayTracedLightingResult(Ray, Context, MinimalRayResult, SurfaceCacheSample);
+}
+
+FRayTracedLightingResult TraceAndCalculateRayTracedLightingFromSurfaceCache(
+	FRayDesc Ray,
+	FRayTracedLightingContext Context)
+{
+	FRayTracedLightingResult Result = CreateRayTracedLightingResult();
+	Result.TraceHitDistance = Ray.TMax;
+
+	#if ENABLE_NEAR_FIELD_TRACING
+	{
+		Result = TraceSurfaceCacheRay(Ray, Context);
+	}
+	#endif
+
+	#if ENABLE_FAR_FIELD_TRACING
+	{
+		if (!Result.bIsHit && Result.bIsCompleted)
+		{
+			Result = TraceSurfaceCacheFarFieldRay(Ray, Context);
+		}
+	}
+	#endif
+
+	return Result;
+}

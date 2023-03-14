@@ -1,0 +1,16 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define VISUALIZE_TRACE_DATA_STRIDE 3
+
+uint VisualizeTraceCoherency;
+
+RWBuffer<float4> RWVisualizeTracesData;
+
+void WriteTraceForVisualization(uint TraceIndex, float3 WorldPosition, float3 WorldDirection, float TraceHitDistance, float3 TraceRadiance)
+{
+	RWVisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 0] = float4(WorldPosition, 0);
+	RWVisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 1] = float4(WorldDirection * TraceHitDistance, 0);
+	RWVisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 2] = float4(TraceRadiance, 0);
+}

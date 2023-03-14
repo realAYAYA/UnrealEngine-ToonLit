@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Live Link Control Rig",
+	"Description": "Allows access to LiveLink Data through Control Rig",
+	"Category": "Animation",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Plugins": [
+		{
+			"Name": "ControlRig",
+			"Enabled":  true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "LiveLinkControlRig",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

@@ -1,0 +1,55 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "WebAPI",
+	"Description": "Automated generation of web based API's,",
+	"Category": "Web",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault" : false,
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "WebAPI",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+        {
+			"Name": "WebAPIEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+        {
+            "Name": "WebAPIBlueprintGraph",
+            "Type": "UncookedOnly",
+            "LoadingPhase": "Default"
+        },
+        {
+			"Name": "WebAPIOpenAPI",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "WebAPILiquidJS",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PluginBrowser",
+			"Enabled": true
+		},
+		{
+			"Name": "WebSocketNetworking",
+			"Enabled": true
+		}
+	]
+}

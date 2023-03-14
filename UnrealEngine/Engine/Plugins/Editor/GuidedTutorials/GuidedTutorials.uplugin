@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Guided Tutorials",
+	"Description": "Adds classes and content that support running guided tutorials within the editor UI.",
+	"Category": "Learning",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"CanContainVerse": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "IntroTutorials",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

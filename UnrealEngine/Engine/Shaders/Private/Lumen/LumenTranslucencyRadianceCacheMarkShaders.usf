@@ -1,0 +1,99 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenTranslucencyRadianceCacheMarkShaders.usf
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+
+// Material pass reroutes
+#define SceneTexturesStruct LumenTranslucencyRadianceCacheMarkPass.SceneTextures
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+// Lumen specific pass reroutes
+#define RadianceCacheMark LumenTranslucencyRadianceCacheMarkPass
+#define RWRadianceProbeIndirectionTexture LumenTranslucencyRadianceCacheMarkPass.RWRadianceProbeIndirectionTexture
+
+#include "LumenRadianceCacheMarkCommon.ush"
+
+struct FLumenTranslucencyRadianceCacheMarkInterpolantsVSToPS
+{
+
+};
+
+struct FLumenTranslucencyRadianceCacheMarkVSToPS
+{
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+	FLumenTranslucencyRadianceCacheMarkInterpolantsVSToPS PassInterpolants;
+	float4 Position : SV_POSITION;
+};
+
+void MainVS(
+	FVertexFactoryInput Input,
+	out FLumenTranslucencyRadianceCacheMarkVSToPS Output
+	)
+{	
+	uint EyeIndex = 0;
+	ResolvedView = ResolveView();
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPositionExcludingWPO = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float4 WorldPosition = WorldPositionExcludingWPO;
+	float4 ClipSpacePosition;
+
+	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);	
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
+
+	ISOLATE
+	{
+		WorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
+		ClipSpacePosition = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+		Output.Position = ClipSpacePosition;
+	}
+
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+}
+
+EARLYDEPTHSTENCIL
+void MainPS(
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FLumenTranslucencyRadianceCacheMarkInterpolantsVSToPS PassInterpolants,
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position		
+	OPTIONAL_IsFrontFace)
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
+
+	//@todo - conservative coverage
+	uint ClipmapIndex = GetRadianceProbeClipmapForMark(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition), InterleavedGradientNoise(MaterialParameters.SvPosition.xy, View.StateFrameIndexMod8));
+
+	if (IsValidRadianceCacheClipmapForMark(ClipmapIndex))
+	{
+		float MaxDepth = 1000000.0f;
+#define CULL_TO_HZB 1
+#if CULL_TO_HZB
+		float2 HZBScreenUV = (SvPosition.xy - View.ViewRectMin.xy) * View.ViewSizeAndInvSize.zw * LumenTranslucencyRadianceCacheMarkPass.ViewportUVToHZBBufferUV;
+
+		MaxDepth = ConvertFromDeviceZ(LumenTranslucencyRadianceCacheMarkPass.FurthestHZBTexture.SampleLevel(GlobalPointClampedSampler, HZBScreenUV, LumenTranslucencyRadianceCacheMarkPass.HZBMipLevel).x);
+#endif
+
+		if (MaterialParameters.ScreenPosition.w < MaxDepth)
+		{
+			MarkPositionUsedInIndirectionTexture(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition), ClipmapIndex);
+		}
+	}
+}

@@ -1,0 +1,147 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+PathTracingPointLight.ush: Light sampling functions for Point lights
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingLightCommon.ush"
+#include "PathTracingCapsuleLight.ush"
+
+
+FLightHit PointLight_TraceLight(FRayDesc Ray, int LightId)
+{
+	if (GetSourceLength(LightId) > 0)
+	{
+		return CapsuleLight_TraceLight(Ray, LightId);
+	}
+
+	float3 TranslatedLightPosition = GetTranslatedPosition(LightId);
+	float LightRadius = GetRadius(LightId);
+	float LightRadius2 = Pow2(LightRadius);
+	float3 oc = Ray.Origin - TranslatedLightPosition;
+	float b = dot(oc, Ray.Direction);
+	// "Precision Improvements for Ray / Sphere Intersection" - Ray Tracing Gems (2019)
+	// https://link.springer.com/content/pdf/10.1007%2F978-1-4842-4427-2_7.pdf
+	// NOTE: we assume the incoming ray direction is normalized
+	float h = LightRadius2 - length2(oc - b * Ray.Direction);
+	if (h > 0)
+	{
+		float t = -b - sqrt(h);
+		if (t > Ray.TMin && t < Ray.TMax)
+		{
+			float LightDistanceSquared = dot(oc, oc);
+
+			// #dxr_todo: sphere area is 4*pi*r^2 -- but the factor of 4 is missing for some reason?
+			float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+			float3 LightRadiance = LightPower / (PI * LightRadius2);
+			LightRadiance *= ComputeAttenuationFalloff(LightDistanceSquared, LightId);
+
+			float SinThetaMax2 = saturate(LightRadius2 / LightDistanceSquared);
+			float OneMinusCosThetaMax = SinThetaMax2 < 0.01 ? SinThetaMax2 * (0.5 + 0.125 * SinThetaMax2) : 1 - sqrt(1 - SinThetaMax2);
+
+			float SolidAngle = 2 * PI * OneMinusCosThetaMax;
+			return CreateLightHit(LightRadiance, 1.0 / SolidAngle, t);
+		}
+		// #dxr_todo: process inside hit here ...
+		// How should we define radiance on the inside of the sphere?
+	}
+	return NullLightHit();
+}
+
+FLightSample PointLight_SampleLight(
+	int LightId,
+	float2 RandSample,
+	float3 TranslatedWorldPos,
+	float3 WorldNormal
+)
+{
+	float3 LightDirection = GetTranslatedPosition(LightId) - TranslatedWorldPos;
+	float LightDistanceSquared = dot(LightDirection, LightDirection);
+
+	FLightSample Result = NullLightSample();
+	if (GetSourceLength(LightId) > 0)
+	{
+		Result = CapsuleLight_SampleLight(LightId, RandSample, TranslatedWorldPos, WorldNormal);
+	}
+	else
+	{
+		// Point light case
+
+		// Sample the solid angle subtended by the sphere (which could be singgular, in which case the PDF will be infinite)
+		float Radius = GetRadius(LightId);
+		float Radius2 = Pow2(Radius);
+
+		// #dxr_todo: come up with a better definition when we are inside the light
+		float SinThetaMax2 = saturate(Radius2 / LightDistanceSquared);
+
+		// #dxr_todo: find a better way of handling the region inside the light than just clamping to 1.0 here
+		float4 DirAndPdf = UniformSampleConeRobust(RandSample, SinThetaMax2);
+
+		float CosTheta = DirAndPdf.z;
+		float SinTheta2 = 1.0 - CosTheta * CosTheta;
+
+		Result.Direction = TangentToWorld(DirAndPdf.xyz, normalize(LightDirection));
+		Result.Distance = length(LightDirection) * (CosTheta - sqrt(max(SinThetaMax2 - SinTheta2, 0.0)));
+
+		Result.Pdf = DirAndPdf.w;
+
+		float3 LightPower = GetColor(LightId);
+		float3 LightRadiance = LightPower / (PI * Radius2);
+
+		// When the angle is very small, Radiance over pdf simplifies even more since SolidAngle ~= PI * SinThetaMax2
+		// Canceling out common factors further leads to the classic Power / D^2 formula
+		Result.RadianceOverPdf = SinThetaMax2 < 0.001 ? LightPower / LightDistanceSquared : LightRadiance / Result.Pdf;
+	}
+
+	// NOTE: uses distance to center to keep fadeoff mask consistent for all samples
+	Result.RadianceOverPdf *= ComputeAttenuationFalloff(LightDistanceSquared, LightId);
+	Result.RadianceOverPdf *= ComputeIESAttenuation(LightId, TranslatedWorldPos);
+	return Result;
+}
+
+float PointLight_EstimateLight(
+	int LightId,
+	float3 TranslatedWorldPos,
+	float3 WorldNormal,
+	bool IsTransmissiveMaterial
+)
+{
+	// Distance
+	float3 LightDirection = GetTranslatedPosition(LightId) - TranslatedWorldPos;
+	float LightDistanceSquared = dot(LightDirection, LightDirection);
+
+	// Geometric term
+	float NoL = 1.0; // trivial upper bound -- trying to be more accurate appears to reduce performance
+
+	float LightPower = Luminance(GetColor(LightId));
+	float Falloff = ComputeAttenuationFalloff(LightDistanceSquared, LightId);
+	return LightPower * Falloff * NoL / LightDistanceSquared;
+}
+
+FVolumeLightSampleSetup PointLight_PrepareLightVolumeSample(
+	int LightId,
+	float3 RayOrigin,
+	float3 RayDirection,
+	float TMin,
+	float TMax
+)
+{
+	float3 Center = GetTranslatedPosition(LightId);
+	float AttenuationRadius = rcp(GetAttenuation(LightId));
+	float AttenuationRadius2 = Pow2(AttenuationRadius);
+	float3 oc = RayOrigin - Center;
+	float b = dot(oc, RayDirection);
+	float h = AttenuationRadius2 - length2(oc - b * RayDirection);
+	if (h > 0)
+	{
+		float2 t = -b + float2(-1, +1) * sqrt(h);
+		TMin = max(t.x, TMin);
+		TMax = min(t.y, TMax);
+		float3 C = GetColor(LightId);
+		float LightImportance = max3(C.x, C.y, C.z);
+		return CreateEquiAngularSampler(LightImportance, Center, RayOrigin, RayDirection, TMin, TMax);
+	}
+	return NullVolumeLightSetup();
+}

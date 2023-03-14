@@ -1,0 +1,43 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+
+// SRV/UAV variables
+Buffer<float> InputSRV;
+RWBuffer<float> OutputUAV;
+// Input variables
+uint TensorSize;
+float Attribute;
+
+[numthreads(THREADGROUP_SIZE_X, 1, 1)]
+void ElementWiseCS(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint GlobalIndex = DispatchThreadID.x;
+
+	if (GlobalIndex >= TensorSize)
+	{
+		return;
+	}
+
+#if NUMBER_ATTRIBUTES == 0
+#if IS_INLINED > 0
+	// No attributes - Inlined
+	OutputUAV[GlobalIndex] = ElementWiseFunction(OutputUAV[GlobalIndex]);
+#else
+	// No attributes - Not inlined
+	OutputUAV[GlobalIndex] = ElementWiseFunction(InputSRV[GlobalIndex]);
+#endif
+
+#elif NUMBER_ATTRIBUTES == 1
+#if IS_INLINED > 0
+	// 1 attribute - Inlined
+	OutputUAV[GlobalIndex] = ElementWiseFunction(OutputUAV[GlobalIndex], Attribute);
+#else
+	// 1 attribute - Not inlined
+	OutputUAV[GlobalIndex] = ElementWiseFunction(InputSRV[GlobalIndex], Attribute);
+#endif
+
+#else
+	UNIMPLEMENTED // Notify us
+#endif
+}

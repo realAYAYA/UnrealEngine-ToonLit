@@ -1,0 +1,107 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DistortionSTMapProcessor.usf
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+
+float EvalTime;
+float Curve0Key0Time;
+float Curve0Key1Time;
+float Curve0Key0Tangent;
+float Curve0Key1Tangent;
+float Curve1Key0Time;
+float Curve1Key1Time;
+float Curve1Key0Tangent;
+float Curve1Key1Tangent;
+float FocusBlendFactor;
+
+float2 FxFyScale;
+float2 PrincipalPoint;
+uint2 OutputTextureExtent;
+Texture2D SourceTextureOne;
+Texture2D SourceTextureTwo;
+Texture2D SourceTextureThree;
+Texture2D SourceTextureFour;
+SamplerState SourceTextureSampler;
+
+float4 BezierInterp(float4 P0, float4 P1, float4 P2, float4 P3, float Alpha)
+{
+	float4 P01 = lerp(P0, P1, Alpha);
+	float4 P12 = lerp(P1, P2, Alpha);
+	float4 P23 = lerp(P2, P3, Alpha);
+	float4 P012 = lerp(P01, P12, Alpha);
+	float4 P123 = lerp(P12, P23, Alpha);
+	float4 P0123 = lerp(P012, P123, Alpha);
+
+	return P0123;
+}
+
+float4 EvalAtTwoPoints(float EvalTime, float Time0, float Time1, float4 Value0, float4 Value1, float Tangent0, float Tangent1)
+{
+	if (Time0 == Time1)
+	{
+		return Value0;
+	}
+
+	float OneThird = 1.0f / 3.0f;
+
+	float Diff = Time1 - Time0;
+	float Alpha = (EvalTime - Time0) / Diff;
+
+	float4 DeltaValue = Value1 - Value0;
+	float4 TangentScale = DeltaValue / Diff;
+	float4 ScaledTangent0 = Tangent0 * TangentScale;
+	float4 ScaledTangent1 = Tangent1 * TangentScale;
+
+	float4 P0 = Value0;
+	float4 P3 = Value1;
+	float4 P1 = P0 + (ScaledTangent0 * Diff * OneThird);
+	float4 P2 = P3 - (ScaledTangent1 * Diff * OneThird);
+
+	return BezierInterp(P0, P1, P2, P3, Alpha);
+}
+
+void BlendPS(float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	float2 UV = SvPosition.xy / OutputTextureExtent.xy;
+	UV = ((UV - 0.5f) * FxFyScale) + 0.5f;
+
+	float4 TexOneColor = Texture2DSampleLevel(SourceTextureOne, SourceTextureSampler, UV, 0);
+	float4 BlendedColor;
+
+// Case - 2 Focus Curves, 1 Zoom Point Each - Just Lerp
+#if BLEND_TYPE == 1
+	
+	float4 TexTwoColor = Texture2DSampleLevel(SourceTextureTwo, SourceTextureSampler, UV, 0);
+	BlendedColor = lerp(TexOneColor, TexTwoColor, FocusBlendFactor);
+
+// Case - 1 Focus Curve, 2 Zoom Points - One Bezier Interp
+#elif BLEND_TYPE == 2
+
+	float4 TexTwoColor = Texture2DSampleLevel(SourceTextureTwo, SourceTextureSampler, UV, 0);
+	BlendedColor = EvalAtTwoPoints(EvalTime, Curve0Key0Time, Curve0Key1Time, TexOneColor, TexTwoColor, Curve0Key0Tangent, Curve0Key1Tangent);
+	
+// Case - 2 Focus Curves, 2 Zoom Points Each - Two Bezier Interps, then Lerp
+#elif BLEND_TYPE == 3
+
+	float4 TexTwoColor = Texture2DSampleLevel(SourceTextureTwo, SourceTextureSampler, UV, 0);
+	float4 TexThreeColor = Texture2DSampleLevel(SourceTextureThree, SourceTextureSampler, UV, 0);
+	float4 TexFourColor = Texture2DSampleLevel(SourceTextureFour, SourceTextureSampler, UV, 0);
+
+	float4 Curve0BlendedColor = EvalAtTwoPoints(EvalTime, Curve0Key0Time, Curve0Key1Time, TexOneColor, TexTwoColor, Curve0Key0Tangent, Curve0Key1Tangent);
+	float4 Curve1BlendedColor = EvalAtTwoPoints(EvalTime, Curve1Key0Time, Curve1Key1Time, TexThreeColor, TexFourColor, Curve1Key0Tangent, Curve1Key1Tangent);
+
+	//Lerp across focus curves
+	BlendedColor = lerp(Curve0BlendedColor, Curve1BlendedColor, FocusBlendFactor);
+
+#else
+	
+	BlendedColor = TexOneColor;
+
+#endif
+	
+	float2 CenterShift = PrincipalPoint - float2(0.5f, 0.5f);
+	OutColor = BlendedColor + float4(CenterShift.xy, CenterShift.xy);
+}

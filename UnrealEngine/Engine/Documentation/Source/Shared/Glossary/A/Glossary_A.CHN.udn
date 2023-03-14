@@ -1,0 +1,93 @@
+﻿INTSourceChangelist:3810557
+Title:A
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_A]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+Actor
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Actor]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+AI
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_AI]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+AIController
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_AIController]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+动画
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Animation]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+动画序列
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Animation_Sequence]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+资源
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Asset]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_A]
+
+[COMMENT:none]
+[EXCERPT:Glossary_Actor]
+可放入关卡中的对象都是 **Actor**。Actor是支持三维转换（如平移、旋转和缩放）的泛型类。可通过游戏进程代码（C++或蓝图）创建（生成）及销毁Actor。在C++中，AActor是所有Actor的基本类。 
+
+Actor分为数种类型，示例包括：StaticMeshActor、CameraActor和PlayerStartActor。 
+[/EXCERPT:Glossary_Actor]
+[EXCERPT:Glossary_AI]
+ **AI** 也称人工智能，是由一组程序指令而非人工输入控制的行为。例如，非玩家角色（NPC)）就是由AI控制。
+[/EXCERPT:Glossary_AI]
+[EXCERPT:Glossary_AIController]
+就像玩家控制器拥有一个兵卒作为游戏中玩家的代表一样，**AI控制器** 也拥有一个兵卒来代表游戏中的非玩家角色（NPC）。默认情况下，兵卒和角色最终将使用基本AI控制器，除非它们专门被玩家控制器拥有或者被告知不要为它们自己创建一个AI控制器。
+[/EXCERPT:Glossary_AIController]
+[EXCERPT:Glossary_Animation]
+ **动画（Animation）** 是属性值随着时间的变化。示例包括位置、旋转和/或缩放的变化，但也可扩展至任何其他属性值。
+
+“动画（Animation）”可专指虚幻Matinee中创建的序列，或专指在外部三维建模和动画应用程序中为骨架网格体创建，然后导入到虚幻编辑器（Unreal Editor）中的序列。它甚至可以指由C++代码或蓝图创建的某个Actor属性（或多个属性）随着时间的变化。
+[/EXCERPT:Glossary_Animation]
+[EXCERPT:Glossary_Animation_Sequence]
+ **动画序列（Animation Sequence）**（或 **AnimSequence**）是在三维建模和动画应用程序中为骨架网格体创建，然后导入到虚幻编辑器中的动画资源。您可以在Persona中使用动画序列（Animation Sequence）。
+[/EXCERPT:Glossary_Animation_Sequence]
+[EXCERPT:Glossary_Asset]
+ **资源** 是用于构建游戏的元素。示例包括导入到 **内容浏览器（Content Browser）** 或在其中创建的内容，例如材料（Material）、静态网格体（Static Mesh）、纹理（Texture）、粒子系统（Particle System）、蓝图（Blueprint）、和声音提示（Sound Cue）。各资源都保存在单独的.uasset文件中。
+[/EXCERPT:Glossary_Asset]
+[/COMMENT]]

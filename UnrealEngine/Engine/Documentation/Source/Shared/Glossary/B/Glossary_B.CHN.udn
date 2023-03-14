@@ -1,0 +1,76 @@
+﻿INTSourceChangelist:3810557
+Title:B
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+[EXCERPT:Glossary_B]
+
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+蓝图
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Blueprints]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+蓝图编辑器
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE#Glossary_BlueprintEditor]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+蓝图接口
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_BlueprintInterface]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+蓝图宏库
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_BlueprintMacroLibrary]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+笔刷
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Brush]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_B]
+
+[COMMENT:none]
+[EXCERPT:Glossary_Blueprints]
+ **蓝图可视化脚本（Blueprints Visual Scripting）** 系统（或缩写 **蓝图（Blueprints）**）是一个可视化脚本系统，其依据的概念是完全在虚幻编辑器（Unreal Editor）中通过添加节点并将其连接在一起以创建游戏进程元素。蓝图具有足够的灵活性和强大功能，能够在不需要接触任何一行代码的情况下创建一个完整的游戏，它提供了使用几乎所有通常只有程序员才能使用的概念和工具的能力。 
+[/EXCERPT:Glossary_Blueprints]
+[EXCERPT:Glossary_BlueprintEditor]
+ **蓝图编辑器（Blueprint Editor）** 是一个基于节点的图表编辑器。它还有几个其他窗口，可以提供针对性的信息，并允许对蓝图及其图表进行其他修改。
+[/EXCERPT:Glossary_BlueprintEditor]
+[EXCERPT:Glossary_BlueprintInterface]
+ **蓝图接口（Blueprint Interface）** 是一种可在其中创建未定义函数的资源类型。任何蓝图都可以实现这个接口，然后为这些函数创建自己的定义。这是蓝图相互通信的一种方式，特别是当一个蓝图与许多其他蓝图交互时。
+[/EXCERPT:Glossary_BlueprintInterface]
+[EXCERPT:Glossary_BlueprintMacroLibrary]
+ **蓝图宏库（Blueprint Macro Library）** 是一个蓝图容器，它包含宏或或自包含图表的集合，这些宏或图表可以作为节点放置在其他蓝图中。它们可以节省时间，因为它们能够存储常用的节点序列，完成执行和数据传输的输入和输出。宏在引用它们的所有图表之间共享，但是在编译期间，它们会自动扩展到图表中，仿佛它们是一个折叠节点。这意味着不需要编译蓝图宏库，但是对宏的更改仅反映在重新编译包含这些图表的蓝图时将引用该宏的图表中。
+[/EXCERPT:Glossary_BlueprintMacroLibrary]
+[EXCERPT:Glossary_Brush]
+ **笔刷（Brush）** 是一种Actor，用于描述置于关卡中的三维体积，以便对关卡几何体（称为BSP）和游戏进程体积进行定义。通常您将使用BSP笔刷制作您要进行游戏进程测试的关卡或屏蔽该关卡。 
+
+另一方面，根据附加在它们上的效果，体积具有多种用途，例如：阻塞体积（Blocking Volume）（它们是不可见的，用于阻止Actor穿过它们）、伤害产生体积（Pain Causing Volume）（随着时间的推移，会对与其重叠的Actor造成伤害）或触发器体积（Trigger Volume）（用作在Actor进入或退出它们时引发事件的一种方式）。  
+[/EXCERPT:Glossary_Brush]
+[/COMMENT]

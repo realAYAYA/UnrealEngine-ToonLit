@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>netcoreapp3.1</TargetFramework>
+		<UseWPF>true</UseWPF>
+		<UseWindowsForms>true</UseWindowsForms>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+        <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+        <ApplicationIcon>unsync_48px.ico</ApplicationIcon>
+	</PropertyGroup>
+
+</Project>

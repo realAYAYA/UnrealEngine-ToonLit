@@ -1,0 +1,10 @@
+{
+	"featureFilters": {
+		"conversion_mappings": {
+			"filterType": "exclude"
+		},
+		"stringprep": {
+			"filterType": "exclude"
+		}
+	}
+}

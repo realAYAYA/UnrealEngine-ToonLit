@@ -1,0 +1,46 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Azure Spatial Anchors For ARCore",
+	"Description" : "Microsoft Azure Spatial Anchors implementation for ARCore",
+	"Category" : "Augmented Reality",
+	"CreatedBy" : "Epic Games",
+	"CreatedByURL" : "epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsExperimentalVersion" : true,
+	"IsBetaVersion" : true,
+	"Installed" : false,
+	"SupportedTargetPlatforms": [
+		"Android"
+	],
+	"Modules": [
+		{
+			"Name": "AzureSpatialAnchorsForARCore",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"Android"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "AzureSpatialAnchors",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"Android"
+			]
+		},
+		{
+			"Name": "GoogleARCore",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"Android"
+			]
+		}
+	]
+}

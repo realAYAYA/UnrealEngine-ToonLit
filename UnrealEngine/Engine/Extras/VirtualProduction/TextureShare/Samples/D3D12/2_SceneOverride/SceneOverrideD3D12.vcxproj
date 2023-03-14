@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D12/AppCoreD3D12.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B361F3B9-455A-4AA3-B168-18DD4182A96F}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>2_SceneOverrideD3D12</ProjectName>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D11/AppCoreD3D11.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{774CBB7A-6FEA-44CD-B1D0-6E699D29E7E1}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>1_SceneTexturesD3D11</ProjectName>
+  </PropertyGroup>
+</Project>

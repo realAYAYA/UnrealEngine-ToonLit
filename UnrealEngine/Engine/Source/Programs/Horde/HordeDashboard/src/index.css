@@ -1,0 +1,93 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale; 
+  overflow: hidden;
+}
+
+a, a:visited, a:active {
+  text-decoration: none;
+  color:rgb(0, 120, 212);
+}
+
+:focus {
+  outline:none;
+}
+
+a:hover {
+  text-decoration: none;
+  color:rgb(0, 120, 212);
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+.log-link, .log-link:visited, .log-link:hover {
+  text-decoration: none;
+  color:#000000;
+}
+
+.job-item:hover {
+  background:rgb(243, 242, 241);
+}
+
+.job-item.selected {
+  background:rgb(243, 242, 241);
+}
+
+
+.view-log-link, .view-log-link:visited, .view-log-link:hover {
+  text-decoration: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.view-log-link-disabled, .view-log-link-disabled:visited, .view-log-link-disabled:hover {
+  text-decoration: none;
+  color: #8f8f8f;
+  user-select: none;
+}
+
+.cl-callout-button,.cl-callout-button:hover  {
+  text-decoration: none;
+  white-space: nowrap;
+  background: #035ca1;
+  color: rgb(255, 255, 255);
+  user-select: none;
+  font-family: "Horde Open Sans SemiBold";  
+  font-size: 10px;
+  border-width: 0;
+}
+
+.cl-callout-button-user,.cl-callout-button-user:hover  {
+  text-decoration: none;
+  white-space: nowrap;
+  background:#0288ee;
+  color: rgb(255, 255, 255);
+  user-select: none;
+  font-family: "Horde Open Sans SemiBold";  
+  font-size: 10px;
+  border-width: 0;
+}
+
+@keyframes red-pulse {
+  0% {
+    background-color: #CC0000;
+    border: 1px solid #CC0000;
+  }
+  50% {
+    background-color: #FF0000;
+    border: 1px solid #FF0000;
+  }
+  100% {
+    background-color: #CC0000;
+    border: 1px solid #CC0000;
+  }
+
+}
+

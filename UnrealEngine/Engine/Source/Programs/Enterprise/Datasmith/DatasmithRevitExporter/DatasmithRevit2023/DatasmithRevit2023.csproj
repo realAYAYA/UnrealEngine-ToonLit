@@ -1,0 +1,138 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="14.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+      None
+    </ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{62592629-B959-4E19-97A8-0F6EE5941166}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>DatasmithRevit2023</RootNamespace>
+    <AssemblyName>DatasmithRevit2023</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE;REVIT_API_2023</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <StartAction>Program</StartAction>
+    <StartProgram>$(ProgramW6432)\Autodesk\Revit 2023\Revit.exe</StartProgram>
+    <EnableUnmanagedDebugging>true</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE;REVIT_API_2023</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <StartAction>Program</StartAction>
+    <StartProgram>$(ProgramW6432)\Autodesk\Revit 2023\Revit.exe</StartProgram>
+  </PropertyGroup>
+  <PropertyGroup>
+    <RunPostBuildEvent>OnOutputUpdated</RunPostBuildEvent>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="PresentationCore" />
+    <Reference Include="RevitAPI">
+      <HintPath>$(Revit_2023_API)\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(Revit_2023_API)\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="..\Private\DatasmithRevitDocument.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitDocument.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitDocumentData.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitDocumentData.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitDirectLink.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitDirectLink.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitDecal.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitDecal.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitApplication.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitApplication.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitCommand.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitCommand.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitExportContext.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitExportContext.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitExportMessages.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitExportMessages.cs</Link>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitExportOptions.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitExportOptions.cs</Link>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitLight.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitLight.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitMaterial.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitMaterial.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitSettingsManager.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitSettingsManager.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitUtils.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitUtils.cs</Link>
+    </Compile>
+    <Compile Include="..\Private\DatasmithRevitSettingsDialog.cs">
+      <Link>DatasmithRevitExporter\DatasmithRevitSettingsDialog.cs</Link>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="..\..\..\..\..\..\Binaries\Win64\DatasmithFacadeCSharp\Public\*.cs">
+      <Link>DatasmithSwigFacade\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Content Include="DatasmithRevit2023.addin" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Resources\DatasmithRevitResources.csproj">
+      <Project>{bc17d734-8f8f-44c1-a84e-af0e616fbe9e}</Project>
+      <Name>DatasmithRevitResources</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <PostBuildEvent>
+      set PUBLISH_DIR=$(ProjectDir)..\..\..\..\..\..\Binaries\Win64\Revit\2023\
+      xcopy "$(ProjectDir)$(TargetName).addin" "%25PUBLISH_DIR%25" /Y
+      xcopy "$(ProjectDir)$(OutputPath)*.dll" "%25PUBLISH_DIR%25" /Y
+      xcopy "$(ProjectDir)..\Resources\Windows\*.png" "%25PUBLISH_DIR%25" /Y
+      xcopy "$(ProjectDir)..\Resources\Windows\DatasmithBatchExporter.dyn" "%25PUBLISH_DIR%25" /Y
+</PostBuildEvent>
+  </PropertyGroup>
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
+       Other similar extension points exist, see Microsoft.Common.targets.
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+  -->
+  <Target Name="AfterClean">
+    <RemoveDir Directories="DatasmithRevitExporter" Condition="Exists('DatasmithRevitExporter')" />
+    <RemoveDir Directories="DatasmithSwigFacade" Condition="Exists('DatasmithSwigFacade')" />
+  </Target>
+</Project>

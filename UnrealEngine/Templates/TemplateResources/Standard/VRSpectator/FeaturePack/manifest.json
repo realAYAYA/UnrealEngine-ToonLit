@@ -1,0 +1,41 @@
+{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "VR Spectator"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "Feature Pack for VR Spectator"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "VRSpectator.png",
+	"Screenshots": [
+		"VRSpectator_Preview.png"
+	],
+	"Ident": "VRSpectatorStandard",
+	"AdditionalFiles": {
+		"DestinationFilesFolder": "VRSpectator",
+		"AdditionalFilesList": [
+			"Templates/TemplateResources/Standard/VRSpectator/Content/*.*"
+		]
+	}
+}
+

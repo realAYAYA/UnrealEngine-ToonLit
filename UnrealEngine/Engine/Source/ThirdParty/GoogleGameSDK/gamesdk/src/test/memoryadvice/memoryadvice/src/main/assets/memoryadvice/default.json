@@ -1,0 +1,37 @@
+{
+  "heuristics": {
+    "oom_score": {
+      "deltaLimit": {
+        "red": 0.85,
+        "yellow": 0.75
+      }
+    }
+  },
+  "metrics": {
+    "constant": {
+      "MemoryInfo": {
+        "totalMem": true,
+        "threshold": true
+      },
+      "meminfo": {
+        "CommitLimit": true,
+        "HighTotal": true,
+        "LowTotal": true,
+        "MemTotal": true,
+        "VmallocTotal": true
+      },
+      "status": {
+        "VmExe": true,
+        "VmStk": true
+      }
+    },
+    "variable": {
+      "proc": {
+        "oom_score": true
+      }
+    }
+  },
+  "predictions": {
+    "oom_score": true
+  }
+}

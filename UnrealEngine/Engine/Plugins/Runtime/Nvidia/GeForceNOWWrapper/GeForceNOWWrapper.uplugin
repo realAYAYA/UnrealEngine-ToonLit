@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "NVidia GeForce NOW Wrapper",
+	"Version": 1,
+	"VersionName": "1.0",
+	"Description": "NVidia GeForce NOW Wrapper",
+	"Category": "Gameplay Streaming",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"EnabledByDefault": false,
+
+	"Modules": [
+		{
+			"Name": "GeForceNOWWrapper",
+			"Type": "ClientOnlyNoCommandlet",
+			"LoadingPhase": "EarliestPossible",
+			"PlatformAllowList": [ "Win64" ],
+			"TargetDenyList": [ "Server" ]
+		}
+	],
+	"Plugins":
+	[
+		{
+			"Name": "CommonUI",
+			"Enabled": true
+		}
+	]
+}

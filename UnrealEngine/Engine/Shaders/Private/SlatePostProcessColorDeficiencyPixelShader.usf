@@ -1,0 +1,27 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "SlateShaderCommon.ush"
+#include "GammaCorrectionCommon.ush"
+#include "ColorSpace.ush"
+#include "ColorDeficiency.ush"
+
+Texture2D ElementTexture;
+SamplerState ElementTextureSampler;
+
+float ColorVisionDeficiencyType;
+float ColorVisionDeficiencySeverity;
+float bCorrectDeficiency;
+float bSimulateCorrectionWithDeficiency;
+
+float4 ColorDeficiencyMain(FScreenVertexOutput Input) : SV_Target0
+{
+	float4 SourceColor = Texture2DSample(ElementTexture, ElementTextureSampler, Input.UV);
+	// Have to convert to linear color space first - so they say, but it doesn't appear to matter much.
+	//SourceColor.rgb = sRGBToLinear(SourceColor.rgb);
+
+	float3 OutRGB = ColorDeficiency(SourceColor.rgb, ColorVisionDeficiencyType, ColorVisionDeficiencySeverity, bCorrectDeficiency, bSimulateCorrectionWithDeficiency);
+	//OutRGB = LinearToSrgb(OutRGB);
+
+	return float4(OutRGB, SourceColor.a);
+}

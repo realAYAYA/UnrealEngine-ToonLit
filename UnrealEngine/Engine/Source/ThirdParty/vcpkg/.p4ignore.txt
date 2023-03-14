@@ -1,0 +1,31 @@
+# Ignore GitHib repo
+vcpkg/
+vcpkg-*/
+
+# Ignore Mac files
+.DS_Store
+
+# Ignore Win64 packages except custom triplet cross-compiled folders
+Win64/x64-windows-static-*/*/
+!Win64/x64-windows-static-*/*_x64-windows-static-*/
+Win64/arm64-windows-static-*/*/
+!Win64/arm64-windows-static-*/*_arm64-windows-static-*/
+
+# Ignore Linux packages except custom triplet cross-compiled folders
+Linux/x86_64-unknown-linux-gnu/*/
+!Linux/x86_64-unknown-linux-gnu/*_x86_64-unknown-linux-gnu/
+LinuxAArch64/aarch64-unknown-linux-gnueabi/*/
+!LinuxAArch64/aarch64-unknown-linux-gnueabi/*_aarch64-unknown-linux-gnueabi/
+
+# Ignore Mac packages except custom triplet cross-compiled folders
+Mac/x86_64-osx/*/
+!Mac/x86_64-osx/*_x86_64-osx/
+
+# Ignore vcpkg_installed (combined libs & headers for all packages)
+**/vcpkg_installed/
+
+# Ignore packages not built by vcpkg
+**/re2_*/
+**/openssl_*/
+**/openssl-*/
+**/zlib_*/

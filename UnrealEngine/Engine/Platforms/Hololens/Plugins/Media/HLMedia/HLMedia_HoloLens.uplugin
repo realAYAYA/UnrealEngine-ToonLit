@@ -1,0 +1,20 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"Modules": [
+		{
+			"Name": "HLMedia",
+			"Type": "RuntimeNoCommandlet",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		},
+		{
+			"Name": "HLMediaFactory",
+			"Type": "RuntimeNoCommandlet",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		}
+	]
+}

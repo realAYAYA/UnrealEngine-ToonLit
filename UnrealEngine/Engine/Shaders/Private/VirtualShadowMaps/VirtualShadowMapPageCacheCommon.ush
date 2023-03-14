@@ -1,0 +1,35 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMapPageCacheCommon.ush:
+=============================================================================*/
+#pragma once
+
+struct FShadowMapCacheData
+{
+	// ID of the corresponding virtual shadow map from the previous frame, or INDEX_NONE if
+	// there wasn't one.
+	int PrevVirtualShadowMapId;
+
+	int2 ClipmapCornerOffsetDelta;
+	int Padding[1];
+};
+
+StructuredBuffer<FShadowMapCacheData> ShadowMapCacheData;
+StructuredBuffer<uint> PrevPageFlags;
+StructuredBuffer<uint> PrevPageTable;
+StructuredBuffer<FPhysicalPageMetaData> PrevPhysicalPageMetaData;
+ByteAddressBuffer PrevProjectionData;
+
+// Flags buffer (one bit per PersistentPrimitiveIndex) to track statically cached primitives that are invalidating
+// Currently we use GPU messaging to send these primitives back for the CPU to handle as desired
+// in future frames, but this flags buffer ensures we only send one message per prim.
+RWStructuredBuffer<uint> OutStaticInvalidatingPrimitives;
+
+void RecordStaticPrimitiveInvalidation(uint PersistentPrimitiveIndex)
+{
+	uint PrimitiveIdWordOffset = PersistentPrimitiveIndex / 32U;
+	uint PrimitiveIdWordMask = 1U << (PersistentPrimitiveIndex % 32U);
+
+	InterlockedOr(OutStaticInvalidatingPrimitives[PrimitiveIdWordOffset], PrimitiveIdWordMask);
+}

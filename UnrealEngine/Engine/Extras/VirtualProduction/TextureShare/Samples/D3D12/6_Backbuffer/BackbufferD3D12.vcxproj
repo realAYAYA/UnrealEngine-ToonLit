@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D12/AppCoreD3D12.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{9BD89747-7731-443E-A032-23B405296B0A}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>6_BackbufferD3D12</ProjectName>
+  </PropertyGroup>
+</Project>

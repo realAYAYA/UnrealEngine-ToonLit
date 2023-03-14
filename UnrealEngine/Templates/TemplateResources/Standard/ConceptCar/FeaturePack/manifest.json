@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "ConceptCar.png",
+	"Screenshots":
+	[
+		"ConceptCar_Preview.png"
+	],
+	"Ident": "ConceptCarStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "ConceptCar",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/ConceptCar/Content/*.*"
+		]
+	}
+}
+

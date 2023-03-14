@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"SupportedTargetPlatforms": [
+		"HoloLens"
+	],
+	"Modules": [
+		{
+			"Name": "OpenXRHMD",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		},
+		{
+			"Name": "OpenXRInput",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		},
+		{
+			"Name": "OpenXRAR",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		}
+	]
+}

@@ -1,0 +1,23 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "GPUSceneWriter.ush"
+#include "../InstanceCulling/InstanceCullingLoadBalancer.ush"
+
+/**
+ * Each thread loops over a range on instances loaded from a buffer. The instance bounds are projected to all cached virtual shadow map address space 
+ * and any overlapped pages are marked as invalid.
+ */
+[numthreads(NUM_THREADS_PER_GROUP, 1, 1)]
+void GPUSceneSetInstancePrimitiveIdCS(uint3 GroupId : SV_GroupID, int GroupThreadIndex : SV_GroupIndex)
+{
+	FInstanceWorkSetup WorkSetup = InstanceCullingLoadBalancer_Setup(GroupId, GroupThreadIndex, 0U);
+
+	if (!WorkSetup.bValid)
+	{
+		return;
+	}
+
+	uint InstanceId = WorkSetup.Item.InstanceDataOffset + uint(WorkSetup.LocalItemIndex);
+	WriteInstancePrimitiveId(InstanceId, WorkSetup.Item.Payload);
+}

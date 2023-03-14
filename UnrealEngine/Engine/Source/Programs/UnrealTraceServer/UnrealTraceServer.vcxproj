@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{E00E6CBD-F5A7-4318-87E3-AB0B30B5E3E6}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <NMakeBuildCommandLine>nmake /E DEBUG=1</NMakeBuildCommandLine>
+    <NMakeOutput>$(OutDir)UnrealTraceServer.exe</NMakeOutput>
+    <NMakeCleanCommandLine>nmake clean /E DEBUG=1</NMakeCleanCommandLine>
+    <NMakeIncludeSearchPath>$(ProjectDir)thirdparty\cxxopts\include;$(ProjectDir)thirdparty\asio\1.12.2;$(ExternalIncludePath)</NMakeIncludeSearchPath>
+    <NMakePreprocessorDefinitions>DEBUG=1</NMakePreprocessorDefinitions>
+    <AdditionalOptions>/std:c++17</AdditionalOptions>
+    <OutDir>$(SolutionDir)_build\windows\debug\</OutDir>
+    <IntDir>$(SolutionDir)_intermediate\windows\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <NMakeBuildCommandLine>nmake</NMakeBuildCommandLine>
+    <NMakeOutput>$(OutDir)UnrealTraceServer.exe</NMakeOutput>
+    <NMakeCleanCommandLine>nmake clean</NMakeCleanCommandLine>
+    <NMakeIncludeSearchPath>$(ProjectDir)thirdparty\cxxopts\include;$(ProjectDir)thirdparty\asio\1.12.2;$(ExternalIncludePath)</NMakeIncludeSearchPath>
+    <AdditionalOptions>/std:c++17</AdditionalOptions>
+    <OutDir>$(SolutionDir)_build\windows\development\</OutDir>
+    <IntDir>$(SolutionDir)_intermediate\windows\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Asio.cpp" />
+    <ClCompile Include="src\AsioContext.cpp" />
+    <ClCompile Include="src\AsioFile.cpp" />
+    <ClCompile Include="src\AsioIoable.cpp" />
+    <ClCompile Include="src\AsioSocket.cpp" />
+    <ClCompile Include="src\AsioTcpServer.cpp" />
+    <ClCompile Include="src\AsioTickable.cpp" />
+    <ClCompile Include="src\Cbor.cpp" />
+    <ClCompile Include="src\Main.cpp" />
+    <ClCompile Include="src\Recorder.cpp" />
+    <ClCompile Include="src\Store.cpp" />
+    <ClCompile Include="src\StoreCborServer.cpp" />
+    <ClCompile Include="src\StoreService.cpp" />
+    <ClCompile Include="src\SystemTray.cpp" />
+    <ClCompile Include="src\TraceRelay.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Asio.h" />
+    <ClInclude Include="src\AsioContext.h" />
+    <ClInclude Include="src\AsioFile.h" />
+    <ClInclude Include="src\AsioIoable.h" />
+    <ClInclude Include="src\AsioSocket.h" />
+    <ClInclude Include="src\AsioTcpServer.h" />
+    <ClInclude Include="src\AsioTickable.h" />
+    <ClInclude Include="src\Cbor.h" />
+    <ClInclude Include="src\CborPayload.h" />
+    <ClInclude Include="src\Foundation.h" />
+    <ClInclude Include="src\Pch.h" />
+    <ClInclude Include="src\Recorder.h" />
+    <ClInclude Include="src\Store.h" />
+    <ClInclude Include="src\StoreCborServer.h" />
+    <ClInclude Include="src\StoreService.h" />
+    <ClInclude Include="src\TraceRelay.h" />
+    <ClInclude Include="src\Utils.h" />
+    <ClInclude Include="src\Version.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Version.aps" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\Version.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

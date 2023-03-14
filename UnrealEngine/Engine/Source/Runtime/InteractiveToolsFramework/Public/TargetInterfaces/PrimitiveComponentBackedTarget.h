@@ -1,0 +1,55 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
+#include "Engine/EngineTypes.h"    // FHitResult
+#endif
+#include "UObject/Interface.h"
+
+#include "PrimitiveComponentBackedTarget.generated.h"
+
+class UPrimitiveComponent;
+class AActor;
+
+struct FHitResult;
+
+UINTERFACE()
+class INTERACTIVETOOLSFRAMEWORK_API UPrimitiveComponentBackedTarget : public UInterface
+{
+	GENERATED_BODY()
+};
+
+class INTERACTIVETOOLSFRAMEWORK_API IPrimitiveComponentBackedTarget
+{
+	GENERATED_BODY()
+
+public:
+
+	/** @return the Component this is a Source for */
+	virtual UPrimitiveComponent* GetOwnerComponent() const = 0;
+
+	/** @return the Actor that owns this Component */
+	virtual AActor* GetOwnerActor() const = 0;
+
+	/**
+	 * Set the visibility of the Component associated with this Source (ie to hide during Tool usage)
+	 * @param bVisible desired visibility
+	 */
+	virtual void SetOwnerVisibility(bool bVisible) const = 0;
+
+	/**
+	 * @return the transform on this component
+	 * @todo Do we need to return a list of transforms here?
+	 */
+	virtual FTransform GetWorldTransform() const = 0;
+
+	/**
+	 * Compute ray intersection with the MeshDescription this Source is providing
+	 * @param WorldRay ray in world space
+	 * @param OutHit hit test data
+	 * @return true if ray intersected Component
+	 */
+	virtual bool HitTestComponent(const FRay& WorldRay, FHitResult& OutHit) const = 0;
+};

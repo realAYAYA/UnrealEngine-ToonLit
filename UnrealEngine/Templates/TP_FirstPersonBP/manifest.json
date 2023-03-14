@@ -1,0 +1,78 @@
+{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "First Person"
+		},
+		{
+			"Language": "ko",
+			"Text": "일인칭"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "第一人称游戏"
+		},
+		{
+			"Language": "ja",
+			"Text": "ファーストパーソン"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "The first person template features a player character (represented by a pair of arms) which is viewed from first person perspective. The character can be moved around the level using keyboard, controller or virtual joystick on a touch device. Additionally the player can look around using mouse, controller or virtual joystick on a touch device. The character can also pick up a gun that, using mouse, controller or virtual joystick on a touch device will fire a simple sphere projectile that will affect some physics objects in the level, whilst bounce off the arena walls."
+		},
+		{
+			"Language": "ko",
+			"Text": "일인칭 템플릿은 일인칭 시점에서 보이는 (양팔로 표현되는) 플레이어 캐릭터를 특징으로 합니다. 캐릭터 이동은 키보드, 컨트롤러, 터치 디바이스의 가상 조이스틱으로 가능합니다. 추가적으로 플레이어는 마우스, 컨트롤러, 터치 디바이스의 가상 조이스틱을 사용하여 주변을 둘러볼 수도 있습니다. 캐릭터에는 총이 장착되어 있어 마우스, 컨트롤러, 터치 디바이스의 가상 조이스틱을 사용하면 간단한 발사체가 발사되어, 아레나 벽에 튕기면서 레벨에 있는 몇몇 물리 오브젝트에 영향을 줍니다."
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "第一人称模板包含一个第一人称玩家角色（通过一双手臂呈现）。你可以通过键盘、手柄或触摸式设备上的虚拟摇杆控制角色在关卡中四处移动。你还可以使用鼠标、手柄或触摸式设备上的虚拟摇杆转动角色视角，观察四周。此外，你还可以让角色拾取枪支，然后用鼠标、手柄或触摸式设备上的虚拟摇杆来发射球形子弹。子弹会撞飞关卡中的物理对象，还能从竞技场墙壁上弹开。"
+		},
+		{
+			"Language": "ja",
+			"Text": "ファーストパーソンテンプレートには、一人称視点で表示されるプレイヤーキャラクタ（腕として表示されています）がいます。キーボード、コントローラー、タッチデバイスでのバーチャルジョイスティックでこのキャラクタを移動させることができます。追加して、プレイヤーはマウス、コントローラー、タッチデバイスでのバーチャルジョイスティックで周りを見回すことができます。さらにキャラクタは銃を装備して、マウス、コントローラー、タッチデバイスでのバーチャルジョイスティックを使ってシンプルな球体の弾を発射できます。この弾は物理オブジェクトに影響し、アリーナの壁で反射します。"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": "Animation Sequence, Animation Montage, Sound Wave, Skeletal Mesh, Animation Blueprint, Skeleton, Static Mesh."
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": "First Person,Shoot,Fire,Aim"
+		}
+	],
+	"ClassTypes": "Actor, Character, GameMode",
+	"Category": "BlueprintFeature",
+	"FocusAsset": "/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter.BP_FirstPersonCharacter",
+	"Thumbnail": "TP_FirstPersonBP.png",
+	"Screenshots": [
+		"TP_FirstPersonBP_Preview.png"
+	],
+	"AdditionalFeaturePacks": [
+		{
+			"MountName": "FPWeapon",
+			"DetailLevels": [
+				"Standard"
+			]
+		},
+		{
+			"MountName": "LevelPrototyping",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "FirstPersonArms",
+			"DetailLevels": [
+				"Standard"
+			]
+		}
+	]
+}

@@ -1,0 +1,54 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "Blackmagic Media Player",
+	"Version": 2,
+	"VersionName": "2.1",
+	"CreatedBy": "Epic Games Inc",
+	"CreatedByURL": "http://epicgames.com",
+	"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/content/433d28bdfb764ec5b2e60c4f45d5cb5c",
+	"Description": "Implements input and output using Blackmagic Capture cards.",
+	"Category": "Media Players",
+	"CanContainContent": false,
+	"EnabledByDefault": false,
+	"IsBetaVersion": false,
+	"SupportedTargetPlatforms": [ "Win64", "Linux" ],
+	"Modules": [
+		{
+			"Name": "BlackmagicMedia",
+			"Type": "Runtime",
+			"LoadingPhase": "PreLoadingScreen",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		},
+		{
+			"Name": "BlackmagicMediaOutput",
+			"Type": "Runtime",
+			"LoadingPhase": "PreLoadingScreen",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		},
+		{
+			"Name": "BlackmagicMediaFactory",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		},
+		{
+			"Name": "BlackmagicMediaFactory",
+			"Type": "RuntimeNoCommandlet",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		},
+		{
+			"Name": "BlackmagicMediaEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "MediaIOFramework",
+			"Enabled": true
+		}
+	]
+}

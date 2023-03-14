@@ -1,0 +1,37 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneTexturesCommon.ush"
+#include "../LightShaderParameters.ush"
+#include "VirtualShadowMapMaskBitsCommon.ush"
+
+Texture2D<float2> InputShadowFactor;
+Texture2D<float> InputDepthTexture;
+Texture2D<uint4> ShadowMaskBits;
+int CompositeVirtualShadowMapId;
+
+void VirtualShadowMapCompositePS(
+	in float4 SvPosition : SV_Position,
+	out float4 OutShadowMask : SV_Target)
+{
+	float2 ShadowFactor = InputShadowFactor.Load(int3(SvPosition.xy, 0));
+	OutShadowMask = EncodeLightAttenuationFromMask(ShadowFactor.x, ShadowFactor.y);
+}
+
+void VirtualShadowMapCompositeFromMaskBitsPS(
+	in float4 SvPosition : SV_Position,
+	out float4 OutShadowMask : SV_Target)
+{
+	const uint2 PixelPos = uint2(SvPosition.xy);
+
+	const float DeviceZ = SceneTexturesStruct.SceneDepthTexture.Load(int3(PixelPos, 0)).r;
+	const float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+
+	uint EyeIndex = 0; // TODO: Instanced stereo
+	float ShadowMask = GetVirtualShadowMapMaskForLight(
+		ShadowMaskBits, PixelPos, SceneDepth, EyeIndex, CompositeVirtualShadowMapId);;
+	
+	// TODO: Subsurface...?
+		
+	OutShadowMask = EncodeLightAttenuationFromMask(ShadowMask, ShadowMask);
+}

@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ProduceReferenceAssembly>True</ProduceReferenceAssembly>
+    <PackageId />
+    <AssemblyName></AssemblyName>
+    <Configurations>Debug;Release;Development</Configurations>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="envdte" Version="17.3.32804.24" />
+    <PackageReference Include="HIC.System.Windows.Forms.DataVisualization" Version="1.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="UnrealControls">
+      <HintPath>..\..\..\Binaries\DotNET\UnrealControls.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

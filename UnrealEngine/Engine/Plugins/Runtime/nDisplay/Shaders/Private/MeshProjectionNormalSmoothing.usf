@@ -1,0 +1,242 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+
+Texture2D SceneColor;
+Texture2D SceneDepth;
+Texture2D<uint2> SceneStencil;
+
+RWTexture2D<float4> RWColor;
+RWTexture2D<float> RWDepth;
+RWTexture2D<uint> RWStencil;
+
+float4x4 NormalCorrectionMatrix;
+
+#define FILTER_KERNEL_SIZE 25
+
+DECLARE_SCALAR_ARRAY(float, SpatialKernel, FILTER_KERNEL_SIZE);
+DECLARE_SCALAR_ARRAY(float, InteriorSpatialKernel, FILTER_KERNEL_SIZE);
+
+float2 SampleDirection;
+float2 SampleOffsetScale;
+float InvSigma;
+
+/** Adjusts the specified pixel position so as not to be outside of the viewport bounds */
+uint2 AdjustPixelPos(uint2 PixelPos)
+{
+	return uint2(clamp(PixelPos.x, 0.0, Input_Extent.x), clamp(PixelPos.y, 0.0, Input_Extent.y));
+}
+
+/** Converts a vector in normal space to color space */
+float3 NormalToColorSpace(float3 Normal)
+{
+	return Normal * 0.5 + 0.5;
+}
+
+/** Converts a color from color space to normal space */
+float3 NormalFromColorSpace(float3 Color)
+{
+	return 2.0 * Color - 1.0;
+}
+
+/** Transforms the specified world vector into the radial space of the specified vector,
+  * oriented so that the x axis points in the direction of the radial vector */
+float3 TransformToRadialBasis(float3 Vector, float3 RadialVector)
+{
+	const float KINDA_SMALL_NUMBER = 0.0001;
+	float3 Up = abs(RadialVector.z) < (1.0 - KINDA_SMALL_NUMBER) ? float3(0, 0, 1) : float3(1, 0, 0);
+	
+	float3 AzimuthalVector = normalize(cross(Up, RadialVector));
+	float3 InclinationVector = cross(RadialVector, AzimuthalVector);
+	
+	return float3(dot(Vector, RadialVector), dot(Vector, AzimuthalVector), dot(Vector, InclinationVector));
+}
+
+/** A compute pass that copies the scene's color, depth, and stencil buffers into RW textures, as well as converting all normals from world space to radial space */
+[numthreads(8, 8, 1)]
+void CreateRWTexturesCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	// In order to compute the radial space vector to convert the normals to radial space with, compute the world position of the current pixel
+	// This assumes the scene was rendered using an azimuthal projection
+	const uint2 PixelPos = DispatchThreadId;
+	const float2 UV = PixelPos * View.ViewSizeAndInvSize.zw;
+	const float2 ScreenPos = ViewportUVToScreenPos(UV);
+	
+	float3 ProjectedViewPos = mul(float4(ScreenPos.x * View.NearPlane, ScreenPos.y * View.NearPlane, 0.0, View.NearPlane), View.ClipToView).xyz;
+	
+	float Rho = length(ProjectedViewPos);
+	float3 UnitViewPos = normalize(ProjectedViewPos);
+	float3 PlanePos = UnitViewPos / UnitViewPos.z;
+	float2 PolarCoords = float2(sqrt(PlanePos.x * PlanePos.x + PlanePos.y * PlanePos.y), atan2(PlanePos.y, PlanePos.x));
+	
+	float3 ViewPos = float3(sin(PolarCoords.x) * cos(PolarCoords.y), sin(PolarCoords.x) * sin(PolarCoords.y), cos(PolarCoords.x)) * Rho;
+	float3 WorldPos = mul(float4(ViewPos, 0), View.ViewToTranslatedWorld).xyz;
+	
+	float3 RadialVector = normalize(mul(WorldPos, (float3x3) NormalCorrectionMatrix));
+	
+	float4 Color = SceneColor.Load(uint3(PixelPos, 0));
+	float Depth = SceneDepth.Load(uint3(PixelPos, 0)).r;
+	uint Stencil = SceneStencil.Load(uint3(PixelPos, 0)) STENCIL_COMPONENT_SWIZZLE;
+	
+	// If the current pixel is geometry, as indicated by the stencil, use the scene's color as the normal; otherwise,
+	// use the negative radial vector for the empty space normal
+	float3 Normal = lerp(-RadialVector, NormalFromColorSpace(Color.rgb), (float)Stencil);
+	float3 LocalNormal = TransformToRadialBasis(Normal, RadialVector);
+	
+	RWColor[PixelPos] = float4(NormalToColorSpace(LocalNormal), 1.0);
+	RWDepth[PixelPos] = Depth;
+	RWStencil[PixelPos] = Stencil;
+}
+
+/** A compute pass that dilates the depth buffer of overlapping geometry, allowing nearer geometry depth to dilate into further geometry depth */
+[numthreads(8, 8, 1)]
+void DepthDilationCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint2 PixelPos = DispatchThreadId;
+	
+	const int kRadius = (FILTER_KERNEL_SIZE - 1) / 2;
+
+	float InitialDepth = RWDepth[PixelPos];
+	uint InitialStencil = RWStencil[PixelPos];
+
+	float FinalDepth = 0.0;
+	float W = 0.0;
+	
+	// Only dilate onto geometry; if the current pixel's stencil is zero, the dilation can be skipped
+	if (InitialStencil > 0)
+	{
+		UNROLL
+		for (int kIndex = 0; kIndex < FILTER_KERNEL_SIZE; ++kIndex)
+		{
+			int2 PixelOffset = int2(kIndex - kRadius, kIndex - kRadius) * SampleOffsetScale * SampleDirection;
+			uint2 SamplePos = AdjustPixelPos(PixelPos + PixelOffset);
+			
+			float Depth = RWDepth[SamplePos];
+			uint Stencil = RWStencil[SamplePos];
+			
+			// Use a spatial factor here to ensure the depth closest to the edge of the geometry is dilated outwards
+			float SpatialFactor = GET_SCALAR_ARRAY_ELEMENT(InteriorSpatialKernel, kIndex);
+			
+			// Only dilate overlapping geometry outwards if it is nearer to the view origin than the current pixel's depth
+			float DepthFactor = max(Depth - InitialDepth, 0) * Stencil * SpatialFactor;
+			
+			FinalDepth += Depth * DepthFactor;
+			W += DepthFactor;
+		}
+		
+		if (W > 0.0)
+		{
+			RWDepth[PixelPos] = FinalDepth / W;
+		}
+	}
+}
+
+/** A compute pass that dilates the normal, depth, and stencil buffer of geometry into empty space */
+[numthreads(8, 8, 1)]
+void DilationCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint2 PixelPos = DispatchThreadId;
+	
+	const int kRadius = (FILTER_KERNEL_SIZE - 1) / 2;
+	
+	float4 InitialColor = RWColor[PixelPos];
+	float InitialDepth = RWDepth[PixelPos];
+	uint InitialStencil = RWStencil[PixelPos];
+	
+	float3 FinalColor = float3(0.0, 0.0, 0.0);
+	float FinalDepth = 0.0;
+	uint FinalStencil = 0;
+	
+	float W = 0.0;
+	
+	// Only dilate into empty space; if the current pixel's stencil is non-zero, the dilation can be skipped
+	if (InitialStencil < 1)
+	{
+		UNROLL
+		for (int kIndex = 0; kIndex < FILTER_KERNEL_SIZE; ++kIndex)
+		{
+			int2 PixelOffset = int2(kIndex - kRadius, kIndex - kRadius) * SampleOffsetScale * SampleDirection;
+			uint2 SamplePos = AdjustPixelPos(PixelPos + PixelOffset);
+		
+			float3 Color = RWColor[SamplePos].rgb;
+			float Depth = RWDepth[SamplePos];
+			uint Stencil = RWStencil[SamplePos];
+			
+			// Use a spatial factor here to ensure the depth closest to the edge of the geometry is dilated outwards
+			float SpatialFactor = GET_SCALAR_ARRAY_ELEMENT(SpatialKernel, kIndex);
+			
+			// Only dilate geometry into empty space
+			float StencilFactor = Stencil * SpatialFactor;
+
+			FinalColor += Color * StencilFactor;
+			FinalDepth += Depth * StencilFactor;
+			FinalStencil += Stencil;
+			
+			W += StencilFactor;
+		}
+	
+		if (W > 0.0)
+		{
+			RWColor[PixelPos] = float4(FinalColor / W, 1.0);
+			RWDepth[PixelPos] = FinalDepth / W;
+		}
+
+		RWStencil[PixelPos] = FinalStencil;
+	}
+}
+
+/** A compute pass that performs a standard Gaussian blur of the normal and depth buffers. Uses a different spatial deviation for blurring empty space or geometry */
+[numthreads(8, 8, 1)]
+void BlurCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint2 PixelPos = DispatchThreadId;
+	
+	const int kRadius = (FILTER_KERNEL_SIZE - 1) / 2;
+	
+	float3 InitialNormal = NormalFromColorSpace(RWColor[PixelPos].rgb);
+	float InitialDepth = RWDepth[PixelPos];
+	uint Stencil = SceneStencil.Load(int3(PixelPos, 0)) STENCIL_COMPONENT_SWIZZLE;
+	
+	float3 FinalNormal = float3(0.0, 0.0, 0.0);
+	float FinalDepth = 0.0;
+	float W = 0.0;
+	
+	UNROLL
+	for (int kIndex = 0; kIndex < FILTER_KERNEL_SIZE; ++kIndex)
+	{
+		int2 PixelOffset = int2(kIndex - kRadius, kIndex - kRadius) * SampleOffsetScale * SampleDirection;
+		uint2 SamplePos = AdjustPixelPos(PixelPos + PixelOffset);
+		
+		float3 Normal = NormalFromColorSpace(RWColor[SamplePos].rgb);
+		float Depth = RWDepth[SamplePos];
+
+		// Get the correct spatial kernel depending on if we are blurring a screen or empty space
+		float Factor = lerp(GET_SCALAR_ARRAY_ELEMENT(SpatialKernel, kIndex), GET_SCALAR_ARRAY_ELEMENT(InteriorSpatialKernel, kIndex), Stencil);
+
+		FinalNormal += Normal * Factor;
+		FinalDepth += Depth * Factor;
+		W += Factor;
+	}
+	
+	FinalNormal /= W;
+	FinalDepth /= W;
+	
+	RWColor[PixelPos] = float4(NormalToColorSpace(FinalNormal), 1.0);
+	RWDepth[PixelPos] = FinalDepth;
+}
+
+/** A pixel shader that renders the results of any compute shader passes to an output render target, packing the normal and depth values into the correct RGBA channels */
+void OutputNormalMapPS(noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	const float2 UV = UVAndScreenPos.xy;
+	const uint2 PixelPos = int2(UV * Input_Extent);
+	
+	float3 NormalColor = RWColor[PixelPos].rgb;
+	float Depth = RWDepth[PixelPos];
+	
+	// Normal vector is placed into the RGB channel, while depth is placed into the A channel
+	OutColor = float4(NormalColor, Depth);
+}

@@ -1,0 +1,29 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Blank"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "A clean empty project with no code."
+		}
+	],
+	"AssetTypes": [],
+	"SearchTags": [],
+	"ClassTypes": "",
+	"Category": "",
+	"FocusAsset": "",
+	"Thumbnail": "TP_BlankBP.png",
+	"Screenshots":
+	[
+		"TP_BlankBP_Preview.png"
+	],
+	"SortKey": "_1",
+	"AdditionalFeaturePacks": []
+}

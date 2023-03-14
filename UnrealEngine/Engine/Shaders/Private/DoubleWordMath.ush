@@ -1,0 +1,196 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Double-word arithmetic using algorithms from:
+//    "Tight and rigourous error bounds for basic building blocks of double-word arithmetic"
+//       Mioara Joldes, Jean - Michel Muller, Valentina Popescu 
+//    ACM Transactions on Mathematical Software [2017]
+
+// NOTE: the publication above is mainly about proving tight error bounds, the technique itself is much older even (see [Knuth 1974] for instance).
+
+// The basic idea is to represent floating point results using an un-evaluated sum of two floats. For example for addition of a + b, we have:
+//    a + b == c.h + c.l
+//    c.h: closest float to a + b
+//    c.l: remainder (usually a small value)
+
+// The functions below implement a minimum set of arithmetic operations on such numbers. The suffix _f or _d is used to
+// distinguish the type of the arguments (plain float vs. "double" float).
+// TODO: Make use of operator overloading (when available)?
+
+// Important note: the HLSL keyword 'precise' is required to prevent the compiler from optimizing away certain constructions.
+// Indeed while some expressions below may appear to cancel out mathematically, they do not cancel out _numerically_ which is
+// how the algorithms are able to capture additional precision.
+
+// The implementation below assume that the underlying hardware has properly working FMA instruction (mad). Without this, a different
+// implementation of FastTwoMult would be required (see papers above for details on the litterature for this).
+
+struct DWFloat
+{
+	float h;
+	float l;
+
+	float GetFloat()
+	{
+		// merge the hi/lo portions back together to make an ordinary float
+		return h + l;
+	}
+};
+
+DWFloat DWFloatCreate(float h, float l = 0)
+{
+	DWFloat Result;
+	Result.h = h;
+	Result.l = l;
+	return Result;
+}
+
+DWFloat DWNeg(DWFloat a)
+{
+	return DWFloatCreate(-a.h, -a.l);
+}
+
+DWFloat FastTwoSum(float a, float b)
+{
+	const float s = a + b;
+	const precise float e = b - (s - a);
+	return DWFloatCreate(s, e);
+}
+
+DWFloat TwoSum(float a, float b)
+{
+	const float s = a + b;
+	const precise float ap = s - b;
+	const precise float bp = s - ap;
+	const precise float da = a - ap;
+	const precise float db = b - bp;
+	return DWFloatCreate(s, da + db);
+}
+
+DWFloat FastTwoMult(float a, float b)
+{
+	const float p = a * b;
+	const precise float e = mad(a, b, -p);
+	return DWFloatCreate(p, e);
+}
+
+DWFloat DWAdd_ff(float a, float b)
+{
+	return TwoSum(a, b);
+}
+
+DWFloat DWSub_ff(float a, float b)
+{
+	return TwoSum(a, -b);
+}
+
+DWFloat DWAdd_dd(DWFloat a, DWFloat b)
+{
+	DWFloat s = TwoSum(a.h, b.h);
+	DWFloat t = TwoSum(a.l, b.l);
+	s = FastTwoSum(s.h, s.l + t.h);
+	s = FastTwoSum(s.h, s.l + t.l);
+	return s;
+}
+
+DWFloat DWSub_dd(DWFloat a, DWFloat b)
+{
+	return DWAdd_dd(a, DWNeg(b));
+}
+
+DWFloat DWAdd_df(DWFloat a, float b)
+{
+	const DWFloat s = TwoSum(a.h, b);
+	return FastTwoSum(s.h, a.l + s.l);
+}
+
+DWFloat DWSub_df(DWFloat a, float b)
+{
+	const DWFloat s = TwoSum(a.h, -b);
+	return FastTwoSum(s.h, a.l + s.l);
+}
+
+DWFloat DWSub_fd(float a, DWFloat b)
+{
+	return DWNeg(DWSub_df(b, a));
+}
+
+DWFloat DWMul_dd(DWFloat a, DWFloat b)
+{
+	DWFloat p = FastTwoMult(a.h, b.h);
+	p.l = mad(a.h, b.l, p.l);
+	p.l = mad(a.l, b.h, p.l);
+	//p.l = mad(a.l, b.l, p.l); // doesn't seem to add much precision in practice
+	return FastTwoSum(p.h, p.l);
+}
+
+DWFloat DWMul_ff(float a, float b)
+{
+	return FastTwoMult(a, b);
+}
+
+DWFloat DWMul_df(DWFloat a, float b)
+{
+	DWFloat p = FastTwoMult(a.h, b);
+	p.l = mad(a.l, b, p.l);
+	return FastTwoSum(p.h, p.l);
+}
+
+DWFloat DWSqr_d(DWFloat a)
+{
+	return DWMul_dd(a, a);
+}
+
+DWFloat DWSqr_f(float a)
+{
+	return FastTwoMult(a, a);
+}
+
+DWFloat DWSqrt_d(DWFloat a)
+{
+	// "Accurate calculation of Euclidean Norms using Double-word arithmetic"
+	// Vincent Lefevre, Nicolas Louvet, Jean-Michel Muller, Joris Picot, Laurence Rideau - [2021]
+
+	// Algorithm 8
+	const float sh = sqrt(a.h);
+	const precise float p1 = mad(-sh, sh, a.h);
+	const float p2 = a.l + p1;
+	const float sl = p2 / (2.0 * sh);
+	return FastTwoSum(sh, sl);
+}
+
+DWFloat DWDiv_dd(DWFloat b, DWFloat a)
+{
+	const float th = rcp(a.h);
+	const precise float rh = mad(-a.h, th, 1.0);
+	const float rl = -a.l * th;
+	const DWFloat e = FastTwoSum(rh, rl);
+	const DWFloat d = DWMul_df(e, th);
+	const DWFloat m = DWAdd_df(d, th);
+	return DWMul_dd(b, m);
+}
+
+DWFloat DWLengthSquared_fff(float X, float Y, float Z)
+{
+	// "Accurate calculation of Euclidean Norms using Double-word arithmetic"
+	// Vincent Lefevre, Nicolas Louvet, Jean-Michel Muller, Joris Picot, Laurence Rideau - [2021]
+
+	// Algorithm 10
+	const DWFloat y0 = FastTwoMult(X, X);
+	const DWFloat y1 = FastTwoMult(Y, Y);
+	const DWFloat y2 = FastTwoMult(Z, Z);
+	const DWFloat r = DWAdd_df(TwoSum(y0.h, y1.h), y2.h);
+	const float e = (y0.l + y1.l) + y2.l;
+	return DWAdd_df(r, e);
+}
+
+DWFloat DWLengthSquared_ddd(DWFloat X, DWFloat Y, DWFloat Z)
+{
+	return DWAdd_dd(DWAdd_dd(DWSqr_d(X), DWSqr_d(Y)), DWSqr_d(Z));
+}
+
+
+bool DWGreaterThan(DWFloat a, float b)
+{
+	return a.h > b || (a.h == b && a.l > b);
+}

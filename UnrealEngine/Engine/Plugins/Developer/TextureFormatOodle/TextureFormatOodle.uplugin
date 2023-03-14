@@ -1,0 +1,23 @@
+{
+  "FileVersion" : 3,
+	
+	"FriendlyName" : "Oodle Texture",
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"Description" : "Oodle Texture plugin",
+    "Category": "Compression",
+	"EnabledByDefault" : true,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+
+  "Modules": [
+	{
+		"Name": "TextureFormatOodle",
+		"Type": "UncookedOnly",
+		"LoadingPhase": "PostEngineInit"
+	}
+  ]
+}

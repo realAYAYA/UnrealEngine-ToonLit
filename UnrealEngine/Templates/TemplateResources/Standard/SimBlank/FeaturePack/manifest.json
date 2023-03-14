@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Simulation Blank template"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for Simulation Blank template"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "SimBlank.png",
+	"Screenshots":
+	[
+		"SimBlank_Preview.png"
+	],
+	"Ident": "SimBlankStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "SimBlank",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/SimBlank/Content/*.*"
+		]
+	}
+}
+

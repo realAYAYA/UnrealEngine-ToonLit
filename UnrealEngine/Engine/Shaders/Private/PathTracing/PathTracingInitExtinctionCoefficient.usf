@@ -1,0 +1,58 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "PathTracingCommon.ush"
+
+RaytracingAccelerationStructure TLAS;
+RWBuffer<float> RWStartingExtinctionCoefficient;
+
+// TODO: figure out the right start value for camera rays inside glass
+RAY_TRACING_ENTRY_RAYGEN(PathTracingInitExtinctionCoefficientRG)
+{
+	FPackedPathTracingPayload PackedPayload = InitPathTracingPayload(0, true);
+
+	const uint RayFlags = RAY_FLAG_FORCE_OPAQUE;
+	const uint MissShaderIndex = 0;
+
+	FRayDesc UpRay;
+	UpRay.Origin = PrimaryView.TranslatedWorldCameraOrigin;
+	UpRay.Direction = float3(0, 0, 1);
+	UpRay.TMin = 0.0;
+	UpRay.TMax = POSITIVE_INFINITY;
+		
+	TraceRay(
+		TLAS,
+		RayFlags,
+		RAY_TRACING_MASK_ALL,
+		RAY_TRACING_SHADER_SLOT_MATERIAL,
+		RAY_TRACING_NUM_SHADER_SLOTS,
+		MissShaderIndex,
+		UpRay.GetNativeDesc(),
+		PackedPayload);
+
+	float3 StartingSigma = 0.0;
+	while (PackedPayload.IsHit())
+	{
+		FPathTracingPayload HitPayload = UnpackPathTracingPayload(PackedPayload, UpRay);
+		if (HitPayload.ShadingModelID == SHADINGMODELID_SINGLELAYERWATER)
+		{			
+			StartingSigma = max(HitPayload.CustomData.xyz, 1e-8f);
+			break;
+		}
+
+		UpRay.TMin = asfloat(asuint(HitPayload.HitT) + 1);
+		TraceRay(
+			TLAS,
+			RayFlags,
+			RAY_TRACING_MASK_ALL,
+			RAY_TRACING_SHADER_SLOT_MATERIAL,
+			RAY_TRACING_NUM_SHADER_SLOTS,
+			MissShaderIndex,
+			UpRay.GetNativeDesc(),
+			PackedPayload);
+	}
+
+	RWStartingExtinctionCoefficient[0] = StartingSigma.x;
+	RWStartingExtinctionCoefficient[1] = StartingSigma.y;
+	RWStartingExtinctionCoefficient[2] = StartingSigma.z;
+}

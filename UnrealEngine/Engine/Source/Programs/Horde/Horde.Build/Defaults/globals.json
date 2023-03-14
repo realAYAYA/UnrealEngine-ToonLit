@@ -1,0 +1,21 @@
+{
+	"projects": [
+		{
+			"id": "ue5",
+			"path": "ue5.project.json"
+		}
+	],
+	"compute": [
+		{
+			"id": "default",
+			"namespaceid": "horde.compute"
+		}
+	],
+	"storage": {
+		"namespaces": [
+			{
+				"id": "default"
+			}
+		]
+	}
+}

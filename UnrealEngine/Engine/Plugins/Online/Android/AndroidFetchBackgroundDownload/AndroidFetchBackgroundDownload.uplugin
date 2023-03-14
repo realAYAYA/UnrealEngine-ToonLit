@@ -1,0 +1,38 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Android Fetch Background Download",
+	"Description" : "An Android plugin for enabling BackgroundHTTP requests to work while the app is backgrounded through use of the Fetch API.",
+	"Category" : "BackgroundHTTP",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : false,
+	"SupportedTargetPlatforms": [
+		"Android"
+	],
+	"Modules": 
+	[
+		{
+			"Name": "AndroidFetchBackgroundDownload",
+			"Type": "RuntimeNoCommandlet",
+			"LoadingPhase": "None",
+			"PlatformAllowList": [
+				"Android"
+			]
+		}
+	],
+	"Plugins": 
+	[
+		{
+			"Name": "AndroidBackgroundService",
+			"Enabled": true
+		}
+	],
+	"LocalizationTargets": [
+		{
+			"Name": "AndroidFetchBackgroundDownload",
+			"LoadingPolicy": "Always"
+		}
+	]
+}

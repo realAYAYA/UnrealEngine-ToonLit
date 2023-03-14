@@ -1,0 +1,4 @@
+../../../Templates/TP_AEC_HandheldARBP/manifest.json
+../../../Templates/TP_AEC_HandheldARBP/Config/config.ini
+../../../Templates/TP_AEC_HandheldARBP/Media/TP_AEC_HandheldARBP.png
+../../../Templates/TP_AEC_HandheldARBP/Media/TP_AEC_HandheldARBP_Preview.png

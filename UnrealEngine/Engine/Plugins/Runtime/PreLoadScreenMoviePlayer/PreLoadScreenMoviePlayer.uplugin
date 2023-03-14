@@ -1,0 +1,30 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Pre-Load Screen Movie Player",
+	"Description" : "Handles a default implementation of using a Pre-Load screen to dislplay an engine loading movie",
+	"Category" : "PreLoadScreenMoviePlayer",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : true,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+	"Modules": [
+		{
+			"Name": "PreLoadScreenMoviePlayer",
+			"Type": "RuntimeNoCommandlet",
+			"LoadingPhase": "PreEarlyLoadingScreen",
+			"PlatformAllowList": 
+			[
+        "Android",
+        "IOS",
+        "Win64"
+			]
+		}
+	]
+}

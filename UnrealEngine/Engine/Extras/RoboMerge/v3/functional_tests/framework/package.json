@@ -1,0 +1,21 @@
+{
+  "name": "robomerge-tests",
+  "version": "0.0.1",
+  "description": "RoboMerge functional test framework",
+  "repository": {},
+  "keywords": [
+    "robomerge"
+  ],
+  "author": "james.hopkin",
+  "license": "UNLICENSED",
+  "scripts": {},
+  "dependencies": {
+    "@types/bent": "^7.0.2",
+    "@types/mustache": "^0.8.32",
+    "@types/node": "^12.12.34",
+    "bent": "^7.1.2",
+    "colors": "^1.4.0",
+    "jsonlint": "^1.6.3",
+    "mustache": "^3.2.1"
+  }
+}

@@ -1,0 +1,28 @@
+
+WINDOWS:
+	Prerequisites:
+		VisualStudio 16.0 (2019), CMake (3.13 or newer), Python 3, Windows Driver Kit (WDK) [1]
+	Build:
+		Open a Visual Studio Developer Command Prompt.		
+		Run "Build_ShaderConductor_Win64.bat" script. Intermediate files, including VisualStudio solution,
+		will be stored at "%ROOT_UE4_PATH%\Intermediate\ShaderConductor\ShaderConductor.sln" where %ROOT_UE4_PATH% is the
+		path to your UE4 Perforce repository.
+		Modify %ROOT_UE4_PATH%\Engine\Source\ThirdParty\ShaderConductor\ShaderConductor\Source\Core\ShaderConductor.cpp to the direct path for the DLL:
+		e.g.
+			#ifdef _WIN32
+				const char* dllName = "D:\\P4\\DevR\\Engine\\Intermediate\\ShaderConductor\\External\\DirectXShaderCompiler\\RelWithDebInfo\\bin\\dxcompiler.dll";
+		or
+				const char* dllName = "D:\\P4\\DevR\\Engine\\Intermediate\\ShaderConductor\\External\\DirectXShaderCompiler\\Debug\\bin\\dxcompiler.dll";
+		You should be able to compile/build/run ShaderConductorCmd project with the command line dumped on ShaderConductorCmdLine.txt.
+
+MAC:
+	Prerequisites:
+		git, ninja, CMake (3.13 or newer), clang, Python 3
+	Build:
+		Run "UE4_Build_ShaderConductor_Mac.command". Intermediate files will be stored at "Build/"
+		in the current working directory.
+		This command takes one optional command line argument "-debug" to generate ShaderConductor
+		with debug symbols and without optomization.
+
+[1]	WDK for Windows 10:
+	https://docs.microsoft.com/en-us/windows-hardware/drivers/download-the-wdk#download-icon-step-2-install-wdk-for-windows-10-version-1903

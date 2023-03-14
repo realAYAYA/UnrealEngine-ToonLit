@@ -1,0 +1,12 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+struct FDeepShadowViewInfo
+{
+	float4x4 TranslatedWorldToClipScaledBiased; // Has the shadow atlas tile scale bias baked in
+	float4x4 TranslatedWorldToClip;
+	float4 AtlasScaleBias; // Scale/bias for transforming UV coordinates into the shadow atlas tile of this shadow view.
+	float3   ViewForward;
+	float    MinRadiusAtDepth1;
+};

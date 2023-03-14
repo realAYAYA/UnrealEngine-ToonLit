@@ -1,0 +1,9 @@
+Availability:NoPublish
+Title:ABoxReflectionCapture
+Crumbs:
+Description:Overview of the BoxReflectionCapture class
+
+[EXCERPT:ABoxReflectionCapture]
+
+The Box Reflection Capture Actor captures an image of the surrounding area for use in reflections, best suited for use in rectangular hallways and interior rooms. You can place any number of these Actors with little impact on runtime performance.
+[/EXCERPT:ABoxReflectionCapture]

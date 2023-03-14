@@ -1,0 +1,2 @@
+Bundle tool is from https://github.com/google/bundletool/releases
+Apache 2.0 license: https://github.com/google/bundletool/blob/master/LICENSE

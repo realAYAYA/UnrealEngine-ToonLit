@@ -1,0 +1,102 @@
+edddison end User License Agreement,  edddison technologies
+
+1. This is the license Agreement that you are required to accept before installing and using edddison products. Carefully read all the terms and conditions of this END USER SOFTWARE LICENSE AGREEMENT before proceeding with the installation of edddison products. You are not permitted to install edddison products until you have agreed to be bound by all of the terms and conditions of this END USER LICENSE AGREEMENT. If you are installing this product as an employee of an organization then by accepting this license Agreement you also represent and warrant that you are duly authorized to accept the terms and conditions of this license Agreement on behalf of your employer. 
+
+This Agreement is entered into by „edddison technologies“ and you as END USER of edddison products.
+
+2. edddison is a platform and consists of following software programs and products. 
+1. edddison editor
+2. plug-in to 3D software
+3. tracking software
+4. tablet apps
+5. touchscreen app 
+
+The subjects of this license are edddison products for non-commercial purposes and edddison products for commercial purposes, the license-key and any related updates and upgrades, provided to END USER, including computer software and, where applicable, associated media, online or electronic documentation and printed materials (all hereinafter referred to as edddison products).
+	
+ 
+3. GRANT OF LICENSE
+
+3.1. END USER is hereby granted, upon the following terms and conditions, a company-related, non-exclusive, non-transferable license to install and use edddison non-commercial products for limited time and for test purposes only on up to one single computer (Desktop or Laptop). 
+
+3.2. edddison non-commercial products. END USER may - at any time - purchase a license for edddison  non-commercial products and use the full versions of edddison as defined in chapter 6.
+
+3.3. END USER agrees that edddison technologies will be free to copy, modify, create derivative works, publicly display, disclose, distribute, license and sub-license through multiple tiers of distribution and licensees, incorporate and otherwise use any feedback provided by END USER to edddison technologies in relation to edddison products, including derivative works thereto, for any and all commercial and non-commercial purposes, and that edddison technologies will have no confidentiality obligations with respect to such feedback. Feedback is considered to be any correspondence between END USER and edddison technologies, including bug reports, conferences with edddison technologies representatives and/or written evaluations.
+
+ 
+4. edddison RESTRICTIONS 
+
+4.1. edddison products, which are the subjects of this Agreement, are licensed to END USER, not sold. End user may not use or copy edddison products, in whole or in part, except as expressly provided for in this license. 
+4.2. END USER shall not emulate, clone, rent, lend, lease, sell, modify, decompile, or reverse engineer edddison products  or disassemble or create derivative works based on the Software or any portion thereof with the sole exception of a non-available right granted to END USER by applicable legislation, and END USER shall not otherwise reduce any part of the Software to human readable form or transfer the licensed Software, or any subset of the licensed Software, nor permit any third party to do so, except to the extent the foregoing restriction is expressly prohibited by applicable law.  Neither Software’s binary code nor source may be used or reverse engineered to re-create the program algorithm, which is proprietary. All rights not expressly granted herein are reserved by edddison technologies and/or its suppliers, as applicable. Any such unauthorized use of the Software shall result in immediate and automatic termination of this Agreement and the License granted hereunder and may result in criminal and/or civil prosecution against END USER.
+4.3. END USER MAY NOT MODIFY, TRANSLATE, REVERSE ENGINEER, DECOMPILE, DISASSEMBLE OR CREATE DERIVATIVE WORKS OF edddison products OR OTHERWISE ATTEMPT TO (A) DEFEAT, AVOID, BY-PASS, REMOVE, DEACTIVATE OR OTHERWISE CIRCUMVENT ANY SOFTWARE PROTECTION MECHANISMS IN edddison products INCLUDING, WITHOUT LIMITATION, ANY SUCH MECHANISM USED TO RESTRICT OR CONTROL THE FUNCTIONALITY OF edddison products OR (B) DERIVE THE SOURCE CODE OR THE UNDERLYING IDEAS, ALGORITHMS, STRUCTURE OR ORGANIZATION FORM OF edddison products.
+
+5. UPDATES AND UPGRADES	 
+
+5.1. Updates are minor patches and hot fixes without adding new significant features to edddison products (e.g. marked as Version 1.01, 1.1). edddison technologies has no obligation but will attempt to offer required updates for edddison products as soon as possible.	 
+
+5.2. Upgrades are major patches adding new features to edddison products (e.g. Version 2.0, 3.0). It is in edddison technologies sole discretion to offer upgrades for edddison products.
+                                                           
+
+6. SCOPE OF LICENSE
+6.1. END USER may use edddison non-commercial products for  including education, research, testing and personal projects. END USER is allowed to install and/or use edddison non-commercial products on max. one computer (e.g. desktop or laptop). END USER is not entitled to use edddison non-commercial products for commercial purposes. ACCESS TO ANY FILES OR OUTPUT CREATED WITH edddison non-commercial products IS ENTIRELY AT END USER’s RISK: END USER is not permitted to install and/or use edddison non-commercial products on two or more computers simultaneously.
+6.2. END USER may obtain updates for edddison non-commercial products free of cost. edddison technologies has at any time without prior notice and without stating reasons the right to revoke the granting of the license for edddison  products, to modify the scope of the license or to issue new versions of edddison non-commercial products. This can also be done using technical assistance.                                                                                  
+
+6.3. END USER may purchase licenses for edddison commercial products at any time. END USER is allowed to install edddison commercial products on up to three computers (e.g. Desktop or Laptop) and to use edddison commercial products on one computer. END USER is not permitted to use edddison on two or more computers simultaneously without having obtained the proper licenses (e.g. 2 licenses for simultaneous installation on up to six computers and for simultaneous use on up to two computers). END USER is not entitled to pass over any license information for edddison Pro to third parties. 
+6.4. The license fee is specified in the price list. The license to use edddison products has no time restrictions and includes the right to obtain updates free of cost. edddison technologies has the right to revoke the license if END USER breaks the provisions of this License Agreement.
+
+6.6. END USER may purchase Upgrades for edddison non-commercial products.
+
+
+7. OWNERSHIP 
+
+7.1. edddison products are protected by copyright and trademarks and is proprietary and confidential to edddison technologies. All right, title and interest in and to edddison products including associated intellectual property rights are and will remain vested in edddison technologies or edddison technologies affiliated companies including and without limitation any error corrections, enhancements, updates or other modifications to the Software, whether made by edddison technologies or any third party, and all copyrights, patents, trade secret rights, trademark, and other intellectual property rights therein. These rights are protected by national laws and international treaties. 
+
+7.2. You agree that the software and ideas, methods of operation, documentation and authorship contained in the Software are proprietary intellectual property of edddison technologies. This license agreement does not grant any rights to the intellectual property. This includes any trademarks of edddison technologies. END USERs installation or use of the Software does not transfer any title to the intellectual property in the software and END USER will not acquire any rights to the software except as expressly set forth in this agreement. All copies of the software made hereunder must contain the same proprietary notices that appear on and in the software.
+
+
+8. LIMITED WARRANTY AND DISCLAIMER
+	
+8.1. edddison technologies guarantees that edddison non commercial products and/or edddison commercial products will substantially perform according to the specifications and descriptions provided. If edddison educational products and/or edddison commercial products do not perform substantially in accordance with the specifications and descriptions, the entire liability of edddison technologies and its affiliates and END USER’s exclusive remedy will be limited to either, at edddison technologies option, replacement of the Software or refund of the license fee END USER paid for the Software. However that such limited warranty shall not apply to the following: 
+
+(a) END USER Computer’s deficiencies and related infringement for which edddison technologies expressly disclaims any warranty responsibility;	 
+(b) malfunctions, defects, or failures resulting from misuse; abuse; accident; neglect; improper installation or uninstallation, operation or maintenance; theft; vandalism; acts of God; acts of terrorism; power failures or surges; casualty; alteration, non-permitted modification, or repairs by any party other than edddison technologies; or any other third parties’ or END USER‘s actions or causes beyond edddison technologies reasonable control; 
+(c) any defect not made known by END USER to edddison technologies as soon as practical (max. 30 days) after the defect first appears; 
+(d) incompatibility caused by hardware and/or software components installed on END USER‘s Computer.
+
+8.2. END USER acknowledges, accepts and agrees that no software is error free and is advised to back-up the Computer with frequency and reliability suitable for END USER.	
+
+8.3. edddison technologies does not provide any guarantee that edddison non-commercial products and/or edddison commercial products will work correctly in case of violations of the terms described in the manual or in this Agreement.
+
+8.4. In order to receive updated versions of edddison non-commercial products and/or edddison commercial products END USER should refer to the website edddison.com.
+
+8.5. edddison technologies has no obligation but will attempt at its sole discretion to give proper e-mail support to END USER as far as possible within reasonable time.	   
+
+8.6. edddison non-commercial products are PROVIDED "AS IS" AND edddison technologies MAKES NO REPRESENTATION AND GIVES NO WARRANTY AS TO ITS USE OR PERFORMANCE. EXCEPT FOR ANY WARRANTY, CONDITION, REPRESENTATION OR TERM THE EXTENT TO WHICH CANNOT BE EXCLUDED OR LIMITED BY APPLICABLE LAW. edddison technologies AND ITS PARTNERS MAKE NO WARRANTY, CONDITION, REPRESENTATION, OR TERM (EXPRESSED OR IMPLIED, WHETHER BY STATUTE, COMMON LAW, CUSTOM, USAGE OR OTHERWISE) AS TO ANY MATTER INCLUDING, WITHOUT LIMITATION, NONINFRINGEMENT OF THIRD PARTY RIGHTS, MERCHANTABILITY, SATISFACTORY QUALITY, FUNCTIONALITY, PERFORMANCE, INTEGRATION, OR APPLICABILITY FOR A PARTICULAR PURPOSE. END USER ASSUME ALL FAULTS, AND THE ENTIRE RISK AS TO PERFORMANCE AND RESPONSIBILITY FOR SELECTING edddison non-commercial products TO ACHIEVE END USER INTENDED RESULTS, AND FOR THE INSTALLATION OF, USE OF, AND RESULTS OBTAINED FROM edddison non-commercial products. WITHOUT LIMITING THE FOREGOING PROVISIONS, edddison technologies MAKES NO REPRESENTATION AND GIVES NO WARRANTY THAT edddison non-commercial products WILL BE ERROR-FREE OR FREE FROM INTERRUPTIONS OR OTHER FAILURES OR THAT edddison non-commercial products WILL MEET ANY OR ALL END USER REQUIREMENTS WHETHER OR NOT DISCLOSED TO edddison technologies.	
+
+
+
+9. EXCLUSION AND LIMITATION OF LIABILITY 	
+
+9.1. TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL edddison technologies OR ITS PARTNERS BE LIABLE FOR ANY SPECIAL, INCIDENTAL, PUNITIVE, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING, BUT NOT LIMITED TO, DAMAGES FOR LOSS OF PROFITS OR CONFIDENTIAL OR OTHER INFORMATION, FOR BUSINESS INTERRUPTION, FOR LOSS OF PRIVACY, FOR CORRUPTION, DAMAGE AND LOSS OF DATA OR PROGRAMS, FOR FAILURE TO MEET ANY DUTY INCLUDING ANY STATUTORY DUTY, DUTY OF GOOD FAITH OR DUTY OF REASONABLE CARE, FOR NEGLIGENCE, FOR ECONOMIC LOSS, AND FOR ANY OTHER PECUNIARY OR OTHER LOSS WHATSOEVER) ARISING OUT OF OR IN ANY WAY RELATED TO THE USE OF OR INABILITY TO USE edddison products, THE PROVISION OF OR FAILURE TO PROVIDE SUPPORT OR OTHER SERVICES, INFORMATION, SOFTWARE AND RELATED CONTENT THROUGH edddison products OR OTHERWISE ARISING OUT OF THE USE OF THE edddison products, OR OTHERWISE UNDER OR IN CONNECTION WITH ANY PROVISION OF THIS AGREEMENT, OR ARISING OUT OF ANY BREACH OF CONTRACT OR ANY TORT (INCLUDING NEGLIGENCE, MISREPRESENTATION, ANY STRICT LIABILITY OBLIGATION OR DUTY), OR ANY BREACH OF STATUTORY DUTY, OR ANY BREACH OF WARRANTY OF edddison technologies OR ANY OF ITS PARTNERS, EVEN IF edddison technologies OR ANY PARTNER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+9.2. END USER AGREES THAT IN THE EVENT edddison technologies AND/OR ITS PARTNERS ARE FOUND LIABLE, THE LIABILITY OF edddison technologies AND/OR ITS PARTNERS SHALL BE LIMITED BY THE COSTS OF THE SOFTWARE. IN NO CASE SHALL THE LIABILITY OF edddison technologies AND/OR ITS PARTNERS EXCEED THE FEES PAID FOR edddison products TO edddison technologies OR THE PARTNER (AS MAY BE APPLICABLE).
+
+9.3. NOTHING IN THIS AGREEMENT EXCLUDES OR LIMITS ANY CLAIM FOR DEATH AND PERSONAL INJURY. FURTHER IN THE EVENT ANY DISCLAIMER, EXCLUSION OR LIMITATION IN THIS AGREEMENT CANNOT BE EXCLUDED OR LIMITED ACCORDING TO APPLICABLE LAW THEN ONLY SUCH DISCLAIMER, EXCLUSION OR LIMITATION SHALL NOT APPLY TO END USER AND END USER CONTINUES TO BE BOUND BY ALL THE REMAINING DISCLAIMERS, EXCLUSIONS AND LIMITATIONS.
+
+
+
+10. PERIOD FOR BRINGING ACTIONS 	
+No action, regardless of form, arising out of the transactions under this Agreement, may be brought by either party here to more than 6 months after the cause of action has occurred, or was discovered to have occurred, except that an action for infringement of intellectual property rights may be brought within the maximum applicable statutory period.
+
+
+11. GENERAL PROVISIONS 
+
+11.1. The limitations of liability, ownership and intellectual property rights of edddison technologies contained herein and END USER's obligations following termination of this Agreement shall survive the termination of this Agreement for any reason. 
+
+11.2. END USER may not sell, sub-license, assign, share, pledge, rent, distribute or transfer any of its rights under this Agreement in relation to edddison or any portion there of including documentation and any related material. 
+
+11.3. No amendments or modifications may be made to this Agreement except in writing signed by both parties. If one or more provisions of this Agreement are found to be invalid or unenforceable, this Agreement shall not be rendered inoperative but the remaining provisions shall continue in full force and effect. 
+
+11.4. This Agreement constitutes the entire Agreement between the parties with respect to the subject matter of this Agreement. 
+
+11.5. This Agreement shall be governed by the laws of the Austria. 	
+

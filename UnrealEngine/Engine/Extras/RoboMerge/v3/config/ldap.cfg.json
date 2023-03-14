@@ -1,0 +1,23 @@
+
+{
+	"server-config": {
+		"url": "ldaps://ldaps.ol.companyname.net:3269",
+		"adminDn": "ldap-robomerge@companyname",
+
+		"searchBase": "dc=companyname,dc=net",
+		"searchFilter": "(sAMAccountName={{username}})",
+
+		"groupSearchBase": "dc=companyname,dc=net",
+		"groupSearchFilter": "(&(objectclass=group)(member:1.2.840.113556.1.4.1941:={{dn}}))",
+
+		"tlsOptions": {"rejectUnauthorized": false},
+
+		"connectTimeout": 30000
+	},
+	"bot-groups": [
+		{
+			"group": "Robomerge_FTE_Access",
+			"tags": ["fte"]
+		}
+	]
+}

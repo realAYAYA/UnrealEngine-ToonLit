@@ -1,0 +1,218 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define CONFIG_MAX_RANGE_SIZE 1
+
+#include "MotionBlurCommon.ush"
+
+
+//------------------------------------------------------- CONSTANTS
+
+// 0:off / 1:on, useful to debug the motionblur algorithm
+#define MOTIONBLUR_TESTCHART 0
+
+
+//------------------------------------------------------- PARAMETERS
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Velocity)
+
+Texture2D ColorTexture;
+Texture2D VelocityTexture;
+Texture2D DepthTexture;
+
+SamplerState ColorSampler;
+SamplerState VelocitySampler;
+SamplerState DepthSampler;
+
+#if USE_POST_MOTION_BLUR_TRANSLUCENCY
+
+Texture2D PostMotionBlurTranslucencyTexture;
+SamplerState PostMotionBlurTranslucencySampler;
+
+#endif // USE_POST_MOTION_BLUR_TRANSLUCENCY
+
+#if SUPPORTS_INDEPENDENT_SAMPLERS
+	#define SharedVelocitySampler VelocitySampler
+	#define SharedDepthSampler VelocitySampler
+#else
+	#define SharedVelocitySampler VelocitySampler
+	#define SharedDepthSampler DepthSampler
+#endif
+
+
+//------------------------------------------------------- FUNCTIONS
+
+// debug motionblur (very useful, keep)
+// @param ScreenPos -1..1 -1..1 for viewport
+// @param Velocity in -1..1 range for full motionblur
+// @apram Color RGB and depth in alpha
+// @param AvgObject 0:background, 1:foregound
+void OverrideWithTestChart(float2 ScreenPos, inout float2 ObjectVelocity, inout float2 BackgroundVelocity, inout float4 Color, inout float AvgObject)
+{
+#if MOTIONBLUR_TESTCHART == 1
+	// needs to be inside the loop to prevent NVIDIA driver optimizetion (blinking)
+	float2 PixelPos = ScreenPos * Velocity_ScreenPosToViewportScale.xy + Velocity_ScreenPosToViewportBias - 25;
+	float3 BackgroundColor = lerp(0.0, 0.3f, PseudoRandom(PixelPos)); 
+	float3 ForegroundColor = lerp(float3(1, 0, 0), float3(1, 1, 0), PseudoRandom(PixelPos)); 
+
+	int2 tile = (int2)floor(PixelPos / 12.0f);
+	int2 experiment = (int2)floor(tile / 5.0f);
+
+	if(experiment.x >= 0 && experiment.y >= 0 && experiment.x < 10 && experiment.y < 5)
+	{
+		int2 localtile = uint2(tile) % 5;
+
+		bool bForeground = localtile.x == 2 && localtile.y == 2;
+
+		Color.rgb = bForeground ? ForegroundColor : BackgroundColor;
+
+		// depth
+		Color.a = bForeground ? 100.0f : 1000.0f;
+
+		bool bLeftSide = experiment.x < 5;
+
+		if(!bLeftSide)
+		{
+			experiment.x -= 5;
+		}
+
+		float ForegroundAngle = (experiment.x - 1) * (6.283f / 12);
+		float BackgroundAngle = (experiment.y - 1) * (6.283f / 12) + 3.1415f/2;
+
+		// ForegroundR with very small amounts needs extra testing so we do a non linear scale
+		float ForegroundR = pow(experiment.x / 5.0f, 2);
+		float BackgroundR = pow(experiment.y / 5.0f, 2);
+
+		float2 ForegroundXY = ForegroundR * float2(sin(ForegroundAngle), cos(ForegroundAngle));
+		float2 BackgroundXY = BackgroundR * float2(sin(BackgroundAngle), cos(BackgroundAngle));
+
+		BackgroundVelocity.xy = BackgroundXY;
+
+		if(bLeftSide)
+		{
+			ObjectVelocity.xy = ForegroundXY;
+			AvgObject = bForeground;
+		}
+		else
+		{
+			ObjectVelocity.xy = bForeground ? ForegroundXY : BackgroundXY;
+			AvgObject = 1.0f;
+		}
+	}
+
+#endif
+}
+
+// used to visualize the motion blur
+// @return 0/1
+float Compute3DCheckerBoard(float3 Pos)
+{
+	float3 TiledWorldPos = frac(Pos) > 0.5f;
+	return (float)((uint)dot(float3(1,1,1), TiledWorldPos) % 2);
+}
+
+
+//------------------------------------------------------- ENTRY POINT
+
+void MainPS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float4 OutColor : SV_Target0)
+{
+	const float TileSize = 48;
+
+	float2 ScreenSpacePos = UVAndScreenPos.zw;
+	float2 PixelPos = ScreenSpacePos * Velocity_ScreenPosToViewportScale + Velocity_ScreenPosToViewportBias;
+	float2 UV = PixelPos * Velocity_ExtentInverse;
+
+	float2 PixelPosAtTileCenter = PixelPos - (frac(PixelPos / TileSize) - 0.5f) * TileSize;
+	float2 UVAtTileCenter = PixelPosAtTileCenter * Velocity_ExtentInverse;
+	float2 ScreenPosAtTileCenter = (PixelPosAtTileCenter - Velocity_ScreenPosToViewportBias) / Velocity_ScreenPosToViewportScale;
+
+	// World aligned checkerboards
+	{
+		float DeviceZ = DepthTexture.SampleLevel(SharedDepthSampler, UV, 0).r;
+		float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+
+		float3 ScreenVector = mul(float3(ScreenSpacePos, 1), LWCToFloat3x3(PrimaryView.ScreenToWorld)).xyz;
+
+		// world space position of the current pixel
+		float3 OffsetWorldPos = ScreenVector * SceneDepth;
+
+		float3 AbsWorldPos = LWCHackToFloat(PrimaryView.WorldCameraOrigin) + OffsetWorldPos;
+		float3 WorldCheckerboard = Compute3DCheckerBoard(AbsWorldPos * 0.02f) * 0.1f + Compute3DCheckerBoard(AbsWorldPos * 0.002f) * 0.3f + Compute3DCheckerBoard(AbsWorldPos * 0.0002f) * 0.6f;
+		OutColor = float4(lerp(WorldCheckerboard, float3(0,0,0), 0.7f), 1);
+	}
+
+	bool bSelectorOpaqueAtTileCenter = VelocityTexture.SampleLevel(SharedVelocitySampler, UVAtTileCenter, 0).x > 0;
+	bool bSelectorOpaque = VelocityTexture.SampleLevel(SharedVelocitySampler, UV, 0).x > 0;
+
+	// relative, in screen space -1...1 -1..1, can be even outside of that range, points into the movement direction
+	float2 VelocityAtTileCenter;
+	{
+		VelocityAtTileCenter = DecodeVelocityFromTexture(VelocityTexture.SampleLevel(SharedVelocitySampler, UVAtTileCenter, 0)).xy;
+
+		// reconstruct from camera motion if we don't have velocity data
+		if(!bSelectorOpaqueAtTileCenter)
+		{
+			float DeviceZ = DepthTexture.SampleLevel(SharedDepthSampler, UVAtTileCenter, 0).r;
+
+			// UV is per tile
+			float4 ThisClip = float4(ScreenPosAtTileCenter, DeviceZ, 1);
+			float4 PrevClip = mul(ThisClip, View.ClipToPrevClip);
+			float2 PrevScreen = PrevClip.xy / PrevClip.w;
+
+			// points into the movement direction
+			VelocityAtTileCenter = ScreenPosAtTileCenter - PrevScreen;
+		}
+	}
+
+	// tint yellow if velocity data is stored in texture
+	{
+		float3 TintColor = bSelectorOpaque ? float3(0.5f, 0.5f, 0.2f) : float3(0.5f, 0.5f, 0.5f);
+	
+		OutColor.rgb = lerp(OutColor.rgb, TintColor, 0.45f);
+	}
+
+	// tile center
+	{
+		float2 Delta = PixelPos - PixelPosAtTileCenter;
+
+		float HMask = lerp(saturate(abs(Delta.y)), 1, saturate(abs(Delta.x) / TileSize * 4));
+		float VMask = lerp(saturate(abs(Delta.x)), 1, saturate(abs(Delta.y) / TileSize * 4));
+
+		float Dist = length(Delta);
+		OutColor.rgb *= lerp(1, 0.3f, saturate(3 - Dist));
+	}
+
+	float3 LineColor = bSelectorOpaqueAtTileCenter ? float3(1,1,0) : float3(0.7,0.7,0.7);
+
+	// points into the movement direction
+	float2 PixelDirection = VelocityAtTileCenter * Velocity_ScreenPosToViewportScale;
+
+	// arrow
+	{
+		float2 PerpPixelDirection = float2(PixelDirection.y, -PixelDirection.x);
+		float2 DirectionInTile = PixelPos - PixelPosAtTileCenter;
+
+		float DistOnLine = dot(normalize(-PixelDirection), DirectionInTile) + length(PixelDirection);
+
+		bool bArrowHead = DistOnLine < 8;
+
+		float LocalThickness = 1 + (frac(DistOnLine/8)*8)*0.25f;
+
+		float PerpDirectionMask = saturate(LocalThickness - abs(dot(normalize(PerpPixelDirection), DirectionInTile)));
+		float DirectionMask = saturate(length(PixelDirection) - length(DirectionInTile));
+
+		float3 LineMask = PerpDirectionMask * DirectionMask;
+		OutColor.rgb = lerp(OutColor.rgb, LineColor, LineMask);
+	}
+
+	// previous pos is a dot
+	{
+		float3 DotColor = float3(0,1,0);
+		// PixelPos of the previous position
+		float2 PreviousPixelPos = PixelPosAtTileCenter - PixelDirection;
+		float Dist = length(PreviousPixelPos - PixelPos);
+		OutColor.rgb = lerp(OutColor.rgb, LineColor, saturate(4 - Dist));
+		OutColor.rgb = lerp(OutColor.rgb, 0, saturate(2.5f - Dist));
+	}
+}

@@ -1,0 +1,161 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "/Engine/Shared/NaniteDefinitions.h"
+#if VIRTUAL_TEXTURE_TARGET
+#include "../VirtualShadowMaps/VirtualShadowMapPageAccessCommon.ush"
+#endif
+
+RWTexture2D<uint>		OutDepthBuffer;
+RWTexture2DArray<uint>	OutDepthBufferArray;
+RWTexture2D<UlongType>	OutVisBuffer64;
+
+#if VISUALIZE
+RWTexture2D<UlongType>	OutDbgBuffer64;
+RWTexture2D<uint>		OutDbgBuffer32;
+#endif
+
+bool ShouldWritePixel(
+	RWTexture2D<UlongType> OutBuffer,
+	uint2 PixelPos,
+	float DeviceZ
+)
+{
+	// When near clipping is disabled we need to move the geometry
+	DeviceZ = saturate(DeviceZ);
+
+	const uint DepthInt = asuint(DeviceZ);
+
+#if DEPTH_ONLY
+	return OutDepthBuffer[PixelPos] < DepthInt;
+#elif COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
+	return UnpackUlongType(OutBuffer[PixelPos]).y < DepthInt;
+#else
+	#error UNKNOWN_ATOMIC_PLATFORM
+	return false;
+#endif
+}
+
+void WritePixel(
+	RWTexture2D<UlongType> OutBuffer,
+	uint PixelValue,
+	uint2 PixelPos,
+	float DeviceZ
+)
+{
+	// When near clipping is disabled we need to move the geometry 
+	DeviceZ = saturate(DeviceZ);
+
+	const uint DepthInt = asuint(DeviceZ);
+
+#if DEPTH_ONLY
+	InterlockedMax( OutDepthBuffer[ PixelPos ], DepthInt );
+#elif COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
+	const UlongType Pixel = PackUlongType(uint2(PixelValue, DepthInt));
+	ImageInterlockedMaxUInt64(OutBuffer, PixelPos, Pixel);
+#else
+	#error UNKNOWN_ATOMIC_PLATFORM
+#endif
+}
+
+// Optional per-pixel page translation parameters
+struct WritePixelPageTranslation
+{
+	FVirtualSMLevelOffset PageTableLevelOffset;
+	int MipLevel;
+	uint ArrayIndex;
+	bool bTranslate;
+};
+
+WritePixelPageTranslation InitializeWritePixelPageTranslation()
+{
+	WritePixelPageTranslation Result;
+	Result.PageTableLevelOffset = (FVirtualSMLevelOffset)0;
+	Result.MipLevel = 0;
+	Result.ArrayIndex = 0;
+	Result.bTranslate = false;
+	return Result;
+}
+
+WritePixelPageTranslation InitializeWritePixelPageTranslation(uint PageTableLevelOffset, uint MipLevel, uint ArrayIndex)
+{
+	WritePixelPageTranslation Result;
+	Result.PageTableLevelOffset = InitVirtualMLevelOffset(PageTableLevelOffset);
+	Result.MipLevel = MipLevel;
+	Result.ArrayIndex = ArrayIndex;
+	Result.bTranslate = true;
+	return Result;
+}
+
+#if DEPTH_ONLY
+
+// Determines final write position with an optional per-pixel page translation
+bool VirtualToPhysicalTexel(uint2 VirtualPixelPos, WritePixelPageTranslation PageTranslation, out uint3 PhysicalPixelPos)
+{
+	PhysicalPixelPos = uint3(VirtualPixelPos, PageTranslation.ArrayIndex);
+
+#if VIRTUAL_TEXTURE_TARGET
+	if( PageTranslation.bTranslate )
+	{
+		if( !VirtualToPhysicalTexel_PageTableLevelOffset(PageTranslation.PageTableLevelOffset, PageTranslation.MipLevel, VirtualPixelPos, PhysicalPixelPos.xy) )
+		{
+			// mapped to non-commited space.
+			return false;
+		}
+	}
+#endif
+
+	return true;
+}
+
+// Allows you to pre-translate the virtual pixel position to physical and perform an early depth test before calling WriteDepthTextureArray
+bool ShouldWriteDepthTextureArray(
+	uint2 VirtualPixelPos,
+	WritePixelPageTranslation PageTranslation,
+	float DeviceZ,
+	out uint3 PhysicalPixelPos
+)
+{
+	if (!VirtualToPhysicalTexel(VirtualPixelPos, PageTranslation, PhysicalPixelPos))
+	{
+		// mapped to non-commited space.
+		return false;
+	}
+
+	// When near clipping is disabled we need to move the geometry 
+	DeviceZ = saturate(DeviceZ);
+
+	const uint DepthInt = asuint(DeviceZ);
+	return OutDepthBufferArray[PhysicalPixelPos] < DepthInt;
+}
+
+// Write depth pixel. Supports array texture targets (third coordinate of PhysicalPixelPos)
+void WriteDepthTextureArray(uint3 PhysicalPixelPos, float DeviceZ)
+{
+	// When near clipping is disabled we need to move the geometry 
+	DeviceZ = saturate(DeviceZ);
+
+	const uint DepthInt = asuint(DeviceZ);
+	InterlockedMax( OutDepthBufferArray[ PhysicalPixelPos ], DepthInt );
+}
+
+// Write depth pixel with optional per-pixel page translation
+void WriteDepthTextureArray(
+	uint2 VirtualPixelPos,
+	WritePixelPageTranslation PageTranslation,
+	float DeviceZ
+)
+{
+	uint3 PhysicalPixelPos;
+	if (!VirtualToPhysicalTexel(VirtualPixelPos, PageTranslation, PhysicalPixelPos))
+	{
+		// mapped to non-commited space.
+		return;
+	}
+
+	WriteDepthTextureArray(PhysicalPixelPos, DeviceZ);
+}
+
+#endif

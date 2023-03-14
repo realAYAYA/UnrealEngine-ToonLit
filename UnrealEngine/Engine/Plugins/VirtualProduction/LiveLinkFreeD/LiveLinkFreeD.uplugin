@@ -1,0 +1,31 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "LiveLinkFreeD",
+	"Description": "Live Link plugin for the FreeD protocol",
+	"Category": "Virtual Production",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"EnabledByDefault": false,
+	"Plugins": [
+		{
+			"Name": "UdpMessaging",
+			"Enabled": true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "LiveLinkFreeD",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

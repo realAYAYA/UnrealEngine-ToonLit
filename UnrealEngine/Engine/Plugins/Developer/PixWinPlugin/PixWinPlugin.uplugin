@@ -1,0 +1,22 @@
+{
+	"FileVersion": 1,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "PIX for Windows GPU Capture Plugin",
+	"Description": "PIX for Windows graphics debugger integration.",
+	"Category": "Rendering",
+	"CreatedBy": "Epic Games Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"EnabledByDefault": true,
+	"SupportedTargetPlatforms":  [ "Win64" ],
+	"Modules": [
+		{
+			"Name": "PixWinPlugin",
+			"Type": "DeveloperTool",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64" ],
+			"TargetDenyList": [ "Server" ]
+		}
+	]
+}

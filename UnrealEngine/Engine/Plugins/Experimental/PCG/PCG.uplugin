@@ -1,0 +1,41 @@
+{
+	"FileVersion": 3,
+	"Version": 8,
+	"VersionName": "0.1",
+	"EngineVersion": "5.1.0",
+	"FriendlyName": "PCG",
+	"Description": "Procedural generation framework for UE",
+	"Category": "Editor",
+	"CreatedBy": "Epic Games Inc",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "PCG",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "PCGEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+
+	],
+	"Plugins": [
+		{
+			"Name": "GeometryScripting",
+			"Enabled": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
+		}
+	]
+}

@@ -1,0 +1,4 @@
+../../../Templates/TP_MFG_ProdConfigBP/manifest.json
+../../../Templates/TP_MFG_ProdConfigBP/Config/config.ini
+../../../Templates/TP_MFG_ProdConfigBP/Media/TP_MFG_ProdConfigBP.png
+../../../Templates/TP_MFG_ProdConfigBP/Media/TP_MFG_ProdConfigBP_Preview.png

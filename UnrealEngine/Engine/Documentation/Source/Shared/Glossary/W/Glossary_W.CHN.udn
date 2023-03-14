@@ -1,0 +1,51 @@
+﻿INTSourceChangelist:3810557
+Title:W
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_W]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+控件
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_widget]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+导线
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_wire]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+世界场景
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_world]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_W]
+
+[COMMENT:none]
+[EXCERPT:Glossary_widget]
+ **控件（widget）** 是在关卡编辑器中使用的一种可视化工具。在视口中，控件通常具有可视化表示。例如，移动（Move）工具有红色、绿色、蓝色箭头，分别指示X轴、Y轴、Z轴。
+[/EXCERPT:Glossary_widget]
+[EXCERPT:Glossary_wire]
+ **导线（wire）** 是连接可视化脚本（如蓝图）图表部分中的两个节点的线。您可以通过从节点上的引脚拖动来创建导线。您可以将导线从一个节点上的引脚拖动至另一个节点上的引脚，也可以从引脚拖动至空白区域，并使用创建的上下文菜单选择要添加到图表中的另一个节点。导线和引脚一样，也采用了颜色编码。
+[/EXCERPT:Glossary_wire]
+[EXCERPT:Glossary_world]
+ **世界场景（World）** 中包含载入的关卡列表。它可处理关卡流送和动态Actor的生成（创建）。 
+
+虽然没有必要与世界场景进行直接交互，但直接交互确实有助于在游戏结构中提供一个特定的参考点（即直接提及世界场景意味着您不是在谈论关卡、地图或游戏）。 
+
+[/EXCERPT:Glossary_world]
+[/COMMENT]

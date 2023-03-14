@@ -1,0 +1,192 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../HTileEncoding.ush"
+#include "../VelocityCommon.ush"
+
+#if PLATFORM_SUPPORTS_HTILE_LOOKUP
+
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+
+// .x = platform config
+// .y = tiles wide
+// .z = "decal receive" stencil value
+// .w = unused
+uint4 DepthExportConfig;
+uint4 ViewRectMax;
+
+// Requirements:
+// COMPILER_SUPPORTS_TO_SCALAR_MEMORY
+// COMPILER_SUPPORTS_WAVE_ONCE
+// COMPILER_SUPPORTS_WAVE_MINMAX
+// PLATFORM_SUPPORTS_HTILE_LOOKUP
+
+Texture2D<UlongType>		VisBuffer64;
+
+RWStructuredBuffer<uint>	SceneHTile;
+RWTexture2D<float>			SceneDepth;
+RWTexture2D<uint>			SceneStencil;
+
+RWTexture2D<float4>			Velocity;
+
+RWTexture2D<uint>			MaterialResolve;
+RWStructuredBuffer<uint>	MaterialHTile;
+RWTexture2D<float>			MaterialDepth;
+
+ByteAddressBuffer			MaterialSlotTable;
+ByteAddressBuffer			MaterialDepthTable;
+ByteAddressBuffer			MaterialHitProxyTable;
+
+uint EncodeTileMinMaxDepth(float MinDepth, float MaxDepth, uint PlatformConfig)
+{
+	BRANCH
+	if (IsHiStencilTileConfig(PlatformConfig))
+	{
+		return EncodeTileStencilZBaseDelta(
+			MinDepth,
+			MaxDepth,
+			HTILE_DEFAULT_XX,
+			HTILE_DEFAULT_SMEM,
+			HTILE_DEFAULT_SR0,
+			HTILE_DEFAULT_SR1
+		);
+	}
+	else
+	{
+		return EncodeTileMinMaxDepth(MinDepth, MaxDepth);
+	}
+}
+
+[numthreads(HTILE_PIXELS_PER_TILE_WIDE, HTILE_PIXELS_PER_TILE_TALL, 1)]
+void DepthExport(uint3 PixelPos : SV_DispatchThreadID)
+{
+	const uint PlatformConfig	= DepthExportConfig.x;
+	const uint PixelsWide		= DepthExportConfig.y;
+
+	if (any(PixelPos.xy >= ViewRectMax.xy))
+	{
+		return;
+	}
+	const UlongType VisPixel = VisBuffer64[PixelPos.xy];
+
+	// Calculate the HTile tile index and scalarize.
+	// With the same resolution between scene and material HTile, we can use the same tile index
+	// for both depth exports as an optimization.
+	const uint TileIndex = ToScalarMemory(ComputeTileOffset(PixelPos.xy, PixelsWide, PlatformConfig));
+
+#if VELOCITY_EXPORT
+	FNaniteView NaniteView = GetNaniteView(0);
+	ResolvedView = ResolveView();
+#endif
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	// Use default background material depth value
+	float MaterialDepthValue = 0.0f;
+
+	// Avoid the parallel reduction and exports if the tile has no Nanite
+	// pixels. This is an optimization of course, but it also will preserve
+	// existing plane equation compression for scene depth tiles rasterized
+	// outside of Nanite.
+	const bool TileHasNanite = WaveActiveAnyTrue(VisibleClusterIndex != 0xFFFFFFFF);
+	if (TileHasNanite)
+	{
+		float SceneDepthValue = SceneDepth[PixelPos.xy];
+
+		if (VisibleClusterIndex != 0xFFFFFFFF)
+		{
+			checkSlow(IsVisibleClusterIndexImposter(VisibleClusterIndex) || VisibleClusterIndex < DepthExportConfig.w);
+
+			FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+			checkSlow(VisibleCluster.InstanceId < PageConstants.x);
+			const FInstanceSceneData InstanceData = GetInstanceSceneData(VisibleCluster, false);
+			const FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+
+			const uint MaterialSlot = GetMaterialShadingSlot(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+			const uint MaterialDepthId = GetMaterialDepthId(MaterialSlot, MaterialDepthTable);
+			const float NaniteDepth = asfloat(DepthInt);
+
+			if (NaniteDepth >= SceneDepthValue)
+			{
+				const bool IsDecalReceiver = (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_DECAL_RECEIVER) != 0 && View.ShowDecalsMask > 0;
+
+				MaterialDepthValue = asfloat(MaterialDepthId);
+				SceneDepthValue = NaniteDepth;
+				SceneDepth[PixelPos.xy] = SceneDepthValue;
+
+				uint OutStencil = CondMask(IsDecalReceiver, DepthExportConfig.z, 0u);
+
+				//@todo - proper support
+				OutStencil |= 1 << LIGHTING_CHANNELS_TEXTURE_DISTANCE_FIELD_REPRESENTATION_BIT;
+				SceneStencil[PixelPos.xy] = OutStencil;
+
+			#if VELOCITY_EXPORT
+				// Don't output velocity here for WPO clusters, as their velocity must be calculated in the base pass.
+				const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+				const bool bOutputVelocity = !bWPOEnabled && (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_OUTPUT_VELOCITY) != 0;
+				if (bOutputVelocity)
+				{
+					FInstanceDynamicData InstanceDynamicData = CalculateInstanceDynamicData(NaniteView, InstanceData);
+
+					const float4 ScreenPos = SvPositionToScreenPosition(float4(PixelPos.xy, asfloat(DepthInt), 1.0f));
+					const FLWCVector3 WorldPos  = SvPositionToWorld(float4(PixelPos.xy, asfloat(DepthInt), 1.0f));
+					const float3 LocalPos = LWCMultiply(WorldPos, InstanceData.WorldToLocal);
+
+					// TODO: PROG_RASTER - this is incorrect for WPO. Will likely need to be output by the base pass
+					const float3 WorldPosPrev = mul(float4(LocalPos, 1), InstanceDynamicData.PrevLocalToTranslatedWorld).xyz;
+					const float4 ScreenPosPrev = mul(float4(WorldPosPrev.xyz, 1), NaniteView.PrevTranslatedWorldToClip);
+
+					Velocity[PixelPos.xy] = EncodeVelocityToTexture(Calculate3DVelocity(ScreenPos, ScreenPosPrev));
+				}
+				else
+				{
+					// Write out zero (clear color) in case there is moving non-nanite scene data behind it
+					Velocity[PixelPos.xy] = (float4)0;
+				}
+			#endif
+
+				MaterialResolve[PixelPos.xy] = PackMaterialResolve(MaterialSlot, IsDecalReceiver);
+			}
+		}
+
+		const float TileMinSceneDepth = WaveActiveMin(SceneDepthValue);
+		const float TileMaxSceneDepth = WaveActiveMax(SceneDepthValue);
+
+		const float TileMinMaterialDepth = WaveActiveMin(MaterialDepthValue);
+		const float TileMaxMaterialDepth = WaveActiveMax(MaterialDepthValue);
+
+		if (WaveIsFirstLane())
+		{
+			SceneHTile[TileIndex] = EncodeTileMinMaxDepth(TileMinSceneDepth, TileMaxSceneDepth, PlatformConfig);
+			MaterialHTile[TileIndex] = EncodeTileMinMaxDepth(TileMinMaterialDepth, TileMaxMaterialDepth, PlatformConfig);
+		}
+	}
+	else if (WaveIsFirstLane())
+	{
+		MaterialHTile[TileIndex] = EncodeTileMinMaxDepth(0.0f, 0.0f, PlatformConfig);
+	}
+
+	MaterialDepth[PixelPos.xy] = MaterialDepthValue;
+}
+
+// NOTE: A possible further optimization could be to avoid doing a clear depth target clear for materials
+//		 and instead set an empty tile's htile encoding to zmask=0x0 to represent a clear tile, and just
+//		 set the min/max z values to 0.0 - In theory, the depth clear value is in a global register, so
+//		 the zmask=0x0 should just ignore the rest of the encoding. The behavior on GCN around this isn't 
+//		 really documented, so we probably need to do a test where we set the target to clear, make the
+//		 zrange 1.0/1.0 and the depth clear value 0.0. Then render something at z=0.5 and see what happens.
+
+#else
+
+[numthreads(8, 8, 1)]
+void DepthExport(uint3 PixelPos : SV_DispatchThreadID)
+{
+}
+
+#endif

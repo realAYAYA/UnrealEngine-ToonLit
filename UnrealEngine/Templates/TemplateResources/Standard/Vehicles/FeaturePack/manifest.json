@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Vehicles Shared Resource"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for Vehicle Template"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "Vehicles.png",
+	"Screenshots":
+	[
+		"Vehicles_Preview.png"
+	],
+	"Ident": "VehiclesStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "Vehicles",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/Vehicles/Content/*.*"
+		]
+	}
+}
+

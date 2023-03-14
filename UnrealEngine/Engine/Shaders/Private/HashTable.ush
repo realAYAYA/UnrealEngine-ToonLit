@@ -1,0 +1,90 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "Hash.ush"
+
+// Linear probing hash table
+Buffer< uint >		HashTable;
+RWBuffer< uint >	RWHashTable;
+uint			HashTableSize;
+
+// Returns true if key is added for the first time.
+// Index output is the hash table bucket this key is stored in.
+bool HashTableAdd( uint Key, out uint Index )
+{
+	// Zero is reserved as invalid
+	Key++;
+
+	uint NumLoops = 0;
+	LOOP
+	[allow_uav_condition]
+	for(Index = MurmurMix(Key); ; Index++ )
+	{
+		//Belt and braces safety code to prevent inf loops if tables are malformed.
+		if(++NumLoops > HashTableSize)
+		{
+			break;
+		}
+
+		//Index &= HashTableSize - 1;
+		Index = Index % HashTableSize;
+
+		uint StoredKey = RWHashTable[ Index ];
+		if( StoredKey != Key )
+		{
+			if( StoredKey != 0 )
+				continue;
+
+			uint PrevKey;
+			InterlockedCompareExchange( RWHashTable[ Index ], 0, Key, PrevKey );
+			
+			if( PrevKey == 0 )
+				return true;
+			else if( PrevKey != Key )
+				continue;
+		}
+
+		break;
+	}
+
+	return false;
+}
+
+// Returns true if key is found.
+// Index output is the hash table bucket this key is stored in if found.
+bool HashTableFind( uint Key, out uint Index )
+{
+	// Zero is reserved as invalid
+	Key++;
+
+	uint NumLoops = 0;
+	LOOP
+	[allow_uav_condition]
+	for( Index = MurmurMix( Key );; Index++ )
+	{
+		//Belt and braces safety code to prevent inf loops if tables are malformed.
+		if (++NumLoops > HashTableSize)
+		{
+			break;
+		}
+
+		//Index &= HashTableSize - 1;
+		Index = Index % HashTableSize;
+
+		uint StoredKey = HashTable[ Index ];
+		if( StoredKey != Key )
+		{
+			if( StoredKey != 0 )
+				continue;
+		}
+		else
+		{
+			return true;
+		}
+
+		break;
+	}
+
+	return false;
+}

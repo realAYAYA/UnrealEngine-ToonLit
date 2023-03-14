@@ -1,0 +1,17 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+
+Texture2D Texture;
+SamplerState TextureSampler;
+
+void Main(
+	in float2 TextureCoordinate : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+	)
+{
+	const float4 TextureSample = Texture2DSample(Texture, TextureSampler, TextureCoordinate);
+	OutColor = RETURN_COLOR(TextureSample);
+}

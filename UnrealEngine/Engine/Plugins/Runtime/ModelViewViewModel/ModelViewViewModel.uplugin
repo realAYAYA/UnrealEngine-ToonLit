@@ -1,0 +1,35 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "UMG Viewmodel",
+	"Version": 1,
+	"VersionName": "1.0",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"Description": "A plugin to support the Viewmodel pattern in UMG.",
+	"Category": "UI",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+
+	"Modules": [
+		{
+			"Name": "ModelViewViewModel",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+
+		},
+		{
+			"Name": "ModelViewViewModelBlueprint",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "ModelViewViewModelEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

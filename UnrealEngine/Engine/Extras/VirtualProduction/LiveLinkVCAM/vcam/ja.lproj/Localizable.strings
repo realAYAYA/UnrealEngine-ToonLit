@@ -1,0 +1,159 @@
+/* An Add button on an edit item screen. */
+"button-add" = "追加";
+
+/* A Back button to go back to the previous screen */
+"button-back" = "戻る";
+
+/* A cancel button on an alert */
+"button-cancel" = "キャンセル";
+
+/* A button to delete items. */
+"button-delete" = "削除";
+
+/* A button to deselect all items in a list. */
+"button-deselectall" = "すべて選択解除";
+
+/* A done button on an edit item screen. */
+"button-done" = "完了";
+
+/* A button to select items for sharing or delete. */
+"button-select" = "選択";
+
+/* A button to select all items in a list. */
+"button-selectall" = "すべてを選択";
+
+/* Status message that the app is connecting. */
+"Connecting..." = "接続中...";
+
+/* Button to disconnect from a UE instance */
+"Disconnect" = "切断";
+
+/* Prompt disconnect from a remote session. */
+"Disconnect from the remote session?" = "リモートセッションから切断しますか？";
+
+/* The name of the subject (a person, device, character) of the capture */
+"livelink-subjectname" = "サブジェクト名";
+
+/* Title of the application log screen */
+"log-title" = "ログ";
+
+/* An OK button on an alert */
+"okbutton" = "OK";
+
+/* An option was disabled. */
+"option-disabled" = "無効";
+
+/* An option was enabled. */
+"option-enabled" = "有効";
+
+/* Status message that the app is reconnecting. */
+"Reconnecting..." = "再接続中...";
+
+/* Alert title to confirm reset settings. */
+"reset-confirm-title" = "リセット";
+
+/* Alert title to confirm reset settings. */
+"reset-message" = "すべての Live Link VCAM 設定をデフォルトに復元しますか？";
+
+/* Alert message that reset was successful. */
+"reset-success-message" = "Live Link VCAM 設定がデフォルトにリセットされました。";
+
+/* Alert title that reset was successful. */
+"reset-success-title" = "リセット成功";
+
+/* Alert title to confirm reset settings. */
+"reset-title" = "設定をリセットしますか？";
+
+/* Option for setting the interface to always be visible */
+"settings-alwayson" = "常にオン";
+
+/* Option for allowing the interface to fade out (to transparent/invisible) */
+"settings-fadeout" = "フェードアウト";
+
+/* Option for displaying a string as a filename. */
+"settings-filename" = "ファイル名";
+
+/* Signifies a excellent connection quality. This is the highest quality. */
+"signal-excellent" = "最良";
+
+/* Signifies a fair connection quality -- This is lower than good, but higher than poor. */
+"signal-fair" = "やや不良";
+
+/* Signifies a good connection quality -- This is lower than excellent, but higher than fair. */
+"signal-good" = "良好";
+
+/* Signifies a poor connection quality -- This is lowest quality. */
+"signal-poor" = "不良";
+
+/* Battery level of the tentacle device. */
+"tentacle-battery" = "バッテリー";
+
+/* A button to connect to a tentacle sync device */
+"tentacle-connect" = "接続";
+
+/* A button to disconnect from a tentacle sync device */
+"tentacle-disconnect" = "切断";
+
+/* The framerate for the tentacle device. */
+"tentacle-framerate" = "フレームレート";
+
+/* When the tentacle device last sent a message. */
+"tentacle-lastseen" = "最終確認";
+
+/* The device was seen just a moment ago. */
+"tentacle-lastseen-justnow" = "今";
+
+/* The operating mode for the tentacle device. */
+"tentacle-mode" = "モード";
+
+/* The operating mode for the tentacle device. */
+"tentacle-mode-green" = "グリーン（生成）";
+
+/* The operating mode for the tentacle device. */
+"tentacle-mode-red" = "レッド（リンク）";
+
+/* Signal strength indicator of the tentacle device. */
+"tentacle-signal-strength" = "信号強度";
+
+/* A section footer explaining the timecode sources. */
+"timecode-current-footer" = "Live Link VCAM では、iPhone のシステムクロックをタイムコードとして使用すること、NTPサーバーへの接続、Bluetooth 経由で Tentacle Sync からタイムコードを受信することが可能です";
+
+/* An error string for NTP input */
+"timecode-error-ntp" = "データなし";
+
+/* An error string for system timer input */
+"timecode-error-system" = "システムエラー";
+
+/* An error string for tentacle sync input */
+"timecode-error-tentacle" = "デバイスなし";
+
+/* A section title that shows the currently selected source.. */
+"timecode-section-current" = "現在のソース";
+
+/* A section title that lists other options for timecode source. */
+"timecode-section-other" = "その他のソース";
+
+/* An NTP (network time protocol) pool will be used as the timecode source */
+"timecode-source-ntp" = "NTP";
+
+/* The internal device timer will be used as the timecode source */
+"timecode-source-system" = "システムタイマー";
+
+/* An Tentacle Sync will be used as the timecode source */
+"timecode-source-tentacle" = "Tentacle Sync";
+
+/* A screen to edit the NTP pool -- an address for Network Time Protocol data. */
+"timecode-title-ntp-pool" = "NTPプール";
+
+/* An alert title for an error message. */
+"title-error" = "エラー";
+
+/* A label that indicates a default value */
+"value-default" = "デフォルト";
+
+/* An label that indicates no value is set or added -- an empty set. */
+"value-none" = "なし";
+
+/* An unknown or unsupported value was found */
+"value-unknown" = "不明";
+

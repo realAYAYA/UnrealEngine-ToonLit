@@ -1,0 +1,92 @@
+Title:A
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_A]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+Actor（アクタ）
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Actor]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+AI
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_AI]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+AIController
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_AIController]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+アニメーション
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Animation]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+Animation Sequence
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Animation_Sequence]
+	[/PARAM]
+[/OBJECT]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+アセット
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Asset]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_A]
+
+[COMMENT:none]
+[EXCERPT:Glossary_Actor]
+**アクタ** は、レベル内へ配置可能な任意のオブジェクトです。トランスレーション、回転、スケーリングなどの 3D 変形をサポートする汎用クラスです。アクタはゲームプレイ コード (C++ またはブループリント) を通して作成 (スポーン)、破壊することができます。C++ において AActor は全てのアクタの基本クラスになります。 
+
+様々なタイプのアクタがあります。例えば、StaticMeshActor、CameraActor および、PlayerStartActor などがあります。 
+[/EXCERPT:Glossary_Actor]
+[EXCERPT:Glossary_AI]
+**AI** (Artificial intelligence) は、人間による入力ではなくプログラムされた一連のインストラクションで制御されるビヘイビアです。例えば、NPC (ノンプレイヤー キャラクター) は AI で操作されます。
+[/EXCERPT:Glossary_AI]
+[EXCERPT:Glossary_AIController]
+ゲーム内でプレイヤーを表すものとしてプレイヤー コントローラがポーンを所有するように、**AIController** はゲーム内の NPC (ノン プレイヤー キャラクター) を表すものとしてポーンを所有します。特に PlayerController によって所有されるか、AIController を自分で作成しないよう指示される場合を除いて、デフォルトでポーンとキャラクターはベース AIController になります。
+[/EXCERPT:Glossary_AIController]
+[EXCERPT:Glossary_Animation]
+**アニメーション** は、時間経過と共に変化するプロパティ値です。サンプルには位置、回転、スケールでの変更が含まれていますが、他のプロパティ値への拡張も可能です。
+
+特にアンリアル マチネで作成されたシーケンス、あるいは外部の 3D モデリングおよびアニメーション アプリケーションでスケルタルメッシュ用に作成され、その後アンリアル・エディタにインポートされたものを「アニメーション」と呼びます。C++ コードまたはブループリントで作成されたアクタのプロパティ (複数可) における時間経過に伴う変化のことさえもアニメーションと呼びます。
+[/EXCERPT:Glossary_Animation]
+[EXCERPT:Glossary_Animation_Sequence]
+**アニメーション シーケンス** または **AnimSequence** は、スケルタルメッシュ用の 3D モデリングとアニメーション アプリケーションで作成されるアニメーションで、後に へインポートされるアニメーション アセットです。ペルソナでアニメーション シーケンスを使用することができます。
+[/EXCERPT:Glossary_Animation_Sequence]
+[EXCERPT:Glossary_Asset]
+**アセット** は、ゲームを構築するエレメントです。   マテリアル、スタティックメッシュ、テクスチャ、パーティクル システム、ブループリント、サウンドキューなど、インポート先あるいは作成場所が **コンテンツ ブラウザ** であるコンテンツがサンプルとして入っています。アセットは「.uasset」ファイルへ個別に保存されます。
+[/EXCERPT:Glossary_Asset]
+[/COMMENT]

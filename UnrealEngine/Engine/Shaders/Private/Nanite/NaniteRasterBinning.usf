@@ -1,0 +1,415 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+
+#include "NaniteAttributeDecode.ush"
+
+#if (RASTER_BIN_PASS == NANITE_RASTER_BIN_CLASSIFY)
+	#define RASTER_BIN_CLASSIFY	1
+	#define RASTER_BIN_SCATTER	0
+	#define RASTER_BIN_RESERVE	0
+#elif (RASTER_BIN_PASS == NANITE_RASTER_BIN_SCATTER)
+	#define RASTER_BIN_CLASSIFY	0
+	#define RASTER_BIN_SCATTER	1
+	#define RASTER_BIN_RESERVE	0
+#else
+	#define RASTER_BIN_CLASSIFY	0
+	#define RASTER_BIN_SCATTER	0
+	#define RASTER_BIN_RESERVE	1
+#endif
+
+#define NANITE_VERT_REUSE_BATCH COMPILER_SUPPORTS_WAVE_PERMUTE
+
+#define SCALARIZE_ATOMICS 1
+
+// .x = count of SW clusters in bin
+// .y = count of HW clusters in bin
+// .z = offset of contiguous cluster range in global buffer
+// .w = unused (TODO: PROG_RASTER) separate bin for HW?
+RWStructuredBuffer<uint4> OutRasterizerBinHeaders;
+
+uint2 GetRasterizerBinCount(uint BinIndex)
+{
+	// .x = SW cluster count in rasterizer bin
+	// .y = HW cluster count in rasterizer bin
+	return OutRasterizerBinHeaders[BinIndex].xy;
+}
+
+uint GetRasterizerBinCapacity(uint BinIndex)
+{
+	const uint2 BinCount = GetRasterizerBinCount(BinIndex);
+	return (BinCount.x + BinCount.y);
+}
+
+void SetRasterizerBinOffset(uint BinIndex, uint BinOffset)
+{
+	OutRasterizerBinHeaders[BinIndex].z = BinOffset;
+}
+
+uint GetRasterizerBinOffset(uint BinIndex)
+{
+	return OutRasterizerBinHeaders[BinIndex].z;
+}
+
+#if RASTER_BIN_RESERVE
+
+uint RasterBinCount;
+
+RWStructuredBuffer<uint> OutRangeAllocator;
+RWBuffer<uint> OutRasterizerBinArgsSWHW;
+
+uint AllocateRasterizerBinRange(uint ClusterCount)
+{
+	uint RangeStart;
+	InterlockedAdd(OutRangeAllocator[0], ClusterCount, RangeStart);
+	return RangeStart;
+}
+
+[numthreads(64, 1, 1)]
+void RasterBinReserve(uint RasterBinIndex : SV_DispatchThreadID)
+{
+	if (RasterBinIndex < RasterBinCount)
+	{
+		const uint RasterBinCapacity = GetRasterizerBinCapacity(RasterBinIndex);
+		const uint RasterBinOffset = AllocateRasterizerBinRange(RasterBinCapacity);
+		SetRasterizerBinOffset(RasterBinIndex, RasterBinOffset);
+
+		const uint ArgsOffset = (RasterBinIndex * NANITE_RASTERIZER_ARG_COUNT);
+		WriteRasterizerArgsSWHW(OutRasterizerBinArgsSWHW, ArgsOffset, 0u, 0u);
+	}
+}
+
+#else
+
+Buffer<uint> InClusterOffsetSWHW;
+
+StructuredBuffer<uint2> InClusterCountSWHW;
+StructuredBuffer<uint2> InTotalPrevDrawClusters;
+
+uint bEnableVertReuseBatch;
+
+uint RegularMaterialRasterSlotCount;
+ByteAddressBuffer MaterialSlotTable;
+
+#if RASTER_BIN_SCATTER
+RWBuffer<uint> OutRasterizerBinArgsSWHW;
+RWStructuredBuffer<uint2> OutRasterizerBinData;
+#endif
+
+uint ExtractVertReuseBatchInfo(uint2 PackedData, uint BitOffset)
+{
+	uint BitConsumed = min(5, 32 - BitOffset);
+	uint BatchTriCount = BitFieldExtractU32(PackedData.x, BitConsumed, BitOffset);
+	if (5 - BitConsumed > 0)
+	{
+		BatchTriCount |= (BitFieldExtractU32(PackedData.y, 5 - BitConsumed, 0) << BitConsumed);
+	}
+	return BatchTriCount + 1;
+}
+
+uint DecodeVertReuseBatchInfo(FCluster Cluster, uint BatchInfoOffset, uint BatchIndex, bool bInlined)
+{
+	uint BitOffset = CondMask(bInlined, 12u, Cluster.VertReuseBatchCountTableSize * 4u) + (BatchInfoOffset + BatchIndex) * 5;
+	uint DwordOffset = BitOffset >> 5;
+	BitOffset -= DwordOffset * 32;
+
+	uint2 PackedData;
+	if (bInlined)
+	{
+		PackedData = uint2(Cluster.VertReuseBatchInfo[DwordOffset], Cluster.VertReuseBatchInfo[DwordOffset + 1]);
+	}
+	else
+	{
+		PackedData = ClusterPageData.Load2(Cluster.PageBaseAddress + (Cluster.VertReuseBatchCountTableOffset + DwordOffset) * 4);
+	}
+	
+	return ExtractVertReuseBatchInfo(PackedData, BitOffset);
+}
+
+#if RASTER_BIN_CLASSIFY
+void IncrementRasterizerBinCount(uint BinIndex, bool bSoftware, uint BatchCount)
+{
+#if SCALARIZE_ATOMICS
+	// One atomic per lane causes severe contention that ends up dominating execution time.
+
+	// This path uses wave ops to reduce it to one atomic per unique bin in the wave.
+	// As clusters are allocated in ranges at group granularity (currently ~32 clusters),
+	// the expectation is that most waves will only have one or at most a few unique bins.
+	
+	bool bDone = false;
+	while (WaveActiveAnyTrue(!bDone))
+	{
+		if (!bDone)
+		{
+			const uint UniformBinIndex = WaveReadLaneFirst(BinIndex);
+			const bool bUniformSoftware = (bool)WaveReadLaneFirst((uint)bSoftware);
+			if (BinIndex == UniformBinIndex && bSoftware == bUniformSoftware)
+			{
+				if (bUniformSoftware)
+				{
+					WaveInterlockedAdd(OutRasterizerBinHeaders[UniformBinIndex].x, BatchCount);
+				}
+				else
+				{
+					WaveInterlockedAdd(OutRasterizerBinHeaders[UniformBinIndex].y, BatchCount);
+				}
+				
+				bDone = true;
+			}
+		}
+	}
+#else
+	if (bSoftware)
+	{
+		InterlockedAdd(OutRasterizerBinHeaders[BinIndex].x, BatchCount);
+	}
+	else
+	{
+		InterlockedAdd(OutRasterizerBinHeaders[BinIndex].y, BatchCount);
+	}
+#endif
+}
+#elif RASTER_BIN_SCATTER
+uint AllocateRasterizerBinCluster(uint BinIndex, bool bSoftware, uint BatchCount)
+{
+	uint ClusterOffset;
+	uint Offset = (BinIndex * NANITE_RASTERIZER_ARG_COUNT);
+
+	if (!bSoftware)
+	{
+		Offset += CondMask((RenderFlags & NANITE_RENDER_FLAG_MESH_SHADER) || (RenderFlags & NANITE_RENDER_FLAG_PRIMITIVE_SHADER), 4u, 5u);
+	}
+
+#if SCALARIZE_ATOMICS
+	bool bDone = false;
+	while(WaveActiveAnyTrue(!bDone))
+	{
+		if(!bDone)
+		{
+			const uint UniformOffset = WaveReadLaneFirst(Offset);
+			if (Offset == UniformOffset)
+			{
+				WaveInterlockedAdd_(OutRasterizerBinArgsSWHW[UniformOffset], BatchCount, ClusterOffset);
+				bDone = true;
+			}
+		}
+	}
+#else
+	InterlockedAdd(OutRasterizerBinArgsSWHW[UniformOffset], BatchCount, ClusterOffset);
+#endif
+
+	if (!bSoftware)
+	{
+		const uint Capacity = GetRasterizerBinCapacity(BinIndex);
+		ClusterOffset = (Capacity - ClusterOffset - BatchCount); // HW writes from the top, SW writes from the bottom
+	}
+
+	return GetRasterizerBinOffset(BinIndex) + ClusterOffset;
+}
+#endif
+
+void ExportRasterizerBin(uint RasterizerBin, uint ClusterIndex, uint RangeStart, uint RangeEnd, uint BatchCount, uint BatchInfoOffset, FCluster Cluster, bool bBatchInfoInlined, bool bSoftware)
+{
+	const bool bUseBatch = NANITE_VERT_REUSE_BATCH && bEnableVertReuseBatch && (!bSoftware || RasterizerBin >= RegularMaterialRasterSlotCount);
+	BatchCount = CondMask(bUseBatch, BatchCount, 1u);
+#if RASTER_BIN_CLASSIFY
+	IncrementRasterizerBinCount(RasterizerBin, bSoftware, BatchCount);
+#elif RASTER_BIN_SCATTER
+	const uint BinClusterMapping = AllocateRasterizerBinCluster(RasterizerBin, bSoftware, BatchCount);
+	for (uint BatchIndex = 0; BatchIndex < BatchCount; ++BatchIndex)
+	{
+		if (bUseBatch)
+		{
+			uint BatchTriCount = DecodeVertReuseBatchInfo(Cluster, BatchInfoOffset, BatchIndex, bBatchInfoInlined);
+			RangeEnd = RangeStart + BatchTriCount;
+		}
+		OutRasterizerBinData[BinClusterMapping + BatchIndex].x = ClusterIndex;
+		OutRasterizerBinData[BinClusterMapping + BatchIndex].y = (RangeStart << 16) | RangeEnd;
+		RangeStart = RangeEnd;
+	}
+#endif
+}
+
+[numthreads(64, 1, 1)]
+void RasterBinBuild(uint RelativeClusterIndex : SV_DispatchThreadID, uint GroupThreadIndex : SV_GroupIndex)
+{
+	const uint SWClusterCount = InClusterCountSWHW[0].x;
+	const uint HWClusterCount = InClusterCountSWHW[0].y;
+
+	const bool bSoftware = RelativeClusterIndex < SWClusterCount;
+	const uint ClusterCount = SWClusterCount + HWClusterCount;
+
+	if (RelativeClusterIndex < ClusterCount)
+	{
+		RelativeClusterIndex = CondMask(bSoftware, RelativeClusterIndex, RelativeClusterIndex - SWClusterCount);
+
+		uint ClusterOffset = 0;
+
+		const bool bHasPrevDrawData = (RenderFlags & NANITE_RENDER_FLAG_HAS_PREV_DRAW_DATA) != 0u;
+		BRANCH
+		if (bHasPrevDrawData)
+		{
+			ClusterOffset += CondMask(bSoftware, InTotalPrevDrawClusters[0].x, InTotalPrevDrawClusters[0].y);
+		}
+
+	#if IS_POST_PASS
+		ClusterOffset += CondMask(bSoftware, InClusterOffsetSWHW[0], InClusterOffsetSWHW[GetHWClusterCounterIndex(RenderFlags)]);
+	#endif
+
+		uint VisibleClusterIndex = RelativeClusterIndex + ClusterOffset;
+
+		// HW clusters are written from the top
+		VisibleClusterIndex = CondMask(bSoftware, VisibleClusterIndex, (MaxVisibleClusters - 1) - VisibleClusterIndex);
+
+		FVisibleCluster VisibleCluster		= GetVisibleCluster(VisibleClusterIndex, VIRTUAL_TEXTURE_TARGET);
+		FInstanceSceneData InstanceData		= GetInstanceSceneData(VisibleCluster, false);
+		FCluster Cluster					= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+		const bool bWPOEnabled				= (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+		const bool bSecondaryBin			= !bWPOEnabled; // use secondary bin where applicable when WPO disabled
+
+		// TODO: Embed fast path material uint in FVisibleCluster
+		// TODO: Upload uniform with default material bin index, directly allocate/store indirections into 0th range
+		// TODO: Optimize and/or separate out slow path into another dispatch? (possibly with groupshared bin tracking to avoid searching)
+
+		BRANCH
+		if (IsMaterialFastPath(Cluster))
+		{
+			uint RasterizerBin0 = 0;
+			uint RasterizerBin1 = 0;
+			uint RasterizerBin2 = 0;
+
+			uint RasterizerLen0 = 0;
+			uint RasterizerLen1 = 0;
+			uint RasterizerLen2 = 0;
+
+			uint BatchCount0 = BitFieldExtractU32(Cluster.VertReuseBatchInfo.x, 4, 0);
+			uint BatchCount1 = BitFieldExtractU32(Cluster.VertReuseBatchInfo.x, 4, 4);
+			uint BatchCount2 = BitFieldExtractU32(Cluster.VertReuseBatchInfo.x, 4, 8);
+			uint BatchInfoOffset0 = 0;
+			uint BatchInfoOffset1 = BatchCount0;
+			uint BatchInfoOffset2 = BatchCount0 + BatchCount1;
+
+			// Length is remaining triangles after Material0 and Material1
+			const uint Material2Length = Cluster.NumTris - (Cluster.Material0Length + Cluster.Material1Length);
+
+			// The 0th material range is always non-zero length
+			{
+				RasterizerBin0 = GetMaterialRasterSlotFromIndex(Cluster.Material0Index, InstanceData.PrimitiveId, RegularMaterialRasterSlotCount, bSecondaryBin, MaterialSlotTable);
+			}
+
+			BRANCH
+			if (Cluster.Material1Length > 0u)
+			{
+				RasterizerBin1 = GetMaterialRasterSlotFromIndex(Cluster.Material1Index, InstanceData.PrimitiveId, RegularMaterialRasterSlotCount, bSecondaryBin, MaterialSlotTable);
+			}
+
+			BRANCH
+			if (Material2Length > 0)
+			{
+				RasterizerBin2 = GetMaterialRasterSlotFromIndex(Cluster.Material2Index, InstanceData.PrimitiveId, RegularMaterialRasterSlotCount, bSecondaryBin, MaterialSlotTable);
+			}
+
+			if (RasterizerBin0 == RasterizerBin1 && RasterizerBin0 == RasterizerBin2)
+			{
+				RasterizerLen0 = Cluster.NumTris;
+				BatchCount0 += BatchCount1 + BatchCount2;
+			}
+			else if (RasterizerBin0 == RasterizerBin1)
+			{
+				RasterizerLen0 = (Cluster.Material0Length + Cluster.Material1Length);
+				RasterizerLen2 = Material2Length;
+				BatchCount0 += BatchCount1;
+			}
+			else if (RasterizerBin1 == RasterizerBin2)
+			{
+				RasterizerLen0 = Cluster.Material0Length;
+				RasterizerLen1 = Cluster.NumTris - Cluster.Material0Length;
+				BatchCount1 += BatchCount2;
+			}
+			else
+			{
+				RasterizerLen0 = Cluster.Material0Length;
+				RasterizerLen1 = Cluster.Material1Length;
+				RasterizerLen2 = Material2Length;
+			}
+
+			// The 0th material range is always non-zero length
+			{
+				ExportRasterizerBin(RasterizerBin0, RelativeClusterIndex, 0u, RasterizerLen0, BatchCount0, BatchInfoOffset0, Cluster, true, bSoftware);
+			}
+
+			BRANCH
+			if (RasterizerLen1 > 0)
+			{
+				const uint Range1Start = RasterizerLen0;
+				const uint Range1End   = Range1Start + RasterizerLen1;
+				ExportRasterizerBin(RasterizerBin1, RelativeClusterIndex, Range1Start, Range1End, BatchCount1, BatchInfoOffset1, Cluster, true, bSoftware);
+			}
+
+			BRANCH
+			if (RasterizerLen2 > 0)
+			{
+				const uint Range2Start = (RasterizerLen0 + RasterizerLen1);
+				const uint Range2End   = Range2Start + RasterizerLen2;
+				ExportRasterizerBin(RasterizerBin2, RelativeClusterIndex, Range2Start, Range2End, BatchCount2, BatchInfoOffset2, Cluster, true, bSoftware);
+			}
+		}
+		else
+		{
+			uint CurrentRangeBin = 0xFFFFFFFFu;
+			uint CurrentRangeStart = 0;
+			uint CurrentRangeEnd = 0;
+			uint CurrentBatchCount = 0;
+			uint CurrentBatchInfoOffset = 0;
+
+			FBitStreamReaderState BatchCountStreamState = BitStreamReader_Create_Aligned(Cluster.PageBaseAddress + Cluster.VertReuseBatchCountTableOffset * 4, 0, NANITE_MAX_CLUSTER_MATERIALS * 4);
+
+			uint TableOffset = Cluster.PageBaseAddress + Cluster.MaterialTableOffset * 4u;
+			LOOP for (uint TableEntry = 0; TableEntry < Cluster.MaterialTableLength; ++TableEntry)
+			{
+				const uint EncodedRange = ClusterPageData.Load(TableOffset);
+				TableOffset += 4;
+
+				uint TriStart;
+				uint TriLength;
+				uint MaterialIndex;
+				DecodeMaterialRange(EncodedRange, TriStart, TriLength, MaterialIndex);
+
+				const uint RasterizerBinN = GetMaterialRasterSlotFromIndex(MaterialIndex, InstanceData.PrimitiveId, RegularMaterialRasterSlotCount, bSecondaryBin, MaterialSlotTable);
+
+				const uint BatchCount = BitStreamReader_Read_RO(ClusterPageData, BatchCountStreamState, 4, 4);
+
+				// Check if raster slot matches the current run, and that the triangle range is contiguous.
+				const bool bMergeRange = (RasterizerBinN == CurrentRangeBin);
+				if (bMergeRange)
+				{
+					// Update current range
+					CurrentRangeEnd = TriStart + TriLength;
+					CurrentBatchCount += BatchCount;
+				}
+				else
+				{
+					// Not merging previous range, and previous range has valid triangles that need to be flushed
+					BRANCH
+					if (CurrentRangeEnd > 0)
+					{
+						ExportRasterizerBin(CurrentRangeBin, RelativeClusterIndex, CurrentRangeStart, CurrentRangeEnd, CurrentBatchCount, CurrentBatchInfoOffset, Cluster, false, bSoftware);
+					}
+
+					CurrentRangeBin   = RasterizerBinN;
+					CurrentRangeStart = TriStart;
+					CurrentRangeEnd   = CurrentRangeStart + TriLength;
+					CurrentBatchInfoOffset += CurrentBatchCount;
+					CurrentBatchCount = BatchCount;
+				}
+			}
+
+			// Need to flush current range
+			ExportRasterizerBin(CurrentRangeBin, RelativeClusterIndex, CurrentRangeStart, CurrentRangeEnd, CurrentBatchCount, CurrentBatchInfoOffset, Cluster, false, bSoftware);
+		}
+	}
+}
+
+#endif

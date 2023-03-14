@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"Version": 0,
+	"VersionName": "0.1",
+	"FriendlyName": "Media Movie Streamer",
+	"Description": "Movie Streamer using MediaFramework.",
+	"Category": "Movie Players",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "https://docs.unrealengine.com/en-US/Engine/MediaFramework/Overview",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"EnabledByDefault": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "MediaMovieStreamer",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

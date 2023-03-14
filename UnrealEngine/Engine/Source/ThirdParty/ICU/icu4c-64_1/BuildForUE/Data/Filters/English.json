@@ -1,0 +1,25 @@
+{
+	"localeFilter": {
+		"filterType": "language",
+		"whitelist": [
+			"en"
+		]
+	},
+	"featureFilters": {
+		"conversion_mappings": {
+			"filterType": "exclude"
+		},
+		"stringprep": {
+			"filterType": "exclude"
+		},
+		"brkitr_dictionaries": {
+			"filterType": "exclude"
+		},
+		"brkitr_rules": {
+			"filterType": "regex",
+			"blacklist": [
+				"^.*_cj$"
+			]
+		}
+	}
+}

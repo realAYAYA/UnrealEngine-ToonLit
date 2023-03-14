@@ -1,0 +1,13 @@
+﻿INTSourceChangelist:19906333
+Availability:NoPublish
+Title:HLOD System
+Crumbs:
+
+[EXCERPT:main]
+HLOD(Hierarchical Levels of Detail, 계층형 레벨 오브 디테일)를 통해 높은 퀄리티를 유지하면서 퍼포먼스를 향상시킬 수 있습니다.
+
+각 HLOD는 다수의 스태틱 메시 오브젝트를 단순화된 지오메트리의 단일 오브젝트로 결합합니다. 원거리에서는 개별 스태틱 메시 오브젝트 대신 HLOD가 그려집니다. 그 결과, 각 프레임마다 렌더링해야 하는 액터의 수가 감소하여 퍼포먼스가 향상됩니다.
+[VAR:ToolTipFullLink]
+Engine/HLOD
+[/VAR]
+[/EXCERPT:main]

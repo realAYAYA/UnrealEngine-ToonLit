@@ -1,0 +1,8 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+int3 {DataInterfaceName}_NumThreads;
+
+int3 ReadNumThreads_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumThreads;
+}

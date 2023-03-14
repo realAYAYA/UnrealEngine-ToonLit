@@ -1,0 +1,22 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+Texture2D IESTexture;
+SamplerState IESSampler;
+RWTexture2DArray<float> IESAtlas;
+int IESAtlasSlice;
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void PathTracingIESAtlasCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint3 AtlasSize;
+	IESAtlas.GetDimensions(AtlasSize.x, AtlasSize.y, AtlasSize.z);
+	if (any(DispatchThreadId >= AtlasSize.xy))
+	{
+		return;
+	}
+
+	float2 UV = (DispatchThreadId + 0.5) / float2(AtlasSize.xy);
+	IESAtlas[uint3(DispatchThreadId, IESAtlasSlice)] = IESTexture.SampleLevel(IESSampler, UV, 0).r;
+}

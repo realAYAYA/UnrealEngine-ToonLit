@@ -1,0 +1,24 @@
+Title:O
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_O]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+Object
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Object]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_O]
+
+[COMMENT:none]
+[EXCERPT:Glossary_Object]
+The base building blocks in the Unreal Engine are called **Objects** and contain a lot of the essential "under the hood" functionality for your game assets. Just about everything in Unreal Engine inherits (or gets some functionality) from an Object. In C++, `UObject` is the base class of all objects; it implements features such as garbage collections, metadata (`UProperty`) support for exposing variables to the Unreal Editor, and serialization for loading and saving.
+[/EXCERPT:Glossary_Object]
+[/COMMENT]

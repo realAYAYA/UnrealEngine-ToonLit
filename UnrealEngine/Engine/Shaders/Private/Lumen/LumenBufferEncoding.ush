@@ -1,0 +1,62 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../SHCommon.ush"
+
+// Lumen encode 
+#define LUMEN_DIFFUSE_DIRECTIONAL_ENCODING 1
+
+#if LUMEN_DIFFUSE_DIRECTIONAL_ENCODING == 1
+
+void EncodeLumenDiffuseLighting(FTwoBandSHVectorRGB SH, out float4 Vector0, out float4 Vector1)
+{
+	// Encode full HDR ambient
+	Vector0 = float4(SH.R.V.x, SH.G.V.x, SH.B.V.x, 0);
+
+	// Encode luminance normalized directional coefficients
+	float3 LuminanceWeights = float3(.3, .59, .11);
+
+	float3 Coefficient0 = float3(SH.R.V.y, SH.G.V.y, SH.B.V.y);
+	float3 Coefficient1 = float3(SH.R.V.z, SH.G.V.z, SH.B.V.z);
+	float3 Coefficient2 = float3(SH.R.V.w, SH.G.V.w, SH.B.V.w);
+
+	float3 DirectionalCoefficients = float3(dot(Coefficient0, LuminanceWeights), dot(Coefficient1, LuminanceWeights), dot(Coefficient2, LuminanceWeights));
+	float MaxAmbientComponent = max(Vector0.x, max(Vector0.y, Vector0.z));
+			
+	// Derived from SHBasisFunction
+	float4 NormalizationScale0 = float4(
+		0.282095f / 0.488603f,
+		0.282095f / 0.488603f,
+		0.282095f / 0.488603f,
+		0.282095f / 1.092548f);
+
+	float3 NormalizedDirectionalCoefficients = DirectionalCoefficients * (NormalizationScale0.xyz / max(MaxAmbientComponent, .0001f));
+	Vector1 = float4(saturate(NormalizedDirectionalCoefficients * .5f + .5f), 0);
+}
+
+void DecodeLumenDiffuseLighting(float4 Vector0, float4 Vector1, out FTwoBandSHVectorRGB SH)
+{
+	SH.R.V.x = Vector0.r;
+	SH.G.V.x = Vector0.g;
+	SH.B.V.x = Vector0.b;
+
+	float3 NormalizedAmbientColor = Vector0.rgb / ( Luminance( Vector0.rgb ) + 0.00001f );
+	float MaxAmbient = max(Vector0.x, max(Vector0.y, Vector0.z));
+
+	float4 DenormalizationScale0 = float4(
+		0.488603f / 0.282095f, 
+		0.488603f / 0.282095f, 
+		0.488603f / 0.282095f, 
+		1.092548f / 0.282095f);
+
+	float3 Rescaled = (Vector1.rgb * 2 - 1) * MaxAmbient * DenormalizationScale0.xyz;
+	SH.R.V.yzw = Rescaled * NormalizedAmbientColor.r;
+	SH.G.V.yzw = Rescaled * NormalizedAmbientColor.g;
+	SH.B.V.yzw = Rescaled * NormalizedAmbientColor.b;
+}
+
+#else
+#error Unimplemented.
+#endif

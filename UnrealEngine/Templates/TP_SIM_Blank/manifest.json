@@ -1,0 +1,73 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Simulation Blank"
+		},
+		{
+			"Language": "ko",
+			"Text": "시뮬레이션 기본"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "模拟-空白"
+		},
+		{
+			"Language": "ja",
+			"Text": "シミュレーション Blank"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "A basic empty environment with defauts settings suitable for simulation projects."
+		},
+		{
+			"Language": "ko",
+			"Text": "시뮬레이션에 적합한 디폴트 세팅으로 구성된 기본 환경입니다."
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "带有默认设置的简易空白场景。适合用于创建模拟仿真项目。"
+		},
+		{
+			"Language": "ja",
+			"Text": "シミュレーション プロジェクトに適したデフォルト設定の基本的な空の環境"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": "Simulation"
+		}
+	],
+	"ClassTypes": "Actor",
+	"Category": "BlueprintFeature",
+	"FocusAsset": "",
+	"Thumbnail": "TP_SIM_Blank.png",
+	"Screenshots":
+	[
+		"TP_SIM_Blank_Preview.png"
+	],
+	"AdditionalFeaturePacks":
+	[
+		{
+			"MountName": "SimBlank",
+			"DetailLevels":
+			[
+				"Standard"
+			]
+		}
+	]
+}

@@ -1,0 +1,193 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="md-debug|Win32">
+      <Configuration>md-debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="md-debug|x64">
+      <Configuration>md-debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="md-release|Win32">
+      <Configuration>md-release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="md-release|x64">
+      <Configuration>md-release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="mt-debug|Win32">
+      <Configuration>mt-debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="mt-debug|x64">
+      <Configuration>mt-debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="mt-release|Win32">
+      <Configuration>mt-release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="mt-release|x64">
+      <Configuration>mt-release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="UserMacros">
+    <MyPlatform>$(Platform)</MyPlatform>
+  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" Condition="'$(Platform)'=='Win32'">
+    <MyPlatform>x86</MyPlatform>
+  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" Condition="'$(Configuration)'=='mt-debug'">
+    <MyRuntimeLibrary>MultiThreadedDebug</MyRuntimeLibrary>
+    <MyConfiguration>debug</MyConfiguration>
+  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" Condition="'$(Configuration)'=='md-debug'">
+    <MyRuntimeLibrary>MultiThreadedDebugDll</MyRuntimeLibrary>
+    <MyConfiguration>debug</MyConfiguration>
+  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" Condition="'$(Configuration)'=='mt-release'">
+    <MyRuntimeLibrary>MultiThreaded</MyRuntimeLibrary>
+    <MyConfiguration>release</MyConfiguration>
+  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" Condition="'$(Configuration)'=='md-release'">
+    <MyRuntimeLibrary>MultiThreadedDll</MyRuntimeLibrary>
+    <MyConfiguration>release</MyConfiguration>
+  </PropertyGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{7A18E62E-6200-413E-85E5-995D3B9E3A8C}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>metrics_discovery_helper</RootNamespace>
+    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(MyConfiguration)'=='debug'">
+    <UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(MyConfiguration)'=='release'">
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)build\lib\$(MyPlatform)-$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\$(MyPlatform)-$(Configuration)\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <SDLCheck>true</SDLCheck>
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <AdditionalIncludeDirectories>
+        metrics-discovery\inc\common\instrumentation\api;
+        metrics-discovery\instrumentation\metrics_discovery\common\inc;
+        metrics-discovery\instrumentation\utils\common\inc;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+      <ProgramDataBaseFileName>$(OutDir)metrics_discovery_helper.pdb</ProgramDataBaseFileName>
+      <RuntimeLibrary>$(MyRuntimeLibrary)</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Lib>
+      <TreatLibWarningAsErrors>true</TreatLibWarningAsErrors>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(MyConfiguration)'=='debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='md-debug|Win32'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='mt-debug|Win32'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='md-debug|x64'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='mt-debug|x64'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(MyConfiguration)'=='release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='md-release|Win32'">false</WholeProgramOptimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='mt-release|Win32'">false</WholeProgramOptimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='md-release|x64'">false</WholeProgramOptimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='mt-release|x64'">false</WholeProgramOptimization>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='md-release|Win32'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='mt-release|Win32'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='md-release|x64'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+    <Lib>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='mt-release|x64'">shlwapi.lib</AdditionalDependencies>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="metrics-discovery\instrumentation\metrics_discovery\common\md_calculation.cpp" />
+    <ClCompile Include="metrics-discovery\instrumentation\utils\common\iu_debug.c" />
+    <ClCompile Include="metrics-discovery\instrumentation\utils\win\iu_std_win.cpp" />
+    <ClCompile Include="source\context.cpp" />
+    <ClCompile Include="source\equations.cpp" />
+    <ClCompile Include="source\values.cpp" />
+    <ClCompile Include="source\periodic_metrics.cpp" />
+    <ClCompile Include="source\range_metrics_dx11.cpp" />
+    <ClCompile Include="source\report_memory.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="metrics-discovery\inc\common\instrumentation\api\metrics_discovery_api.h">
+      <Message>Copying API header file</Message>
+      <Command>copy /Y "%(Identity)" "$(OutDir)..\..\include\metrics_discovery\%(Filename)%(Extension)" &gt; NUL</Command>
+      <Outputs>$(OutDir)..\..\include\metrics_discovery\%(Filename)%(Extension)</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="source\metrics_discovery_helper.h">
+      <Message>Copying API header file</Message>
+      <Command>copy /Y "%(Identity)" "$(OutDir)..\..\include\metrics_discovery\%(Filename)%(Extension)" &gt; NUL</Command>
+      <Outputs>$(OutDir)..\..\include\metrics_discovery\%(Filename)%(Extension)</Outputs>
+    </CustomBuild>
+    <CustomBuild Include="source\metrics_discovery_helper_dx11.h">
+      <Message>Copying API header file</Message>
+      <Command>copy /Y "%(Identity)" "$(OutDir)..\..\include\metrics_discovery\%(Filename)%(Extension)" &gt; NUL</Command>
+      <Outputs>$(OutDir)..\..\include\metrics_discovery\%(Filename)%(Extension)</Outputs>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_calculation.h" />
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_debug.h" />
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_types.h" />
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_utils.h" />
+    <ClInclude Include="metrics-discovery\instrumentation\utils\common\inc\iu_debug.h" />
+    <ClInclude Include="metrics-discovery\instrumentation\utils\common\inc\iu_std.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

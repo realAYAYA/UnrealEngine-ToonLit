@@ -1,0 +1,21 @@
+{
+	"FileVersion" : 3,
+	
+	"FriendlyName" : "Reflex",
+	"Version" : 1,
+	"VersionName" : "1.6",
+	"Description" : "NVIDIA Reflex Latency Tracking and Tick Rate Handling",
+	"Category" : "Performance",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : false,
+	
+	"Modules" :
+	[
+		{
+			"Name" : "Reflex",
+			"Type" : "ClientOnly",
+			"PlatformAllowList" : [ "Win64" ]
+		}
+	]
+}

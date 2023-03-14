@@ -1,0 +1,201 @@
+﻿<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="15.0">
+  <PropertyGroup>
+    <ProjectType>Local</ProjectType>
+    <ProductVersion>8.0.50727</ProductVersion>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{7ACEDAA9-2DE8-4485-837A-E7D58812A6DC}</ProjectGuid>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ApplicationIcon>
+    </ApplicationIcon>
+    <AssemblyKeyContainerName>
+    </AssemblyKeyContainerName>
+    <AssemblyName>SolidworksDatasmith</AssemblyName>
+    <DefaultClientScript>JScript</DefaultClientScript>
+    <DefaultHTMLPageLayout>Grid</DefaultHTMLPageLayout>
+    <DefaultTargetSchema>IE50</DefaultTargetSchema>
+    <DelaySign>false</DelaySign>
+    <OutputType>Library</OutputType>
+    <RootNamespace>SolidworksDatasmith</RootNamespace>
+    <RunPostBuildEvent>OnBuildSuccess</RunPostBuildEvent>
+    <StartupObject>
+    </StartupObject>
+    <FileUpgradeFlags>
+    </FileUpgradeFlags>
+    <UpgradeBackupLocation>
+    </UpgradeBackupLocation>
+    <StartProgram>$(ProgramW6432)\SOLIDWORKS Corp\SOLIDWORKS\SldWorks.exe</StartProgram>
+    <StartAction>Program</StartAction>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <OldToolsVersion>2.0</OldToolsVersion>
+    <TargetFrameworkProfile />
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <OutputPath>bin\Debug\</OutputPath>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <BaseAddress>285212672</BaseAddress>
+    <CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
+    <ConfigurationOverrideFile>
+    </ConfigurationOverrideFile>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DocumentationFile>
+    </DocumentationFile>
+    <DebugSymbols>true</DebugSymbols>
+    <FileAlignment>4096</FileAlignment>
+    <NoStdLib>false</NoStdLib>
+    <NoWarn>
+    </NoWarn>
+    <Optimize>false</Optimize>
+    <RegisterForComInterop>false</RegisterForComInterop>
+    <RemoveIntegerChecks>false</RemoveIntegerChecks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningLevel>4</WarningLevel>
+    <DebugType>full</DebugType>
+    <ErrorReport>prompt</ErrorReport>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <OutputPath>bin\Release\</OutputPath>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <BaseAddress>285212672</BaseAddress>
+    <CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
+    <ConfigurationOverrideFile>
+    </ConfigurationOverrideFile>
+    <DefineConstants>TRACE</DefineConstants>
+    <DocumentationFile>
+    </DocumentationFile>
+    <DebugSymbols>false</DebugSymbols>
+    <FileAlignment>4096</FileAlignment>
+    <NoStdLib>false</NoStdLib>
+    <NoWarn>
+    </NoWarn>
+    <Optimize>true</Optimize>
+    <RegisterForComInterop>false</RegisterForComInterop>
+    <RemoveIntegerChecks>false</RemoveIntegerChecks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningLevel>4</WarningLevel>
+    <DebugType>none</DebugType>
+    <ErrorReport>prompt</ErrorReport>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <DebugSymbols>true</DebugSymbols>
+    <OutputPath>bin\x64\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <BaseAddress>285212672</BaseAddress>
+    <FileAlignment>4096</FileAlignment>
+    <RegisterForComInterop>false</RegisterForComInterop>
+    <DebugType>full</DebugType>
+    <PlatformTarget>x64</PlatformTarget>
+    <ErrorReport>prompt</ErrorReport>
+    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <OutputPath>bin\x64\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <BaseAddress>285212672</BaseAddress>
+    <Optimize>true</Optimize>
+    <FileAlignment>4096</FileAlignment>
+    <RegisterForComInterop>false</RegisterForComInterop>
+    <PlatformTarget>x64</PlatformTarget>
+    <ErrorReport>prompt</ErrorReport>
+    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ExternalAssemblies Condition="'$(ExternalAssemblies)'==''">$(UE_SDKS_ROOT)\HostWin64\Win64\Solidworks\2021</ExternalAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="SolidWorks.Interop.sldworks">
+      <HintPath>$(ExternalAssemblies)\SolidWorks.Interop.sldworks.dll</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swconst">
+      <HintPath>$(ExternalAssemblies)\SolidWorks.Interop.swconst.dll</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swmotionstudy">
+      <HintPath>$(ExternalAssemblies)\SolidWorks.Interop.swmotionstudy.dll</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swpublished">
+      <HintPath>$(ExternalAssemblies)\SolidWorks.Interop.swpublished.dll</HintPath>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="solidworkstools, Version=2.0.0.0, Culture=neutral, PublicKeyToken=bd18593873b4686d, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(ExternalAssemblies)\solidworkstools.dll</HintPath>
+    </Reference>
+    <Reference Include="System">
+      <Name>System</Name>
+    </Reference>
+    <Reference Include="System.Data">
+      <Name>System.Data</Name>
+    </Reference>
+    <Reference Include="System.Drawing">
+      <Name>System.Drawing</Name>
+    </Reference>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.XML">
+      <Name>System.XML</Name>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Properties\AssemblyInfo.cs">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="..\Private\ConfigurationTree.cs" />
+    <Compile Include="..\Private\ConfigurationExporter.cs" />
+    <Compile Include="..\Private\Addin.cs" />
+    <Compile Include="..\Private\Animation.cs" />
+    <Compile Include="..\Private\AnimationExtractor.cs" />
+    <Compile Include="..\Private\AssemblyDocument.cs" />
+    <Compile Include="..\Private\Body.cs" />
+    <Compile Include="..\Private\BoundingBox.cs" />
+    <Compile Include="..\Private\ConstructionGeometry.cs" />
+    <Compile Include="..\Private\DatasmithExporter.cs" />
+    <Compile Include="..\Private\Document.cs" />
+    <Compile Include="..\Private\GeometryChunk.cs" />
+    <Compile Include="..\Private\Lights.cs" />
+    <Compile Include="..\Private\Material.cs" />
+    <Compile Include="..\Private\MaterialUtils.cs" />
+    <Compile Include="..\Private\MathUtils.cs" />
+    <Compile Include="..\Private\Matrix4.cs" />
+    <Compile Include="..\Private\MeshData.cs" />
+    <Compile Include="..\Private\MetadataManager.cs" />
+    <Compile Include="..\Private\ObjectMaterials.cs" />
+    <Compile Include="..\Private\PartDocument.cs" />
+    <Compile Include="..\Private\StripGeometry.cs" />
+    <Compile Include="..\Private\StripUnion.cs" />
+    <Compile Include="..\Private\StripVector.cs" />
+    <Compile Include="..\Private\Triangle.cs" />
+    <Compile Include="..\Private\TriangleStrip.cs" />
+    <Compile Include="..\Private\UVPlane.cs" />
+    <Compile Include="..\Private\Vec2.cs" />
+    <Compile Include="..\Private\Vec3.cs" />
+    <Compile Include="..\Private\Vertex.cs" />
+    <Compile Include="..\..\..\..\..\..\Binaries\Win64\DatasmithFacadeCSharp\Public\*.cs">
+      <Link>DatasmithSwigFacade\%(Filename)%(Extension)</Link>
+    </Compile>
+    <EmbeddedResource Include="ToolbarLarge.bmp" />
+    <EmbeddedResource Include="ToolbarSmall.bmp" />
+    <EmbeddedResource Include="MainIconLarge.bmp" />
+    <EmbeddedResource Include="MainIconSmall.bmp" />
+  </ItemGroup>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <EngineDir>$(ProjectDir)..\..\..\..\..\..</EngineDir>
+    <InstallerDir>$(ProjectDir)..\Installer</InstallerDir>
+    <PostBuildEvent>
+"$(FrameworkSdkDir)\bin\NETFX 4.8 Tools\tlbexp.exe" "$(TargetDir)$(TargetName)$(TargetExt)" /out:"$(TargetDir)$(TargetName).tlb"
+"$(EngineDir)\Source\ThirdParty\WiX\3.8\heat.exe" file "$(TargetDir)$(TargetName)$(TargetExt)" -gg -o "$(TargetDir)asm_SolidworksToUnreal.wxs"
+"$(EngineDir)\Source\ThirdParty\WiX\3.8\heat.exe" file "$(TargetDir)$(TargetName).tlb" -gg -o "$(TargetDir)tlb_SolidworksToUnreal.wxs"
+"$(ProjectDir)..\bin\$(Configuration)\PreprocessWxs.exe" "$(TargetDir)$(TargetName)$(TargetExt)" "$(TargetDir)asm_SolidworksToUnreal.wxs" "$(TargetDir)tlb_SolidworksToUnreal.wxs" "$(InstallerDir)" "$(EngineDir)"
+</PostBuildEvent>
+  </PropertyGroup>
+</Project>

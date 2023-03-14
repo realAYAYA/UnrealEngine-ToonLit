@@ -1,0 +1,72 @@
+INTSourceChangelist:3810557
+Title:D
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_D]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+
+数据引脚
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_data_pin]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+默认模式
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Defaults_Mode]
+
+		默认模式（Defaults Mode）是蓝图编辑器的三种模式之一；其他两种模式为组件模式（Components Mode）和图表模式（Graph Mode）。
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+细节面板
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Details_panel]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+导演组
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Director_Group]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_D]
+
+[COMMENT:none]
+[EXCERPT:Glossary_data_pin]
+![Blueprint Data Pin Types](k2_pins_data_types.png)
+
+ **数据引脚（Data Pins）** 用于将数据导入节点或从节点输出数据。视其具体类型而定，数据引脚可以连接到同一类型的变量（这些变量有各自的数据引脚），也可以连接到另一个节点上同一类型的数据引脚。与执行引脚一样，数据引脚在未连接到任何对象时显示为轮廓，在连接到任何对象时则显示为实心。
+
+![Blueprint Data Pins](k2_pins_data.png)
+
+节点可以有任意数量的输入或输出数据引脚。函数调用（Function Call）节点的数据引脚对应于相应函数的参数和返回值。
+[/EXCERPT:Glossary_data_pin]
+[EXCERPT:Glossary_Defaults_Mode]
+ **类默认（Class Defaults）** 或 **默认（Defaults）** 模式显示_Blueprint_的所有属性，包括 
+_Blueprint_中包含的变量、本地代码中定义的组件以及复制、导航 
+和碰撞属性。在创建_Blueprint_的新实例时，将使用 
+默认（Defaults）模式下为这些属性设置的值。
+[/EXCERPT:Glossary_Defaults_Mode]
+[EXCERPT:Glossary_Details_panel]
+ **细节面板（Details panel）** 是关卡编辑器（Level Editor）中的一个面板，其中包含各个元素的属性信息。UE中的许多工具和编辑器都包含细节面板：关卡编辑器、Matinee、Persona等。
+[/EXCERPT:Glossary_Details_panel]
+[EXCERPT:Glossary_Director_Group]
+ **导演组（Director Group）** 是一种控制摄像机视点的特定类型Matinee组。您可以使用导演组来切换镜头之间的摄像机视点。每个Matinee序列只能有一个导演组。
+[/EXCERPT:Glossary_Director_Group]
+[/COMMENT]

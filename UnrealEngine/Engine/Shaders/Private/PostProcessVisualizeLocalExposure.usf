@@ -1,0 +1,57 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "ScreenPass.ush"
+#include "PostProcessCommon.ush"
+#include "PostProcessHistogramCommon.ush"
+#include "DeferredShadingCommon.ush"
+#include "TonemapCommon.ush"
+
+Texture2D EyeAdaptationTexture;
+
+Texture2D HDRSceneColorTexture;
+
+Texture3D LumBilateralGrid;
+Texture2D BlurredLogLum;
+
+SamplerState TextureSampler;
+
+uint DebugMode;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+SCREEN_PASS_TEXTURE_VIEWPORT(Output)
+
+float4 MainPS(noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPosition : SV_POSITION) : SV_Target0
+{
+	float2 UV = UVAndScreenPos.xy;
+	int2 PixelPos = (int2)SvPosition.xy;
+
+	float2 ExposureScaleMiddleGrey = EyeAdaptationTexture.Load(int3(0, 0, 0)).xw;
+
+	float4 SceneColor = Texture2DSample(HDRSceneColorTexture, TextureSampler, UV) * View.OneOverPreExposure;
+
+	float LuminanceVal = CalculateEyeAdaptationLuminance(SceneColor.rgb);
+	float LogLuminance = log2(LuminanceVal);
+	float MiddleGreyLumValue = log2(0.18 * ExposureScaleMiddleGrey.y * EyeAdaptation_LocalExposureMiddleGreyExposureCompensation);
+
+	float BaseLogLum = CalculateBaseLogLuminance(LogLuminance, EyeAdaptation_LocalExposureBlurredLuminanceBlend, ExposureScaleMiddleGrey.x, UV, LumBilateralGrid, BlurredLogLum, TextureSampler, TextureSampler);
+	float LocalExposure = CalculateLocalExposure(LogLuminance + log2(ExposureScaleMiddleGrey.x), BaseLogLum, MiddleGreyLumValue, EyeAdaptation_LocalExposureHighlightContrastScale, EyeAdaptation_LocalExposureShadowContrastScale, EyeAdaptation_LocalExposureDetailStrength);
+	float DetailLogLum = (LogLuminance + log2(ExposureScaleMiddleGrey.x)) - BaseLogLum;
+
+	float3 OutValue;
+
+	if (DebugMode == 0)
+	{
+		OutValue = saturate(abs(log2(LocalExposure) / 2)) * lerp(float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), step(LocalExposure, 1));
+	}
+	else if (DebugMode == 1)
+	{
+		OutValue = exp2(BaseLogLum);
+	}
+	else if (DebugMode == 2)
+	{
+		OutValue = exp2(DetailLogLum);
+	}
+
+	return float4(OutValue, 1.0f);
+}

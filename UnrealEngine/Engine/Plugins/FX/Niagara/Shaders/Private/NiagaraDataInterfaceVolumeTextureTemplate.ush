@@ -1,0 +1,15 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+float3			{ParameterName}_TextureSize;
+Texture3D		{ParameterName}_Texture;
+SamplerState	{ParameterName}_TextureSampler;
+
+void SampleVolumeTexture_{ParameterName}(in float3 UV, in float MipLevel, out float4 OutValue)
+{
+	OutValue = {ParameterName}_Texture.SampleLevel({ParameterName}_TextureSampler, UV, MipLevel);
+}
+
+void TextureDimensions3D_{ParameterName}(out float3 OutValue)
+{
+	OutValue = {ParameterName}_TextureSize;
+}

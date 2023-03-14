@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ROBOMERGE</title>
+<link rel="icon" href="/img/robo-r.png" type="image/png">
+<link rel="stylesheet" href="/css/fontawesome.5.9.0.all.min.css">
+<link rel="stylesheet" href="/css/bootstrap.min.css">
+<link rel="stylesheet" href="/css/main.css">
+<link rel="stylesheet" href="/css/table.css">
+
+	<script src="/js/jquery-3.4.1.min.js"></script>
+	<script src="/js/bootstrap.bundle.min.js"></script>
+
+<script src="/js/boilerplate.js"></script>
+<script src="/js/skip.js"></script>
+<script language="javascript">
+
+    $(function() {
+        skipVerify()
+    });
+
+</script>
+</head>
+<body>
+
+
+<div class="text">
+    <div id="preview"></div>
+    <div id="reasonSelectDiv" style="display:none;" align="center">
+        <h3>Please select a reason you are skipping <strong class="changelist"></strong>:</h3>
+        <form id="reasonForm" style="display: inline-block; text-align: left">
+            <label>
+                <input type="radio" id="notrelevant" class="reasonRadio" name="reason" value="notrelevant">
+                Work is not relevant to the target branch.
+            </label>
+            <br />
+            <label>
+                <input type="radio" id="willredo" class="reasonRadio" name="reason" value="willredo">
+                I will manually redo work in the merge targets.
+            </label>
+        </form>
+    </div>
+    <div id="result"></div>
+    <button id="returnbutton" class="initiallyHidden btn btn-lg btn-block btn-info" onclick="goHome()">Return to RoboMerge homepage</button>
+</div>    
+
+</body>
+</html>

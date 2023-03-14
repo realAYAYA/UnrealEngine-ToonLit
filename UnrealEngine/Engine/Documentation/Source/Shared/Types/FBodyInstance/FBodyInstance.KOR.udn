@@ -1,0 +1,150 @@
+INTSourceChangelist:19906333
+Availability:NoPublish
+Title:FBodyInstance RTTs
+Crumbs:
+
+[EXCERPT:bStartAwake]
+
+이 Physics Body(피직스 바디)를 Start Awake(깨우기 시작)할지 결정합니다. 깨어있는(잠들지 않은) 피직스 바디에는 시뮬레이션이 활성화되어 있습니다. 깨어있는 피직스 바디가 일정 시간 동안 정지해 있게 되면, 다시 Sleep(슬립) 상태로 돌아갑니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:bStartAwake]
+
+
+
+[EXCERPT:bEnableGravity]
+
+특정 피직스 바디에 Gravity(중력)을 끌 수 있습니다. 피직스 에셋에 사용하여 스켈레탈 메시의 일정 부분에 중력의 영향을 받지 않도록 할 수 있습니다. 이를테면 수중 식물이나 우주선에서 끊어진 견인 케이블 같은 것입니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:bEnableGravity]
+
+
+
+
+[EXCERPT:PhysMaterialOverride]
+
+Simple Collision(단순 콜리전), 즉 컨벡스 헐이나 구체, 박스, 스필 등 기본 피직스 셰이프에 관련된 콜리전에 사용되는 이 특정 피직스 바디에 대한 PhysMaterial(피지컬 머티리얼)을 덮어씁니다. 이를 통해 신발에 좀 더 고무같은 속성을 주는 것처럼 특정 피직스 바디에 다른 속성을 적용할 수 있습니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:PhysMaterialOverride]
+
+
+
+
+[EXCERPT:COMNudge]
+
+피직스 바디의 Center of Mass(질량중심)을 조절합니다.
+
+주로 비히클이나 불규칙한 모양을 둘러싼 대형 피직스 바디에 사용됩니다. 한 대형 피직스 바디가 비히클의 질량 대부분을 정의하는 데 종종 사용될 것입니다. 해당 바디에 대한 질량중심은 사용되는 피직스 바디를 기준으로 결정되기 때문에 거의 항상 피직스 바디의 정중앙에 위치하게 됩니다. 이로 인해 비히클의 핸들이 어긋날 수 있으므로 비히클 질량의 실제 위치를 고려해서 질량중심을 조정할 수 있습니다.
+
+![](PhAT_COM.png)
+
+Mass Properties(질량 프로퍼티) 표시 플래그는 Movable(무버블) 및 Simulated(시뮬레이티드) 바디에 대한 질량중심 및 Inertia Frame(관성 좌표계)를 시각화합니다. 질량중심은 보통 지오메트리 내에 있으므로 와이어프레임 렌더링 모드를 켜줘야 합니다.
+
+![](COM_Geom.png)
+
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:COMNudge]
+
+
+
+
+[EXCERPT:SleepFamily]
+
+이 세팅은 피직스 바디가 얼마나 빨리 도로 잠드는지, 얼마나 안정되어 있어야 잠드는지를 정의합니다. 미리 정의된 슬립 패밀리(Sleep Family)는 둘 입니다:
+
+* SF_Normal (보통) - 대부분의 경우에 좋지만, 원호의 정상이나 추운동의 느린 지점에서 피직스 바디가 잠들게 될 수 있습니다.
+
+* SF_Sensitive (민감) - 추운동의 원호 정상 부분에서 거의 "정지" 상태로 느려지지만 중력으로 끌어당겨지는 추운동 비슷한 운동에 좋습니다. 그런 상황에서 피직스 바디가 잠들지 않도록 합니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:SleepFamily]
+
+
+
+
+[EXCERPT:MassScale]
+
+선택된 피직스 바디의 Mass(질량) 스케일을 조정합니다.
+
+스켈레탈 메시가 다른 물질로 만들어졌거나 밀도가 다른 것처럼 보이도록 만드는데 사용됩니다. 피직스 바디의 질량을 정의하는 계산법이 모든 피직스 바디에 동일하게 적용되기 때문에 이 옵션이 필요합니다.
+
+이를 통해 사물이 레벨 내 활성화된 물리 법칙의 영향을 더 또는 덜 받도록 할 수 있습니다. 질량을 낮추면 좀 더 하늘거리는 느낌을 낼 수 있는 반면, 질량을 높이면 Physics Asset(피직스 에셋)이 좀 더 단단하게 고정된 듯한 느낌을 구현할 수 있습니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:MassScale]
+
+
+
+[EXCERPT:AngularDamping]
+
+피직스 바디의 회전에 항력같은 효과를 추가해 줍니다만, 좀 더 정확하게는 피직스 바디가 회전에 저항하는 정도를 나타냅니다. 가장 쉽게 도개교같은 것을 떠올려 보자면, 각형 제동(Angular Damping)은 도개교를 지탱하는 체인같은 역할을 하여, 열린 상태로의 전환을 적당히 둔화시켜 줍니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies
+[/VAR]
+[/EXCERPT:AngularDamping]
+
+
+
+[EXCERPT:LinearDamping]
+
+피직스 바디에 항력 같은 효과를 추가합니다. 좀 더 정확하게는 피직스 바디가 이동에 저항하는 정도를 나타냅니다. 낙하하는 피직스 바디의 경우 추락 속도를 늦춰주며, 마치 물이나 진흙에 잠기는 듯한 효과를 구현할 수 있습니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies
+[/VAR]
+[/EXCERPT:LinearDamping]
+
+
+
+
+[EXCERPT:PositionSolverIterationCount]
+
+CPU 추가 비용으로 Position Solver(위치 솔버)의 정확도를 향상시켜 줍니다. 피직스 바디의 떨림을 제거하여 더욱 빠르게 정지 상태에 도달하도록 하여 보다 효과적으로 안정화한다는 이점이 있습니다.
+
+이 옵션은 래그돌 떨림을 수정할 때 차선책으로 사용해야 합니다. 먼저 댐핑 값을 조정해 보거나 어느 피직스 바디의 충돌을 허용할지 결정해야 합니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:PositionSolverIterationCount]
+
+
+
+
+[EXCERPT:VelocitySolverIterationCount]
+
+Position Solver Iteration Count(위치 솔버 반복작업 수)와 마찬가지로, 이 피직스 바디가 속도를 구하기 위한 반복처리 횟수를 늘려주지만, CPU 처리 비용도 늘어납니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#physics
+[/VAR]
+[/EXCERPT:VelocitySolverIterationCount]
+
+
+
+
+[EXCERPT:bNotifyRigidBodyCollision]
+
+선택된 피직스 바디가 블루프린트나 코드 엘리먼트에 충돌했는지 보고할 수 있도록 합니다. 이 옵션이 꺼져 있으면, 피직스 바디가 사물과 충돌은 하지만 실제로 그 내용을 보고하지는 않습니다.
+Engine/Physics/PhysicsBodies/#collision
+[/EXCERPT:bNotifyRigidBodyCollision]
+
+
+
+
+[EXCERPT:bUseCCD]
+
+CCD(Continuous Collision Detection, 지속 콜리전 감지)는 피직스 바디의 CPU 처리 비용이 증가되지만 충돌 감지 정확도가 훨씬 정확해 집니다.
+
+고속으로 움직이는 오브젝트의 상호관통 방출 오류의 방지나 좀 더 정확한 충돌 감지가 필요한 경우에 사용할 수 있는 옵션입니다. 또한 오버랩 및 폰과 같은 단일 오브젝트 유형에서의 콜리전을 보고하도록 설정된 피직스 바디의 경우, CCD를 사용하면 다음 프레임에서 방출되기 전 피직스 바디가 오버랩되는 한 프레임에서의 중복 이벤트를 방지할 수 있습니다.
+[VAR:ToolTipFullLink]
+Engine/Physics/PhysicsBodies#collision
+[/VAR]
+[/EXCERPT:bUseCCD]
+

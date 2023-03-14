@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Simulation templates Shared Resource - Sandbox template"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for Simulation Sandbox template"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "SimSandbox.png",
+	"Screenshots":
+	[
+		"SimSandbox_Preview.png"
+	],
+	"Ident": "SimSandboxStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "SimSandbox",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/SimSandbox/Content/*.*"
+		]
+	}
+}
+

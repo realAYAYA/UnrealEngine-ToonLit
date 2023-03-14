@@ -1,0 +1,26 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+uint			{ParameterName}_LocalSpace;
+uint			{ParameterName}_FixedBoundsValid;
+float3			{ParameterName}_FixedBoundsMin;
+float3			{ParameterName}_FixedBoundsMax;
+
+void GetLocalSpace_{ParameterName}(out bool bLocalSpace)
+{
+	bLocalSpace = {ParameterName}_LocalSpace != 0;
+}
+
+void GetBounds_{ParameterName}(out bool bValid, out float3 Min, out float3 Max)
+{
+	// GPU is always fixed no dynamic bounds currently
+	bValid = {ParameterName}_FixedBoundsValid != 0;
+	Min = {ParameterName}_FixedBoundsMin;
+	Max = {ParameterName}_FixedBoundsMax;
+}
+
+void GetFixedBounds_{ParameterName}(out bool bValid, out float3 Min, out float3 Max)
+{
+	bValid = {ParameterName}_FixedBoundsValid != 0;
+	Min = {ParameterName}_FixedBoundsMin;
+	Max = {ParameterName}_FixedBoundsMax;
+}

@@ -1,0 +1,25 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Content Browser - File Data Source",
+	"Description" : "Data Source plugin providing loose file support for the Content Browser",
+	"Category" : "Content Browser",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "ContentBrowserFileDataSource",
+			"Type" : "Editor",
+			"LoadingPhase" : "Default"
+		}
+	]
+}

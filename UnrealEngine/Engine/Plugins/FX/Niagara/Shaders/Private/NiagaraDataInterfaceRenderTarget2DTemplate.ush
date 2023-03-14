@@ -1,0 +1,41 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+int2					{ParameterName}_TextureSize;
+RWTexture2D<float4>		{ParameterName}_RWTexture;
+Texture2D<float4>		{ParameterName}_Texture;
+SamplerState			{ParameterName}_TextureSampler;
+
+void SetRenderTargetValue_{ParameterName}_UEImpureCall(bool bExecute, int IndexX, int IndexY, float4 Value)
+{
+	if ( bExecute )
+	{
+		{ParameterName}_RWTexture[int2(IndexX, IndexY)] = Value;
+	}
+}
+
+void GetRenderTargetValue_{ParameterName}(int IndexX, int IndexY, out float4 Value)
+{
+	Value = {ParameterName}_Texture.Load(int3(IndexX, IndexY, 0));
+}
+
+void SampleRenderTargetValue_{ParameterName}(float2 UV, out float4 Value)
+{
+	Value = {ParameterName}_Texture.SampleLevel({ParameterName}_TextureSampler, UV, 0.0f);
+}
+
+void GetRenderTargetSize_{ParameterName}(out int Width, out int Height)
+{
+	Width = {ParameterName}_TextureSize.x;
+	Height = {ParameterName}_TextureSize.y;
+}
+
+void LinearToIndex_{ParameterName}(int Linear, out int IndexX, out int IndexY)
+{
+	IndexX = Linear % {ParameterName}_TextureSize.x;
+	IndexY = Linear / {ParameterName}_TextureSize.x;
+}
+
+void ExecToIndex_{ParameterName}(out int IndexX, out int IndexY)
+{
+	LinearToIndex_{ParameterName}(ExecIndex(), IndexX, IndexY);
+}

@@ -1,0 +1,12 @@
+#pragma once
+
+struct StructExample
+{
+    float AddValues(float inA, float inB)
+    {
+        return inA + inB;
+    }
+};
+
+StructExample MyStruct;
+return MyStruct.AddValues(A, B); 

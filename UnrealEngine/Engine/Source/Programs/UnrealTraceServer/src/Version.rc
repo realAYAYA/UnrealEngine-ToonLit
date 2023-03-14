@@ -1,0 +1,24 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Version.h"
+
+1 VERSIONINFO
+	FILEVERSION		TS_VERSION_PROTOCOL, TS_VERSION_MINOR
+	PRODUCTVERSION	5 /* UE5 */
+{
+	BLOCK "StringFileInfo" {
+		BLOCK "040904b0" {
+			VALUE "CompanyName",	"Epic Games"
+			VALUE "ProductName",	"Unreal Engine Trace Server"
+			VALUE "FileDescription","Hub for UE5 runtime traces (i.e. -tracehost=<host>) and tools like Unreal Insights"
+			VALUE "ProductVersion",	"UE5"
+		}
+	}
+	BLOCK "VarFileInfo" {
+		VALUE "Translation", 0x0409, 1200
+	}
+}
+
+TS_ICON_ID ICON "icon.ico"
+
+/* vim: set noexpandtab : */

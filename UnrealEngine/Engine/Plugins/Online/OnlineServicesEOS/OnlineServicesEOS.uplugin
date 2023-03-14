@@ -1,0 +1,44 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "Online Services EOS",
+	"Version": 1,
+	"VersionName": "1.0",
+	"Description": "Online Services implementation for EOS Account and Game services.",
+	"Category": "Online Platform",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"EnabledByDefault": false,
+
+	"Modules": [
+		{
+			"Name": "OnlineServicesEOS",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformDenyList": [
+				"LinuxArm64",
+				"TVOS"
+			]
+		}
+	],
+	"LocalizationTargets": [
+		{
+			"Name": "OnlineSubsystemEOS",
+			"LoadingPolicy": "Always"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "OnlineServices",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineServicesEOSGS",
+			"Enabled": true
+		},
+		{
+			"Name": "EOSShared",
+			"Enabled": true
+		}
+	]
+}

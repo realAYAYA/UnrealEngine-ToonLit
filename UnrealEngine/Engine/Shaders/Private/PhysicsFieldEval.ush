@@ -1,0 +1,1036 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	PhysicsFieldEval.ush
+=============================================================================*/
+
+#pragma once
+
+#include "Common.ush"
+
+/* -----------------------------------------------------------------
+ * Field System constants and context
+ * -----------------------------------------------------------------
+ */
+
+Buffer<float> NodesParams;
+Buffer<int> NodesOffsets;
+Buffer<int> TargetsOffsets;
+float TimeSeconds;
+
+/* ----------------------------------------------------------------- 
+ * Shared datas to store field evaluation
+ * -----------------------------------------------------------------
+ */
+
+#define MAX_DATAS 16
+groupshared float SharedDatas[64][MAX_DATAS];
+static int GFieldGroupThreadId;
+
+/* -----------------------------------------------------------------
+ * Reandom Vector + Perlin Noise
+ * -----------------------------------------------------------------
+ */
+ 
+static const int p[512] =
+{
+	151, 160, 137, 91, 90, 15,
+    131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23,
+    190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33,
+    88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166,
+    77, 146, 158, 231, 83, 111, 229, 122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244,
+    102, 143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196,
+    135, 130, 116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123,
+    5, 202, 38, 147, 118, 126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42,
+    223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9,
+    129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228,
+    251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107,
+    49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254,
+    138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180,
+ 
+    151, 160, 137, 91, 90, 15,
+    131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23,
+    190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33,
+    88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166,
+    77, 146, 158, 231, 83, 111, 229, 122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244,
+    102, 143, 54, 65, 25, 63, 161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196,
+    135, 130, 116, 188, 159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123,
+    5, 202, 38, 147, 118, 126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42,
+    223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9,
+    129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228,
+    251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107,
+    49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254,
+    138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180
+};
+ 
+float FadeValue(float t)
+{
+	return t * t * t * (t * (t * 6 - 15) + 10);
+}
+ 
+float LerpValue(float t, float a, float b)
+{
+	return a + t * (b - a);
+}
+ 
+float GradientDirection(int hash, float x, float y, float z)
+{
+    // CONVERT LO 4 BITS OF HASH CODE INTO 12 GRADIENT DIRECTIONS.
+	int h = hash & 15;
+	float u = h < 8 ? x : y;
+	float v = h < 4 ? y : h == 12 || h == 14 ? x : z;
+	return ((h & 1) == 0 ? u : -u) + ((h & 2) == 0 ? v : -v);
+}
+ 
+float PerlinNoise(float3 pos)
+{
+    // FIND UNIT CUBE THAT CONTAINS POINT.
+	int X = (int) floor(pos.x) & 255;
+	int Y = (int) floor(pos.y) & 255;
+	int Z = (int) floor(pos.z) & 255;
+   
+    // FIND RELATIVE X,Y,Z OF POINT IN CUBE.
+	float x = pos.x - floor(pos.x);
+	float y = pos.y - floor(pos.y);
+	float z = pos.z - floor(pos.z);
+   
+    // COMPUTE FADE CURVES FOR EACH OF X,Y,Z.
+	float u = FadeValue(x);
+	float v = FadeValue(y);
+	float w = FadeValue(z);
+   
+    // HASH COORDINATES OF THE 8 CUBE CORNERS
+	int A = p[X] + Y;
+	int AA = p[A] + Z;
+	int AB = p[A + 1] + Z;
+	int B = p[X + 1] + Y;
+	int BA = p[B] + Z;
+	int BB = p[B + 1] + Z;
+ 
+    // AND ADD BLENDED RESULTS FROM  8 CORNERS OF CUBE
+	return clamp(0.97 * LerpValue(w, LerpValue(v, LerpValue(u, GradientDirection(p[AA], x, y, z), // CORNER 0      
+           GradientDirection(p[BA], x - 1, y, z)), // CORNER 1                              
+           LerpValue(u, GradientDirection(p[AB], x, y - 1, z), // CORNER 2                        
+           GradientDirection(p[BB], x - 1, y - 1, z))), // CORNER 3                      
+           LerpValue(v, LerpValue(u, GradientDirection(p[AA + 1], x, y, z - 1), // CORNER 4            
+           GradientDirection(p[BA + 1], x - 1, y, z - 1)), // CORNER 5                  
+           LerpValue(u, GradientDirection(p[AB + 1], x, y - 1, z - 1), // CORNER 6  
+           GradientDirection(p[BB + 1], x - 1, y - 1, z - 1)))), -1.0, 1.0); // CORNER 7
+}
+
+uint3 RandomVector(int3 p)
+{
+	// taking a signed int then reinterpreting as unsigned gives good behavior for negatives
+	uint3 v = uint3(p);
+
+	// Linear congruential step. These LCG constants are from Numerical Recipies
+	// For additional #'s, PCG would do multiple LCG steps and scramble each on output
+	// So v here is the RNG state
+	v = v * 1664525u + 1013904223u;
+
+	// PCG uses xorshift for the final shuffle, but it is expensive (and cheap
+	// versions of xorshift have visible artifacts). Instead, use simple MAD Feistel steps
+	//
+	// Feistel ciphers divide the state into separate parts (usually by bits)
+	// then apply a series of permutation steps one part at a time. The permutations
+	// use a reversible operation (usually ^) to part being updated with the result of
+	// a permutation function on the other parts and the key.
+	//
+	// In this case, I'm using v.x, v.y and v.z as the parts, using + instead of ^ for
+	// the combination function, and just multiplying the other two parts (no key) for 
+	// the permutation function.
+	//
+	// That gives a simple mad per round.
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+
+	// only top 16 bits are well shuffled
+	return v >> 16u;
+}
+
+/* -----------------------------------------------------------------
+ * Field System defines
+ * -----------------------------------------------------------------
+ */
+
+#define NONE_TYPE 0
+#define RESULTS_TYPE 1
+#define INTEGER_TYPE 2
+#define SCALAR_TYPE 3
+#define VECTOR_TYPE 4
+
+#define NONE_TARGET 0
+#define DYNAMIC_STATE 1
+#define	LINEAR_FORCE 2
+#define	EXTERNAL_STRAIN	3
+#define	KILL_PARTICLES 4
+#define	LINEAR_VELOCITY 5
+#define	ANGULAR_VELOCITY 6
+#define	ANGULAR_TORQUE 7
+#define	INTERNAL_STRAIN 8
+#define	DISABLED_THRESHOLD 9
+#define	SLEEPING_THRESHOLD 10
+#define	POSITION_STATIC 11
+#define	POSITION_ANIMATED 12
+#define	POSITION_TARGET 13
+#define	DYNAMIC_CONSTRAINT 14
+#define	COLLISION_GROUP 15
+#define	ACTIVATE_DISABLED 16
+
+#define NONE_NODE 0
+#define UNIFORM_INTEGER 1
+#define RADIAL_MASK_INTEGER 2
+#define UNIFORM_SCALAR 3
+#define RADIAL_FALLOFF_SCALAR 4
+#define PLANE_FALLOFF_SCALAR 5
+#define BOX_FALLOFF_SCALAR 6
+#define NOISE_SCALAR 7
+#define UNIFORM_VECTOR 8
+#define RADIAL_VECTOR 9
+#define RANDOM_VECTOR 10
+#define SUM_SCALAR 11
+#define SUM_VECTOR 12
+#define CONVERSION_FIELD 13
+#define CULLING_FIELD 14
+#define WAVE_SCALAR 15
+
+#define SET_ALWAYS 0
+#define SET_IFF_NOT_INTERIOR 1
+#define SET_IFF_NOT_EXTERIOR 2
+
+#define NONE_FALLOFF 0 
+#define FALLOFF_LINEAR 1
+#define FALLOFF_INVERSE 2
+#define FALLOFF_SQUARED 3
+#define FALLOFF_LOGARITHMIC 4
+
+#define MULTIPLY_OP 0
+#define DIVIDE_OP 1
+#define ADD_OP 2
+#define SUBTRACT_OP 3
+
+#define CULLING_INSIDE 0
+#define CULLING_OUTSIDE 1
+
+#define WAVE_COSINE 0
+#define WAVE_GAUSSIAN 1
+#define WAVE_FALLOFF 2
+#define WAVE_DECAY 3
+
+/* -----------------------------------------------------------------
+ * Quat utils
+ * -----------------------------------------------------------------
+ */
+
+float3 FieldRotateVectorByQuat(in float3 Vector, in float4 Quat)
+{
+	float3 T = 2.0 * cross(Quat.xyz, Vector);
+	return Vector + Quat.w * T + cross(Quat.xyz, T);
+}
+
+float3 FieldUnRotateVectorByQuat(in float3 Vector, in float4 Quat)
+{
+	float3 T = 2.0 * cross(Quat.xyz, Vector);
+	return Vector - Quat.w * T + cross(Quat.xyz, T);
+}
+
+/* -----------------------------------------------------------------
+ * Uniform Integer Field
+ * -----------------------------------------------------------------
+ */
+
+#define UNIFORM_INTEGER_MAGNITUDE 0
+
+void EvaluateUniformInteger(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = NodesParams[NodeOffset + UNIFORM_INTEGER_MAGNITUDE];
+}
+
+/* -----------------------------------------------------------------
+ * Radial Int Mask Field
+ * -----------------------------------------------------------------
+ */
+
+#define RADIAL_MASK_INTEGER_RADIUS 0
+#define RADIAL_MASK_INTEGER_POSITIONX 1
+#define RADIAL_MASK_INTEGER_POSITIONY 2
+#define RADIAL_MASK_INTEGER_POSITIONZ 3
+#define RADIAL_MASK_INTEGER_INTERIOR_VALUE 4
+#define RADIAL_MASK_INTEGER_EXTERIOR_VALUE 5
+#define RADIAL_MASK_INTEGER_SET_MASK_CONDITION 6
+
+void EvaluateRadialMaskInteger(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const float3 DeltaPosition = float3(NodesParams[NodeOffset + RADIAL_MASK_INTEGER_POSITIONX],
+										 NodesParams[NodeOffset + RADIAL_MASK_INTEGER_POSITIONY],
+										 NodesParams[NodeOffset + RADIAL_MASK_INTEGER_POSITIONZ]) - SamplePosition;
+	const float DistanceSquared = dot(DeltaPosition, DeltaPosition);
+	const int DeltaResult = (DistanceSquared < NodesParams[NodeOffset + RADIAL_MASK_INTEGER_RADIUS] *
+											 NodesParams[NodeOffset + RADIAL_MASK_INTEGER_RADIUS]) ?
+											 (int)NodesParams[NodeOffset + RADIAL_MASK_INTEGER_INTERIOR_VALUE]:
+											 (int)NodesParams[NodeOffset + RADIAL_MASK_INTEGER_EXTERIOR_VALUE];
+	const int MaskCondition = (int)NodesParams[NodeOffset + RADIAL_MASK_INTEGER_SET_MASK_CONDITION];
+	
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = (MaskCondition == SET_ALWAYS) ? DeltaResult :
+					 ((MaskCondition == SET_IFF_NOT_INTERIOR) && (SharedDatas[GFieldGroupThreadId][LocalIndex] != NodesParams[NodeOffset + RADIAL_MASK_INTEGER_INTERIOR_VALUE])) ? DeltaResult :
+					 ((MaskCondition == SET_IFF_NOT_EXTERIOR) && (SharedDatas[GFieldGroupThreadId][LocalIndex] != NodesParams[NodeOffset + RADIAL_MASK_INTEGER_EXTERIOR_VALUE])) ? DeltaResult : SharedDatas[GFieldGroupThreadId][LocalIndex];
+}
+
+/* -----------------------------------------------------------------
+ * Uniform Scalar Field
+ * -----------------------------------------------------------------
+ */
+
+#define UNIFORM_SCALAR_MAGNITUDE 0
+
+void EvaluateUniformScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = NodesParams[NodeOffset + UNIFORM_SCALAR_MAGNITUDE];
+}
+
+/* -----------------------------------------------------------------
+ * Common Falloff functions
+ * -----------------------------------------------------------------
+ */
+
+void SetFalloffValue(in int FieldFalloff, in float FieldMagnitude, in float DeltaDistance, out float OutNodeResult)
+{
+	if (FieldFalloff == NONE_FALLOFF)
+	{
+		OutNodeResult = FieldMagnitude;
+	}
+	else if (FieldFalloff == FALLOFF_LINEAR)
+	{
+		OutNodeResult = FieldMagnitude * DeltaDistance;
+	}
+	else if (FieldFalloff == FALLOFF_SQUARED)
+	{
+		OutNodeResult = FieldMagnitude * DeltaDistance * DeltaDistance;
+	}
+	else if (FieldFalloff == FALLOFF_INVERSE)
+	{
+		OutNodeResult = FieldMagnitude * 2.0 * (1.0 - 1.0 / (DeltaDistance+1.0));
+	}
+	else if (FieldFalloff == FALLOFF_LOGARITHMIC)
+	{
+		OutNodeResult = FieldMagnitude * log(DeltaDistance + 1.0) / log(2.0);
+	}
+	else
+	{
+		OutNodeResult = 0.0;
+	}
+}
+
+/* -----------------------------------------------------------------
+ * Wave Scalar Field
+ * -----------------------------------------------------------------
+ */
+
+#define WAVE_SCALAR_MAGNITUDE 0
+#define WAVE_SCALAR_POSITIONX 1
+#define WAVE_SCALAR_POSITIONY 2
+#define WAVE_SCALAR_POSITIONZ 3
+#define WAVE_SCALAR_WAVELENGTH 4
+#define WAVE_SCALAR_PERIOD 5
+#define WAVE_SCALAR_TIME 6
+#define WAVE_SCALAR_FUNCTION 7
+#define WAVE_SCALAR_FALLOFF 8
+
+static const float WAVE_PI = 3.14159265f;
+
+void EvaluateWaveScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex, in float MinLength)
+{
+	const float Distance = length(float3(NodesParams[NodeOffset + WAVE_SCALAR_POSITIONX],
+										 NodesParams[NodeOffset + WAVE_SCALAR_POSITIONY],
+										 NodesParams[NodeOffset + WAVE_SCALAR_POSITIONZ]) - SamplePosition);
+	
+	const float Wavelength = NodesParams[NodeOffset + WAVE_SCALAR_WAVELENGTH];
+	const float Velocity = Wavelength / NodesParams[NodeOffset + WAVE_SCALAR_PERIOD];
+	
+	const float Wavenumber = 2.0 * WAVE_PI / max(Wavelength, MinLength);
+	const float DeltaTime = max(TimeSeconds - NodesParams[NodeOffset + WAVE_SCALAR_TIME], 0.0);
+	const float Radius = Velocity * DeltaTime;
+	const float Phase = Wavenumber * (Distance - Radius);
+	
+	float Result = 0.0;
+	
+	const int Function = (int) NodesParams[NodeOffset + WAVE_SCALAR_FUNCTION];
+	const float Magnitude = NodesParams[NodeOffset + WAVE_SCALAR_MAGNITUDE];
+	
+	[branch]
+	if (Function == WAVE_GAUSSIAN)
+	{
+		Result = Magnitude * exp(-Phase * Phase);
+	}
+	else if (Function == WAVE_COSINE)
+	{
+		Result = Magnitude * cos(Phase);
+	}
+	else if (Function == WAVE_FALLOFF)
+	{
+		const int Falloff = (int) NodesParams[NodeOffset + WAVE_SCALAR_FALLOFF];
+		
+		if ((Distance < Radius) && (Radius > 0.0))
+		{
+			const float Fraction = (1.0 - Distance / Radius);
+			SetFalloffValue(Falloff, Magnitude, Fraction, Result);
+		}
+	}
+	else if (Function == WAVE_DECAY)
+	{
+		const float Decay = DeltaTime / NodesParams[NodeOffset + WAVE_SCALAR_PERIOD];
+		Result = Magnitude * exp(-Decay * Decay);
+
+	}
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = Result;
+}
+
+/* -----------------------------------------------------------------
+ * Radial Falloff Field
+ * -----------------------------------------------------------------
+ */
+
+#define RADIAL_FALLOFF_MAGNITUDE 0
+#define RADIAL_FALLOFF_MIN_RANGE 1
+#define RADIAL_FALLOFF_MAX_RANGE 2
+#define RADIAL_FALLOFF_DEFAULT 3
+#define RADIAL_FALLOFF_RADIUS 4
+#define RADIAL_FALLOFF_POSITIONX 5
+#define RADIAL_FALLOFF_POSITIONY 6
+#define RADIAL_FALLOFF_POSITIONZ 7
+#define RADIAL_FALLOFF_FALLOFF 8
+
+void EvaluateRadialFalloffScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	float ScalarDatas = NodesParams[NodeOffset + RADIAL_FALLOFF_DEFAULT];
+	const float DeltaRange = NodesParams[NodeOffset + RADIAL_FALLOFF_MAX_RANGE] - NodesParams[NodeOffset + RADIAL_FALLOFF_MIN_RANGE];
+
+	const float3 DeltaPosition = float3(NodesParams[NodeOffset + RADIAL_FALLOFF_POSITIONX],
+									    NodesParams[NodeOffset + RADIAL_FALLOFF_POSITIONY],
+										NodesParams[NodeOffset + RADIAL_FALLOFF_POSITIONZ]) - SamplePosition;
+	const float LocalDistance = length(DeltaPosition);
+	const float FieldRadius = NodesParams[NodeOffset + RADIAL_FALLOFF_RADIUS];
+	
+	if (FieldRadius > 0.0 && LocalDistance < FieldRadius)
+	{
+		const float DeltaDistance = 1.0 - LocalDistance / FieldRadius;
+
+		SetFalloffValue((int)NodesParams[NodeOffset + RADIAL_FALLOFF_FALLOFF],
+						1.0, DeltaDistance, ScalarDatas);
+		ScalarDatas = NodesParams[NodeOffset + RADIAL_FALLOFF_MAGNITUDE] * (NodesParams[NodeOffset + RADIAL_FALLOFF_MIN_RANGE] + ScalarDatas * DeltaRange);
+	}
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ScalarDatas;
+}
+
+/* -----------------------------------------------------------------
+ * Plane Falloff Field
+ * -----------------------------------------------------------------
+ */
+
+#define PLANE_FALLOFF_MAGNITUDE 0
+#define PLANE_FALLOFF_MIN_RANGE 1
+#define PLANE_FALLOFF_MAX_RANGE 2
+#define PLANE_FALLOFF_DEFAULT 3
+#define PLANE_FALLOFF_DISTANCE 4
+#define PLANE_FALLOFF_POSITIONX 5
+#define PLANE_FALLOFF_POSITIONY 6
+#define PLANE_FALLOFF_POSITIONZ 7
+#define PLANE_FALLOFF_NORMALX 8
+#define PLANE_FALLOFF_NORMALY 9
+#define PLANE_FALLOFF_NORMALZ 10
+#define PLANE_FALLOFF_FALLOFF 11
+
+void EvaluatePlaneFalloffScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	float ScalarDatas = NodesParams[NodeOffset + PLANE_FALLOFF_DEFAULT];
+	const float DeltaRange = NodesParams[NodeOffset + PLANE_FALLOFF_MAX_RANGE] - NodesParams[NodeOffset + PLANE_FALLOFF_MIN_RANGE];
+
+	const float3 PlaneBase = float3(NodesParams[NodeOffset + PLANE_FALLOFF_POSITIONX],
+								    NodesParams[NodeOffset + PLANE_FALLOFF_POSITIONY],
+								    NodesParams[NodeOffset + PLANE_FALLOFF_POSITIONZ]);
+
+	const float3 PlaneNormal = float3(NodesParams[NodeOffset + PLANE_FALLOFF_NORMALX],
+							          NodesParams[NodeOffset + PLANE_FALLOFF_NORMALY],
+								      NodesParams[NodeOffset + PLANE_FALLOFF_NORMALZ]);
+
+	const float PlaneOffset = dot(PlaneBase, PlaneNormal);
+
+	const float LocalDistance = dot(PlaneNormal, SamplePosition) - PlaneOffset;
+	const float PlaneDistance = NodesParams[NodeOffset + PLANE_FALLOFF_DISTANCE];
+
+	if (PlaneDistance > 0.0 && LocalDistance > -PlaneDistance && LocalDistance < 0.0)
+	{
+		const float DeltaDistance = 1.0 + LocalDistance / PlaneDistance;
+		
+		SetFalloffValue((int)NodesParams[NodeOffset + PLANE_FALLOFF_FALLOFF],
+						1.0, DeltaDistance, ScalarDatas);
+		ScalarDatas = NodesParams[NodeOffset + PLANE_FALLOFF_MAGNITUDE] * (NodesParams[NodeOffset + PLANE_FALLOFF_MIN_RANGE] + ScalarDatas * DeltaRange);
+	}
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ScalarDatas;
+}
+
+/* -----------------------------------------------------------------
+ * Box Falloff Field
+ * -----------------------------------------------------------------
+ */
+
+#define BOX_FALLOFF_MAGNITUDE 0
+#define BOX_FALLOFF_MIN_RANGE 1
+#define BOX_FALLOFF_MAX_RANGE 2
+#define BOX_FALLOFF_DEFAULT 3
+#define BOX_FALLOFF_ROTATIONX 4
+#define BOX_FALLOFF_ROTATIONY 5
+#define BOX_FALLOFF_ROTATIONZ 6
+#define BOX_FALLOFF_ROTATIONW 7
+#define BOX_FALLOFF_TRANSLATIONX 8
+#define BOX_FALLOFF_TRANSLATIONY 9
+#define BOX_FALLOFF_TRANSLATIONZ 10
+#define BOX_FALLOFF_SCALEX 11
+#define BOX_FALLOFF_SCALEY 12
+#define BOX_FALLOFF_SCALEZ 13
+#define BOX_FALLOFF_FALLOFF 14
+ 
+void EvaluateBoxFalloffScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	float ScalarDatas = NodesParams[NodeOffset + BOX_FALLOFF_DEFAULT];
+	const float HalfBox = 50.0;
+	
+	const float DeltaRange = NodesParams[NodeOffset + BOX_FALLOFF_MAX_RANGE] - NodesParams[NodeOffset + BOX_FALLOFF_MIN_RANGE];
+
+	const float4 BoxRotation = float4(NodesParams[NodeOffset + BOX_FALLOFF_ROTATIONX],
+								      NodesParams[NodeOffset + BOX_FALLOFF_ROTATIONY],
+								      NodesParams[NodeOffset + BOX_FALLOFF_ROTATIONZ],
+									  NodesParams[NodeOffset + BOX_FALLOFF_ROTATIONW]);
+
+	const float3 BoxTranslation = float3(NodesParams[NodeOffset + BOX_FALLOFF_TRANSLATIONX],
+							             NodesParams[NodeOffset + BOX_FALLOFF_TRANSLATIONY],
+								         NodesParams[NodeOffset + BOX_FALLOFF_TRANSLATIONZ]);
+
+	const float3 BoxScale = float3(NodesParams[NodeOffset + BOX_FALLOFF_SCALEX],
+							       NodesParams[NodeOffset + BOX_FALLOFF_SCALEY],
+								   NodesParams[NodeOffset + BOX_FALLOFF_SCALEZ]);
+
+	const float3 InverseScale = float3(BoxScale.x != 0.0 ? 1.0 / BoxScale.x : 0.0,
+										BoxScale.y != 0.0 ? 1.0 / BoxScale.y : 0.0,
+										BoxScale.z != 0.0 ? 1.0 / BoxScale.z : 0.0);
+
+	const float3 LocalPosition = FieldUnRotateVectorByQuat(SamplePosition - BoxTranslation, BoxRotation) * InverseScale;
+	
+	const float3 DeltaPosition = abs(LocalPosition) - float3(HalfBox, HalfBox, HalfBox);
+	const int ClosestAxis = ((DeltaPosition.x > DeltaPosition.y) && (DeltaPosition.x > DeltaPosition.z)) ? 0 : (DeltaPosition.y > DeltaPosition.z) ? 1 : 2;
+	const float OutsideDistance = length(max(DeltaPosition, 0.0));
+
+	const float LocalDistance = OutsideDistance + min(DeltaPosition[ClosestAxis], 0.0);
+
+	if (LocalDistance < 0.0)
+	{
+		const float DeltaDistance = -LocalDistance / HalfBox;
+		
+		SetFalloffValue((int)NodesParams[NodeOffset + BOX_FALLOFF_FALLOFF],
+						1.0,DeltaDistance, ScalarDatas);
+		ScalarDatas = NodesParams[NodeOffset + BOX_FALLOFF_MAGNITUDE] * (NodesParams[NodeOffset + BOX_FALLOFF_MIN_RANGE] + ScalarDatas * DeltaRange);
+	}
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ScalarDatas;
+}
+
+/* -----------------------------------------------------------------
+ * Noise Field
+ * -----------------------------------------------------------------
+ */
+
+#define NOISE_MIN_RANGE 0
+#define NOISE_MAX_RANGE 1
+#define NOISE_ROTATIONX 2
+#define NOISE_ROTATIONY 3
+#define NOISE_ROTATIONZ 4
+#define NOISE_ROTATIONW 5
+#define NOISE_TRANSLATIONX 6
+#define NOISE_TRANSLATIONY 7
+#define NOISE_TRANSLATIONZ 8
+#define NOISE_SCALEX 9
+#define NOISE_SCALEY 10
+#define NOISE_SCALEZ 11
+ 
+void EvaluateNoiseScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex, in float MinScale)
+{
+	const float4 NoiseRotation = float4(NodesParams[NodeOffset + NOISE_ROTATIONX],
+								        NodesParams[NodeOffset + NOISE_ROTATIONY],
+								        NodesParams[NodeOffset + NOISE_ROTATIONZ],
+									    NodesParams[NodeOffset + NOISE_ROTATIONW]);
+	
+	const float3 NoiseTranslation = float3(NodesParams[NodeOffset + NOISE_TRANSLATIONX],
+								           NodesParams[NodeOffset + NOISE_TRANSLATIONY],
+								           NodesParams[NodeOffset + NOISE_TRANSLATIONZ]);
+
+	float3 NoiseScale = float3(NodesParams[NodeOffset + NOISE_SCALEX],
+							         NodesParams[NodeOffset + NOISE_SCALEY],
+								     NodesParams[NodeOffset + NOISE_SCALEZ]);
+	
+	NoiseScale = 0.5 * max(NoiseScale, float3(MinScale, MinScale, MinScale));
+	
+	const float3 InverseScale = float3(NoiseScale.x != 0.0 ? 1.0 / NoiseScale.x : 0.0,
+										NoiseScale.y != 0.0 ? 1.0 / NoiseScale.y : 0.0,
+										NoiseScale.z != 0.0 ? 1.0 / NoiseScale.z : 0.0);
+
+	float3 LocalPosition = fmod(FieldUnRotateVectorByQuat(SamplePosition - NoiseTranslation, NoiseRotation), NoiseScale) * InverseScale;
+	LocalPosition = (clamp(LocalPosition, float3(-1.0,-1.0,-1.0), float3(1.0,1.0,1.0)) * 0.5 + float3(0.5,0.5,0.5)) * 255;
+
+	const float NoiseValue = PerlinNoise(LocalPosition) * 0.5 + 0.5; 
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = NoiseValue * (NodesParams[NodeOffset + NOISE_MAX_RANGE] -
+								  NodesParams[NodeOffset + NOISE_MIN_RANGE]) 
+				+ NodesParams[NodeOffset + NOISE_MIN_RANGE];
+}
+
+
+/* -----------------------------------------------------------------
+ * Uniform Vector Field
+ * -----------------------------------------------------------------
+ */
+
+#define UNIFORM_VECTOR_MAGNITUDE 0
+#define UNIFORM_VECTOR_DIRECTIONX 1
+#define UNIFORM_VECTOR_DIRECTIONY 2
+#define UNIFORM_VECTOR_DIRECTIONZ 3
+ 
+void EvaluateUniformVector(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const float3 VectorDatas = NodesParams[NodeOffset + UNIFORM_VECTOR_MAGNITUDE] * float3(
+										NodesParams[NodeOffset + UNIFORM_VECTOR_DIRECTIONX],
+								        NodesParams[NodeOffset + UNIFORM_VECTOR_DIRECTIONY],
+								        NodesParams[NodeOffset + UNIFORM_VECTOR_DIRECTIONZ]);
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.x;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.y;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.z;
+}
+
+/* -----------------------------------------------------------------
+ * Radial Vector Field
+ * -----------------------------------------------------------------
+ */
+
+#define RADIAL_VECTOR_MAGNITUDE 0
+#define RADIAL_VECTOR_POSITIONX 1
+#define RADIAL_VECTOR_POSITIONY 2
+#define RADIAL_VECTOR_POSITIONZ 3
+ 
+void EvaluateRadialVector(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const float3 RadialDirection = SamplePosition - float3(
+										NodesParams[NodeOffset + RADIAL_VECTOR_POSITIONX],
+								        NodesParams[NodeOffset + RADIAL_VECTOR_POSITIONY],
+								        NodesParams[NodeOffset + RADIAL_VECTOR_POSITIONZ]);
+	const float DirectionLength = length(RadialDirection);
+	const float3 VectorDatas = (DirectionLength != 0.0) ? NodesParams[NodeOffset + RADIAL_VECTOR_MAGNITUDE] *
+					RadialDirection / DirectionLength : float3(0, 0, 0);
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.x;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.y;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.z;
+}
+
+/* -----------------------------------------------------------------
+ * Random Vector Field
+ * -----------------------------------------------------------------
+ */
+
+#define RANDOM_VECTOR_MAGNITUDE 0
+ 
+void EvaluateRandomVector(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const float3 RadialDirection = float3(RandomVector(int3(SamplePosition))) / 0xffff - 0.5;//float3(Rand3DPCG16(int3(SamplePosition))) / 0xffff - 0.5;
+
+	const float DirectionLength = length(RadialDirection);
+	const float3 VectorDatas = (DirectionLength != 0.0) ? NodesParams[NodeOffset + RANDOM_VECTOR_MAGNITUDE] *
+					RadialDirection / DirectionLength : float3(0, 0, 0);
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.x;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.y;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.z;
+}
+
+/* -----------------------------------------------------------------
+ * Sum Scalar Field
+ * -----------------------------------------------------------------
+ */
+
+#define SUM_SCALAR_MAGNITUDE 0
+#define SUM_SCALAR_RIGHT 1
+#define SUM_SCALAR_LEFT 2
+#define SUM_SCALAR_OPERATION 3
+
+void EvaluateSumScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int HasRight = (int)NodesParams[NodeOffset + SUM_SCALAR_RIGHT];
+	const int HasLeft = (int)NodesParams[NodeOffset + SUM_SCALAR_LEFT];
+
+	LocalIndex -= HasRight + HasLeft;
+
+	const int FieldOperation = (int)NodesParams[NodeOffset + SUM_SCALAR_OPERATION];
+	const bool UnitOperation = (FieldOperation == MULTIPLY_OP) || (FieldOperation == DIVIDE_OP);
+
+	int OffsetIndex = LocalIndex;
+	const float ScalarRight = HasRight ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : UnitOperation ? 1.0 : 0.0;
+	OffsetIndex += HasRight;
+	const float ScalarLeft = HasLeft ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : UnitOperation ? 1.0 : 0.0;
+
+	float ScalarDatas = 0.0;
+	if (FieldOperation == MULTIPLY_OP)
+	{
+		ScalarDatas = ScalarRight * ScalarLeft;
+	}
+	else if (FieldOperation == DIVIDE_OP)
+	{
+		ScalarDatas = ScalarLeft / ScalarRight;
+	}
+	else if (FieldOperation == ADD_OP)
+	{
+		ScalarDatas = ScalarRight + ScalarLeft;
+	}
+	else if (FieldOperation == SUBTRACT_OP)
+	{
+		ScalarDatas = ScalarLeft - ScalarRight;
+	}
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ScalarDatas * NodesParams[NodeOffset + SUM_SCALAR_MAGNITUDE];
+}
+
+/* -----------------------------------------------------------------
+ * Sum Vector Field
+ * -----------------------------------------------------------------
+ */
+
+#define SUM_VECTOR_MAGNITUDE 0
+#define SUM_VECTOR_SCALAR 1
+#define SUM_VECTOR_RIGHT 2
+#define SUM_VECTOR_LEFT 3
+#define SUM_VECTOR_OPERATION 4
+
+void EvaluateSumVector(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int HasScalar = (int)NodesParams[NodeOffset + SUM_VECTOR_SCALAR];
+	const int HasRight = (int)NodesParams[NodeOffset + SUM_VECTOR_RIGHT];
+	const int HasLeft = (int)NodesParams[NodeOffset + SUM_VECTOR_LEFT];
+
+	LocalIndex -= HasScalar + HasRight * 3 + HasLeft * 3;
+
+	const int FieldOperation = (int)NodesParams[NodeOffset + SUM_VECTOR_OPERATION];
+	const bool UnitOperation = (FieldOperation == MULTIPLY_OP) || (FieldOperation == DIVIDE_OP);
+
+	int OffsetIndex = LocalIndex;
+	const float ScalarMagnitude = HasScalar ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : 1.0;
+	OffsetIndex += HasScalar;
+	const float3 VectorRight = HasRight ? float3(SharedDatas[GFieldGroupThreadId][OffsetIndex], SharedDatas[GFieldGroupThreadId][OffsetIndex + 1], SharedDatas[GFieldGroupThreadId][OffsetIndex + 2]) : UnitOperation ? float3(1, 1, 1) : float3(0, 0, 0);
+	OffsetIndex += HasRight * 3;
+	const float3 VectorLeft = HasLeft ? float3(SharedDatas[GFieldGroupThreadId][OffsetIndex], SharedDatas[GFieldGroupThreadId][OffsetIndex + 1], SharedDatas[GFieldGroupThreadId][OffsetIndex + 2]) : UnitOperation ? float3(1, 1, 1) : float3(0, 0, 0);
+
+	float3 VectorDatas = float3(0.0, 0.0, 0.0);
+	if (FieldOperation == MULTIPLY_OP)
+	{
+		VectorDatas = VectorRight * VectorLeft;
+	}
+	else if (FieldOperation == DIVIDE_OP)
+	{
+		VectorDatas = VectorLeft / VectorRight;
+	}
+	else if (FieldOperation == ADD_OP)
+	{
+		VectorDatas = VectorRight + VectorLeft;
+	}
+	else if (FieldOperation == SUBTRACT_OP)
+	{
+		VectorDatas = VectorLeft - VectorRight;
+	}
+
+	VectorDatas *= ScalarMagnitude * NodesParams[NodeOffset + SUM_VECTOR_MAGNITUDE];
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.x;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.y;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = VectorDatas.z;
+}
+
+/* -----------------------------------------------------------------
+ * Conversion Scalar
+ * -----------------------------------------------------------------
+ */
+#define CONVERSION_INPUT 0
+
+void EvaluateConversionScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	// conversion in the same LocalIndex
+}
+
+/* -----------------------------------------------------------------
+ * Conversion Integer
+ * -----------------------------------------------------------------
+ */
+
+void EvaluateConversionInteger(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	// conversion in the same LocalIndex
+}
+
+/* -----------------------------------------------------------------
+ * Culling Integer
+ * -----------------------------------------------------------------
+ */
+
+#define CULLING_SCALAR 0
+#define CULLING_INPUT 1
+#define CULLING_OPERATION 2
+
+void EvaluateCullingInteger(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int HasScalar = (int)NodesParams[NodeOffset + CULLING_SCALAR];
+	const int HasInput = (int)NodesParams[NodeOffset + CULLING_INPUT];
+
+	LocalIndex -= HasScalar + HasInput;
+
+	int OffsetIndex = LocalIndex;
+	const float CullingScalar = HasScalar ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : 0.0;
+	OffsetIndex += (int)CullingScalar;
+	const int InputInteger = HasInput ? (int) SharedDatas[GFieldGroupThreadId][OffsetIndex] : 0;
+
+	const int CullingOperation = (int)NodesParams[NodeOffset + CULLING_OPERATION];
+	const bool ValidSample = ((CullingOperation == CULLING_OUTSIDE) && (CullingScalar != 0.0)) ||
+							 ((CullingOperation == CULLING_INSIDE) && (CullingScalar == 0.0));
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = (float) (ValidSample ? InputInteger : 0);
+}
+
+/* -----------------------------------------------------------------
+ * Culling Scalar
+ * -----------------------------------------------------------------
+ */
+
+void EvaluateCullingScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int HasScalar = (int)NodesParams[NodeOffset + CULLING_SCALAR];
+	const int HasInput = (int) NodesParams[NodeOffset + CULLING_INPUT];
+
+	LocalIndex -= HasScalar + HasInput;
+
+	int OffsetIndex = LocalIndex;
+	const float CullingScalar = HasScalar ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : 0.0;
+	OffsetIndex += (int)CullingScalar;
+	const float InputScalar = HasInput ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : 0.0;
+
+	const int CullingOperation = (int)NodesParams[NodeOffset + CULLING_OPERATION];
+	const bool ValidSample = ((CullingOperation == CULLING_OUTSIDE) && (CullingScalar != 0.0)) ||
+							 ((CullingOperation == CULLING_INSIDE) && (CullingScalar == 0.0));
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ValidSample ? InputScalar : 0.0;
+}
+
+/* -----------------------------------------------------------------
+ * Culling Vector
+ * -----------------------------------------------------------------
+ */
+
+void EvaluateCullingVector(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int HasScalar = (int)NodesParams[NodeOffset + CULLING_SCALAR];
+	const int HasInput = (int)NodesParams[NodeOffset + CULLING_INPUT];
+
+	LocalIndex -= HasScalar + HasInput * 3;
+
+	int OffsetIndex = LocalIndex;
+	const float CullingScalar = HasScalar ? SharedDatas[GFieldGroupThreadId][OffsetIndex] : 0.0;
+	OffsetIndex += (int)CullingScalar;
+	const float3 InputVector = HasInput ? float3(SharedDatas[GFieldGroupThreadId][OffsetIndex], SharedDatas[GFieldGroupThreadId][OffsetIndex + 1], SharedDatas[GFieldGroupThreadId][OffsetIndex + 2]) : float3(0, 0, 0);
+
+	const int CullingOperation = (int)NodesParams[NodeOffset + CULLING_OPERATION];
+	const bool ValidSample = ((CullingOperation == CULLING_OUTSIDE) && (CullingScalar != 0.0)) ||
+							 ((CullingOperation == CULLING_INSIDE) && (CullingScalar == 0.0));
+
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ValidSample ? InputVector.x : 0.0;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ValidSample ? InputVector.y : 0.0;
+	SharedDatas[GFieldGroupThreadId][LocalIndex++] = ValidSample ? InputVector.z : 0.0;
+}
+
+/* -----------------------------------------------------------------
+ * Nodes evaluation
+ * -----------------------------------------------------------------
+ */
+
+void EvaluateFieldNodeInteger(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int NodeType = (int)NodesParams[NodeOffset];
+
+	[branch]
+	if (NodeType == UNIFORM_INTEGER)
+	{
+		EvaluateUniformInteger(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == RADIAL_MASK_INTEGER)
+	{
+		EvaluateRadialMaskInteger(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == CONVERSION_FIELD)
+	{
+		EvaluateConversionInteger(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == CULLING_FIELD)
+	{
+		EvaluateCullingInteger(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+}
+
+void EvaluateFieldNodeScalar(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex, in float MinScale, in float MinLength)
+{
+	const int NodeType = (int)NodesParams[NodeOffset];
+
+	[branch]
+	if (NodeType == UNIFORM_SCALAR)
+	{
+		EvaluateUniformScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == WAVE_SCALAR)
+	{
+		EvaluateWaveScalar(SamplePosition, NodeOffset + 1, LocalIndex, MinLength);
+	}
+	else if (NodeType == RADIAL_FALLOFF_SCALAR)
+	{
+		EvaluateRadialFalloffScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == PLANE_FALLOFF_SCALAR)
+	{
+		EvaluatePlaneFalloffScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == BOX_FALLOFF_SCALAR)
+	{
+		EvaluateBoxFalloffScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == NOISE_SCALAR)
+	{
+		EvaluateNoiseScalar(SamplePosition, NodeOffset + 1, LocalIndex, MinScale);
+	}
+	else if (NodeType == SUM_SCALAR)
+	{
+		EvaluateSumScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == CONVERSION_FIELD)
+	{
+		EvaluateConversionScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == CULLING_FIELD)
+	{
+		EvaluateCullingScalar(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+}
+
+void EvaluateFieldNodeVector(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex)
+{
+	const int NodeType = (int)NodesParams[NodeOffset];
+
+	[branch]
+	if (NodeType == UNIFORM_VECTOR)
+	{
+		EvaluateUniformVector(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == RADIAL_VECTOR)
+	{
+		EvaluateRadialVector(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == RANDOM_VECTOR)
+	{
+		EvaluateRandomVector(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == SUM_VECTOR)
+	{
+		EvaluateSumVector(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (NodeType == CULLING_FIELD)
+	{
+		EvaluateCullingVector(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+}
+
+void EvaluateFieldNodeDatas(in float3 SamplePosition, in int NodeOffset, inout int LocalIndex, in float MinScale, in float MinLength)
+{
+	const int DatasType = (int)NodesParams[NodeOffset];
+
+	[branch]
+	if (DatasType == SCALAR_TYPE)
+	{
+		EvaluateFieldNodeScalar(SamplePosition, NodeOffset + 1, LocalIndex, MinScale, MinLength);
+	}
+	else if (DatasType == INTEGER_TYPE)
+	{
+		EvaluateFieldNodeInteger(SamplePosition, NodeOffset + 1, LocalIndex);
+	}
+	else if (DatasType == VECTOR_TYPE)
+	{
+		EvaluateFieldNodeVector(SamplePosition, NodeOffset + 1,  LocalIndex);
+	}
+}
+
+void SampleFieldDatas(in float3 SamplePosition, inout int LocalIndex, in int TargetType, in float MinScale, in float MinLength)
+{
+	const int NodesBegin = TargetsOffsets[TargetType];
+	const int NodesEnd = TargetsOffsets[TargetType + 1];
+	const int NumNodes = NodesBegin - NodesEnd;
+
+	[unroll]
+	for (int DatasIndex = 0; DatasIndex < MAX_DATAS; ++DatasIndex)
+	{
+		SharedDatas[GFieldGroupThreadId][DatasIndex] = 0.0;
+	}
+	[branch]
+	if (NumNodes != 0)
+	{
+		for (int NodeIndex = NodesBegin; NodeIndex < NodesEnd; ++NodeIndex)
+		{
+			const int NodeOffset = NodesOffsets[NodeIndex];
+			EvaluateFieldNodeDatas(SamplePosition, NodeOffset, LocalIndex, MinScale, MinLength);
+		}
+	}
+}
+
+float3 PhysicsField_EvalPhysicsVectorField(in float3 SamplePosition, in int TargetIndex)
+{
+	float3 VectorField = float3(0,0,0);
+
+	int LocalIndex = 0;
+	SampleFieldDatas(SamplePosition, LocalIndex, TargetIndex, 0.0, 0.0);
+
+	if(LocalIndex == 3)
+	{
+		VectorField.x = SharedDatas[GFieldGroupThreadId][0];
+		VectorField.y = SharedDatas[GFieldGroupThreadId][1];
+		VectorField.z = SharedDatas[GFieldGroupThreadId][2];
+	}
+	return VectorField;
+}
+
+float PhysicsField_EvalPhysicsScalarField(in float3 SamplePosition, in int TargetIndex)
+{
+	float ScalarField = 0.0;
+
+	int LocalIndex = 0;
+	SampleFieldDatas(SamplePosition, LocalIndex, TargetIndex, 0.0, 0.0);
+
+	if(LocalIndex == 1)
+	{
+		ScalarField = SharedDatas[GFieldGroupThreadId][0];
+	}
+	return ScalarField;
+}
+
+int PhysicsField_EvalPhysicsIntegerField(in float3 SamplePosition, in int TargetIndex)
+{
+	int IntegerField = 0;
+
+	int LocalIndex = 0;
+	SampleFieldDatas(SamplePosition, LocalIndex, TargetIndex, 0.0, 0.0);
+
+	if(LocalIndex == 1)
+	{
+		IntegerField = SharedDatas[GFieldGroupThreadId][0];
+	}
+	return IntegerField;
+}
+

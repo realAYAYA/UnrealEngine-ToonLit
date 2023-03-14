@@ -1,0 +1,101 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../MonteCarlo.ush"
+#include "HairStrandsClusterCommon.ush"
+
+uint VertexStart;
+uint VertexCount;
+uint DispatchCountX;
+
+Buffer<uint4>  	 PositionBuffer;
+RWBuffer<float4> OutputTangentBuffer;
+
+uint			HairStrandsVF_bIsCullingEnable;
+
+#if PERMUTATION_CULLING == 1
+Buffer<uint>	HairStrandsVF_CullingIndirectBuffer;
+Buffer<uint>	HairStrandsVF_CullingIndexBuffer;
+Buffer<uint>	IndirectBufferArgs;
+#endif
+
+#if PERMUTATION_GROUP_SIZE == 64
+	#define GROUP_SIZE 64
+#elif PERMUTATION_GROUP_SIZE == 32
+	#define GROUP_SIZE 32
+#else
+	#error Unknown group size	
+#endif
+
+float4 PackNormal(float3 V, uint A)
+{
+	return float4(clamp(V,float(-1).xxx,float(1).xxx), 1.0f);
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	const int MaxVertexCount = VertexStart + int(VertexCount);
+	int IndexCurr = VertexStart + GetHairStrandsVertexFetchIndex(DispatchThreadId, GROUP_SIZE, DispatchCountX);
+	int IndexPrev = clamp(IndexCurr-1, 0, MaxVertexCount-1);
+	int IndexNext = clamp(IndexCurr+1, 0, MaxVertexCount-1);
+	bool bValid = IndexCurr < MaxVertexCount;
+#if PERMUTATION_CULLING
+	if (HairStrandsVF_bIsCullingEnable)
+	{
+		const int FetchIndex = GetHairStrandsVertexFetchIndex_Culled(DispatchThreadId, GROUP_SIZE);
+		const int VertexCountAfterCulling = clamp((int)HairStrandsVF_CullingIndirectBuffer[3], 0, MaxVertexCount);
+		bValid = false;
+		if (FetchIndex < VertexCountAfterCulling)
+		{
+			const int FetchIndexPrev = clamp(FetchIndex-1, 0, VertexCountAfterCulling-1);
+			const int FetchIndexCurr = clamp(FetchIndex  , 0, VertexCountAfterCulling-1);
+			const int FetchIndexNext = clamp(FetchIndex+1, 0, VertexCountAfterCulling-1);
+
+			IndexPrev = HairStrandsVF_CullingIndexBuffer[FetchIndexPrev];
+			IndexCurr = HairStrandsVF_CullingIndexBuffer[FetchIndexCurr];
+			IndexNext = HairStrandsVF_CullingIndexBuffer[FetchIndexNext];
+
+			bValid = true;
+		}
+	}
+#endif
+
+	if (IndexCurr < MaxVertexCount)
+	{
+		const uint4 DataCurr = PositionBuffer[IndexCurr];
+		const uint4 DataPrev = PositionBuffer[IndexPrev];
+		const uint4 DataNext = PositionBuffer[IndexNext];
+
+		const float3 PCurr = f16tof32(DataCurr.xyz);
+		float3 PPrev = f16tof32(DataPrev.xyz);
+		float3 PNext = f16tof32(DataNext.xyz);
+
+		// For more details about the vertex type, see StrandHairVertexFactor.ush
+		const uint TypeCurr = asuint(DataCurr.a) & 0x3;
+		const uint TypePrev = asuint(DataPrev.a) & 0x3;
+		const uint TypeNext = asuint(DataNext.a) & 0x3;
+
+		float3 T0 = 0;
+		const bool bIsPrevValid = TypePrev == 0 || TypePrev == 1;
+		if (bIsPrevValid)
+		{
+			T0 = normalize(PCurr - PPrev);
+		}
+
+		float3 T1 = 0;
+		const bool bIsNextValid = TypeNext == 0 || TypeNext == 2;
+		if (bIsNextValid)
+		{
+			T1 = normalize(PNext - PCurr);
+		}
+
+		const float3 T = normalize(T0 + T1);
+
+		// TODO: switch to rotation minimizing frames to avoid the discontinuity
+		float3x3 Basis = GetTangentBasis(T);
+
+		OutputTangentBuffer[IndexCurr*2]   = PackNormal(Basis[0], 0);
+		OutputTangentBuffer[IndexCurr*2+1] = PackNormal(Basis[2], 127);
+	}
+}

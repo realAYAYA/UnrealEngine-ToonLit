@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--GameSDK plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- init section is always evaluated once per architecture -->
+	<init>
+		<log text="GoogleGameSDK Android init"/>
+		<setBoolFromProperty result="bIncludeMemAdvisor" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="bEnableGameSDKMemAdvisor" default="false"/>
+	</init>
+	
+	<gameActivityImportAdditions>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+import com.google.android.apps.internal.games.memoryadvice.MemoryAdvisor;
+import com.google.android.apps.internal.games.memoryadvice.MemoryWatcher;
+				</insert>
+			</true>
+		</if>
+	</gameActivityImportAdditions>
+
+	<gameActivityPostConfigRulesAdditions>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+					<![CDATA[
+// --- GoogleGameSDK gameActivityPostConfigRulesAdditions---
+String memAdvisorEnableVar = "enableMemAdvisor";
+if(variables.containsKey(memAdvisorEnableVar) && variables.get(memAdvisorEnableVar).equals("true"))
+{
+	memoryAdvisor = new MemoryAdvisor(this);
+	String memAdvisorEnableDumpInfoVar = "memAdvisorEnableDumpInfo";
+	boolean bDumpMemAdvisorInfoToLog = variables.containsKey(memAdvisorEnableDumpInfoVar) && variables.get(memAdvisorEnableDumpInfoVar).equals("true");
+	InitMemoryAdvisor(bDumpMemAdvisorInfoToLog, null);
+}
+// --- GoogleGameSDK gameActivityPostConfigRulesAdditions---
+					]]>
+				</insert>
+			</true>
+		</if>
+	</gameActivityPostConfigRulesAdditions>
+
+	<gameActivityClassAdditions>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+					<![CDATA[
+private MemoryAdvisor memoryAdvisor;
+private MemoryWatcher memoryWatcher;
+private boolean verboseLogging = false;
+void InitMemoryAdvisor(boolean dumpMemAdviceDataToLog, String MemAdviceDataDumpFilePath) 
+{
+	Map<String, Object> advice = memoryAdvisor.getAdvice();
+	Map<String, Object> deviceInfo = memoryAdvisor.getDeviceInfo();
+				
+	if( dumpMemAdviceDataToLog )
+	{
+		Log.debug("MemAdvice device info json :"+new JSONObject(deviceInfo).toString());
+		if( MemAdviceDataDumpFilePath != null)
+		{
+			try(FileWriter out = new FileWriter(new File(MemAdviceDataDumpFilePath, "memdeviceinfo.json")))
+			{
+				out.write(new JSONObject(deviceInfo).toString());
+			}
+			catch(Exception e)
+			{
+				Log.debug("MemAdvice failed to write device info "+e.toString());
+			}
+		}
+	}				
+	memoryWatcher =
+	new MemoryWatcher(memoryAdvisor, 1000, new MemoryWatcher.DefaultClient() 
+	{
+		@Override
+		public void receiveAdvice(Map<String, Object> advice) 
+		{
+			if(verboseLogging)
+			{
+				Log.debug("MemAdvice "+advice.toString());					
+			}
+		}
+					
+		@Override
+		public void newState(MemoryAdvisor.MemoryState memoryState)
+		{
+			Log.debug("MemAdvice new state "+memoryState.toString());
+			SetCrashContextData("UE.Android.GoogleMemAdvice", memoryState.toString());
+		}
+	});
+}
+					]]>
+				</insert>
+			</true>
+		</if>
+	</gameActivityClassAdditions>
+	<baseBuildGradleAdditions>
+		<insert>
+allprojects 
+{
+	repositories 
+	{
+		</insert>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+		google()
+		mavenCentral()
+		maven 
+		{
+			url 'https://jitpack.io'
+		}
+				</insert>
+			</true>
+		</if>
+		<insert>
+		repositories
+		{
+			flatDir
+			{
+		</insert>
+		<insertValue value="dirs '$S(AbsPluginDir)/gamesdk/aar'"/>
+		<insertNewline/>
+		<insert>
+			}
+		}
+	}
+}
+		</insert>
+	</baseBuildGradleAdditions>
+
+	<buildGradleAdditions>
+		<if condition="bIncludeMemAdvisor">
+			<true>
+				<insert>
+android
+{
+	compileOptions
+	{
+		sourceCompatibility JavaVersion.VERSION_1_8
+		targetCompatibility JavaVersion.VERSION_1_8
+	}
+}
+dependencies
+{
+	implementation 'com.google.android.games:memory-advice:0.24'
+}
+				</insert>
+			</true>
+		</if>
+		<insert>
+dependencies.implementation(name: 'aar', ext: 'aar')
+		</insert>
+	</buildGradleAdditions>
+</root>

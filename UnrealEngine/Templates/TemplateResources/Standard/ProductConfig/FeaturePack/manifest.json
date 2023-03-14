@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "ProductConfig.png",
+	"Screenshots":
+	[
+		"ProductConfig_Preview.png"
+	],
+	"Ident": "ProductConfigStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "ProductConfig",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/ProductConfig/Content/*.*"
+		]
+	}
+}
+

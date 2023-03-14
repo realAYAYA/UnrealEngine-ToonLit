@@ -1,0 +1,3908 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+// generated
+#ifndef _SYMS_META_CV_H
+#define _SYMS_META_CV_H
+//~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:885
+#pragma pack(push,1)
+typedef struct SYMS_CvGuid{
+SYMS_U32 data1;
+SYMS_U16 data2;
+SYMS_U16 data3;
+SYMS_U32 data4;
+SYMS_U32 data5;
+} SYMS_CvGuid;
+typedef SYMS_U8 SYMS_CvBasicType;
+enum{
+SYMS_CvBasicType_NOTYPE = 0x00,
+SYMS_CvBasicType_ABS = 0x01,
+SYMS_CvBasicType_SEGMENT = 0x02,
+SYMS_CvBasicType_VOID = 0x03,
+SYMS_CvBasicType_CURRENCY = 0x04,
+SYMS_CvBasicType_NBASICSTR = 0x05,
+SYMS_CvBasicType_FBASICSTR = 0x06,
+SYMS_CvBasicType_NOTTRANS = 0x07,
+SYMS_CvBasicType_HRESULT = 0x08,
+SYMS_CvBasicType_CHAR = 0x10,
+SYMS_CvBasicType_SHORT = 0x11,
+SYMS_CvBasicType_LONG = 0x12,
+SYMS_CvBasicType_QUAD = 0x13,
+SYMS_CvBasicType_OCT = 0x14,
+SYMS_CvBasicType_UCHAR = 0x20,
+SYMS_CvBasicType_USHORT = 0x21,
+SYMS_CvBasicType_ULONG = 0x22,
+SYMS_CvBasicType_UQUAD = 0x23,
+SYMS_CvBasicType_UOCT = 0x24,
+SYMS_CvBasicType_BOOL8 = 0x30,
+SYMS_CvBasicType_BOOL16 = 0x31,
+SYMS_CvBasicType_BOOL32 = 0x32,
+SYMS_CvBasicType_BOOL64 = 0x33,
+SYMS_CvBasicType_FLOAT32 = 0x40,
+SYMS_CvBasicType_FLOAT64 = 0x41,
+SYMS_CvBasicType_FLOAT80 = 0x42,
+SYMS_CvBasicType_FLOAT128 = 0x43,
+SYMS_CvBasicType_FLOAT48 = 0x44,
+SYMS_CvBasicType_FLOAT32PP = 0x45,
+SYMS_CvBasicType_FLOAT16 = 0x46,
+SYMS_CvBasicType_COMPLEX32 = 0x50,
+SYMS_CvBasicType_COMPLEX64 = 0x51,
+SYMS_CvBasicType_COMPLEX80 = 0x52,
+SYMS_CvBasicType_COMPLEX128 = 0x53,
+SYMS_CvBasicType_BIT = 0x60,
+SYMS_CvBasicType_PASCHAR = 0x61,
+SYMS_CvBasicType_BOOL32FF = 0x62,
+SYMS_CvBasicType_INT8 = 0x68,
+SYMS_CvBasicType_UINT8 = 0x69,
+SYMS_CvBasicType_RCHAR = 0x70,
+SYMS_CvBasicType_WCHAR = 0x71,
+SYMS_CvBasicType_INT16 = 0x72,
+SYMS_CvBasicType_UINT16 = 0x73,
+SYMS_CvBasicType_INT32 = 0x74,
+SYMS_CvBasicType_UINT32 = 0x75,
+SYMS_CvBasicType_INT64 = 0x76,
+SYMS_CvBasicType_UINT64 = 0x77,
+SYMS_CvBasicType_INT128 = 0x78,
+SYMS_CvBasicType_UINT128 = 0x79,
+SYMS_CvBasicType_CHAR16 = 0x7a,
+SYMS_CvBasicType_CHAR32 = 0x7b,
+SYMS_CvBasicType_CHAR8 = 0x7c,
+SYMS_CvBasicType_PTR = 0xf0,
+SYMS_CvBasicType_COUNT = 53
+};
+typedef SYMS_U8 SYMS_CvBasicPointerKind;
+enum{
+SYMS_CvBasicPointerKind_VALUE = 0x0,
+SYMS_CvBasicPointerKind_16BIT = 0x1,
+SYMS_CvBasicPointerKind_FAR_16BIT = 0x2,
+SYMS_CvBasicPointerKind_HUGE_16BIT = 0x3,
+SYMS_CvBasicPointerKind_32BIT = 0x4,
+SYMS_CvBasicPointerKind_16_32BIT = 0x5,
+SYMS_CvBasicPointerKind_64BIT = 0x6,
+SYMS_CvBasicPointerKind_COUNT = 7
+};
+typedef SYMS_U16 SYMS_CvArch;
+enum{
+SYMS_CvArch_8080 = 0x00,
+SYMS_CvArch_8086 = 0x01,
+SYMS_CvArch_80286 = 0x02,
+SYMS_CvArch_80386 = 0x03,
+SYMS_CvArch_80486 = 0x04,
+SYMS_CvArch_PENTIUM = 0x05,
+SYMS_CvArch_PENTIUMII = 0x06,
+SYMS_CvArch_PENTIUMPRO = SYMS_CvArch_PENTIUMII,
+SYMS_CvArch_PENTIUMIII = 0x07,
+SYMS_CvArch_MIPS = 0x10,
+SYMS_CvArch_MIPSR4000 = SYMS_CvArch_MIPS,
+SYMS_CvArch_MIPS16 = 0x11,
+SYMS_CvArch_MIPS32 = 0x12,
+SYMS_CvArch_MIPS64 = 0x13,
+SYMS_CvArch_MIPSI = 0x14,
+SYMS_CvArch_MIPSII = 0x15,
+SYMS_CvArch_MIPSIII = 0x16,
+SYMS_CvArch_MIPSIV = 0x17,
+SYMS_CvArch_MIPSV = 0x18,
+SYMS_CvArch_M68000 = 0x20,
+SYMS_CvArch_M68010 = 0x21,
+SYMS_CvArch_M68020 = 0x22,
+SYMS_CvArch_M68030 = 0x23,
+SYMS_CvArch_M68040 = 0x24,
+SYMS_CvArch_ALPHA = 0x30,
+SYMS_CvArch_ALPHA_21064 = SYMS_CvArch_ALPHA,
+SYMS_CvArch_ALPHA_21164 = 0x31,
+SYMS_CvArch_ALPHA_21164A = 0x32,
+SYMS_CvArch_ALPHA_21264 = 0x33,
+SYMS_CvArch_ALPHA_21364 = 0x34,
+SYMS_CvArch_PPC601 = 0x40,
+SYMS_CvArch_PPC603 = 0x41,
+SYMS_CvArch_PPC604 = 0x42,
+SYMS_CvArch_PPC620 = 0x43,
+SYMS_CvArch_PPCFP = 0x44,
+SYMS_CvArch_PPCBE = 0x45,
+SYMS_CvArch_SH3 = 0x50,
+SYMS_CvArch_SH3E = 0x51,
+SYMS_CvArch_SH3DSP = 0x52,
+SYMS_CvArch_SH4 = 0x53,
+SYMS_CvArch_SHMEDIA = 0x54,
+SYMS_CvArch_ARM3 = 0x60,
+SYMS_CvArch_ARM4 = 0x61,
+SYMS_CvArch_ARM4T = 0x62,
+SYMS_CvArch_ARM5 = 0x63,
+SYMS_CvArch_ARM5T = 0x64,
+SYMS_CvArch_ARM6 = 0x65,
+SYMS_CvArch_ARM_XMAC = 0x66,
+SYMS_CvArch_ARM_WMMX = 0x67,
+SYMS_CvArch_ARM7 = 0x68,
+SYMS_CvArch_OMNI = 0x70,
+SYMS_CvArch_IA64 = 0x80,
+SYMS_CvArch_IA64_1 = 0x80,
+SYMS_CvArch_IA64_2 = 0x81,
+SYMS_CvArch_CEE = 0x90,
+SYMS_CvArch_AM33 = 0xA0,
+SYMS_CvArch_M32R = 0xB0,
+SYMS_CvArch_TRICORE = 0xC0,
+SYMS_CvArch_X64 = 0xD0,
+SYMS_CvArch_AMD64 = SYMS_CvArch_X64,
+SYMS_CvArch_EBC = 0xE0,
+SYMS_CvArch_THUMB = 0xF0,
+SYMS_CvArch_ARMNT = 0xF4,
+SYMS_CvArch_ARM64 = 0xF6,
+SYMS_CvArch_D3D11_SHADER = 0x100,
+SYMS_CvArch_COUNT = 65
+};
+typedef SYMS_U16 SYMS_CvAllReg;
+enum{
+SYMS_CvAllReg_ERR = 30000,
+SYMS_CvAllReg_TEB = 30001,
+SYMS_CvAllReg_TIMER = 30002,
+SYMS_CvAllReg_EFAD1 = 30003,
+SYMS_CvAllReg_EFAD2 = 30004,
+SYMS_CvAllReg_EFAD3 = 30005,
+SYMS_CvAllReg_VFRAME = 30006,
+SYMS_CvAllReg_HANDLE = 30007,
+SYMS_CvAllReg_PARAMS = 30008,
+SYMS_CvAllReg_LOCALS = 30009,
+SYMS_CvAllReg_TID = 30010,
+SYMS_CvAllReg_ENV = 30011,
+SYMS_CvAllReg_CMDLN = 30012,
+SYMS_CvAllReg_COUNT = 13
+};
+typedef SYMS_U16 SYMS_CvRegx86;
+enum{
+//         CODE REG-ID BYTE-OFFSET BYTE-SIZE
+SYMS_CvRegx86_NONE = 0,
+SYMS_CvRegx86_AL = 1,
+SYMS_CvRegx86_CL = 2,
+SYMS_CvRegx86_DL = 3,
+SYMS_CvRegx86_BL = 4,
+SYMS_CvRegx86_AH = 5,
+SYMS_CvRegx86_CH = 6,
+SYMS_CvRegx86_DH = 7,
+SYMS_CvRegx86_BH = 8,
+SYMS_CvRegx86_AX = 9,
+SYMS_CvRegx86_CX = 10,
+SYMS_CvRegx86_DX = 11,
+SYMS_CvRegx86_BX = 12,
+SYMS_CvRegx86_SP = 13,
+SYMS_CvRegx86_BP = 14,
+SYMS_CvRegx86_SI = 15,
+SYMS_CvRegx86_DI = 16,
+SYMS_CvRegx86_EAX = 17,
+SYMS_CvRegx86_ECX = 18,
+SYMS_CvRegx86_EDX = 19,
+SYMS_CvRegx86_EBX = 20,
+SYMS_CvRegx86_ESP = 21,
+SYMS_CvRegx86_EBP = 22,
+SYMS_CvRegx86_ESI = 23,
+SYMS_CvRegx86_EDI = 24,
+SYMS_CvRegx86_ES = 25,
+SYMS_CvRegx86_CS = 26,
+SYMS_CvRegx86_SS = 27,
+SYMS_CvRegx86_DS = 28,
+SYMS_CvRegx86_FS = 29,
+SYMS_CvRegx86_GS = 30,
+SYMS_CvRegx86_IP = 31,
+SYMS_CvRegx86_FLAGS = 32,
+SYMS_CvRegx86_EIP = 33,
+SYMS_CvRegx86_EFLAGS = 34,
+SYMS_CvRegx86_MM0 = 146,
+SYMS_CvRegx86_MM1 = 147,
+SYMS_CvRegx86_MM2 = 148,
+SYMS_CvRegx86_MM3 = 149,
+SYMS_CvRegx86_MM4 = 150,
+SYMS_CvRegx86_MM5 = 151,
+SYMS_CvRegx86_MM6 = 152,
+SYMS_CvRegx86_MM7 = 153,
+SYMS_CvRegx86_XMM0 = 154,
+SYMS_CvRegx86_XMM1 = 155,
+SYMS_CvRegx86_XMM2 = 156,
+SYMS_CvRegx86_XMM3 = 157,
+SYMS_CvRegx86_XMM4 = 158,
+SYMS_CvRegx86_XMM5 = 159,
+SYMS_CvRegx86_XMM6 = 160,
+SYMS_CvRegx86_XMM7 = 161,
+SYMS_CvRegx86_XMM00 = 162,
+SYMS_CvRegx86_XMM01 = 163,
+SYMS_CvRegx86_XMM02 = 164,
+SYMS_CvRegx86_XMM03 = 165,
+SYMS_CvRegx86_XMM10 = 166,
+SYMS_CvRegx86_XMM11 = 167,
+SYMS_CvRegx86_XMM12 = 168,
+SYMS_CvRegx86_XMM13 = 169,
+SYMS_CvRegx86_XMM20 = 170,
+SYMS_CvRegx86_XMM21 = 171,
+SYMS_CvRegx86_XMM22 = 172,
+SYMS_CvRegx86_XMM23 = 173,
+SYMS_CvRegx86_XMM30 = 174,
+SYMS_CvRegx86_XMM31 = 175,
+SYMS_CvRegx86_XMM32 = 176,
+SYMS_CvRegx86_XMM33 = 177,
+SYMS_CvRegx86_XMM40 = 178,
+SYMS_CvRegx86_XMM41 = 179,
+SYMS_CvRegx86_XMM42 = 180,
+SYMS_CvRegx86_XMM43 = 181,
+SYMS_CvRegx86_XMM50 = 182,
+SYMS_CvRegx86_XMM51 = 183,
+SYMS_CvRegx86_XMM52 = 184,
+SYMS_CvRegx86_XMM53 = 185,
+SYMS_CvRegx86_XMM60 = 186,
+SYMS_CvRegx86_XMM61 = 187,
+SYMS_CvRegx86_XMM62 = 188,
+SYMS_CvRegx86_XMM63 = 189,
+SYMS_CvRegx86_XMM70 = 190,
+SYMS_CvRegx86_XMM71 = 191,
+SYMS_CvRegx86_XMM72 = 192,
+SYMS_CvRegx86_XMM73 = 193,
+SYMS_CvRegx86_XMM0L = 194,
+SYMS_CvRegx86_XMM1L = 195,
+SYMS_CvRegx86_XMM2L = 196,
+SYMS_CvRegx86_XMM3L = 197,
+SYMS_CvRegx86_XMM4L = 198,
+SYMS_CvRegx86_XMM5L = 199,
+SYMS_CvRegx86_XMM6L = 200,
+SYMS_CvRegx86_XMM7L = 201,
+SYMS_CvRegx86_XMM0H = 202,
+SYMS_CvRegx86_XMM1H = 203,
+SYMS_CvRegx86_XMM2H = 204,
+SYMS_CvRegx86_XMM3H = 205,
+SYMS_CvRegx86_XMM4H = 206,
+SYMS_CvRegx86_XMM5H = 207,
+SYMS_CvRegx86_XMM6H = 208,
+SYMS_CvRegx86_XMM7H = 209,
+//  AVX registers
+SYMS_CvRegx86_YMM0 = 252,
+SYMS_CvRegx86_YMM1 = 253,
+SYMS_CvRegx86_YMM2 = 254,
+SYMS_CvRegx86_YMM3 = 255,
+SYMS_CvRegx86_YMM4 = 256,
+SYMS_CvRegx86_YMM5 = 257,
+SYMS_CvRegx86_YMM6 = 258,
+SYMS_CvRegx86_YMM7 = 259,
+SYMS_CvRegx86_YMM0H = 260,
+SYMS_CvRegx86_YMM1H = 261,
+SYMS_CvRegx86_YMM2H = 262,
+SYMS_CvRegx86_YMM3H = 263,
+SYMS_CvRegx86_YMM4H = 264,
+SYMS_CvRegx86_YMM5H = 265,
+SYMS_CvRegx86_YMM6H = 266,
+SYMS_CvRegx86_YMM7H = 267,
+//  AVX integer registers
+SYMS_CvRegx86_YMM0I0 = 268,
+SYMS_CvRegx86_YMM0I1 = 269,
+SYMS_CvRegx86_YMM0I2 = 270,
+SYMS_CvRegx86_YMM0I3 = 271,
+SYMS_CvRegx86_YMM1I0 = 272,
+SYMS_CvRegx86_YMM1I1 = 273,
+SYMS_CvRegx86_YMM1I2 = 274,
+SYMS_CvRegx86_YMM1I3 = 275,
+SYMS_CvRegx86_YMM2I0 = 276,
+SYMS_CvRegx86_YMM2I1 = 277,
+SYMS_CvRegx86_YMM2I2 = 278,
+SYMS_CvRegx86_YMM2I3 = 279,
+SYMS_CvRegx86_YMM3I0 = 280,
+SYMS_CvRegx86_YMM3I1 = 281,
+SYMS_CvRegx86_YMM3I2 = 282,
+SYMS_CvRegx86_YMM3I3 = 283,
+SYMS_CvRegx86_YMM4I0 = 284,
+SYMS_CvRegx86_YMM4I1 = 285,
+SYMS_CvRegx86_YMM4I2 = 286,
+SYMS_CvRegx86_YMM4I3 = 287,
+SYMS_CvRegx86_YMM5I0 = 288,
+SYMS_CvRegx86_YMM5I1 = 289,
+SYMS_CvRegx86_YMM5I2 = 290,
+SYMS_CvRegx86_YMM5I3 = 291,
+SYMS_CvRegx86_YMM6I0 = 292,
+SYMS_CvRegx86_YMM6I1 = 293,
+SYMS_CvRegx86_YMM6I2 = 294,
+SYMS_CvRegx86_YMM6I3 = 295,
+SYMS_CvRegx86_YMM7I0 = 296,
+SYMS_CvRegx86_YMM7I1 = 297,
+SYMS_CvRegx86_YMM7I2 = 298,
+SYMS_CvRegx86_YMM7I3 = 299,
+//  AVX floating-point single precise registers
+SYMS_CvRegx86_YMM0F0 = 300,
+SYMS_CvRegx86_YMM0F1 = 301,
+SYMS_CvRegx86_YMM0F2 = 302,
+SYMS_CvRegx86_YMM0F3 = 303,
+SYMS_CvRegx86_YMM0F4 = 304,
+SYMS_CvRegx86_YMM0F5 = 305,
+SYMS_CvRegx86_YMM0F6 = 306,
+SYMS_CvRegx86_YMM0F7 = 307,
+SYMS_CvRegx86_YMM1F0 = 308,
+SYMS_CvRegx86_YMM1F1 = 309,
+SYMS_CvRegx86_YMM1F2 = 310,
+SYMS_CvRegx86_YMM1F3 = 311,
+SYMS_CvRegx86_YMM1F4 = 312,
+SYMS_CvRegx86_YMM1F5 = 313,
+SYMS_CvRegx86_YMM1F6 = 314,
+SYMS_CvRegx86_YMM1F7 = 315,
+SYMS_CvRegx86_YMM2F0 = 316,
+SYMS_CvRegx86_YMM2F1 = 317,
+SYMS_CvRegx86_YMM2F2 = 318,
+SYMS_CvRegx86_YMM2F3 = 319,
+SYMS_CvRegx86_YMM2F4 = 320,
+SYMS_CvRegx86_YMM2F5 = 321,
+SYMS_CvRegx86_YMM2F6 = 322,
+SYMS_CvRegx86_YMM2F7 = 323,
+SYMS_CvRegx86_YMM3F0 = 324,
+SYMS_CvRegx86_YMM3F1 = 325,
+SYMS_CvRegx86_YMM3F2 = 326,
+SYMS_CvRegx86_YMM3F3 = 327,
+SYMS_CvRegx86_YMM3F4 = 328,
+SYMS_CvRegx86_YMM3F5 = 329,
+SYMS_CvRegx86_YMM3F6 = 330,
+SYMS_CvRegx86_YMM3F7 = 331,
+SYMS_CvRegx86_YMM4F0 = 332,
+SYMS_CvRegx86_YMM4F1 = 333,
+SYMS_CvRegx86_YMM4F2 = 334,
+SYMS_CvRegx86_YMM4F3 = 335,
+SYMS_CvRegx86_YMM4F4 = 336,
+SYMS_CvRegx86_YMM4F5 = 337,
+SYMS_CvRegx86_YMM4F6 = 338,
+SYMS_CvRegx86_YMM4F7 = 339,
+SYMS_CvRegx86_YMM5F0 = 340,
+SYMS_CvRegx86_YMM5F1 = 341,
+SYMS_CvRegx86_YMM5F2 = 342,
+SYMS_CvRegx86_YMM5F3 = 343,
+SYMS_CvRegx86_YMM5F4 = 344,
+SYMS_CvRegx86_YMM5F5 = 345,
+SYMS_CvRegx86_YMM5F6 = 346,
+SYMS_CvRegx86_YMM5F7 = 347,
+SYMS_CvRegx86_YMM6F0 = 348,
+SYMS_CvRegx86_YMM6F1 = 349,
+SYMS_CvRegx86_YMM6F2 = 350,
+SYMS_CvRegx86_YMM6F3 = 351,
+SYMS_CvRegx86_YMM6F4 = 352,
+SYMS_CvRegx86_YMM6F5 = 353,
+SYMS_CvRegx86_YMM6F6 = 354,
+SYMS_CvRegx86_YMM6F7 = 355,
+SYMS_CvRegx86_YMM7F0 = 356,
+SYMS_CvRegx86_YMM7F1 = 357,
+SYMS_CvRegx86_YMM7F2 = 358,
+SYMS_CvRegx86_YMM7F3 = 359,
+SYMS_CvRegx86_YMM7F4 = 360,
+SYMS_CvRegx86_YMM7F5 = 361,
+SYMS_CvRegx86_YMM7F6 = 362,
+SYMS_CvRegx86_YMM7F7 = 363,
+//  AVX floating-point double precise registers
+SYMS_CvRegx86_YMM0D0 = 364,
+SYMS_CvRegx86_YMM0D1 = 365,
+SYMS_CvRegx86_YMM0D2 = 366,
+SYMS_CvRegx86_YMM0D3 = 367,
+SYMS_CvRegx86_YMM1D0 = 368,
+SYMS_CvRegx86_YMM1D1 = 369,
+SYMS_CvRegx86_YMM1D2 = 370,
+SYMS_CvRegx86_YMM1D3 = 371,
+SYMS_CvRegx86_YMM2D0 = 372,
+SYMS_CvRegx86_YMM2D1 = 373,
+SYMS_CvRegx86_YMM2D2 = 374,
+SYMS_CvRegx86_YMM2D3 = 375,
+SYMS_CvRegx86_YMM3D0 = 376,
+SYMS_CvRegx86_YMM3D1 = 377,
+SYMS_CvRegx86_YMM3D2 = 378,
+SYMS_CvRegx86_YMM3D3 = 379,
+SYMS_CvRegx86_YMM4D0 = 380,
+SYMS_CvRegx86_YMM4D1 = 381,
+SYMS_CvRegx86_YMM4D2 = 382,
+SYMS_CvRegx86_YMM4D3 = 383,
+SYMS_CvRegx86_YMM5D0 = 384,
+SYMS_CvRegx86_YMM5D1 = 385,
+SYMS_CvRegx86_YMM5D2 = 386,
+SYMS_CvRegx86_YMM5D3 = 387,
+SYMS_CvRegx86_YMM6D0 = 388,
+SYMS_CvRegx86_YMM6D1 = 389,
+SYMS_CvRegx86_YMM6D2 = 390,
+SYMS_CvRegx86_YMM6D3 = 391,
+SYMS_CvRegx86_YMM7D0 = 392,
+SYMS_CvRegx86_YMM7D1 = 393,
+SYMS_CvRegx86_YMM7D2 = 394,
+SYMS_CvRegx86_YMM7D3 = 395,
+SYMS_CvRegx86_COUNT = 243
+};
+typedef SYMS_U16 SYMS_CvRegx64;
+enum{
+//       CODE REG-ID BYTE-OFFSET BYTE-SIZE
+SYMS_CvRegx64_NONE = 0,
+SYMS_CvRegx64_AL = 1,
+SYMS_CvRegx64_CL = 2,
+SYMS_CvRegx64_DL = 3,
+SYMS_CvRegx64_BL = 4,
+SYMS_CvRegx64_AH = 5,
+SYMS_CvRegx64_CH = 6,
+SYMS_CvRegx64_DH = 7,
+SYMS_CvRegx64_BH = 8,
+SYMS_CvRegx64_AX = 9,
+SYMS_CvRegx64_CX = 10,
+SYMS_CvRegx64_DX = 11,
+SYMS_CvRegx64_BX = 12,
+SYMS_CvRegx64_SP = 13,
+SYMS_CvRegx64_BP = 14,
+SYMS_CvRegx64_SI = 15,
+SYMS_CvRegx64_DI = 16,
+SYMS_CvRegx64_EAX = 17,
+SYMS_CvRegx64_ECX = 18,
+SYMS_CvRegx64_EDX = 19,
+SYMS_CvRegx64_EBX = 20,
+SYMS_CvRegx64_ESP = 21,
+SYMS_CvRegx64_EBP = 22,
+SYMS_CvRegx64_ESI = 23,
+SYMS_CvRegx64_EDI = 24,
+SYMS_CvRegx64_ES = 25,
+SYMS_CvRegx64_CS = 26,
+SYMS_CvRegx64_SS = 27,
+SYMS_CvRegx64_DS = 28,
+SYMS_CvRegx64_FS = 29,
+SYMS_CvRegx64_GS = 30,
+SYMS_CvRegx64_FLAGS = 32,
+SYMS_CvRegx64_RIP = 33,
+SYMS_CvRegx64_EFLAGS = 34,
+//  Control registers
+SYMS_CvRegx64_CR0 = 80,
+SYMS_CvRegx64_CR1 = 81,
+SYMS_CvRegx64_CR2 = 82,
+SYMS_CvRegx64_CR3 = 83,
+SYMS_CvRegx64_CR4 = 84,
+SYMS_CvRegx64_CR8 = 88,
+//  Debug registers
+SYMS_CvRegx64_DR0 = 90,
+SYMS_CvRegx64_DR1 = 91,
+SYMS_CvRegx64_DR2 = 92,
+SYMS_CvRegx64_DR3 = 93,
+SYMS_CvRegx64_DR4 = 94,
+SYMS_CvRegx64_DR5 = 95,
+SYMS_CvRegx64_DR6 = 96,
+SYMS_CvRegx64_DR7 = 97,
+//  TODO(allen): Are we missing dr8-dr15 in the x64 register definitions?
+SYMS_CvRegx64_DR8 = 98,
+SYMS_CvRegx64_DR9 = 99,
+SYMS_CvRegx64_DR10 = 100,
+SYMS_CvRegx64_DR11 = 101,
+SYMS_CvRegx64_DR12 = 102,
+SYMS_CvRegx64_DR13 = 103,
+SYMS_CvRegx64_DR14 = 104,
+SYMS_CvRegx64_DR15 = 105,
+//  TODO(allen): Are we missing these in the x64 register definitions?
+SYMS_CvRegx64_GDTR = 110,
+SYMS_CvRegx64_GDTL = 111,
+SYMS_CvRegx64_IDTR = 112,
+SYMS_CvRegx64_IDTL = 113,
+SYMS_CvRegx64_LDTR = 114,
+SYMS_CvRegx64_TR = 115,
+SYMS_CvRegx64_ST0 = 128,
+SYMS_CvRegx64_ST1 = 129,
+SYMS_CvRegx64_ST2 = 130,
+SYMS_CvRegx64_ST3 = 131,
+SYMS_CvRegx64_ST4 = 132,
+SYMS_CvRegx64_ST5 = 133,
+SYMS_CvRegx64_ST6 = 134,
+SYMS_CvRegx64_ST7 = 135,
+//  TODO(allen): Figure out how these map to our registers (looks like a different naming scheme)
+SYMS_CvRegx64_CTRL = 136,
+SYMS_CvRegx64_STAT = 137,
+SYMS_CvRegx64_TAG = 138,
+SYMS_CvRegx64_FPIP = 139,
+SYMS_CvRegx64_FPCS = 140,
+SYMS_CvRegx64_FPDO = 141,
+SYMS_CvRegx64_FPDS = 142,
+SYMS_CvRegx64_ISEM = 143,
+SYMS_CvRegx64_FPEIP = 144,
+SYMS_CvRegx64_FPEDO = 145,
+SYMS_CvRegx64_MM0 = 146,
+SYMS_CvRegx64_MM1 = 147,
+SYMS_CvRegx64_MM2 = 148,
+SYMS_CvRegx64_MM3 = 149,
+SYMS_CvRegx64_MM4 = 150,
+SYMS_CvRegx64_MM5 = 151,
+SYMS_CvRegx64_MM6 = 152,
+SYMS_CvRegx64_MM7 = 153,
+SYMS_CvRegx64_XMM0 = 154,
+SYMS_CvRegx64_XMM1 = 155,
+SYMS_CvRegx64_XMM2 = 156,
+SYMS_CvRegx64_XMM3 = 157,
+SYMS_CvRegx64_XMM4 = 158,
+SYMS_CvRegx64_XMM5 = 159,
+SYMS_CvRegx64_XMM6 = 160,
+SYMS_CvRegx64_XMM7 = 161,
+SYMS_CvRegx64_XMM0_0 = 162,
+SYMS_CvRegx64_XMM0_1 = 163,
+SYMS_CvRegx64_XMM0_2 = 164,
+SYMS_CvRegx64_XMM0_3 = 165,
+SYMS_CvRegx64_XMM1_0 = 166,
+SYMS_CvRegx64_XMM1_1 = 167,
+SYMS_CvRegx64_XMM1_2 = 168,
+SYMS_CvRegx64_XMM1_3 = 169,
+SYMS_CvRegx64_XMM2_0 = 170,
+SYMS_CvRegx64_XMM2_1 = 171,
+SYMS_CvRegx64_XMM2_2 = 172,
+SYMS_CvRegx64_XMM2_3 = 173,
+SYMS_CvRegx64_XMM3_0 = 174,
+SYMS_CvRegx64_XMM3_1 = 175,
+SYMS_CvRegx64_XMM3_2 = 176,
+SYMS_CvRegx64_XMM3_3 = 177,
+SYMS_CvRegx64_XMM4_0 = 178,
+SYMS_CvRegx64_XMM4_1 = 179,
+SYMS_CvRegx64_XMM4_2 = 180,
+SYMS_CvRegx64_XMM4_3 = 181,
+SYMS_CvRegx64_XMM5_0 = 182,
+SYMS_CvRegx64_XMM5_1 = 183,
+SYMS_CvRegx64_XMM5_2 = 184,
+SYMS_CvRegx64_XMM5_3 = 185,
+SYMS_CvRegx64_XMM6_0 = 186,
+SYMS_CvRegx64_XMM6_1 = 187,
+SYMS_CvRegx64_XMM6_2 = 188,
+SYMS_CvRegx64_XMM6_3 = 189,
+SYMS_CvRegx64_XMM7_0 = 190,
+SYMS_CvRegx64_XMM7_1 = 191,
+SYMS_CvRegx64_XMM7_2 = 192,
+SYMS_CvRegx64_XMM7_3 = 193,
+SYMS_CvRegx64_XMM0L = 194,
+SYMS_CvRegx64_XMM1L = 195,
+SYMS_CvRegx64_XMM2L = 196,
+SYMS_CvRegx64_XMM3L = 197,
+SYMS_CvRegx64_XMM4L = 198,
+SYMS_CvRegx64_XMM5L = 199,
+SYMS_CvRegx64_XMM6L = 200,
+SYMS_CvRegx64_XMM7L = 201,
+SYMS_CvRegx64_XMM0H = 202,
+SYMS_CvRegx64_XMM1H = 203,
+SYMS_CvRegx64_XMM2H = 204,
+SYMS_CvRegx64_XMM3H = 205,
+SYMS_CvRegx64_XMM4H = 206,
+SYMS_CvRegx64_XMM5H = 207,
+SYMS_CvRegx64_XMM6H = 208,
+SYMS_CvRegx64_XMM7H = 209,
+//  XMM status register
+SYMS_CvRegx64_MXCSR = 211,
+//  XMM sub-registers (WNI integer)
+SYMS_CvRegx64_EMM0L = 220,
+SYMS_CvRegx64_EMM1L = 221,
+SYMS_CvRegx64_EMM2L = 222,
+SYMS_CvRegx64_EMM3L = 223,
+SYMS_CvRegx64_EMM4L = 224,
+SYMS_CvRegx64_EMM5L = 225,
+SYMS_CvRegx64_EMM6L = 226,
+SYMS_CvRegx64_EMM7L = 227,
+SYMS_CvRegx64_EMM0H = 228,
+SYMS_CvRegx64_EMM1H = 229,
+SYMS_CvRegx64_EMM2H = 230,
+SYMS_CvRegx64_EMM3H = 231,
+SYMS_CvRegx64_EMM4H = 232,
+SYMS_CvRegx64_EMM5H = 233,
+SYMS_CvRegx64_EMM6H = 234,
+SYMS_CvRegx64_EMM7H = 235,
+SYMS_CvRegx64_MM00 = 236,
+SYMS_CvRegx64_MM01 = 237,
+SYMS_CvRegx64_MM10 = 238,
+SYMS_CvRegx64_MM11 = 239,
+SYMS_CvRegx64_MM20 = 240,
+SYMS_CvRegx64_MM21 = 241,
+SYMS_CvRegx64_MM30 = 242,
+SYMS_CvRegx64_MM31 = 243,
+SYMS_CvRegx64_MM40 = 244,
+SYMS_CvRegx64_MM41 = 245,
+SYMS_CvRegx64_MM50 = 246,
+SYMS_CvRegx64_MM51 = 247,
+SYMS_CvRegx64_MM60 = 248,
+SYMS_CvRegx64_MM61 = 249,
+SYMS_CvRegx64_MM70 = 250,
+SYMS_CvRegx64_MM71 = 251,
+SYMS_CvRegx64_XMM8 = 252,
+SYMS_CvRegx64_XMM9 = 253,
+SYMS_CvRegx64_XMM10 = 254,
+SYMS_CvRegx64_XMM11 = 255,
+SYMS_CvRegx64_XMM12 = 256,
+SYMS_CvRegx64_XMM13 = 257,
+SYMS_CvRegx64_XMM14 = 258,
+SYMS_CvRegx64_XMM15 = 259,
+SYMS_CvRegx64_XMM8_0 = 260,
+SYMS_CvRegx64_XMM8_1 = 261,
+SYMS_CvRegx64_XMM8_2 = 262,
+SYMS_CvRegx64_XMM8_3 = 263,
+SYMS_CvRegx64_XMM9_0 = 264,
+SYMS_CvRegx64_XMM9_1 = 265,
+SYMS_CvRegx64_XMM9_2 = 266,
+SYMS_CvRegx64_XMM9_3 = 267,
+SYMS_CvRegx64_XMM10_0 = 268,
+SYMS_CvRegx64_XMM10_1 = 269,
+SYMS_CvRegx64_XMM10_2 = 270,
+SYMS_CvRegx64_XMM10_3 = 271,
+SYMS_CvRegx64_XMM11_0 = 272,
+SYMS_CvRegx64_XMM11_1 = 273,
+SYMS_CvRegx64_XMM11_2 = 274,
+SYMS_CvRegx64_XMM11_3 = 275,
+SYMS_CvRegx64_XMM12_0 = 276,
+SYMS_CvRegx64_XMM12_1 = 277,
+SYMS_CvRegx64_XMM12_2 = 278,
+SYMS_CvRegx64_XMM12_3 = 279,
+SYMS_CvRegx64_XMM13_0 = 280,
+SYMS_CvRegx64_XMM13_1 = 281,
+SYMS_CvRegx64_XMM13_2 = 282,
+SYMS_CvRegx64_XMM13_3 = 283,
+SYMS_CvRegx64_XMM14_0 = 284,
+SYMS_CvRegx64_XMM14_1 = 285,
+SYMS_CvRegx64_XMM14_2 = 286,
+SYMS_CvRegx64_XMM14_3 = 287,
+SYMS_CvRegx64_XMM15_0 = 288,
+SYMS_CvRegx64_XMM15_1 = 289,
+SYMS_CvRegx64_XMM15_2 = 290,
+SYMS_CvRegx64_XMM15_3 = 291,
+SYMS_CvRegx64_XMM8L = 292,
+SYMS_CvRegx64_XMM9L = 293,
+SYMS_CvRegx64_XMM10L = 294,
+SYMS_CvRegx64_XMM11L = 295,
+SYMS_CvRegx64_XMM12L = 296,
+SYMS_CvRegx64_XMM13L = 297,
+SYMS_CvRegx64_XMM14L = 298,
+SYMS_CvRegx64_XMM15L = 299,
+SYMS_CvRegx64_XMM8H = 300,
+SYMS_CvRegx64_XMM9H = 301,
+SYMS_CvRegx64_XMM10H = 302,
+SYMS_CvRegx64_XMM11H = 303,
+SYMS_CvRegx64_XMM12H = 304,
+SYMS_CvRegx64_XMM13H = 305,
+SYMS_CvRegx64_XMM14H = 306,
+SYMS_CvRegx64_XMM15H = 307,
+//  XMM sub-registers (WNI integer)
+SYMS_CvRegx64_EMM8L = 308,
+SYMS_CvRegx64_EMM9L = 309,
+SYMS_CvRegx64_EMM10L = 310,
+SYMS_CvRegx64_EMM11L = 311,
+SYMS_CvRegx64_EMM12L = 312,
+SYMS_CvRegx64_EMM13L = 313,
+SYMS_CvRegx64_EMM14L = 314,
+SYMS_CvRegx64_EMM15L = 315,
+SYMS_CvRegx64_EMM8H = 316,
+SYMS_CvRegx64_EMM9H = 317,
+SYMS_CvRegx64_EMM10H = 318,
+SYMS_CvRegx64_EMM11H = 319,
+SYMS_CvRegx64_EMM12H = 320,
+SYMS_CvRegx64_EMM13H = 321,
+SYMS_CvRegx64_EMM14H = 322,
+SYMS_CvRegx64_EMM15H = 323,
+//  Low byte forms of some standard registers
+SYMS_CvRegx64_SIL = 324,
+SYMS_CvRegx64_DIL = 325,
+SYMS_CvRegx64_BPL = 326,
+SYMS_CvRegx64_SPL = 327,
+//  64-bit regular registers
+SYMS_CvRegx64_RAX = 328,
+SYMS_CvRegx64_RBX = 329,
+SYMS_CvRegx64_RCX = 330,
+SYMS_CvRegx64_RDX = 331,
+SYMS_CvRegx64_RSI = 332,
+SYMS_CvRegx64_RDI = 333,
+SYMS_CvRegx64_RBP = 334,
+SYMS_CvRegx64_RSP = 335,
+//  64-bit integer registers with 8-, 16-, and 32-bit forms (B, W, and D)
+SYMS_CvRegx64_R8 = 336,
+SYMS_CvRegx64_R9 = 337,
+SYMS_CvRegx64_R10 = 338,
+SYMS_CvRegx64_R11 = 339,
+SYMS_CvRegx64_R12 = 340,
+SYMS_CvRegx64_R13 = 341,
+SYMS_CvRegx64_R14 = 342,
+SYMS_CvRegx64_R15 = 343,
+SYMS_CvRegx64_R8B = 344,
+SYMS_CvRegx64_R9B = 345,
+SYMS_CvRegx64_R10B = 346,
+SYMS_CvRegx64_R11B = 347,
+SYMS_CvRegx64_R12B = 348,
+SYMS_CvRegx64_R13B = 349,
+SYMS_CvRegx64_R14B = 350,
+SYMS_CvRegx64_R15B = 351,
+SYMS_CvRegx64_R8W = 352,
+SYMS_CvRegx64_R9W = 353,
+SYMS_CvRegx64_R10W = 354,
+SYMS_CvRegx64_R11W = 355,
+SYMS_CvRegx64_R12W = 356,
+SYMS_CvRegx64_R13W = 357,
+SYMS_CvRegx64_R14W = 358,
+SYMS_CvRegx64_R15W = 359,
+SYMS_CvRegx64_R8D = 360,
+SYMS_CvRegx64_R9D = 361,
+SYMS_CvRegx64_R10D = 362,
+SYMS_CvRegx64_R11D = 363,
+SYMS_CvRegx64_R12D = 364,
+SYMS_CvRegx64_R13D = 365,
+SYMS_CvRegx64_R14D = 366,
+SYMS_CvRegx64_R15D = 367,
+//  AVX registers 256 bits
+SYMS_CvRegx64_YMM0 = 368,
+SYMS_CvRegx64_YMM1 = 369,
+SYMS_CvRegx64_YMM2 = 370,
+SYMS_CvRegx64_YMM3 = 371,
+SYMS_CvRegx64_YMM4 = 372,
+SYMS_CvRegx64_YMM5 = 373,
+SYMS_CvRegx64_YMM6 = 374,
+SYMS_CvRegx64_YMM7 = 375,
+SYMS_CvRegx64_YMM8 = 376,
+SYMS_CvRegx64_YMM9 = 377,
+SYMS_CvRegx64_YMM10 = 378,
+SYMS_CvRegx64_YMM11 = 379,
+SYMS_CvRegx64_YMM12 = 380,
+SYMS_CvRegx64_YMM13 = 381,
+SYMS_CvRegx64_YMM14 = 382,
+SYMS_CvRegx64_YMM15 = 383,
+//  AVX registers upper 128 bits
+SYMS_CvRegx64_YMM0H = 384,
+SYMS_CvRegx64_YMM1H = 385,
+SYMS_CvRegx64_YMM2H = 386,
+SYMS_CvRegx64_YMM3H = 387,
+SYMS_CvRegx64_YMM4H = 388,
+SYMS_CvRegx64_YMM5H = 389,
+SYMS_CvRegx64_YMM6H = 390,
+SYMS_CvRegx64_YMM7H = 391,
+SYMS_CvRegx64_YMM8H = 392,
+SYMS_CvRegx64_YMM9H = 393,
+SYMS_CvRegx64_YMM10H = 394,
+SYMS_CvRegx64_YMM11H = 395,
+SYMS_CvRegx64_YMM12H = 396,
+SYMS_CvRegx64_YMM13H = 397,
+SYMS_CvRegx64_YMM14H = 398,
+SYMS_CvRegx64_YMM15H = 399,
+//  Lower/upper 8 bytes of XMM registers.  Unlike CV_AMD64_XMM<regnum><H/L>, these
+//   ** values reprsesent the bit patterns of the registers as 64-bit integers, not
+//   ** the representation of these registers as a double. 
+SYMS_CvRegx64_XMM0IL = 400,
+SYMS_CvRegx64_XMM1IL = 401,
+SYMS_CvRegx64_XMM2IL = 402,
+SYMS_CvRegx64_XMM3IL = 403,
+SYMS_CvRegx64_XMM4IL = 404,
+SYMS_CvRegx64_XMM5IL = 405,
+SYMS_CvRegx64_XMM6IL = 406,
+SYMS_CvRegx64_XMM7IL = 407,
+SYMS_CvRegx64_XMM8IL = 408,
+SYMS_CvRegx64_XMM9IL = 409,
+SYMS_CvRegx64_XMM10IL = 410,
+SYMS_CvRegx64_XMM11IL = 411,
+SYMS_CvRegx64_XMM12IL = 412,
+SYMS_CvRegx64_XMM13IL = 413,
+SYMS_CvRegx64_XMM14IL = 414,
+SYMS_CvRegx64_XMM15IL = 415,
+SYMS_CvRegx64_XMM0IH = 416,
+SYMS_CvRegx64_XMM1IH = 417,
+SYMS_CvRegx64_XMM2IH = 418,
+SYMS_CvRegx64_XMM3IH = 419,
+SYMS_CvRegx64_XMM4IH = 420,
+SYMS_CvRegx64_XMM5IH = 421,
+SYMS_CvRegx64_XMM6IH = 422,
+SYMS_CvRegx64_XMM7IH = 423,
+SYMS_CvRegx64_XMM8IH = 424,
+SYMS_CvRegx64_XMM9IH = 425,
+SYMS_CvRegx64_XMM10IH = 426,
+SYMS_CvRegx64_XMM11IH = 427,
+SYMS_CvRegx64_XMM12IH = 428,
+SYMS_CvRegx64_XMM13IH = 429,
+SYMS_CvRegx64_XMM14IH = 430,
+SYMS_CvRegx64_XMM15IH = 431,
+//  AVX integer registers
+SYMS_CvRegx64_YMM0I0 = 432,
+SYMS_CvRegx64_YMM0I1 = 433,
+SYMS_CvRegx64_YMM0I2 = 434,
+SYMS_CvRegx64_YMM0I3 = 435,
+SYMS_CvRegx64_YMM1I0 = 436,
+SYMS_CvRegx64_YMM1I1 = 437,
+SYMS_CvRegx64_YMM1I2 = 438,
+SYMS_CvRegx64_YMM1I3 = 439,
+SYMS_CvRegx64_YMM2I0 = 440,
+SYMS_CvRegx64_YMM2I1 = 441,
+SYMS_CvRegx64_YMM2I2 = 442,
+SYMS_CvRegx64_YMM2I3 = 443,
+SYMS_CvRegx64_YMM3I0 = 444,
+SYMS_CvRegx64_YMM3I1 = 445,
+SYMS_CvRegx64_YMM3I2 = 446,
+SYMS_CvRegx64_YMM3I3 = 447,
+SYMS_CvRegx64_YMM4I0 = 448,
+SYMS_CvRegx64_YMM4I1 = 449,
+SYMS_CvRegx64_YMM4I2 = 450,
+SYMS_CvRegx64_YMM4I3 = 451,
+SYMS_CvRegx64_YMM5I0 = 452,
+SYMS_CvRegx64_YMM5I1 = 453,
+SYMS_CvRegx64_YMM5I2 = 454,
+SYMS_CvRegx64_YMM5I3 = 455,
+SYMS_CvRegx64_YMM6I0 = 456,
+SYMS_CvRegx64_YMM6I1 = 457,
+SYMS_CvRegx64_YMM6I2 = 458,
+SYMS_CvRegx64_YMM6I3 = 459,
+SYMS_CvRegx64_YMM7I0 = 460,
+SYMS_CvRegx64_YMM7I1 = 461,
+SYMS_CvRegx64_YMM7I2 = 462,
+SYMS_CvRegx64_YMM7I3 = 463,
+SYMS_CvRegx64_YMM8I0 = 464,
+SYMS_CvRegx64_YMM8I1 = 465,
+SYMS_CvRegx64_YMM8I2 = 466,
+SYMS_CvRegx64_YMM8I3 = 467,
+SYMS_CvRegx64_YMM9I0 = 468,
+SYMS_CvRegx64_YMM9I1 = 469,
+SYMS_CvRegx64_YMM9I2 = 470,
+SYMS_CvRegx64_YMM9I3 = 471,
+SYMS_CvRegx64_YMM10I0 = 472,
+SYMS_CvRegx64_YMM10I1 = 473,
+SYMS_CvRegx64_YMM10I2 = 474,
+SYMS_CvRegx64_YMM10I3 = 475,
+SYMS_CvRegx64_YMM11I0 = 476,
+SYMS_CvRegx64_YMM11I1 = 477,
+SYMS_CvRegx64_YMM11I2 = 478,
+SYMS_CvRegx64_YMM11I3 = 479,
+SYMS_CvRegx64_YMM12I0 = 480,
+SYMS_CvRegx64_YMM12I1 = 481,
+SYMS_CvRegx64_YMM12I2 = 482,
+SYMS_CvRegx64_YMM12I3 = 483,
+SYMS_CvRegx64_YMM13I0 = 484,
+SYMS_CvRegx64_YMM13I1 = 485,
+SYMS_CvRegx64_YMM13I2 = 486,
+SYMS_CvRegx64_YMM13I3 = 487,
+SYMS_CvRegx64_YMM14I0 = 488,
+SYMS_CvRegx64_YMM14I1 = 489,
+SYMS_CvRegx64_YMM14I2 = 490,
+SYMS_CvRegx64_YMM14I3 = 491,
+SYMS_CvRegx64_YMM15I0 = 492,
+SYMS_CvRegx64_YMM15I1 = 493,
+SYMS_CvRegx64_YMM15I2 = 494,
+SYMS_CvRegx64_YMM15I3 = 495,
+//  AVX floating-point single precise registers
+SYMS_CvRegx64_YMM0F0 = 496,
+SYMS_CvRegx64_YMM0F1 = 497,
+SYMS_CvRegx64_YMM0F2 = 498,
+SYMS_CvRegx64_YMM0F3 = 499,
+SYMS_CvRegx64_YMM0F4 = 500,
+SYMS_CvRegx64_YMM0F5 = 501,
+SYMS_CvRegx64_YMM0F6 = 502,
+SYMS_CvRegx64_YMM0F7 = 503,
+SYMS_CvRegx64_YMM1F0 = 504,
+SYMS_CvRegx64_YMM1F1 = 505,
+SYMS_CvRegx64_YMM1F2 = 506,
+SYMS_CvRegx64_YMM1F3 = 507,
+SYMS_CvRegx64_YMM1F4 = 508,
+SYMS_CvRegx64_YMM1F5 = 509,
+SYMS_CvRegx64_YMM1F6 = 510,
+SYMS_CvRegx64_YMM1F7 = 511,
+SYMS_CvRegx64_YMM2F0 = 512,
+SYMS_CvRegx64_YMM2F1 = 513,
+SYMS_CvRegx64_YMM2F2 = 514,
+SYMS_CvRegx64_YMM2F3 = 515,
+SYMS_CvRegx64_YMM2F4 = 516,
+SYMS_CvRegx64_YMM2F5 = 517,
+SYMS_CvRegx64_YMM2F6 = 518,
+SYMS_CvRegx64_YMM2F7 = 519,
+SYMS_CvRegx64_YMM3F0 = 520,
+SYMS_CvRegx64_YMM3F1 = 521,
+SYMS_CvRegx64_YMM3F2 = 522,
+SYMS_CvRegx64_YMM3F3 = 523,
+SYMS_CvRegx64_YMM3F4 = 524,
+SYMS_CvRegx64_YMM3F5 = 525,
+SYMS_CvRegx64_YMM3F6 = 526,
+SYMS_CvRegx64_YMM3F7 = 527,
+SYMS_CvRegx64_YMM4F0 = 528,
+SYMS_CvRegx64_YMM4F1 = 529,
+SYMS_CvRegx64_YMM4F2 = 530,
+SYMS_CvRegx64_YMM4F3 = 531,
+SYMS_CvRegx64_YMM4F4 = 532,
+SYMS_CvRegx64_YMM4F5 = 533,
+SYMS_CvRegx64_YMM4F6 = 534,
+SYMS_CvRegx64_YMM4F7 = 535,
+SYMS_CvRegx64_YMM5F0 = 536,
+SYMS_CvRegx64_YMM5F1 = 537,
+SYMS_CvRegx64_YMM5F2 = 538,
+SYMS_CvRegx64_YMM5F3 = 539,
+SYMS_CvRegx64_YMM5F4 = 540,
+SYMS_CvRegx64_YMM5F5 = 541,
+SYMS_CvRegx64_YMM5F6 = 542,
+SYMS_CvRegx64_YMM5F7 = 543,
+SYMS_CvRegx64_YMM6F0 = 544,
+SYMS_CvRegx64_YMM6F1 = 545,
+SYMS_CvRegx64_YMM6F2 = 546,
+SYMS_CvRegx64_YMM6F3 = 547,
+SYMS_CvRegx64_YMM6F4 = 548,
+SYMS_CvRegx64_YMM6F5 = 549,
+SYMS_CvRegx64_YMM6F6 = 550,
+SYMS_CvRegx64_YMM6F7 = 551,
+SYMS_CvRegx64_YMM7F0 = 552,
+SYMS_CvRegx64_YMM7F1 = 553,
+SYMS_CvRegx64_YMM7F2 = 554,
+SYMS_CvRegx64_YMM7F3 = 555,
+SYMS_CvRegx64_YMM7F4 = 556,
+SYMS_CvRegx64_YMM7F5 = 557,
+SYMS_CvRegx64_YMM7F6 = 558,
+SYMS_CvRegx64_YMM7F7 = 559,
+SYMS_CvRegx64_YMM8F0 = 560,
+SYMS_CvRegx64_YMM8F1 = 561,
+SYMS_CvRegx64_YMM8F2 = 562,
+SYMS_CvRegx64_YMM8F3 = 563,
+SYMS_CvRegx64_YMM8F4 = 564,
+SYMS_CvRegx64_YMM8F5 = 565,
+SYMS_CvRegx64_YMM8F6 = 566,
+SYMS_CvRegx64_YMM8F7 = 567,
+SYMS_CvRegx64_YMM9F0 = 568,
+SYMS_CvRegx64_YMM9F1 = 569,
+SYMS_CvRegx64_YMM9F2 = 570,
+SYMS_CvRegx64_YMM9F3 = 571,
+SYMS_CvRegx64_YMM9F4 = 572,
+SYMS_CvRegx64_YMM9F5 = 573,
+SYMS_CvRegx64_YMM9F6 = 574,
+SYMS_CvRegx64_YMM9F7 = 575,
+SYMS_CvRegx64_YMM10F0 = 576,
+SYMS_CvRegx64_YMM10F1 = 577,
+SYMS_CvRegx64_YMM10F2 = 578,
+SYMS_CvRegx64_YMM10F3 = 579,
+SYMS_CvRegx64_YMM10F4 = 580,
+SYMS_CvRegx64_YMM10F5 = 581,
+SYMS_CvRegx64_YMM10F6 = 582,
+SYMS_CvRegx64_YMM10F7 = 583,
+SYMS_CvRegx64_YMM11F0 = 584,
+SYMS_CvRegx64_YMM11F1 = 585,
+SYMS_CvRegx64_YMM11F2 = 586,
+SYMS_CvRegx64_YMM11F3 = 587,
+SYMS_CvRegx64_YMM11F4 = 588,
+SYMS_CvRegx64_YMM11F5 = 589,
+SYMS_CvRegx64_YMM11F6 = 590,
+SYMS_CvRegx64_YMM11F7 = 591,
+SYMS_CvRegx64_YMM12F0 = 592,
+SYMS_CvRegx64_YMM12F1 = 593,
+SYMS_CvRegx64_YMM12F2 = 594,
+SYMS_CvRegx64_YMM12F3 = 595,
+SYMS_CvRegx64_YMM12F4 = 596,
+SYMS_CvRegx64_YMM12F5 = 597,
+SYMS_CvRegx64_YMM12F6 = 598,
+SYMS_CvRegx64_YMM12F7 = 599,
+SYMS_CvRegx64_YMM13F0 = 600,
+SYMS_CvRegx64_YMM13F1 = 601,
+SYMS_CvRegx64_YMM13F2 = 602,
+SYMS_CvRegx64_YMM13F3 = 603,
+SYMS_CvRegx64_YMM13F4 = 604,
+SYMS_CvRegx64_YMM13F5 = 605,
+SYMS_CvRegx64_YMM13F6 = 606,
+SYMS_CvRegx64_YMM13F7 = 607,
+SYMS_CvRegx64_YMM14F0 = 608,
+SYMS_CvRegx64_YMM14F1 = 609,
+SYMS_CvRegx64_YMM14F2 = 610,
+SYMS_CvRegx64_YMM14F3 = 611,
+SYMS_CvRegx64_YMM14F4 = 612,
+SYMS_CvRegx64_YMM14F5 = 613,
+SYMS_CvRegx64_YMM14F6 = 614,
+SYMS_CvRegx64_YMM14F7 = 615,
+SYMS_CvRegx64_YMM15F0 = 616,
+SYMS_CvRegx64_YMM15F1 = 617,
+SYMS_CvRegx64_YMM15F2 = 618,
+SYMS_CvRegx64_YMM15F3 = 619,
+SYMS_CvRegx64_YMM15F4 = 620,
+SYMS_CvRegx64_YMM15F5 = 621,
+SYMS_CvRegx64_YMM15F6 = 622,
+SYMS_CvRegx64_YMM15F7 = 623,
+//  AVX floating-point double precise registers
+SYMS_CvRegx64_YMM0D0 = 624,
+SYMS_CvRegx64_YMM0D1 = 625,
+SYMS_CvRegx64_YMM0D2 = 626,
+SYMS_CvRegx64_YMM0D3 = 627,
+SYMS_CvRegx64_YMM1D0 = 628,
+SYMS_CvRegx64_YMM1D1 = 629,
+SYMS_CvRegx64_YMM1D2 = 630,
+SYMS_CvRegx64_YMM1D3 = 631,
+SYMS_CvRegx64_YMM2D0 = 632,
+SYMS_CvRegx64_YMM2D1 = 633,
+SYMS_CvRegx64_YMM2D2 = 634,
+SYMS_CvRegx64_YMM2D3 = 635,
+SYMS_CvRegx64_YMM3D0 = 636,
+SYMS_CvRegx64_YMM3D1 = 637,
+SYMS_CvRegx64_YMM3D2 = 638,
+SYMS_CvRegx64_YMM3D3 = 639,
+SYMS_CvRegx64_YMM4D0 = 640,
+SYMS_CvRegx64_YMM4D1 = 641,
+SYMS_CvRegx64_YMM4D2 = 642,
+SYMS_CvRegx64_YMM4D3 = 643,
+SYMS_CvRegx64_YMM5D0 = 644,
+SYMS_CvRegx64_YMM5D1 = 645,
+SYMS_CvRegx64_YMM5D2 = 646,
+SYMS_CvRegx64_YMM5D3 = 647,
+SYMS_CvRegx64_YMM6D0 = 648,
+SYMS_CvRegx64_YMM6D1 = 649,
+SYMS_CvRegx64_YMM6D2 = 650,
+SYMS_CvRegx64_YMM6D3 = 651,
+SYMS_CvRegx64_YMM7D0 = 652,
+SYMS_CvRegx64_YMM7D1 = 653,
+SYMS_CvRegx64_YMM7D2 = 654,
+SYMS_CvRegx64_YMM7D3 = 655,
+SYMS_CvRegx64_YMM8D0 = 656,
+SYMS_CvRegx64_YMM8D1 = 657,
+SYMS_CvRegx64_YMM8D2 = 658,
+SYMS_CvRegx64_YMM8D3 = 659,
+SYMS_CvRegx64_YMM9D0 = 660,
+SYMS_CvRegx64_YMM9D1 = 661,
+SYMS_CvRegx64_YMM9D2 = 662,
+SYMS_CvRegx64_YMM9D3 = 663,
+SYMS_CvRegx64_YMM10D0 = 664,
+SYMS_CvRegx64_YMM10D1 = 665,
+SYMS_CvRegx64_YMM10D2 = 666,
+SYMS_CvRegx64_YMM10D3 = 667,
+SYMS_CvRegx64_YMM11D0 = 668,
+SYMS_CvRegx64_YMM11D1 = 669,
+SYMS_CvRegx64_YMM11D2 = 670,
+SYMS_CvRegx64_YMM11D3 = 671,
+SYMS_CvRegx64_YMM12D0 = 672,
+SYMS_CvRegx64_YMM12D1 = 673,
+SYMS_CvRegx64_YMM12D2 = 674,
+SYMS_CvRegx64_YMM12D3 = 675,
+SYMS_CvRegx64_YMM13D0 = 676,
+SYMS_CvRegx64_YMM13D1 = 677,
+SYMS_CvRegx64_YMM13D2 = 678,
+SYMS_CvRegx64_YMM13D3 = 679,
+SYMS_CvRegx64_YMM14D0 = 680,
+SYMS_CvRegx64_YMM14D1 = 681,
+SYMS_CvRegx64_YMM14D2 = 682,
+SYMS_CvRegx64_YMM14D3 = 683,
+SYMS_CvRegx64_YMM15D0 = 684,
+SYMS_CvRegx64_YMM15D1 = 685,
+SYMS_CvRegx64_YMM15D2 = 686,
+SYMS_CvRegx64_YMM15D3 = 687,
+SYMS_CvRegx64_COUNT = 613
+};
+typedef SYMS_U32 SYMS_CvSignature;
+enum{
+SYMS_CvSignature_C6 = 0,
+SYMS_CvSignature_C7 = 1,
+SYMS_CvSignature_C11 = 2,
+SYMS_CvSignature_C13 = 4,
+SYMS_CvSignature_RESERVED = 5,
+SYMS_CvSignature_COUNT = 5
+};
+typedef SYMS_U16 SYMS_CvSymKind;
+enum{
+SYMS_CvSymKind_NULL = 0,
+SYMS_CvSymKind_COMPILE = 0x0001,
+//  Compile flags symbol
+SYMS_CvSymKind_REGISTER_16t = 0x0002,
+//  Register variable
+SYMS_CvSymKind_CONSTANT_16t = 0x0003,
+//  constant symbol
+SYMS_CvSymKind_UDT_16t = 0x0004,
+//  User defined type
+SYMS_CvSymKind_SSEARCH = 0x0005,
+//  Start Search
+SYMS_CvSymKind_END = 0x0006,
+//  Block, procedure, "with" or thunk end
+SYMS_CvSymKind_SKIP = 0x0007,
+//  Reserve symbol space in $$Symbols table
+SYMS_CvSymKind_CVRESERVE = 0x0008,
+//  Reserved symbol for CV internal use
+SYMS_CvSymKind_OBJNAME_ST = 0x0009,
+//  path to object file name
+SYMS_CvSymKind_ENDARG = 0x000a,
+//  end of argument/return list
+SYMS_CvSymKind_COBOLUDT_16t = 0x000b,
+//  special UDT for cobol that does not symbol pack
+SYMS_CvSymKind_MANYREG_16t = 0x000c,
+//  multiple register variable
+SYMS_CvSymKind_RETURN = 0x000d,
+//  return description symbol
+SYMS_CvSymKind_ENTRYTHIS = 0x000e,
+//  description of this pointer on entry
+SYMS_CvSymKind_BPREL16 = 0x0100,
+//  BP-relative
+SYMS_CvSymKind_LDATA16 = 0x0101,
+//  Module-static symbol
+SYMS_CvSymKind_GDATA16 = 0x0102,
+//  Global data symbol
+SYMS_CvSymKind_PUB16 = 0x0103,
+//  a public symbol
+SYMS_CvSymKind_LPROC16 = 0x0104,
+//  Local procedure start
+SYMS_CvSymKind_GPROC16 = 0x0105,
+//  Global procedure start
+SYMS_CvSymKind_THUNK16 = 0x0106,
+//  Thunk Start
+SYMS_CvSymKind_BLOCK16 = 0x0107,
+//  block start
+SYMS_CvSymKind_WITH16 = 0x0108,
+//  with start
+SYMS_CvSymKind_LABEL16 = 0x0109,
+//  code label
+SYMS_CvSymKind_CEXMODEL16 = 0x010a,
+//  change execution model
+SYMS_CvSymKind_VFTABLE16 = 0x010b,
+//  address of virtual function table
+SYMS_CvSymKind_REGREL16 = 0x010c,
+//  register relative address
+SYMS_CvSymKind_BPREL32_16t = 0x0200,
+//  BP-relative
+SYMS_CvSymKind_LDATA32_16t = 0x0201,
+//  Module-static symbol
+SYMS_CvSymKind_GDATA32_16t = 0x0202,
+//  Global data symbol
+SYMS_CvSymKind_PUB32_16t = 0x0203,
+//  a public symbol (CV internal reserved)
+SYMS_CvSymKind_LPROC32_16t = 0x0204,
+//  Local procedure start
+SYMS_CvSymKind_GPROC32_16t = 0x0205,
+//  Global procedure start
+SYMS_CvSymKind_THUNK32_ST = 0x0206,
+//  Thunk Start
+SYMS_CvSymKind_BLOCK32_ST = 0x0207,
+//  block start
+SYMS_CvSymKind_WITH32_ST = 0x0208,
+//  with start
+SYMS_CvSymKind_LABEL32_ST = 0x0209,
+//  code label
+SYMS_CvSymKind_CEXMODEL32 = 0x020a,
+//  change execution model
+SYMS_CvSymKind_VFTABLE32_16t = 0x020b,
+//  address of virtual function table
+SYMS_CvSymKind_REGREL32_16t = 0x020c,
+//  register relative address
+SYMS_CvSymKind_LTHREAD32_16t = 0x020d,
+//  static thread storage
+SYMS_CvSymKind_GTHREAD32_16t = 0x020e,
+//  static thread storage
+SYMS_CvSymKind_SLINK32 = 0x020f,
+//  static link for MIPS EH implementation
+SYMS_CvSymKind_LPROCMIPS_16t = 0x0300,
+//  Local procedure start
+SYMS_CvSymKind_GPROCMIPS_16t = 0x0301,
+//  Global procedure start
+SYMS_CvSymKind_PROCREF_ST = 0x0400,
+//  Reference to a procedure
+SYMS_CvSymKind_DATAREF_ST = 0x0401,
+//  Reference to data
+SYMS_CvSymKind_ALIGN = 0x0402,
+//  Used for page alignment of symbols
+SYMS_CvSymKind_LPROCREF_ST = 0x0403,
+//  Local Reference to a procedure
+SYMS_CvSymKind_OEM = 0x0404,
+//  OEM defined symbol
+SYMS_CvSymKind_TI16_MAX = 0x1000,
+//  Register variable
+SYMS_CvSymKind_CONSTANT_ST = 0x1002,
+//  constant symbol
+SYMS_CvSymKind_UDT_ST = 0x1003,
+//  User defined type
+SYMS_CvSymKind_COBOLUDT_ST = 0x1004,
+//  special UDT for cobol that does not symbol pack
+SYMS_CvSymKind_MANYREG_ST = 0x1005,
+//  multiple register variable
+SYMS_CvSymKind_BPREL32_ST = 0x1006,
+//  BP-relative
+SYMS_CvSymKind_LDATA32_ST = 0x1007,
+//  Module-static symbol
+SYMS_CvSymKind_GDATA32_ST = 0x1008,
+//  Global data symbol
+SYMS_CvSymKind_PUB32_ST = 0x1009,
+//  a public symbol (CV internal reserved)
+SYMS_CvSymKind_LPROC32_ST = 0x100a,
+//  Local procedure start
+SYMS_CvSymKind_GPROC32_ST = 0x100b,
+//  Global procedure start
+SYMS_CvSymKind_VFTABLE32 = 0x100c,
+//  address of virtual function table
+SYMS_CvSymKind_REGREL32_ST = 0x100d,
+//  register relative address
+SYMS_CvSymKind_LTHREAD32_ST = 0x100e,
+//  static thread storage
+SYMS_CvSymKind_GTHREAD32_ST = 0x100f,
+//  static thread storage
+SYMS_CvSymKind_LPROCMIPS_ST = 0x1010,
+//  Local procedure start
+SYMS_CvSymKind_GPROCMIPS_ST = 0x1011,
+//  Global procedure start
+SYMS_CvSymKind_FRAMEPROC = 0x1012,
+//  extra frame and proc information
+SYMS_CvSymKind_COMPILE2_ST = 0x1013,
+//  extended compile flags and info
+SYMS_CvSymKind_MANYREG2_ST = 0x1014,
+//  multiple register variable
+SYMS_CvSymKind_LPROCIA64_ST = 0x1015,
+//  Local procedure start (IA64)
+SYMS_CvSymKind_GPROCIA64_ST = 0x1016,
+//  Global procedure start (IA64)
+SYMS_CvSymKind_LOCALSLOT_ST = 0x1017,
+//  static IL sym with field for static slot index
+SYMS_CvSymKind_PARAMSLOT_ST = 0x1018,
+//  static IL sym with field for parameter slot index
+SYMS_CvSymKind_ANNOTATION = 0x1019,
+//  Annotation string literals
+SYMS_CvSymKind_GMANPROC_ST = 0x101a,
+//  Global proc
+SYMS_CvSymKind_LMANPROC_ST = 0x101b,
+//  Local proc
+SYMS_CvSymKind_RESERVED1 = 0x101c,
+//  reserved
+SYMS_CvSymKind_RESERVED2 = 0x101d,
+//  reserved
+SYMS_CvSymKind_RESERVED3 = 0x101e,
+//  reserved
+SYMS_CvSymKind_RESERVED4 = 0x101f,
+//  reserved
+SYMS_CvSymKind_LMANDATA_ST = 0x1020,
+SYMS_CvSymKind_GMANDATA_ST = 0x1021,
+SYMS_CvSymKind_MANFRAMEREL_ST = 0x1022,
+SYMS_CvSymKind_MANREGISTER_ST = 0x1023,
+SYMS_CvSymKind_MANSLOT_ST = 0x1024,
+SYMS_CvSymKind_MANMANYREG_ST = 0x1025,
+SYMS_CvSymKind_MANREGREL_ST = 0x1026,
+SYMS_CvSymKind_MANMANYREG2_ST = 0x1027,
+SYMS_CvSymKind_MANTYPREF = 0x1028,
+//  Index for type referenced by name from metadata
+SYMS_CvSymKind_UNAMESPACE_ST = 0x1029,
+//  Using namespace
+SYMS_CvSymKind_ST_MAX = 0x1100,
+//  starting point for SZ name symbols
+SYMS_CvSymKind_OBJNAME = 0x1101,
+//  path to object file name
+SYMS_CvSymKind_THUNK32 = 0x1102,
+//  Thunk Start
+SYMS_CvSymKind_BLOCK32 = 0x1103,
+//  block start
+SYMS_CvSymKind_WITH32 = 0x1104,
+//  with start
+SYMS_CvSymKind_LABEL32 = 0x1105,
+//  code label
+SYMS_CvSymKind_REGISTER = 0x1106,
+//  Register variable
+SYMS_CvSymKind_CONSTANT = 0x1107,
+//  constant symbol
+SYMS_CvSymKind_UDT = 0x1108,
+//  User defined type
+SYMS_CvSymKind_COBOLUDT = 0x1109,
+//  special UDT for cobol that does not symbol pack
+SYMS_CvSymKind_MANYREG = 0x110a,
+//  multiple register variable
+SYMS_CvSymKind_BPREL32 = 0x110b,
+//  BP-relative
+SYMS_CvSymKind_LDATA32 = 0x110c,
+//  Module-static symbol
+SYMS_CvSymKind_GDATA32 = 0x110d,
+//  Global data symbol
+SYMS_CvSymKind_PUB32 = 0x110e,
+//  a public symbol (CV internal reserved)
+SYMS_CvSymKind_LPROC32 = 0x110f,
+//  Local procedure start
+SYMS_CvSymKind_GPROC32 = 0x1110,
+//  Global procedure start
+SYMS_CvSymKind_REGREL32 = 0x1111,
+//  register relative address
+SYMS_CvSymKind_LTHREAD32 = 0x1112,
+//  static thread storage
+SYMS_CvSymKind_GTHREAD32 = 0x1113,
+//  static thread storage
+SYMS_CvSymKind_LPROCMIPS = 0x1114,
+//  Local procedure start
+SYMS_CvSymKind_GPROCMIPS = 0x1115,
+//  Global procedure start
+SYMS_CvSymKind_COMPILE2 = 0x1116,
+//  extended compile flags and info
+SYMS_CvSymKind_MANYREG2 = 0x1117,
+//  multiple register variable
+SYMS_CvSymKind_LPROCIA64 = 0x1118,
+//  Local procedure start (IA64)
+SYMS_CvSymKind_GPROCIA64 = 0x1119,
+//  Global procedure start (IA64)
+SYMS_CvSymKind_LOCALSLOT = 0x111a,
+//  static IL sym with field for static slot index
+SYMS_CvSymKind_PARAMSLOT = 0x111b,
+//  static IL sym with field for parameter slot index
+SYMS_CvSymKind_LMANDATA = 0x111c,
+SYMS_CvSymKind_GMANDATA = 0x111d,
+SYMS_CvSymKind_MANFRAMEREL = 0x111e,
+SYMS_CvSymKind_MANREGISTER = 0x111f,
+SYMS_CvSymKind_MANSLOT = 0x1120,
+SYMS_CvSymKind_MANMANYREG = 0x1121,
+SYMS_CvSymKind_MANREGREL = 0x1122,
+SYMS_CvSymKind_MANMANYREG2 = 0x1123,
+SYMS_CvSymKind_UNAMESPACE = 0x1124,
+//  Using namespace
+SYMS_CvSymKind_PROCREF = 0x1125,
+//  Reference to a procedure
+SYMS_CvSymKind_DATAREF = 0x1126,
+//  Reference to data
+SYMS_CvSymKind_LPROCREF = 0x1127,
+//  Local Reference to a procedure
+SYMS_CvSymKind_ANNOTATIONREF = 0x1128,
+//  Reference to an S_ANNOTATION symbol
+SYMS_CvSymKind_TOKENREF = 0x1129,
+//  Reference to one of the many MANPROCSYM's
+SYMS_CvSymKind_GMANPROC = 0x112a,
+//  Global proc
+SYMS_CvSymKind_LMANPROC = 0x112b,
+//  Local proc
+SYMS_CvSymKind_TRAMPOLINE = 0x112c,
+//  trampoline thunks
+SYMS_CvSymKind_MANCONSTANT = 0x112d,
+//  constants with metadata type info
+SYMS_CvSymKind_ATTR_FRAMEREL = 0x112e,
+//  relative to virtual frame ptr
+SYMS_CvSymKind_ATTR_REGISTER = 0x112f,
+//  stored in a register
+SYMS_CvSymKind_ATTR_REGREL = 0x1130,
+//  relative to register (alternate frame ptr)
+SYMS_CvSymKind_ATTR_MANYREG = 0x1131,
+//  stored in >1 register
+SYMS_CvSymKind_SEPCODE = 0x1132,
+//  defines a static symbol in optimized code
+SYMS_CvSymKind_DEFRANGE_2005 = 0x1134,
+//  defines a single range of addresses in which symbol can be evaluated
+SYMS_CvSymKind_DEFRANGE2_2005 = 0x1135,
+//  defines ranges of addresses in which symbol can be evaluated
+SYMS_CvSymKind_SECTION = 0x1136,
+//  A COFF section in a PE executable
+SYMS_CvSymKind_COFFGROUP = 0x1137,
+//  A COFF group
+SYMS_CvSymKind_EXPORT = 0x1138,
+//  A export
+SYMS_CvSymKind_CALLSITEINFO = 0x1139,
+//  Indirect call site information
+SYMS_CvSymKind_FRAMECOOKIE = 0x113a,
+//  Security cookie information
+SYMS_CvSymKind_DISCARDED = 0x113b,
+//  Discarded by LINK /OPT:REF (experimental, see richards)
+SYMS_CvSymKind_COMPILE3 = 0x113c,
+//  Replacement for S_COMPILE2
+SYMS_CvSymKind_ENVBLOCK = 0x113d,
+//  Environment block split off from S_COMPILE2
+SYMS_CvSymKind_LOCAL = 0x113e,
+//  defines a local symbol in optimized code
+SYMS_CvSymKind_DEFRANGE = 0x113f,
+//  defines a single range of addresses in which symbol can be evaluated
+SYMS_CvSymKind_DEFRANGE_SUBFIELD = 0x1140,
+//  ranges for a subfield
+SYMS_CvSymKind_DEFRANGE_REGISTER = 0x1141,
+//  ranges for en-registered symbol
+SYMS_CvSymKind_DEFRANGE_FRAMEPOINTER_REL = 0x1142,
+//  range for stack symbol.
+SYMS_CvSymKind_DEFRANGE_SUBFIELD_REGISTER = 0x1143,
+//  ranges for en-registered field of symbol
+SYMS_CvSymKind_DEFRANGE_FRAMEPOINTER_REL_FULL_SCOPE = 0x1144,
+//  range for stack symbol span valid full scope of function body, gap might apply.
+SYMS_CvSymKind_DEFRANGE_REGISTER_REL = 0x1145,
+//  range for symbol address as register + offset.
+SYMS_CvSymKind_LPROC32_ID = 0x1146,
+SYMS_CvSymKind_GPROC32_ID = 0x1147,
+SYMS_CvSymKind_LPROCMIPS_ID = 0x1148,
+SYMS_CvSymKind_GPROCMIPS_ID = 0x1149,
+SYMS_CvSymKind_LPROCIA64_ID = 0x114a,
+SYMS_CvSymKind_GPROCIA64_ID = 0x114b,
+SYMS_CvSymKind_BUILDINFO = 0x114c,
+//  build information.
+SYMS_CvSymKind_INLINESITE = 0x114d,
+//  inlined function callsite.
+SYMS_CvSymKind_INLINESITE_END = 0x114e,
+SYMS_CvSymKind_PROC_ID_END = 0x114f,
+SYMS_CvSymKind_DEFRANGE_HLSL = 0x1150,
+SYMS_CvSymKind_GDATA_HLSL = 0x1151,
+SYMS_CvSymKind_LDATA_HLSL = 0x1152,
+SYMS_CvSymKind_FILESTATIC = 0x1153,
+//  DPC groupshared variable
+SYMS_CvSymKind_LPROC32_DPC = 0x1155,
+//  DPC static procedure start
+SYMS_CvSymKind_LPROC32_DPC_ID = 0x1156,
+SYMS_CvSymKind_DEFRANGE_DPC_PTR_TAG = 0x1157,
+//  DPC pointer tag definition range
+SYMS_CvSymKind_DPC_SYM_TAG_MAP = 0x1158,
+//  DPC pointer tag value to symbol record map
+SYMS_CvSymKind_ARMSWITCHTABLE = 0x1159,
+SYMS_CvSymKind_CALLEES = 0x115a,
+SYMS_CvSymKind_CALLERS = 0x115b,
+SYMS_CvSymKind_POGODATA = 0x115c,
+SYMS_CvSymKind_INLINESITE2 = 0x115d,
+//  extended inline site information
+SYMS_CvSymKind_HEAPALLOCSITE = 0x115e,
+//  heap allocation site
+SYMS_CvSymKind_MOD_TYPEREF = 0x115f,
+//  only generated at link time
+SYMS_CvSymKind_REF_MINIPDB = 0x1160,
+//  only generated at link time for mini PDB
+SYMS_CvSymKind_PDBMAP = 0x1161,
+//  only generated at link time for mini PDB
+SYMS_CvSymKind_GDATA_HLSL32 = 0x1162,
+SYMS_CvSymKind_LDATA_HLSL32 = 0x1163,
+SYMS_CvSymKind_GDATA_HLSL32_EX = 0x1164,
+SYMS_CvSymKind_LDATA_HLSL32_EX = 0x1165,
+SYMS_CvSymKind_FASTLINK = 0x1167,
+SYMS_CvSymKind_INLINEES = 0x1168,
+SYMS_CvSymKind_COUNT = 194
+};
+typedef struct SYMS_CvAnnotation{
+SYMS_U32 off;
+SYMS_U16 seg;
+SYMS_U16 count;
+} SYMS_CvAnnotation;
+typedef struct SYMS_CvRegister{
+SYMS_CvTypeId type;
+SYMS_U16 reg;
+} SYMS_CvRegister;
+typedef struct SYMS_CvBPRelSym32{
+SYMS_U32 off;
+SYMS_CvTypeId itype;
+} SYMS_CvBPRelSym32;
+typedef struct SYMS_CvVPathSym32{
+SYMS_CvTypeId root;
+//  "type index of the root path"
+SYMS_CvTypeId path;
+//  "type nidex of the path record"
+SYMS_U32 off;
+//  "offset of virtual function table"
+SYMS_U16 seg;
+} SYMS_CvVPathSym32;
+typedef struct SYMS_CvOEM{
+SYMS_CvGuid id;
+SYMS_CvTypeId itype;//  data[] 4 byte aligned
+} SYMS_CvOEM;
+typedef struct SYMS_CvSLink32{
+SYMS_U32 frame_size;
+SYMS_U32 offset;
+SYMS_U16 reg;
+} SYMS_CvSLink32;
+typedef SYMS_U8 SYMS_CvGenericStyle;
+enum{
+SYMS_CvGenericStyle_VOID,
+//  "void return type"
+SYMS_CvGenericStyle_REG,
+//  "return data is in register"
+SYMS_CvGenericStyle_ICAN,
+//  "indirect caller allocated near"
+SYMS_CvGenericStyle_ICAF,
+//  "indirect caller allocated far"
+SYMS_CvGenericStyle_IRAN,
+//  "indirect returnee allocated near"
+SYMS_CvGenericStyle_IRAF,
+//  "indirect returnee allocated far"
+SYMS_CvGenericStyle_UNUSED,
+SYMS_CvGenericStyle_COUNT = 7
+};
+typedef SYMS_U16 SYMS_CvGenericFlags;
+enum{
+SYMS_CvGenericFlags_CSTYLE = (1 << 0),
+SYMS_CvGenericFlags_RSCLEAN = (1 << 1),//  "true if returnee stack cleanup"
+};
+typedef struct SYMS_CvReturn{
+SYMS_CvGenericFlags flags;
+SYMS_CvGenericStyle style;
+} SYMS_CvReturn;
+typedef struct SYMS_CvStartSearch{
+SYMS_U32 start_symbol;
+//  offset where to start search (procedure)
+SYMS_U16 segment;
+} SYMS_CvStartSearch;
+typedef SYMS_U8 SYMS_CvLanguage;
+enum{
+SYMS_CvLanguage_C = 0x00,
+SYMS_CvLanguage_CXX = 0x01,
+SYMS_CvLanguage_FORTRAN = 0x02,
+SYMS_CvLanguage_MASM = 0x03,
+SYMS_CvLanguage_PASCAL = 0x04,
+SYMS_CvLanguage_BASIC = 0x05,
+SYMS_CvLanguage_COBOL = 0x06,
+SYMS_CvLanguage_LINK = 0x07,
+SYMS_CvLanguage_CVTRES = 0x08,
+SYMS_CvLanguage_CVTPGD = 0x09,
+SYMS_CvLanguage_CSHARP = 0x0A,
+SYMS_CvLanguage_VB = 0x0B,
+SYMS_CvLanguage_ILASM = 0x0C,
+SYMS_CvLanguage_JAVA = 0x0D,
+SYMS_CvLanguage_JSCRIPT = 0x0E,
+SYMS_CvLanguage_MSIL = 0x0F,
+SYMS_CvLanguage_HLSL = 0x10,
+SYMS_CvLanguage_COUNT = 17
+};
+typedef struct SYMS_CvThread32{
+SYMS_CvTypeId itype;
+SYMS_U32 tls_off;
+SYMS_U16 tls_seg;
+// variable-width: SYMS_U8 name;
+} SYMS_CvThread32;
+typedef SYMS_U32 SYMS_CvCompileFlags;
+enum{
+SYMS_CvCompileFlags_Language_SHIFT = 0, SYMS_CvCompileFlags_Language_MASK = 0xff,
+SYMS_CvCompileFlags_Pcode = (1 << 8),
+SYMS_CvCompileFlags_FloatPrec_SHIFT = 9, SYMS_CvCompileFlags_FloatPrec_MASK = 0x3,
+SYMS_CvCompileFlags_FloatPkg_SHIFT = 11, SYMS_CvCompileFlags_FloatPkg_MASK = 0x3,
+SYMS_CvCompileFlags_AmbientData_SHIFT = 13, SYMS_CvCompileFlags_AmbientData_MASK = 0x7,
+SYMS_CvCompileFlags_AmbientCode_SHIFT = 16, SYMS_CvCompileFlags_AmbientCode_MASK = 0x7,
+SYMS_CvCompileFlags_Mode = (1 << 19),
+SYMS_CvCompileFlags_pad_SHIFT = 20, SYMS_CvCompileFlags_pad_MASK = 0xf,
+};
+#define SYMS_CvCompileFlags_Extract_Language(f) (SYMS_CvLanguage)(((f) >> SYMS_CvCompileFlags_Language_SHIFT) & SYMS_CvCompileFlags_Language_MASK)
+#define SYMS_CvCompileFlags_Extract_FloatPrec(f) (SYMS_U8)(((f) >> SYMS_CvCompileFlags_FloatPrec_SHIFT) & SYMS_CvCompileFlags_FloatPrec_MASK)
+#define SYMS_CvCompileFlags_Extract_FloatPkg(f) (SYMS_U8)(((f) >> SYMS_CvCompileFlags_FloatPkg_SHIFT) & SYMS_CvCompileFlags_FloatPkg_MASK)
+#define SYMS_CvCompileFlags_Extract_AmbientData(f) (SYMS_U8)(((f) >> SYMS_CvCompileFlags_AmbientData_SHIFT) & SYMS_CvCompileFlags_AmbientData_MASK)
+#define SYMS_CvCompileFlags_Extract_AmbientCode(f) (SYMS_U8)(((f) >> SYMS_CvCompileFlags_AmbientCode_SHIFT) & SYMS_CvCompileFlags_AmbientCode_MASK)
+#define SYMS_CvCompileFlags_Extract_pad(f) (SYMS_U8)(((f) >> SYMS_CvCompileFlags_pad_SHIFT) & SYMS_CvCompileFlags_pad_MASK)
+typedef struct SYMS_CvCompile{
+SYMS_U8 machine;
+SYMS_CvCompileFlags flags;
+// variable-width: SYMS_U8 ver_str;
+} SYMS_CvCompile;
+// struct SYMS_CvEnd{} skipped - no fixed width members
+typedef SYMS_U32 SYMS_CvCompile2Flags;
+enum{
+SYMS_CvCompile2Flag_Language_SHIFT = 0, SYMS_CvCompile2Flag_Language_MASK = 0xff,
+SYMS_CvCompile2Flag_EC = (1 << 8),
+SYMS_CvCompile2Flag_NoDbgInfo = (1 << 9),
+SYMS_CvCompile2Flag_LTCG = (1 << 10),
+SYMS_CvCompile2Flag_NoDataAlign = (1 << 11),
+SYMS_CvCompile2Flag_ManagedPresent = (1 << 12),
+SYMS_CvCompile2Flag_SecurityChecks = (1 << 13),
+SYMS_CvCompile2Flag_HotPatch = (1 << 14),
+SYMS_CvCompile2Flag_CVTCIL = (1 << 15),
+SYMS_CvCompile2Flag_MSILModule = (1 << 16),
+};
+#define SYMS_CvCompile2Flags_Extract_Language(f) (SYMS_CvLanguage)(((f) >> SYMS_CvCompile2Flag_Language_SHIFT) & SYMS_CvCompile2Flag_Language_MASK)
+typedef struct SYMS_CvCompile2{
+SYMS_CvCompile2Flags flags;
+SYMS_CvArch machine;
+SYMS_U16 ver_fe_major;
+SYMS_U16 ver_fe_minor;
+SYMS_U16 ver_fe_build;
+SYMS_U16 ver_major;
+SYMS_U16 ver_minor;
+SYMS_U16 ver_build;
+// variable-width: SYMS_U8 ver_str;
+} SYMS_CvCompile2;
+typedef SYMS_U32 SYMS_CvCompile3Flags;
+enum{
+SYMS_CvCompile3Flag_Language_SHIFT = 0, SYMS_CvCompile3Flag_Language_MASK = 0xff,
+SYMS_CvCompile3Flag_unused_1 = (1 << 8),
+SYMS_CvCompile3Flag_EC = (1 << 9),
+SYMS_CvCompile3Flag_NoDbgInfo = (1 << 10),
+SYMS_CvCompile3Flag_LTCG = (1 << 11),
+SYMS_CvCompile3Flag_NoDataAlign = (1 << 12),
+SYMS_CvCompile3Flag_ManagedPresent = (1 << 13),
+SYMS_CvCompile3Flag_SecurityChecks = (1 << 14),
+SYMS_CvCompile3Flag_HotPatch = (1 << 15),
+SYMS_CvCompile3Flag_CVTCIL = (1 << 16),
+SYMS_CvCompile3Flag_MSILModule = (1 << 17),
+SYMS_CvCompile3Flag_SDL = (1 << 18),
+SYMS_CvCompile3Flag_PGO = (1 << 19),
+SYMS_CvCompile3Flag_EXP = (1 << 20),
+};
+#define SYMS_CvCompile3Flags_Extract_Language(f) (SYMS_CvLanguage)(((f) >> SYMS_CvCompile3Flag_Language_SHIFT) & SYMS_CvCompile3Flag_Language_MASK)
+typedef struct SYMS_CvCompile3{
+SYMS_CvCompile3Flags flags;
+SYMS_CvArch machine;
+SYMS_U16 ver_fe_major;
+SYMS_U16 ver_fe_minor;
+SYMS_U16 ver_fe_build;
+SYMS_U16 ver_feqfe;
+SYMS_U16 ver_major;
+SYMS_U16 ver_minor;
+SYMS_U16 ver_build;
+SYMS_U16 ver_qfe;
+// variable-width: SYMS_U8 version;
+} SYMS_CvCompile3;
+typedef struct SYMS_CvObjname{
+SYMS_U32 sig;
+// variable-width: SYMS_U8 name;
+} SYMS_CvObjname;
+// struct SYMS_CvUNamespace{} skipped - no fixed width members
+typedef struct SYMS_CvRef2{
+SYMS_U32 sum_name;
+//  SUC of the name
+SYMS_U32 sym_off;
+//  Offset of actual symbol in $$Symbols
+SYMS_CvModIndex imod;
+//  Module containing the actual symbol
+// variable-width: SYMS_U8 name;
+} SYMS_CvRef2;
+typedef SYMS_U32 SYMS_CvSepcodeFlags;
+enum{
+SYMS_CvSepcodeFlags_IS_LEXICAL_SCOPE = (1 << 0),
+SYMS_CvSepcodeFlags_RETURNS_TO_PARENT = (1 << 1),//  "code frag returns to parent"
+};
+typedef struct SYMS_CvSepcode{
+SYMS_U32 parent;
+SYMS_U32 end;
+SYMS_U32 len;
+SYMS_CvSepcodeFlags flags;
+SYMS_U32 sec_off;
+SYMS_U32 sec_parent_off;
+//  parent relative offset to enclosing scope.
+SYMS_U16 sec;
+SYMS_U16 sec_parent;
+} SYMS_CvSepcode;
+typedef struct SYMS_CvSlotsym32{
+SYMS_U32 slot_index;
+SYMS_CvTypeId type;
+} SYMS_CvSlotsym32;
+typedef struct SYMS_CvPogoInfo{
+SYMS_U32 invocations;
+SYMS_U64 dynamic_inst_count;
+SYMS_U32 static_inst_count;
+SYMS_U32 post_inline_static_inst_count;
+} SYMS_CvPogoInfo;
+typedef struct SYMS_CvManyreg{
+SYMS_CvTypeId type;
+SYMS_U8 count;
+} SYMS_CvManyreg;
+typedef struct SYMS_CvManyreg2{
+SYMS_CvTypeId type;
+SYMS_U16 count;
+} SYMS_CvManyreg2;
+typedef SYMS_U8 SYMS_CvEncodedFramePtrReg;
+enum{
+SYMS_CvEncodedFramePtrReg_None = 0,
+SYMS_CvEncodedFramePtrReg_StackPtr = 1,
+SYMS_CvEncodedFramePtrReg_FramePtr = 2,
+SYMS_CvEncodedFramePtrReg_BasePtr = 3,
+SYMS_CvEncodedFramePtrReg_COUNT = 4
+};
+typedef SYMS_U32 SYMS_CvFrameprocFlags;
+enum{
+SYMS_CvFrameprocFlag_UsesAlloca = (1 << 0),
+SYMS_CvFrameprocFlag_UsesSetJmp = (1 << 1),
+SYMS_CvFrameprocFlag_UsesLongJmp = (1 << 2),
+SYMS_CvFrameprocFlag_UsesInlAsm = (1 << 3),
+SYMS_CvFrameprocFlag_UsesEH = (1 << 4),
+SYMS_CvFrameprocFlag_Inline = (1 << 5),
+SYMS_CvFrameprocFlag_HasSEH = (1 << 6),
+SYMS_CvFrameprocFlag_Naked = (1 << 7),
+SYMS_CvFrameprocFlag_HasSecurityChecks = (1 << 8),
+SYMS_CvFrameprocFlag_AsyncEH = (1 << 9),
+SYMS_CvFrameprocFlag_GSNoStackOrdering = (1 << 10),
+SYMS_CvFrameprocFlag_WasInlined = (1 << 11),
+SYMS_CvFrameprocFlag_GSCheck = (1 << 12),
+SYMS_CvFrameprocFlag_SafeBuffers = (1 << 13),
+SYMS_CvFrameprocFlag_LocalBasePointer_SHIFT = 14, SYMS_CvFrameprocFlag_LocalBasePointer_MASK = 0x3,
+SYMS_CvFrameprocFlag_ParamBasePointer_SHIFT = 16, SYMS_CvFrameprocFlag_ParamBasePointer_MASK = 0x3,
+SYMS_CvFrameprocFlag_PogoOn = (1 << 18),
+SYMS_CvFrameprocFlag_PogoCountsValid = (1 << 19),
+SYMS_CvFrameprocFlag_OptSpeed = (1 << 20),
+SYMS_CvFrameprocFlag_HasCFG = (1 << 21),
+SYMS_CvFrameprocFlag_HasCFW = (1 << 22),
+};
+#define SYMS_CvFrameprocFlags_Extract_LocalBasePointer(f) (SYMS_CvEncodedFramePtrReg)(((f) >> SYMS_CvFrameprocFlag_LocalBasePointer_SHIFT) & SYMS_CvFrameprocFlag_LocalBasePointer_MASK)
+#define SYMS_CvFrameprocFlags_Extract_ParamBasePointer(f) (SYMS_CvEncodedFramePtrReg)(((f) >> SYMS_CvFrameprocFlag_ParamBasePointer_SHIFT) & SYMS_CvFrameprocFlag_ParamBasePointer_MASK)
+typedef struct SYMS_CvFrameproc{
+SYMS_U32 frame_size;
+SYMS_U32 pad_size;
+SYMS_U32 pad_off;
+//  frame pointer relative offset to where padding begins
+SYMS_U32 save_reg_size;
+SYMS_U32 eh_off;
+//  offset of exception handler
+SYMS_CvSectionIndex eh_sec;
+SYMS_CvFrameprocFlags flags;
+} SYMS_CvFrameproc;
+typedef SYMS_U8 SYMS_CvThunkOrdinal;
+enum{
+SYMS_CvThunkOrdinal_NOTYPE,
+//  standard thunk
+SYMS_CvThunkOrdinal_ADJUSTOR,
+//  adjustor for "this"
+SYMS_CvThunkOrdinal_VCALL,
+SYMS_CvThunkOrdinal_PCODE,
+SYMS_CvThunkOrdinal_LOAD,
+//  "thunk which loads the address to jump to via unknwon means"
+SYMS_CvThunkOrdinal_TRAMP_INCREMENTAL,
+SYMS_CvThunkOrdinal_TRAMP_BRANCHISLAND,
+SYMS_CvThunkOrdinal_COUNT = 7
+};
+typedef struct SYMS_CvThunk32{
+SYMS_U32 parent;
+SYMS_U32 end;
+SYMS_U32 next;
+SYMS_U32 off;
+SYMS_U16 sec;
+SYMS_U16 len;
+SYMS_CvThunkOrdinal ord;
+// variable-width: SYMS_U8 name;
+} SYMS_CvThunk32;
+typedef struct SYMS_CvBlock32{
+SYMS_U32 par;
+SYMS_U32 end;
+SYMS_U32 len;
+SYMS_U32 off;
+SYMS_U16 sec;
+// variable-width: SYMS_U8 name;
+} SYMS_CvBlock32;
+typedef SYMS_U8 SYMS_CvProcFlags;
+enum{
+SYMS_CvProcFlag_NOFPO = (1 << 0),
+SYMS_CvProcFlag_INT_RETURN = (1 << 1),
+SYMS_CvProcFlag_FAR_RETURN = (1 << 2),
+SYMS_CvProcFlag_NEVER_RETURN = (1 << 3),
+SYMS_CvProcFlag_NOTREACHED = (1 << 4),
+SYMS_CvProcFlag_CUSTOM_CALL = (1 << 5),
+SYMS_CvProcFlag_NOINLINE = (1 << 6),
+SYMS_CvProcFlag_OPTDBGINFO = (1 << 7),
+};
+typedef struct SYMS_CvLabel32{
+SYMS_U32 off;
+SYMS_U16 sec;
+SYMS_CvProcFlags flags;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLabel32;
+typedef struct SYMS_CvConstant{
+SYMS_CvTypeId itype;
+// variable-width: SYMS_PdbNumeric num;
+// variable-width: SYMS_U8 name;
+} SYMS_CvConstant;
+typedef struct SYMS_CvUDT{
+SYMS_CvTypeId itype;
+// variable-width: SYMS_U8 name;
+} SYMS_CvUDT;
+typedef SYMS_U16 SYMS_CvTrampolineKind;
+enum{
+SYMS_CvTrampolineKind_INCREMENTAL,
+SYMS_CvTrampolineKind_BRANCH_ISLAND,
+SYMS_CvTrampolineKind_COUNT = 2
+};
+typedef struct SYMS_CvTrampoline{
+SYMS_CvTrampolineKind type;
+SYMS_U16 thunk_size;
+SYMS_U32 thunk_sec_off;
+SYMS_U32 target_sec_off;
+SYMS_CvSectionIndex thunk_sec;
+SYMS_CvSectionIndex target_sec;
+} SYMS_CvTrampoline;
+typedef struct SYMS_CvSection{
+SYMS_U16 sec_index;
+SYMS_U8 align;
+SYMS_U8 pad;
+SYMS_U32 rva;
+SYMS_U32 size;
+SYMS_U32 characteristics;
+// variable-width: SYMS_U8 name;
+} SYMS_CvSection;
+typedef struct SYMS_CvCoffGroup{
+SYMS_U32 size;
+SYMS_U32 characteristics;
+SYMS_U32 off;
+SYMS_U16 sec;
+// variable-width: SYMS_U8 name;
+} SYMS_CvCoffGroup;
+typedef SYMS_U16 SYMS_CvExportFlags;
+enum{
+SYMS_CvExportFlag_CONSTANT = (1 << 0),
+SYMS_CvExportFlag_DATA = (1 << 1),
+SYMS_CvExportFlag_PRIVATE = (1 << 2),
+SYMS_CvExportFlag_NONAME = (1 << 3),
+SYMS_CvExportFlag_ORDINAL = (1 << 4),
+SYMS_CvExportFlag_FORWARDER = (1 << 5),
+};
+typedef struct SYMS_CvExport{
+SYMS_U16 ordinal;
+SYMS_CvExportFlags flags;
+// variable-width: SYMS_U8 name;
+} SYMS_CvExport;
+typedef struct SYMS_CvCallSiteInfo{
+SYMS_U32 off;
+//  call site section offset
+SYMS_U16 sec;
+//  call site section index
+SYMS_U16 pad;
+//  padding
+SYMS_CvTypeId itype;
+} SYMS_CvCallSiteInfo;
+typedef SYMS_U32 SYMS_CvFrameCookieKind;
+enum{
+SYMS_CvFrameCookieKind_COPY,
+SYMS_CvFrameCookieKind_XOR_SP,
+SYMS_CvFrameCookieKind_XOR_BP,
+SYMS_CvFrameCookieKind_XOR_R13,
+SYMS_CvFrameCookieKind_COUNT = 4
+};
+typedef struct SYMS_CvFrameCookie{
+SYMS_U32 off;
+SYMS_CvReg reg;
+SYMS_CvFrameCookieKind kind;
+SYMS_U8 flags;
+} SYMS_CvFrameCookie;
+typedef struct SYMS_CvEnvblock{
+SYMS_U8 flags;
+// variable-width: SYMS_U8 rgsz;
+} SYMS_CvEnvblock;
+typedef SYMS_U16 SYMS_CvLocalFlags;
+enum{
+SYMS_CvLocalFlag_PARAM = (1 << 0),
+SYMS_CvLocalFlag_ADDR_TAKEN = (1 << 1),
+SYMS_CvLocalFlag_COMPGEN = (1 << 2),
+SYMS_CvLocalFlag_AGGREGATE = (1 << 3),
+SYMS_CvLocalFlag_PARTOF_ARGGREGATE = (1 << 4),
+SYMS_CvLocalFlag_ALIASED = (1 << 5),
+SYMS_CvLocalFlag_ALIAS = (1 << 6),
+SYMS_CvLocalFlag_RETVAL = (1 << 7),
+SYMS_CvLocalFlag_OPTOUT = (1 << 8),
+SYMS_CvLocalFlag_GLOBAL = (1 << 9),
+SYMS_CvLocalFlag_STATIC = (1 << 10),
+};
+typedef struct SYMS_CvLocal{
+SYMS_CvTypeId itype;
+SYMS_CvLocalFlags flags;
+//  Name of this symbol, a null terminated array of UTF8 characters.
+// variable-width: SYMS_U8 name;
+} SYMS_CvLocal;
+typedef struct SYMS_CvLvarAddrRange{
+SYMS_U32 off;
+SYMS_U16 sec;
+SYMS_U16 len;
+} SYMS_CvLvarAddrRange;
+typedef struct SYMS_CvLvarAddrGap{
+SYMS_U16 off;
+SYMS_U16 len;
+} SYMS_CvLvarAddrGap;
+typedef SYMS_U16 SYMS_CvRangeAttribs;
+enum{
+SYMS_CvRangeAttrib_MAYBE = (1 << 0),
+};
+typedef struct SYMS_CvDefrange{
+SYMS_U32 program;
+SYMS_CvLvarAddrRange range;
+// variable-width: SYMS_CvLvarAddrGap gaps;
+} SYMS_CvDefrange;
+typedef struct SYMS_CvDefrangeSubfield{
+SYMS_U32 program;
+SYMS_U32 off_in_parent;
+SYMS_CvLvarAddrRange range;
+// variable-width: SYMS_CvLvarAddrGap gaps;
+} SYMS_CvDefrangeSubfield;
+typedef struct SYMS_CvDefrangeRegister{
+SYMS_CvReg reg;
+SYMS_CvRangeAttribs attribs;
+SYMS_CvLvarAddrRange range;
+// variable-width: SYMS_CvLvarAddrGap gaps;
+} SYMS_CvDefrangeRegister;
+typedef struct SYMS_CvDefrangeFramepointerRel{
+SYMS_U32 off;
+SYMS_CvLvarAddrRange range;
+// variable-width: SYMS_CvLvarAddrGap gaps;
+} SYMS_CvDefrangeFramepointerRel;
+typedef struct SYMS_CvDefrangeSubfieldRegister{
+SYMS_CvReg reg;
+SYMS_CvRangeAttribs attribs;
+SYMS_U32 off_parent;
+SYMS_CvLvarAddrRange range;
+// variable-width: SYMS_CvLvarAddrGap gaps;
+} SYMS_CvDefrangeSubfieldRegister;
+typedef struct SYMS_CvDefrangeFramepointerRelFullScope{
+SYMS_U32 off;
+} SYMS_CvDefrangeFramepointerRelFullScope;
+typedef SYMS_U16 SYMS_CvDefrangeRegisterRelFlags;
+enum{
+SYMS_CvDefrangeRegisterRelFlag_SPILLED_OUT_UDT_MEMBER = (1 << 0),
+SYMS_CvDefrangeRegisterRelFlag_unused_1 = (1 << 1),
+SYMS_CvDefrangeRegisterRelFlag_unused_2 = (1 << 2),
+SYMS_CvDefrangeRegisterRelFlag_unused_3 = (1 << 3),
+SYMS_CvDefrangeRegisterRelFlag_OFFSET_PARENT_SHIFT = 4, SYMS_CvDefrangeRegisterRelFlag_OFFSET_PARENT_MASK = 0xfff,
+};
+#define SYMS_CvDefrangeRegisterRelFlags_Extract_OFFSET_PARENT(f) (SYMS_U16)(((f) >> SYMS_CvDefrangeRegisterRelFlag_OFFSET_PARENT_SHIFT) & SYMS_CvDefrangeRegisterRelFlag_OFFSET_PARENT_MASK)
+typedef struct SYMS_CvDefrangeRegisterRel{
+SYMS_CvReg reg;
+SYMS_CvDefrangeRegisterRelFlags flags;
+SYMS_U32 reg_off;
+SYMS_CvLvarAddrRange range;
+// variable-width: SYMS_CvLvarAddrGap gaps;
+} SYMS_CvDefrangeRegisterRel;
+typedef struct SYMS_CvData32{
+SYMS_CvTypeId itype;
+SYMS_U32 sec_off;
+SYMS_CvSectionIndex sec;
+// variable-width: SYMS_U8 name;
+} SYMS_CvData32;
+typedef SYMS_U32 SYMS_CvPubsymFlags;
+enum{
+SYMS_CvPubsymFlags_CODE = (1 << 0),
+SYMS_CvPubsymFlags_FUNCTION = (1 << 1),
+SYMS_CvPubsymFlags_MANAGED_CODE = (1 << 2),
+SYMS_CvPubsymFlags_MSIL = (1 << 3),//  "set if managed IL code"
+};
+typedef struct SYMS_CvPubsym32{
+SYMS_CvPubsymFlags flags;
+SYMS_U32 off;
+SYMS_U16 sec;
+//  "seg" in the reference code - but it's just a section number
+// variable-width: SYMS_U8 name;
+} SYMS_CvPubsym32;
+// struct SYMS_CvGProc16{} skipped - no fixed width members
+// struct SYMS_CvGProc3216t{} skipped - no fixed width members
+typedef struct SYMS_CvProc32{
+SYMS_U32 parent;
+SYMS_U32 end;
+SYMS_U32 next;
+SYMS_U32 len;
+SYMS_U32 dbg_start;
+SYMS_U32 dbg_end;
+SYMS_CvTypeId itype;
+SYMS_U32 off;
+SYMS_U16 sec;
+SYMS_CvProcFlags flags;
+// variable-width: SYMS_U8 name;
+} SYMS_CvProc32;
+typedef struct SYMS_CvRegrel32{
+SYMS_U32 reg_off;
+SYMS_CvTypeId itype;
+SYMS_CvReg reg;
+// variable-width: SYMS_U8 name;
+} SYMS_CvRegrel32;
+typedef struct SYMS_CvBuildInfo{
+SYMS_CvItemId id;
+} SYMS_CvBuildInfo;
+typedef struct SYMS_CvFunctionList{
+SYMS_U32 count;
+// variable-width: SYMS_CvTypeId func;
+//  this should be like "array_clamped_to_stream" or something.
+// variable-width: SYMS_U32 invocations;
+} SYMS_CvFunctionList;
+typedef enum SYMS_CvBAOpcode{
+SYMS_CvBAOpcode_Invalid,
+SYMS_CvBAOpcode_CodeOffset,
+SYMS_CvBAOpcode_ChangeCodeOffsetBase,
+SYMS_CvBAOpcode_ChangeCodeOffset,
+SYMS_CvBAOpcode_ChangeCodeLength,
+SYMS_CvBAOpcode_ChangeFile,
+SYMS_CvBAOpcode_ChangeLineOffset,
+SYMS_CvBAOpcode_ChangeLineEndDelta,
+SYMS_CvBAOpcode_ChangeRangeKind,
+SYMS_CvBAOpcode_ChangeColumnStart,
+SYMS_CvBAOpcode_ChangeColumnEndDelta,
+SYMS_CvBAOpcode_ChangeCodeOffsetAndLineOffset,
+SYMS_CvBAOpcode_ChangeCodeLengthAndCodeOffset,
+SYMS_CvBAOpcode_ChangeColumnEnd,
+SYMS_CvBAOpcode_COUNT = 14
+} SYMS_CvBAOpcode;
+typedef struct SYMS_CvInlineSite{
+SYMS_U32 parent_offset;
+SYMS_U32 end_offset;
+SYMS_CvItemId inlinee;
+// variable-width: SYMS_PdbBinaryAnnotation binaryAnnotations;
+} SYMS_CvInlineSite;
+typedef struct SYMS_CvInlineSite2{
+SYMS_U32 parent_offset;
+SYMS_U32 end_offset;
+SYMS_CvItemId inlinee;
+SYMS_U32 invocations;
+// variable-width: SYMS_PdbBinaryAnnotation binaryAnnotations;
+} SYMS_CvInlineSite2;
+// struct SYMS_CvInlineSiteEnd{} skipped - no fixed width members
+typedef struct SYMS_CvInlinees{
+SYMS_U32 count;
+// variable-width: SYMS_U32 desc;
+} SYMS_CvInlinees;
+typedef struct SYMS_CvFileStatic{
+SYMS_CvTypeId itype;
+SYMS_U32 mod_offset;
+SYMS_CvLocalFlags flags;
+// variable-width: SYMS_U8 name;
+} SYMS_CvFileStatic;
+typedef struct SYMS_CvHeapAllocSite{
+SYMS_U32 off;
+//  call site offset
+SYMS_U16 sec;
+//  call site section
+SYMS_U16 call_inst_len;
+//  length of heap allocation call instruction (in bytes)
+SYMS_CvTypeId itype;
+} SYMS_CvHeapAllocSite;
+typedef struct SYMS_CvLocalVarAttr{
+SYMS_U32 off;
+SYMS_U16 seg;
+SYMS_CvLocalFlags flags;
+} SYMS_CvLocalVarAttr;
+typedef struct SYMS_CvFramerel{
+SYMS_U32 off;
+SYMS_CvTypeId itype;
+SYMS_CvLocalVarAttr attr;
+} SYMS_CvFramerel;
+typedef struct SYMS_CvAttrReg{
+SYMS_CvTypeId itype;
+SYMS_CvLocalVarAttr attr;
+SYMS_U16 reg;
+} SYMS_CvAttrReg;
+typedef struct SYMS_CvAttrRegrel{
+SYMS_U32 off;
+SYMS_CvTypeId itype;
+SYMS_U16 reg;
+SYMS_CvLocalVarAttr attr;
+} SYMS_CvAttrRegrel;
+typedef struct SYMS_CvAttrManyreg{
+SYMS_CvTypeId itype;
+SYMS_CvLocalVarAttr attr;
+SYMS_U8 reg_count;
+} SYMS_CvAttrManyreg;
+typedef SYMS_U16 SYMS_CvFastLinkFlags;
+enum{
+SYMS_CvFastLinkFlag_IS_GLOBAL_DATA = (1 << 0),
+SYMS_CvFastLinkFlag_IS_DATA = (1 << 1),
+SYMS_CvFastLinkFlag_IS_UDT = (1 << 2),
+SYMS_CvFastLinkFlag_unused_1 = (1 << 3),
+SYMS_CvFastLinkFlag_IS_CONST = (1 << 4),
+SYMS_CvFastLinkFlag_unused_2 = (1 << 5),
+SYMS_CvFastLinkFlag_IS_NAMESPACE = (1 << 6),
+};
+typedef struct SYMS_CvFastLink{
+SYMS_CvTypeId itype;
+SYMS_CvFastLinkFlags flags;
+// variable-width: SYMS_U8 name;
+SYMS_U32 padding;
+} SYMS_CvFastLink;
+typedef SYMS_U16 SYMS_CvArmSwitchType;
+enum{
+SYMS_CvArmSwitchType_INT1,
+SYMS_CvArmSwitchType_UINT1,
+SYMS_CvArmSwitchType_INT2,
+SYMS_CvArmSwitchType_UINT2,
+SYMS_CvArmSwitchType_INT4,
+SYMS_CvArmSwitchType_UINT5,
+SYMS_CvArmSwitchType_POINTER,
+SYMS_CvArmSwitchType_UINT1SHL1,
+SYMS_CvArmSwitchType_UINT2SHL1,
+SYMS_CvArmSwitchType_INT1SSHL1,
+SYMS_CvArmSwitchType_INT2SSHL1,
+SYMS_CvArmSwitchType_TBB = SYMS_CvArmSwitchType_UINT1SHL1,
+SYMS_CvArmSwitchType_TBH = SYMS_CvArmSwitchType_UINT2SHL1,
+SYMS_CvArmSwitchType_COUNT = 13
+};
+typedef struct SYMS_CvArmSwitchTable{
+SYMS_U32 off_base;
+//  "Section-relative offset to the base for switch offsets"
+SYMS_U16 sec_base;
+//  "Section index of the base for switch offsets"
+SYMS_CvArmSwitchType switch_type;
+SYMS_U32 off_branch;
+//  "Section-relative offset to the table branch instruction"
+SYMS_U32 off_table;
+//  "Section-relative offset to the start of the table"
+SYMS_U16 sec_branch;
+SYMS_U16 sec_table;
+SYMS_U32 entry_count;
+} SYMS_CvArmSwitchTable;
+typedef SYMS_U16 SYMS_CvRefMiniPdbFlags;
+enum{
+SYMS_CvRefMiniPdbFlags_LOCAL = (1 << 0),
+SYMS_CvRefMiniPdbFlags_DATA = (1 << 1),
+SYMS_CvRefMiniPdbFlags_UDT = (1 << 2),
+SYMS_CvRefMiniPdbFlags_LABEL = (1 << 3),
+SYMS_CvRefMiniPdbFlags_CONST = (1 << 4),
+};
+typedef struct SYMS_CvRefMiniPdb{
+SYMS_U32 data;
+//  If UDT flag is set then this is SYMS_CvTypeId, otherwise coff section index 
+SYMS_U16 imod;
+SYMS_CvRefMiniPdbFlags flags;
+} SYMS_CvRefMiniPdb;
+typedef SYMS_U32 SYMS_CvModTypeRefFlags;
+enum{
+SYMS_CvModTypeRefFlags_NONE = (1 << 0),
+SYMS_CvModTypeRefFlags_REF_TMPCT = (1 << 1),
+SYMS_CvModTypeRefFlags_OWN_TMPCT = (1 << 2),
+SYMS_CvModTypeRefFlags_OWN_TMR = (1 << 3),
+SYMS_CvModTypeRefFlags_OWN_TM = (1 << 4),
+SYMS_CvModTypeRefFlags_REF_TM = (1 << 5),
+};
+typedef struct SYMS_CvModTypeRef{
+SYMS_CvModTypeRefFlags flags;
+//  "these two words contain SN or module index depending on above flags"
+SYMS_U16 word0;
+SYMS_U16 word1;
+} SYMS_CvModTypeRef;
+typedef SYMS_U8 SYMS_CvDiscardedType;
+enum{
+SYMS_CvDiscardedType_UNKNOWN,
+SYMS_CvDiscardedType_NOT_SELECTED,
+SYMS_CvDiscardedType_NOT_REFERENCED,
+SYMS_CvDiscardedType_COUNT = 3
+};
+typedef SYMS_U32 SYMS_CvDiscardedFlags;
+enum{
+SYMS_CvDiscardedFlags_TYPE_SHIFT = 0, SYMS_CvDiscardedFlags_TYPE_MASK = 0xff,
+};
+#define SYMS_CvDiscardedFlags_Extract_TYPE(f) (SYMS_CvDiscardedType)(((f) >> SYMS_CvDiscardedFlags_TYPE_SHIFT) & SYMS_CvDiscardedFlags_TYPE_MASK)
+typedef struct SYMS_CvDiscarded{
+SYMS_CvDiscardedFlags flags;
+SYMS_U32 file_id;
+//  "First FILEID if line number info present"
+SYMS_U32 file_ln;
+} SYMS_CvDiscarded;
+typedef SYMS_U16 SYMS_CvLeaf;
+enum{
+//  leaf indices starting records but referenced from symbol records
+SYMS_CvLeaf_MODIFIER_16t = 0x0001,
+SYMS_CvLeaf_POINTER_16t = 0x0002,
+SYMS_CvLeaf_ARRAY_16t = 0x0003,
+SYMS_CvLeaf_CLASS_16t = 0x0004,
+SYMS_CvLeaf_STRUCTURE_16t = 0x0005,
+SYMS_CvLeaf_UNION_16t = 0x0006,
+SYMS_CvLeaf_ENUM_16t = 0x0007,
+SYMS_CvLeaf_PROCEDURE_16t = 0x0008,
+SYMS_CvLeaf_MFUNCTION_16t = 0x0009,
+SYMS_CvLeaf_VTSHAPE = 0x000a,
+SYMS_CvLeaf_COBOL0_16t = 0x000b,
+SYMS_CvLeaf_COBOL1 = 0x000c,
+SYMS_CvLeaf_BARRAY_16t = 0x000d,
+SYMS_CvLeaf_LABEL = 0x000e,
+SYMS_CvLeaf_NULL = 0x000f,
+SYMS_CvLeaf_NOTTRAN = 0x0010,
+SYMS_CvLeaf_DIMARRAY_16t = 0x0011,
+SYMS_CvLeaf_VFTPATH_16t = 0x0012,
+SYMS_CvLeaf_PRECOMP_16t = 0x0013,
+//  not referenced from symbol
+SYMS_CvLeaf_ENDPRECOMP = 0x0014,
+//  not referenced from symbol
+SYMS_CvLeaf_OEM_16t = 0x0015,
+//  oem definable type string
+SYMS_CvLeaf_TYPESERVER_ST = 0x0016,
+//  leaf indices starting records but referenced only from type records
+SYMS_CvLeaf_SKIP_16t = 0x0200,
+SYMS_CvLeaf_ARGLIST_16t = 0x0201,
+SYMS_CvLeaf_DEFARG_16t = 0x0202,
+SYMS_CvLeaf_LIST = 0x0203,
+SYMS_CvLeaf_FIELDLIST_16t = 0x0204,
+SYMS_CvLeaf_DERIVED_16t = 0x0205,
+SYMS_CvLeaf_BITFIELD_16t = 0x0206,
+SYMS_CvLeaf_METHODLIST_16t = 0x0207,
+SYMS_CvLeaf_DIMCONU_16t = 0x0208,
+SYMS_CvLeaf_DIMCONLU_16t = 0x0209,
+SYMS_CvLeaf_DIMVARU_16t = 0x020a,
+SYMS_CvLeaf_DIMVARLU_16t = 0x020b,
+SYMS_CvLeaf_REFSYM = 0x020c,
+SYMS_CvLeaf_BCLASS_16t = 0x0400,
+SYMS_CvLeaf_VBCLASS_16t = 0x0401,
+SYMS_CvLeaf_IVBCLASS_16t = 0x0402,
+SYMS_CvLeaf_ENUMERATE_ST = 0x0403,
+SYMS_CvLeaf_FRIENDFCN_16t = 0x0404,
+SYMS_CvLeaf_INDEX_16t = 0x0405,
+SYMS_CvLeaf_MEMBER_16t = 0x0406,
+SYMS_CvLeaf_STMEMBER_16t = 0x0407,
+SYMS_CvLeaf_METHOD_16t = 0x0408,
+SYMS_CvLeaf_NESTTYPE_16t = 0x0409,
+SYMS_CvLeaf_VFUNCTAB_16t = 0x040a,
+SYMS_CvLeaf_FRIENDCLS_16t = 0x040b,
+SYMS_CvLeaf_ONEMETHOD_16t = 0x040c,
+SYMS_CvLeaf_VFUNCOFF_16t = 0x040d,
+SYMS_CvLeaf_TI16_MAX = 0x1000,
+//  32-bit type index versions of leaves, all have the 0x1000 bit set
+SYMS_CvLeaf_MODIFIER = 0x1001,
+SYMS_CvLeaf_POINTER = 0x1002,
+SYMS_CvLeaf_ARRAY_ST = 0x1003,
+SYMS_CvLeaf_CLASS_ST = 0x1004,
+SYMS_CvLeaf_STRUCTURE_ST = 0x1005,
+SYMS_CvLeaf_UNION_ST = 0x1006,
+SYMS_CvLeaf_ENUM_ST = 0x1007,
+SYMS_CvLeaf_PROCEDURE = 0x1008,
+SYMS_CvLeaf_MFUNCTION = 0x1009,
+SYMS_CvLeaf_COBOL0 = 0x100a,
+SYMS_CvLeaf_BARRAY = 0x100b,
+SYMS_CvLeaf_DIMARRAY_ST = 0x100c,
+SYMS_CvLeaf_VFTPATH = 0x100d,
+SYMS_CvLeaf_PRECOMP_ST = 0x100e,
+//  not referenced from symbol
+SYMS_CvLeaf_OEM = 0x100f,
+//  oem definable type string
+SYMS_CvLeaf_ALIAS_ST = 0x1010,
+//  alias (typedef) type
+SYMS_CvLeaf_OEM2 = 0x1011,
+//  leaf indices starting records but referenced only from type records
+SYMS_CvLeaf_SKIP = 0x1200,
+SYMS_CvLeaf_ARGLIST = 0x1201,
+SYMS_CvLeaf_DEFARG_ST = 0x1202,
+SYMS_CvLeaf_FIELDLIST = 0x1203,
+SYMS_CvLeaf_DERIVED = 0x1204,
+SYMS_CvLeaf_BITFIELD = 0x1205,
+SYMS_CvLeaf_METHODLIST = 0x1206,
+SYMS_CvLeaf_DIMCONU = 0x1207,
+SYMS_CvLeaf_DIMCONLU = 0x1208,
+SYMS_CvLeaf_DIMVARU = 0x1209,
+SYMS_CvLeaf_DIMVARLU = 0x120a,
+SYMS_CvLeaf_BCLASS = 0x1400,
+SYMS_CvLeaf_VBCLASS = 0x1401,
+SYMS_CvLeaf_IVBCLASS = 0x1402,
+SYMS_CvLeaf_FRIENDFCN_ST = 0x1403,
+SYMS_CvLeaf_INDEX = 0x1404,
+SYMS_CvLeaf_MEMBER_ST = 0x1405,
+SYMS_CvLeaf_STMEMBER_ST = 0x1406,
+SYMS_CvLeaf_METHOD_ST = 0x1407,
+SYMS_CvLeaf_NESTTYPE_ST = 0x1408,
+SYMS_CvLeaf_VFUNCTAB = 0x1409,
+SYMS_CvLeaf_FRIENDCLS = 0x140a,
+SYMS_CvLeaf_ONEMETHOD_ST = 0x140b,
+SYMS_CvLeaf_VFUNCOFF = 0x140c,
+SYMS_CvLeaf_NESTTYPEEX_ST = 0x140d,
+SYMS_CvLeaf_MEMBERMODIFY_ST = 0x140e,
+SYMS_CvLeaf_MANAGED_ST = 0x140f,
+SYMS_CvLeaf_ST_MAX = 0x1500,
+//  Types w/ SZ names
+SYMS_CvLeaf_TYPESERVER = 0x1501,
+//  not referenced from symbol
+SYMS_CvLeaf_ENUMERATE = 0x1502,
+SYMS_CvLeaf_ARRAY = 0x1503,
+SYMS_CvLeaf_CLASS = 0x1504,
+SYMS_CvLeaf_STRUCTURE = 0x1505,
+SYMS_CvLeaf_UNION = 0x1506,
+SYMS_CvLeaf_ENUM = 0x1507,
+SYMS_CvLeaf_DIMARRAY = 0x1508,
+SYMS_CvLeaf_PRECOMP = 0x1509,
+//  not referenced from symbol
+SYMS_CvLeaf_ALIAS = 0x150a,
+//  alias (typedef) type
+SYMS_CvLeaf_DEFARG = 0x150b,
+SYMS_CvLeaf_FRIENDFCN = 0x150c,
+SYMS_CvLeaf_MEMBER = 0x150d,
+SYMS_CvLeaf_STMEMBER = 0x150e,
+SYMS_CvLeaf_METHOD = 0x150f,
+SYMS_CvLeaf_NESTTYPE = 0x1510,
+SYMS_CvLeaf_ONEMETHOD = 0x1511,
+SYMS_CvLeaf_NESTTYPEEX = 0x1512,
+SYMS_CvLeaf_MEMBERMODIFY = 0x1513,
+SYMS_CvLeaf_MANAGED = 0x1514,
+SYMS_CvLeaf_TYPESERVER2 = 0x1515,
+SYMS_CvLeaf_STRIDED_ARRAY = 0x1516,
+//  same as LF_ARRAY, but with stride between adjacent elements
+SYMS_CvLeaf_HLSL = 0x1517,
+SYMS_CvLeaf_MODIFIER_EX = 0x1518,
+SYMS_CvLeaf_INTERFACE = 0x1519,
+SYMS_CvLeaf_BINTERFACE = 0x151a,
+SYMS_CvLeaf_VECTOR = 0x151b,
+SYMS_CvLeaf_MATRIX = 0x151c,
+SYMS_CvLeaf_VFTABLE = 0x151d,
+//  a virtual function table
+SYMS_CvLeaf_ENDOFLEAFRECORD = SYMS_CvLeaf_VFTABLE,
+SYMS_CvLeaf_TYPE_LAST,
+//  one greater than the last type record
+SYMS_CvLeaf_TYPE_MAX = SYMS_CvLeaf_TYPE_LAST,
+SYMS_CvLeaf_FUNC_ID = 0x1601,
+//  static func ID
+SYMS_CvLeaf_MFUNC_ID = 0x1602,
+//  member func ID
+SYMS_CvLeaf_BUILDINFO = 0x1603,
+//  build info: tool, version, command line, src/pdb file
+SYMS_CvLeaf_SUBSTR_LIST = 0x1604,
+//  similar to LF_ARGLIST, for list of sub strings
+SYMS_CvLeaf_STRING_ID = 0x1605,
+//  string ID
+SYMS_CvLeaf_UDT_SRC_LINE = 0x1606,
+//  only generated by compiler
+SYMS_CvLeaf_UDT_MOD_SRC_LINE = 0x1607,
+//  only generated by linker
+SYMS_CvLeaf_CLASSPTR = 0x1608,
+SYMS_CvLeaf_CLASSPTR2 = 0x1609,
+SYMS_CvLeaf_ID_LAST,
+//  one greater than the last ID record
+SYMS_CvLeaf_ID_MAX = SYMS_CvLeaf_ID_LAST,
+SYMS_CvLeaf_NUMERIC = 0x8000,
+SYMS_CvLeaf_CHAR = 0x8000,
+SYMS_CvLeaf_SHORT = 0x8001,
+SYMS_CvLeaf_USHORT = 0x8002,
+SYMS_CvLeaf_LONG = 0x8003,
+SYMS_CvLeaf_ULONG = 0x8004,
+SYMS_CvLeaf_FLOAT32 = 0x8005,
+SYMS_CvLeaf_FLOAT64 = 0x8006,
+SYMS_CvLeaf_FLOAT80 = 0x8007,
+SYMS_CvLeaf_FLOAT128 = 0x8008,
+SYMS_CvLeaf_QUADWORD = 0x8009,
+SYMS_CvLeaf_UQUADWORD = 0x800a,
+SYMS_CvLeaf_FLOAT48 = 0x800b,
+SYMS_CvLeaf_COMPLEX32 = 0x800c,
+SYMS_CvLeaf_COMPLEX64 = 0x800d,
+SYMS_CvLeaf_COMPLEX80 = 0x800e,
+SYMS_CvLeaf_COMPLEX128 = 0x800f,
+SYMS_CvLeaf_VARSTRING = 0x8010,
+SYMS_CvLeaf_OCTWORD = 0x8017,
+SYMS_CvLeaf_UOCTWORD = 0x8018,
+SYMS_CvLeaf_DECIMAL = 0x8019,
+SYMS_CvLeaf_DATE = 0x801a,
+SYMS_CvLeaf_UTF8STRING = 0x801b,
+SYMS_CvLeaf_FLOAT16 = 0x801c,
+SYMS_CvLeaf_PAD0 = 0xf0,
+SYMS_CvLeaf_PAD1 = 0xf1,
+SYMS_CvLeaf_PAD2 = 0xf2,
+SYMS_CvLeaf_PAD3 = 0xf3,
+SYMS_CvLeaf_PAD4 = 0xf4,
+SYMS_CvLeaf_PAD5 = 0xf5,
+SYMS_CvLeaf_PAD6 = 0xf6,
+SYMS_CvLeaf_PAD7 = 0xf7,
+SYMS_CvLeaf_PAD8 = 0xf8,
+SYMS_CvLeaf_PAD9 = 0xf9,
+SYMS_CvLeaf_PAD10 = 0xfa,
+SYMS_CvLeaf_PAD11 = 0xfb,
+SYMS_CvLeaf_PAD12 = 0xfc,
+SYMS_CvLeaf_PAD13 = 0xfd,
+SYMS_CvLeaf_PAD14 = 0xfe,
+SYMS_CvLeaf_PAD15 = 0xff,
+SYMS_CvLeaf_COUNT = 178
+};
+typedef SYMS_U16 SYMS_CvModifierFlags;
+enum{
+SYMS_CvModifierFlag_CONST = (1 << 0),
+SYMS_CvModifierFlag_VOLATILE = (1 << 1),
+SYMS_CvModifierFlag_UNALIGNED = (1 << 2),
+};
+typedef SYMS_U8 SYMS_CvHFAKind;
+enum{
+SYMS_CvHFAKind_NONE,
+SYMS_CvHFAKind_FLOAT,
+SYMS_CvHFAKind_DOUBLE,
+SYMS_CvHFAKind_OTHER,
+SYMS_CvHFAKind_COUNT = 4
+};
+typedef SYMS_U8 SYMS_CvMoComUDTKind;
+enum{
+SYMS_CvMoComUDTKind_NONE,
+SYMS_CvMoComUDTKind_REF,
+SYMS_CvMoComUDTKind_VALUE,
+SYMS_CvMoComUDTKind_INTERFACE,
+SYMS_CvMoComUDTKind_COUNT = 4
+};
+typedef SYMS_U16 SYMS_CvTypeProps;
+enum{
+SYMS_CvTypeProp_PACKED = (1 << 0),
+SYMS_CvTypeProp_CTOR = (1 << 1),
+SYMS_CvTypeProp_OVLOPS = (1 << 2),
+SYMS_CvTypeProp_ISNSESTED = (1 << 3),
+SYMS_CvTypeProp_CNESTED = (1 << 4),
+SYMS_CvTypeProp_OPASSIGN = (1 << 5),
+SYMS_CvTypeProp_OPCAST = (1 << 6),
+SYMS_CvTypeProp_FWDREF = (1 << 7),
+SYMS_CvTypeProp_SCOPED = (1 << 8),
+SYMS_CvTypeProp_HAS_UNIQUE_NAME = (1 << 9),
+SYMS_CvTypeProp_SEALED = (1 << 10),
+SYMS_CvTypeProp_HFA_SHIFT = 11, SYMS_CvTypeProp_HFA_MASK = 0x3,
+SYMS_CvTypeProp_INTRINSIC = (1 << 13),
+SYMS_CvTypeProp_MOCOM_SHIFT = 14, SYMS_CvTypeProp_MOCOM_MASK = 0x3,
+};
+#define SYMS_CvTypeProps_Extract_HFA(f) (SYMS_CvHFAKind)(((f) >> SYMS_CvTypeProp_HFA_SHIFT) & SYMS_CvTypeProp_HFA_MASK)
+#define SYMS_CvTypeProps_Extract_MOCOM(f) (SYMS_CvMoComUDTKind)(((f) >> SYMS_CvTypeProp_MOCOM_SHIFT) & SYMS_CvTypeProp_MOCOM_MASK)
+typedef SYMS_U8 SYMS_CvPointerKind;
+enum{
+SYMS_CvPointerKind_NEAR = 0x00,
+//  16 bit pointer
+SYMS_CvPointerKind_FAR = 0x01,
+//  16:16 far pointer
+SYMS_CvPointerKind_HUGE = 0x02,
+//  16:16 huge pointer
+SYMS_CvPointerKind_BASE_SEG = 0x03,
+//  based on segment
+SYMS_CvPointerKind_BASE_VAL = 0x04,
+//  based on value of base
+SYMS_CvPointerKind_BASE_SEGVAL = 0x05,
+//  based on segment value of base
+SYMS_CvPointerKind_BASE_ADDR = 0x06,
+//  based on address of base
+SYMS_CvPointerKind_BASE_SEGADDR = 0x07,
+//  based on segment address of base
+SYMS_CvPointerKind_BASE_TYPE = 0x08,
+//  based on type
+SYMS_CvPointerKind_BASE_SELF = 0x09,
+//  based on self
+SYMS_CvPointerKind_NEAR32 = 0x0a,
+//  32 bit pointer
+SYMS_CvPointerKind_FAR32 = 0x0b,
+//  16:32 pointer
+SYMS_CvPointerKind_64 = 0x0c,
+//  64 bit pointer
+SYMS_CvPointerKind_UNUSEDPTR = 0x0d,
+SYMS_CvPointerKind_COUNT = 14
+};
+typedef SYMS_U8 SYMS_CvPointerMode;
+enum{
+SYMS_CvPointerMode_PTR = 0x00,
+//  "normal" pointer
+SYMS_CvPointerMode_REF = 0x01,
+//  "old" reference
+SYMS_CvPointerMode_LVREF = 0x01,
+//  l-value reference
+SYMS_CvPointerMode_PMEM = 0x02,
+//  pointer to data member
+SYMS_CvPointerMode_PMFUNC = 0x03,
+//  pointer to member function
+SYMS_CvPointerMode_RVREF = 0x04,
+//  r-value reference
+SYMS_CvPointerMode_RESERVED = 0x05,
+SYMS_CvPointerMode_COUNT = 7
+};
+typedef SYMS_U32 SYMS_CvPointerAttribs;
+enum{
+SYMS_CvPointerAttrib_KIND_SHIFT = 0, SYMS_CvPointerAttrib_KIND_MASK = 0x1f,
+SYMS_CvPointerAttrib_MODE_SHIFT = 5, SYMS_CvPointerAttrib_MODE_MASK = 0x7,
+SYMS_CvPointerAttrib_IS_FLAT = (1 << 8),
+SYMS_CvPointerAttrib_IS_VOLATILE = (1 << 9),
+SYMS_CvPointerAttrib_IS_CONST = (1 << 10),
+SYMS_CvPointerAttrib_IS_UNALIGNED = (1 << 11),
+SYMS_CvPointerAttrib_IS_RESTRICTED = (1 << 12),
+SYMS_CvPointerAttrib_SIZE_SHIFT = 13, SYMS_CvPointerAttrib_SIZE_MASK = 0x3f,
+SYMS_CvPointerAttrib_IS_MOCOM = (1 << 19),
+SYMS_CvPointerAttrib_IS_LREF = (1 << 20),
+SYMS_CvPointerAttrib_IS_RREF = (1 << 21),
+};
+#define SYMS_CvPointerAttribs_Extract_KIND(f) (SYMS_CvPointerKind)(((f) >> SYMS_CvPointerAttrib_KIND_SHIFT) & SYMS_CvPointerAttrib_KIND_MASK)
+#define SYMS_CvPointerAttribs_Extract_MODE(f) (SYMS_CvPointerMode)(((f) >> SYMS_CvPointerAttrib_MODE_SHIFT) & SYMS_CvPointerAttrib_MODE_MASK)
+#define SYMS_CvPointerAttribs_Extract_SIZE(f) (SYMS_U32)(((f) >> SYMS_CvPointerAttrib_SIZE_SHIFT) & SYMS_CvPointerAttrib_SIZE_MASK)
+typedef SYMS_U16 SYMS_CvMemberPointerKind;
+enum{
+SYMS_CvMemberPointerKind_Undef = 0x00,
+//  not specified (pre VC8)
+SYMS_CvMemberPointerKind_D_Single = 0x01,
+//  member data, single inheritance
+SYMS_CvMemberPointerKind_D_Multiple = 0x02,
+//  member data, multiple inheritance
+SYMS_CvMemberPointerKind_D_Virtual = 0x03,
+//  member data, virtual inheritance
+SYMS_CvMemberPointerKind_D_General = 0x04,
+//  member data, most general
+SYMS_CvMemberPointerKind_F_Single = 0x05,
+//  member function, single inheritance
+SYMS_CvMemberPointerKind_F_Multiple = 0x06,
+//  member function, multiple inheritance
+SYMS_CvMemberPointerKind_F_Virtual = 0x07,
+//  member function, virtual inheritance
+SYMS_CvMemberPointerKind_F_General = 0x08,
+SYMS_CvMemberPointerKind_COUNT = 9
+};
+typedef SYMS_U32 SYMS_CvVirtualTableShape;
+enum{
+SYMS_CvVirtualTableShape_NEAR,
+//  16 bit pointer
+SYMS_CvVirtualTableShape_FAR,
+//  16:16 bit pointer
+SYMS_CvVirtualTableShape_THIN,
+//  ??
+SYMS_CvVirtualTableShape_OUTER,
+//  MS pdf (page 36): Address point displacement to outermost class. This is at entry[-1] from table entry
+SYMS_CvVirtualTableShape_META,
+//  MS pdf (page 36): Far pointer to metaclass descriptor. This is at entry[-2] from table address.
+SYMS_CvVirtualTableShape_NEAR32,
+//  32bit pointer
+SYMS_CvVirtualTableShape_FAR32,
+//  ??
+SYMS_CvVirtualTableShape_UNUSED,
+SYMS_CvVirtualTableShape_COUNT = 8
+};
+typedef SYMS_U8 SYMS_CvMethodProp;
+enum{
+SYMS_CvMethodProp_VANILLA = 0,
+SYMS_CvMethodProp_VIRTUAL = 1,
+SYMS_CvMethodProp_STATIC = 2,
+SYMS_CvMethodProp_FRIEND = 3,
+SYMS_CvMethodProp_INTRO = 4,
+SYMS_CvMethodProp_PUREVIRT = 5,
+SYMS_CvMethodProp_PUREINTRO = 6,
+SYMS_CvMethodProp_COUNT = 7
+};
+typedef SYMS_U8 SYMS_CvMemberAccess;
+enum{
+SYMS_CvMemberAccess_NULL = 0,
+SYMS_CvMemberAccess_PRIVATE = 1,
+SYMS_CvMemberAccess_PROTECTED = 2,
+SYMS_CvMemberAccess_PUBLIC = 3,
+SYMS_CvMemberAccess_COUNT = 4
+};
+typedef SYMS_U16 SYMS_CvFieldAttribs;
+enum{
+SYMS_CvFieldAttrib_ACCESS_SHIFT = 0, SYMS_CvFieldAttrib_ACCESS_MASK = 0x3,
+SYMS_CvFieldAttrib_MPROP_SHIFT = 2, SYMS_CvFieldAttrib_MPROP_MASK = 0x7,
+SYMS_CvFieldAttrib_PSEUDO = (1 << 5),
+SYMS_CvFieldAttrib_NOINHERIT = (1 << 6),
+SYMS_CvFieldAttrib_NOCONSTRUCT = (1 << 7),
+SYMS_CvFieldAttrib_COMPGENX = (1 << 8),
+SYMS_CvFieldAttrib_SEALED = (1 << 9),
+};
+#define SYMS_CvFieldAttribs_Extract_ACCESS(f) (SYMS_CvMemberAccess)(((f) >> SYMS_CvFieldAttrib_ACCESS_SHIFT) & SYMS_CvFieldAttrib_ACCESS_MASK)
+#define SYMS_CvFieldAttribs_Extract_MPROP(f) (SYMS_CvMethodProp)(((f) >> SYMS_CvFieldAttrib_MPROP_SHIFT) & SYMS_CvFieldAttrib_MPROP_MASK)
+typedef SYMS_U16 SYMS_CvLabelKind;
+enum{
+SYMS_CvLabelKind_NEAR = 0,
+SYMS_CvLabelKind_FAR = 4,
+SYMS_CvLabelKind_COUNT = 2
+};
+typedef SYMS_U8 SYMS_CvFunctionAttribs;
+enum{
+SYMS_CvFunctionAttrib_CXXRETURNUDT = (1 << 0),
+SYMS_CvFunctionAttrib_CTOR = (1 << 1),
+SYMS_CvFunctionAttrib_CTORVBASE = (1 << 2),
+};
+typedef SYMS_U8 SYMS_CvCallKind;
+enum{
+SYMS_CvCallKind_NEAR_C = 0x00,
+//  near right to left push, caller pops stack
+SYMS_CvCallKind_FAR_C = 0x01,
+//  far right to left push, caller pops stack
+SYMS_CvCallKind_NEAR_PASCAL = 0x02,
+//  near left to right push, callee pops stack
+SYMS_CvCallKind_FAR_PASCAL = 0x03,
+//  far left to right push, callee pops stack
+SYMS_CvCallKind_NEAR_FAST = 0x04,
+//  near left to right push with regs, callee pops stack
+SYMS_CvCallKind_FAR_FAST = 0x05,
+//  far left to right push with regs, callee pops stack
+SYMS_CvCallKind_SKIPPED = 0x06,
+//  skipped (unused) call index
+SYMS_CvCallKind_NEAR_STD = 0x07,
+//  near standard call
+SYMS_CvCallKind_FAR_STD = 0x08,
+//  far standard call
+SYMS_CvCallKind_NEAR_SYS = 0x09,
+//  near sys call
+SYMS_CvCallKind_FAR_SYS = 0x0a,
+//  far sys call
+SYMS_CvCallKind_THISCALL = 0x0b,
+//  this call (this passed in register)
+SYMS_CvCallKind_MIPSCALL = 0x0c,
+//  Mips call
+SYMS_CvCallKind_GENERIC = 0x0d,
+//  Generic call sequence
+SYMS_CvCallKind_ALPHACALL = 0x0e,
+//  Alpha call
+SYMS_CvCallKind_PPCCALL = 0x0f,
+//  PPC call
+SYMS_CvCallKind_SHCALL = 0x10,
+//  Hitachi SuperH call
+SYMS_CvCallKind_ARMCALL = 0x11,
+//  ARM call
+SYMS_CvCallKind_AM33CALL = 0x12,
+//  AM33 call
+SYMS_CvCallKind_TRICALL = 0x13,
+//  TriCore Call
+SYMS_CvCallKind_SH5CALL = 0x14,
+//  Hitachi SuperH-5 call
+SYMS_CvCallKind_M32RCALL = 0x15,
+//  M32R Call
+SYMS_CvCallKind_CLRCALL = 0x16,
+//  clr call
+SYMS_CvCallKind_INLINE = 0x17,
+//  Marker for routines always inlined and thus lacking a convention
+SYMS_CvCallKind_NEAR_VECTOR = 0x18,
+//  near left to right push with regs, callee pops stack
+SYMS_CvCallKind_RESERVED = 0x19,
+SYMS_CvCallKind_COUNT = 26
+};
+typedef struct SYMS_CvLeafPreComp{
+SYMS_U32 start_index;
+SYMS_U32 count;
+SYMS_U32 signature;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafPreComp;
+typedef struct SYMS_CvLeafTypeServer2{
+SYMS_CvGuid sig70;
+SYMS_U32 age;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafTypeServer2;
+typedef struct SYMS_CvLeafBuildInfo{
+SYMS_U16 count;
+SYMS_CvItemId arg;
+} SYMS_CvLeafBuildInfo;
+typedef struct SYMS_CvLeafSkip_16t{
+SYMS_U16 type;//  pad data
+} SYMS_CvLeafSkip_16t;
+typedef struct SYMS_CvLeafSkip{
+SYMS_CvTypeIndex type;//  pad data
+} SYMS_CvLeafSkip;
+typedef struct SYMS_CvLeafVTShape{
+SYMS_U16 count;
+} SYMS_CvLeafVTShape;
+typedef struct SYMS_CvLeafLabel{
+SYMS_CvLabelKind mode;
+} SYMS_CvLeafLabel;
+typedef struct SYMS_CvLeafModifier{
+SYMS_CvTypeId itype;
+SYMS_CvModifierFlags flags;
+} SYMS_CvLeafModifier;
+typedef struct SYMS_CvLeafPointer{
+SYMS_CvTypeId itype;
+SYMS_CvPointerAttribs attr;
+} SYMS_CvLeafPointer;
+typedef struct SYMS_CvLeafProcedure{
+SYMS_CvTypeId ret_itype;
+SYMS_CvCallKind call_kind;
+SYMS_CvFunctionAttribs funcattr;
+SYMS_U16 arg_count;
+SYMS_CvTypeId arg_itype;
+} SYMS_CvLeafProcedure;
+typedef struct SYMS_CvLeafMFunction{
+SYMS_CvTypeId ret_itype;
+SYMS_CvTypeId class_itype;
+SYMS_CvTypeId this_itype;
+SYMS_CvCallKind call_kind;
+SYMS_CvFunctionAttribs funcattr;
+SYMS_U16 arg_count;
+SYMS_CvTypeId arg_itype;
+SYMS_S32 thisadjust;
+} SYMS_CvLeafMFunction;
+typedef struct SYMS_CvLeafArgList{
+SYMS_U32 count;
+// variable-width: SYMS_U32 itypes;
+} SYMS_CvLeafArgList;
+typedef struct SYMS_CvLeafBitField{
+SYMS_CvTypeId itype;
+SYMS_U8 len;
+SYMS_U8 pos;
+} SYMS_CvLeafBitField;
+typedef struct SYMS_CvLeafIndex{
+SYMS_U16 pad;
+SYMS_CvTypeId itype;
+} SYMS_CvLeafIndex;
+typedef struct SYMS_CvLeafArray{
+SYMS_CvTypeId entry_itype;
+SYMS_CvTypeId index_itype;
+// variable-width: SYMS_PdbNumeric val;
+} SYMS_CvLeafArray;
+typedef struct SYMS_CvLeafStruct{
+SYMS_U16 count;
+SYMS_CvTypeProps props;
+SYMS_CvTypeId field;
+SYMS_CvTypeId derived;
+SYMS_CvTypeId vshape;
+// variable-width: SYMS_PdbNumeric size;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafStruct;
+typedef struct SYMS_CvLeafUnion{
+SYMS_U16 count;
+SYMS_CvTypeProps props;
+SYMS_CvTypeId field;
+// variable-width: SYMS_PdbNumeric size;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafUnion;
+typedef struct SYMS_CvLeafEnum{
+SYMS_U16 count;
+SYMS_CvTypeProps props;
+SYMS_CvTypeId itype;
+SYMS_CvTypeId field;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafEnum;
+typedef struct SYMS_CvLeafAlias{
+SYMS_CvTypeId itype;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafAlias;
+typedef struct SYMS_CvLeafMember{
+SYMS_CvFieldAttribs attribs;
+SYMS_CvTypeId itype;
+// variable-width: SYMS_PdbNumeric offset;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafMember;
+typedef struct SYMS_CvLeafStMember{
+SYMS_CvFieldAttribs attribs;
+SYMS_CvTypeId itype;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafStMember;
+typedef struct SYMS_CvLeafMethod{
+SYMS_U16 count;
+SYMS_CvTypeId itype_list;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafMethod;
+typedef struct SYMS_CvLeafOneMethod{
+SYMS_CvFieldAttribs attribs;
+SYMS_CvTypeId itype;
+} SYMS_CvLeafOneMethod;
+typedef struct SYMS_CvLeafEnumerate{
+SYMS_CvFieldAttribs attribs;
+// variable-width: SYMS_PdbNumeric val;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafEnumerate;
+typedef struct SYMS_CvLeafNestType{
+SYMS_U16 pad;
+SYMS_CvTypeId index;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafNestType;
+typedef struct SYMS_CvLeafNestTypeEx{
+SYMS_CvFieldAttribs attribs;
+SYMS_CvTypeId itype;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafNestTypeEx;
+typedef struct SYMS_CvLeafBClass{
+SYMS_CvFieldAttribs attribs;
+SYMS_CvTypeId itype;
+// variable-width: SYMS_PdbNumeric offset;
+} SYMS_CvLeafBClass;
+typedef struct SYMS_CvLeafVBClass{
+SYMS_CvFieldAttribs attribs;
+SYMS_CvTypeId itype;
+SYMS_CvTypeId vbptr_itype;
+// variable-width: SYMS_PdbNumeric vbptr_off;
+} SYMS_CvLeafVBClass;
+typedef struct SYMS_CvLeafVFuncTab{
+SYMS_U16 pad;
+SYMS_CvTypeId itype;
+} SYMS_CvLeafVFuncTab;
+typedef struct SYMS_CvLeafVFuncOff{
+SYMS_U16 pad;
+SYMS_CvTypeId itype;
+SYMS_U32 off;
+} SYMS_CvLeafVFuncOff;
+typedef struct SYMS_CvLeafVFTable{
+SYMS_CvTypeId owner_itype;
+SYMS_CvTypeId base_table_itype;
+SYMS_U32 offset_in_object_layout;
+SYMS_U32 names_len;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafVFTable;
+typedef struct SYMS_CvLeafFuncId{
+SYMS_CvItemId scope_id;
+//  parent scope of the ID, 0 if global
+SYMS_CvTypeId itype;
+//  function type
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafFuncId;
+typedef struct SYMS_CvLeafMFuncId{
+SYMS_CvItemId parent_itype;
+SYMS_CvItemId itype;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafMFuncId;
+typedef struct SYMS_CvLeafStringId{
+//  TODO(allen): Whose "id" is this??
+SYMS_CvItemId id;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafStringId;
+typedef struct SYMS_CvLeafUDTSrcLine{
+SYMS_CvTypeId udt_itype;
+//  itype which this source line references.
+SYMS_CvItemId src;
+//  cvinfo.h: "index to LF_STRING_ID record where file name is saved"
+SYMS_U32 ln;
+} SYMS_CvLeafUDTSrcLine;
+typedef struct SYMS_CvLeafModSrcLine{
+SYMS_CvTypeId udt_itype;
+SYMS_CvItemId src;
+SYMS_U32 ln;
+SYMS_U16 comp_unit;
+} SYMS_CvLeafModSrcLine;
+typedef struct SYMS_CvLeafClassPtr{
+SYMS_CvTypeProps props;
+SYMS_U16 padding;
+SYMS_CvTypeId field;
+SYMS_U32 unknown2;
+SYMS_U32 unknown3;
+SYMS_U16 unknown4;
+} SYMS_CvLeafClassPtr;
+typedef SYMS_U32 SYMS_CvSubSectionKind;
+enum{
+SYMS_CvSubSectionKind_SYMBOLS = 0xf1,
+SYMS_CvSubSectionKind_LINES = 0xf2,
+SYMS_CvSubSectionKind_STRINGTABLE = 0xf3,
+SYMS_CvSubSectionKind_FILECHKSMS = 0xf4,
+SYMS_CvSubSectionKind_FRAMEDATA = 0xf5,
+SYMS_CvSubSectionKind_INLINEELINES = 0xf6,
+SYMS_CvSubSectionKind_CROSSSCOPEIMPORTS = 0xf7,
+SYMS_CvSubSectionKind_CROSSSCOPEEXPORTS = 0xf8,
+SYMS_CvSubSectionKind_IL_LINES = 0xf9,
+SYMS_CvSubSectionKind_FUNC_MDTOKEN_MAP = 0xfa,
+SYMS_CvSubSectionKind_TYPE_MDTOKEN_MAP = 0xfb,
+SYMS_CvSubSectionKind_MERGED_ASSEMBLY_INPUT = 0xfc,
+SYMS_CvSubSectionKind_COFF_SYMBOL_RVA = 0xfd,
+SYMS_CvSubSectionKind_COUNT = 13
+};
+typedef struct SYMS_CvSubSectionHeader{
+SYMS_CvSubSectionKind kind;
+SYMS_U32 size;
+} SYMS_CvSubSectionHeader;
+typedef SYMS_U8 SYMS_CvChecksumKind;
+enum{
+SYMS_CvChecksumKind_NULL,
+SYMS_CvChecksumKind_MD5,
+SYMS_CvChecksumKind_SHA1,
+SYMS_CvChecksumKind_SHA256,
+SYMS_CvChecksumKind_COUNT = 4
+};
+typedef enum SYMS_CvInlineeSourceLineSig{
+SYMS_CvInlineeSourceLineSig_REGULAR = 0,
+//  SYMS_CvInlineeSourceLine
+SYMS_CvInlineeSourceLineSig_EXTENDED = 1,
+SYMS_CvInlineeSourceLineSig_COUNT = 2
+} SYMS_CvInlineeSourceLineSig;
+typedef struct SYMS_CvInlineeSourceLine{
+SYMS_CvItemId inlinee;
+//  function id
+SYMS_U32 file_id;
+//  offset into FILECHKSMS subsection
+SYMS_U32 base_line_number;
+} SYMS_CvInlineeSourceLine;
+typedef struct SYMS_CvInlineeSourceLineEx{
+SYMS_CvItemId inlinee;
+SYMS_CvItemId file_id;
+SYMS_U32 base_line_number;
+SYMS_U32 extra_file_count;
+// variable-width: SYMS_U32 extra_file_id;
+} SYMS_CvInlineeSourceLineEx;
+#pragma pack(pop)
+
+//~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1133
+SYMS_C_LINKAGE_BEGIN
+SYMS_API SYMS_Language syms_cv_base_language_from_cv_language(SYMS_CvLanguage v);
+SYMS_API SYMS_MemVisibility syms_mem_visibility_from_member_access(SYMS_CvMemberAccess v);
+SYMS_C_LINKAGE_END
+
+//~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1588
+SYMS_C_LINKAGE_BEGIN
+SYMS_C_LINKAGE_END
+
+//~ generated from code at syms/metaprogram/syms_metaprogram_serial.c:1694
+SYMS_GLOBAL SYMS_RegSlice syms_reg_slices_X86[396] = {
+{SYMS_RegX86Code_nil, 0, 0},
+{SYMS_RegX86Code_eax, 0, 1},
+{SYMS_RegX86Code_ecx, 0, 1},
+{SYMS_RegX86Code_edx, 0, 1},
+{SYMS_RegX86Code_ebx, 0, 1},
+{SYMS_RegX86Code_eax, 1, 1},
+{SYMS_RegX86Code_ecx, 1, 1},
+{SYMS_RegX86Code_edx, 1, 1},
+{SYMS_RegX86Code_ebx, 1, 1},
+{SYMS_RegX86Code_eax, 0, 2},
+{SYMS_RegX86Code_ecx, 0, 2},
+{SYMS_RegX86Code_edx, 0, 2},
+{SYMS_RegX86Code_ebx, 0, 2},
+{SYMS_RegX86Code_esp, 0, 2},
+{SYMS_RegX86Code_ebp, 0, 2},
+{SYMS_RegX86Code_esi, 0, 2},
+{SYMS_RegX86Code_edi, 0, 2},
+{SYMS_RegX86Code_eax, 0, 4},
+{SYMS_RegX86Code_ecx, 0, 4},
+{SYMS_RegX86Code_edx, 0, 4},
+{SYMS_RegX86Code_ebx, 0, 4},
+{SYMS_RegX86Code_esp, 0, 4},
+{SYMS_RegX86Code_ebp, 0, 4},
+{SYMS_RegX86Code_esi, 0, 4},
+{SYMS_RegX86Code_edi, 0, 4},
+{SYMS_RegX86Code_es, 0, 2},
+{SYMS_RegX86Code_cs, 0, 2},
+{SYMS_RegX86Code_ss, 0, 2},
+{SYMS_RegX86Code_ds, 0, 2},
+{SYMS_RegX86Code_fs, 0, 2},
+{SYMS_RegX86Code_gs, 0, 2},
+{SYMS_RegX86Code_eip, 0, 2},
+{SYMS_RegX86Code_eflags, 0, 2},
+{SYMS_RegX86Code_eip, 0, 4},
+{SYMS_RegX86Code_eflags, 0, 4},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX86Code_fpr0, 0, 8},
+{SYMS_RegX86Code_fpr1, 0, 8},
+{SYMS_RegX86Code_fpr2, 0, 8},
+{SYMS_RegX86Code_fpr3, 0, 8},
+{SYMS_RegX86Code_fpr4, 0, 8},
+{SYMS_RegX86Code_fpr5, 0, 8},
+{SYMS_RegX86Code_fpr6, 0, 8},
+{SYMS_RegX86Code_fpr7, 0, 8},
+{SYMS_RegX86Code_ymm0, 0, 16},
+{SYMS_RegX86Code_ymm1, 0, 16},
+{SYMS_RegX86Code_ymm2, 0, 16},
+{SYMS_RegX86Code_ymm3, 0, 16},
+{SYMS_RegX86Code_ymm4, 0, 16},
+{SYMS_RegX86Code_ymm5, 0, 16},
+{SYMS_RegX86Code_ymm6, 0, 16},
+{SYMS_RegX86Code_ymm7, 0, 16},
+{SYMS_RegX86Code_ymm0, 0, 4},
+{SYMS_RegX86Code_ymm0, 4, 4},
+{SYMS_RegX86Code_ymm0, 8, 4},
+{SYMS_RegX86Code_ymm0, 12, 4},
+{SYMS_RegX86Code_ymm1, 0, 4},
+{SYMS_RegX86Code_ymm1, 4, 4},
+{SYMS_RegX86Code_ymm1, 8, 4},
+{SYMS_RegX86Code_ymm1, 12, 4},
+{SYMS_RegX86Code_ymm2, 0, 4},
+{SYMS_RegX86Code_ymm2, 4, 4},
+{SYMS_RegX86Code_ymm2, 8, 4},
+{SYMS_RegX86Code_ymm2, 12, 4},
+{SYMS_RegX86Code_ymm3, 0, 4},
+{SYMS_RegX86Code_ymm3, 4, 4},
+{SYMS_RegX86Code_ymm3, 8, 4},
+{SYMS_RegX86Code_ymm3, 12, 4},
+{SYMS_RegX86Code_ymm4, 0, 4},
+{SYMS_RegX86Code_ymm4, 4, 4},
+{SYMS_RegX86Code_ymm4, 8, 4},
+{SYMS_RegX86Code_ymm4, 12, 4},
+{SYMS_RegX86Code_ymm5, 0, 4},
+{SYMS_RegX86Code_ymm5, 4, 4},
+{SYMS_RegX86Code_ymm5, 8, 4},
+{SYMS_RegX86Code_ymm5, 12, 4},
+{SYMS_RegX86Code_ymm6, 0, 4},
+{SYMS_RegX86Code_ymm6, 4, 4},
+{SYMS_RegX86Code_ymm6, 8, 4},
+{SYMS_RegX86Code_ymm6, 12, 4},
+{SYMS_RegX86Code_ymm7, 0, 4},
+{SYMS_RegX86Code_ymm7, 4, 4},
+{SYMS_RegX86Code_ymm7, 8, 4},
+{SYMS_RegX86Code_ymm7, 12, 4},
+{SYMS_RegX86Code_ymm0, 0, 8},
+{SYMS_RegX86Code_ymm1, 0, 8},
+{SYMS_RegX86Code_ymm2, 0, 8},
+{SYMS_RegX86Code_ymm3, 0, 8},
+{SYMS_RegX86Code_ymm4, 0, 8},
+{SYMS_RegX86Code_ymm5, 0, 8},
+{SYMS_RegX86Code_ymm6, 0, 8},
+{SYMS_RegX86Code_ymm7, 0, 8},
+{SYMS_RegX86Code_ymm0, 8, 8},
+{SYMS_RegX86Code_ymm1, 8, 8},
+{SYMS_RegX86Code_ymm2, 8, 8},
+{SYMS_RegX86Code_ymm3, 8, 8},
+{SYMS_RegX86Code_ymm4, 8, 8},
+{SYMS_RegX86Code_ymm5, 8, 8},
+{SYMS_RegX86Code_ymm6, 8, 8},
+{SYMS_RegX86Code_ymm7, 8, 8},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX86Code_ymm0, 0, 32},
+{SYMS_RegX86Code_ymm1, 0, 32},
+{SYMS_RegX86Code_ymm2, 0, 32},
+{SYMS_RegX86Code_ymm3, 0, 32},
+{SYMS_RegX86Code_ymm4, 0, 32},
+{SYMS_RegX86Code_ymm5, 0, 32},
+{SYMS_RegX86Code_ymm6, 0, 32},
+{SYMS_RegX86Code_ymm7, 0, 32},
+{SYMS_RegX86Code_ymm0, 16, 16},
+{SYMS_RegX86Code_ymm1, 16, 16},
+{SYMS_RegX86Code_ymm2, 16, 16},
+{SYMS_RegX86Code_ymm3, 16, 16},
+{SYMS_RegX86Code_ymm4, 16, 16},
+{SYMS_RegX86Code_ymm5, 16, 16},
+{SYMS_RegX86Code_ymm6, 16, 16},
+{SYMS_RegX86Code_ymm7, 16, 16},
+{SYMS_RegX86Code_ymm0, 0, 8},
+{SYMS_RegX86Code_ymm0, 8, 8},
+{SYMS_RegX86Code_ymm0, 16, 8},
+{SYMS_RegX86Code_ymm0, 24, 8},
+{SYMS_RegX86Code_ymm1, 0, 8},
+{SYMS_RegX86Code_ymm1, 8, 8},
+{SYMS_RegX86Code_ymm1, 16, 8},
+{SYMS_RegX86Code_ymm1, 24, 8},
+{SYMS_RegX86Code_ymm2, 0, 8},
+{SYMS_RegX86Code_ymm2, 8, 8},
+{SYMS_RegX86Code_ymm2, 16, 8},
+{SYMS_RegX86Code_ymm2, 24, 8},
+{SYMS_RegX86Code_ymm3, 0, 8},
+{SYMS_RegX86Code_ymm3, 8, 8},
+{SYMS_RegX86Code_ymm3, 16, 8},
+{SYMS_RegX86Code_ymm3, 24, 8},
+{SYMS_RegX86Code_ymm4, 0, 8},
+{SYMS_RegX86Code_ymm4, 8, 8},
+{SYMS_RegX86Code_ymm4, 16, 8},
+{SYMS_RegX86Code_ymm4, 24, 8},
+{SYMS_RegX86Code_ymm5, 0, 8},
+{SYMS_RegX86Code_ymm5, 8, 8},
+{SYMS_RegX86Code_ymm5, 16, 8},
+{SYMS_RegX86Code_ymm5, 24, 8},
+{SYMS_RegX86Code_ymm6, 0, 8},
+{SYMS_RegX86Code_ymm6, 8, 8},
+{SYMS_RegX86Code_ymm6, 16, 8},
+{SYMS_RegX86Code_ymm6, 24, 8},
+{SYMS_RegX86Code_ymm7, 0, 8},
+{SYMS_RegX86Code_ymm7, 8, 8},
+{SYMS_RegX86Code_ymm7, 16, 8},
+{SYMS_RegX86Code_ymm7, 24, 8},
+{SYMS_RegX86Code_ymm0, 0, 4},
+{SYMS_RegX86Code_ymm0, 4, 4},
+{SYMS_RegX86Code_ymm0, 8, 4},
+{SYMS_RegX86Code_ymm0, 12, 4},
+{SYMS_RegX86Code_ymm0, 16, 4},
+{SYMS_RegX86Code_ymm0, 20, 4},
+{SYMS_RegX86Code_ymm0, 24, 4},
+{SYMS_RegX86Code_ymm0, 28, 4},
+{SYMS_RegX86Code_ymm1, 0, 4},
+{SYMS_RegX86Code_ymm1, 4, 4},
+{SYMS_RegX86Code_ymm1, 8, 4},
+{SYMS_RegX86Code_ymm1, 12, 4},
+{SYMS_RegX86Code_ymm1, 16, 4},
+{SYMS_RegX86Code_ymm1, 20, 4},
+{SYMS_RegX86Code_ymm1, 24, 4},
+{SYMS_RegX86Code_ymm1, 28, 4},
+{SYMS_RegX86Code_ymm2, 0, 4},
+{SYMS_RegX86Code_ymm2, 4, 4},
+{SYMS_RegX86Code_ymm2, 8, 4},
+{SYMS_RegX86Code_ymm2, 12, 4},
+{SYMS_RegX86Code_ymm2, 16, 4},
+{SYMS_RegX86Code_ymm2, 20, 4},
+{SYMS_RegX86Code_ymm2, 24, 4},
+{SYMS_RegX86Code_ymm2, 28, 4},
+{SYMS_RegX86Code_ymm3, 0, 4},
+{SYMS_RegX86Code_ymm3, 4, 4},
+{SYMS_RegX86Code_ymm3, 8, 4},
+{SYMS_RegX86Code_ymm3, 12, 4},
+{SYMS_RegX86Code_ymm3, 16, 4},
+{SYMS_RegX86Code_ymm3, 20, 4},
+{SYMS_RegX86Code_ymm3, 24, 4},
+{SYMS_RegX86Code_ymm3, 28, 4},
+{SYMS_RegX86Code_ymm4, 0, 4},
+{SYMS_RegX86Code_ymm4, 4, 4},
+{SYMS_RegX86Code_ymm4, 8, 4},
+{SYMS_RegX86Code_ymm4, 12, 4},
+{SYMS_RegX86Code_ymm4, 16, 4},
+{SYMS_RegX86Code_ymm4, 20, 4},
+{SYMS_RegX86Code_ymm4, 24, 4},
+{SYMS_RegX86Code_ymm4, 28, 4},
+{SYMS_RegX86Code_ymm5, 0, 4},
+{SYMS_RegX86Code_ymm5, 4, 4},
+{SYMS_RegX86Code_ymm5, 8, 4},
+{SYMS_RegX86Code_ymm5, 12, 4},
+{SYMS_RegX86Code_ymm5, 16, 4},
+{SYMS_RegX86Code_ymm5, 20, 4},
+{SYMS_RegX86Code_ymm5, 24, 4},
+{SYMS_RegX86Code_ymm5, 28, 4},
+{SYMS_RegX86Code_ymm6, 0, 4},
+{SYMS_RegX86Code_ymm6, 4, 4},
+{SYMS_RegX86Code_ymm6, 8, 4},
+{SYMS_RegX86Code_ymm6, 12, 4},
+{SYMS_RegX86Code_ymm6, 16, 4},
+{SYMS_RegX86Code_ymm6, 20, 4},
+{SYMS_RegX86Code_ymm6, 24, 4},
+{SYMS_RegX86Code_ymm6, 28, 4},
+{SYMS_RegX86Code_ymm7, 0, 4},
+{SYMS_RegX86Code_ymm7, 4, 4},
+{SYMS_RegX86Code_ymm7, 8, 4},
+{SYMS_RegX86Code_ymm7, 12, 4},
+{SYMS_RegX86Code_ymm7, 16, 4},
+{SYMS_RegX86Code_ymm7, 20, 4},
+{SYMS_RegX86Code_ymm7, 24, 4},
+{SYMS_RegX86Code_ymm7, 28, 4},
+{SYMS_RegX86Code_ymm0, 0, 8},
+{SYMS_RegX86Code_ymm0, 8, 8},
+{SYMS_RegX86Code_ymm0, 16, 8},
+{SYMS_RegX86Code_ymm0, 24, 8},
+{SYMS_RegX86Code_ymm1, 0, 8},
+{SYMS_RegX86Code_ymm1, 8, 8},
+{SYMS_RegX86Code_ymm1, 16, 8},
+{SYMS_RegX86Code_ymm1, 24, 8},
+{SYMS_RegX86Code_ymm2, 0, 8},
+{SYMS_RegX86Code_ymm2, 8, 8},
+{SYMS_RegX86Code_ymm2, 16, 8},
+{SYMS_RegX86Code_ymm2, 24, 8},
+{SYMS_RegX86Code_ymm3, 0, 8},
+{SYMS_RegX86Code_ymm3, 8, 8},
+{SYMS_RegX86Code_ymm3, 16, 8},
+{SYMS_RegX86Code_ymm3, 24, 8},
+{SYMS_RegX86Code_ymm4, 0, 8},
+{SYMS_RegX86Code_ymm4, 8, 8},
+{SYMS_RegX86Code_ymm4, 16, 8},
+{SYMS_RegX86Code_ymm4, 24, 8},
+{SYMS_RegX86Code_ymm5, 0, 8},
+{SYMS_RegX86Code_ymm5, 8, 8},
+{SYMS_RegX86Code_ymm5, 16, 8},
+{SYMS_RegX86Code_ymm5, 24, 8},
+{SYMS_RegX86Code_ymm6, 0, 8},
+{SYMS_RegX86Code_ymm6, 8, 8},
+{SYMS_RegX86Code_ymm6, 16, 8},
+{SYMS_RegX86Code_ymm6, 24, 8},
+{SYMS_RegX86Code_ymm7, 0, 8},
+{SYMS_RegX86Code_ymm7, 8, 8},
+{SYMS_RegX86Code_ymm7, 16, 8},
+{SYMS_RegX86Code_ymm7, 24, 8},
+};
+SYMS_GLOBAL SYMS_RegSlice syms_reg_slices_X64[688] = {
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_rax, 0, 1},
+{SYMS_RegX64Code_rcx, 0, 1},
+{SYMS_RegX64Code_rdx, 0, 1},
+{SYMS_RegX64Code_rbx, 0, 1},
+{SYMS_RegX64Code_rax, 1, 1},
+{SYMS_RegX64Code_rcx, 1, 1},
+{SYMS_RegX64Code_rdx, 1, 1},
+{SYMS_RegX64Code_rbx, 1, 1},
+{SYMS_RegX64Code_rax, 0, 2},
+{SYMS_RegX64Code_rcx, 0, 2},
+{SYMS_RegX64Code_rdx, 0, 2},
+{SYMS_RegX64Code_rbx, 0, 2},
+{SYMS_RegX64Code_rsp, 0, 2},
+{SYMS_RegX64Code_rbp, 0, 2},
+{SYMS_RegX64Code_rsi, 0, 2},
+{SYMS_RegX64Code_rdi, 0, 2},
+{SYMS_RegX64Code_rax, 0, 4},
+{SYMS_RegX64Code_rax, 0, 4},
+{SYMS_RegX64Code_rdx, 0, 4},
+{SYMS_RegX64Code_rbx, 0, 4},
+{SYMS_RegX64Code_rsp, 0, 4},
+{SYMS_RegX64Code_rbp, 0, 4},
+{SYMS_RegX64Code_rsi, 0, 4},
+{SYMS_RegX64Code_rdi, 0, 4},
+{SYMS_RegX64Code_es, 0, 2},
+{SYMS_RegX64Code_cs, 0, 2},
+{SYMS_RegX64Code_ss, 0, 2},
+{SYMS_RegX64Code_ds, 0, 2},
+{SYMS_RegX64Code_fs, 0, 2},
+{SYMS_RegX64Code_gs, 0, 2},
+{0, 0, 0},
+{SYMS_RegX64Code_rflags, 0, 2},
+{SYMS_RegX64Code_rip, 0, 2},
+{SYMS_RegX64Code_rflags, 0, 4},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{0, 0, 0},
+{SYMS_RegX64Code_dr0, 0, 4},
+{SYMS_RegX64Code_dr1, 0, 4},
+{SYMS_RegX64Code_dr2, 0, 4},
+{SYMS_RegX64Code_dr3, 0, 4},
+{SYMS_RegX64Code_dr4, 0, 4},
+{SYMS_RegX64Code_dr5, 0, 4},
+{SYMS_RegX64Code_dr6, 0, 4},
+{SYMS_RegX64Code_dr7, 0, 4},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX64Code_st0, 0, 10},
+{SYMS_RegX64Code_st1, 0, 10},
+{SYMS_RegX64Code_st2, 0, 10},
+{SYMS_RegX64Code_st3, 0, 10},
+{SYMS_RegX64Code_st4, 0, 10},
+{SYMS_RegX64Code_st5, 0, 10},
+{SYMS_RegX64Code_st6, 0, 10},
+{SYMS_RegX64Code_st7, 0, 10},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_nil, 0, 0},
+{SYMS_RegX64Code_fpr0, 0, 8},
+{SYMS_RegX64Code_fpr1, 0, 8},
+{SYMS_RegX64Code_fpr2, 0, 8},
+{SYMS_RegX64Code_fpr3, 0, 8},
+{SYMS_RegX64Code_fpr4, 0, 8},
+{SYMS_RegX64Code_fpr5, 0, 8},
+{SYMS_RegX64Code_fpr6, 0, 8},
+{SYMS_RegX64Code_fpr7, 0, 8},
+{SYMS_RegX64Code_ymm0, 0, 16},
+{SYMS_RegX64Code_ymm1, 0, 16},
+{SYMS_RegX64Code_ymm2, 0, 16},
+{SYMS_RegX64Code_ymm3, 0, 16},
+{SYMS_RegX64Code_ymm4, 0, 16},
+{SYMS_RegX64Code_ymm5, 0, 16},
+{SYMS_RegX64Code_ymm6, 0, 16},
+{SYMS_RegX64Code_ymm7, 0, 16},
+{SYMS_RegX64Code_ymm0, 0, 4},
+{SYMS_RegX64Code_ymm0, 4, 4},
+{SYMS_RegX64Code_ymm0, 8, 4},
+{SYMS_RegX64Code_ymm0, 12, 4},
+{SYMS_RegX64Code_ymm1, 0, 4},
+{SYMS_RegX64Code_ymm1, 4, 4},
+{SYMS_RegX64Code_ymm1, 8, 4},
+{SYMS_RegX64Code_ymm1, 12, 4},
+{SYMS_RegX64Code_ymm2, 0, 4},
+{SYMS_RegX64Code_ymm2, 4, 4},
+{SYMS_RegX64Code_ymm2, 8, 4},
+{SYMS_RegX64Code_ymm2, 12, 4},
+{SYMS_RegX64Code_ymm3, 0, 4},
+{SYMS_RegX64Code_ymm3, 4, 4},
+{SYMS_RegX64Code_ymm3, 8, 4},
+{SYMS_RegX64Code_ymm3, 12, 4},
+{SYMS_RegX64Code_ymm4, 0, 4},
+{SYMS_RegX64Code_ymm4, 4, 4},
+{SYMS_RegX64Code_ymm4, 8, 4},
+{SYMS_RegX64Code_ymm4, 12, 4},
+{SYMS_RegX64Code_ymm5, 0, 4},
+{SYMS_RegX64Code_ymm5, 4, 4},
+{SYMS_RegX64Code_ymm5, 8, 4},
+{SYMS_RegX64Code_ymm5, 12, 4},
+{SYMS_RegX64Code_ymm6, 0, 4},
+{SYMS_RegX64Code_ymm6, 4, 4},
+{SYMS_RegX64Code_ymm6, 8, 4},
+{SYMS_RegX64Code_ymm6, 12, 4},
+{SYMS_RegX64Code_ymm7, 0, 4},
+{SYMS_RegX64Code_ymm7, 4, 4},
+{SYMS_RegX64Code_ymm7, 8, 4},
+{SYMS_RegX64Code_ymm7, 12, 4},
+{SYMS_RegX64Code_ymm0, 0, 8},
+{SYMS_RegX64Code_ymm1, 0, 8},
+{SYMS_RegX64Code_ymm2, 0, 8},
+{SYMS_RegX64Code_ymm3, 0, 8},
+{SYMS_RegX64Code_ymm4, 0, 8},
+{SYMS_RegX64Code_ymm5, 0, 8},
+{SYMS_RegX64Code_ymm6, 0, 8},
+{SYMS_RegX64Code_ymm7, 0, 8},
+{SYMS_RegX64Code_ymm0, 8, 8},
+{SYMS_RegX64Code_ymm1, 8, 8},
+{SYMS_RegX64Code_ymm2, 8, 8},
+{SYMS_RegX64Code_ymm3, 8, 8},
+{SYMS_RegX64Code_ymm4, 8, 8},
+{SYMS_RegX64Code_ymm5, 8, 8},
+{SYMS_RegX64Code_ymm6, 8, 8},
+{SYMS_RegX64Code_ymm7, 8, 8},
+{0, 0, 0},
+{SYMS_RegX64Code_mxcsr, 0, 4},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{0, 0, 0},
+{SYMS_RegX64Code_ymm0, 0, 8},
+{SYMS_RegX64Code_ymm1, 0, 8},
+{SYMS_RegX64Code_ymm2, 0, 8},
+{SYMS_RegX64Code_ymm3, 0, 8},
+{SYMS_RegX64Code_ymm4, 0, 8},
+{SYMS_RegX64Code_ymm5, 0, 8},
+{SYMS_RegX64Code_ymm6, 0, 8},
+{SYMS_RegX64Code_ymm7, 0, 8},
+{SYMS_RegX64Code_ymm0, 8, 8},
+{SYMS_RegX64Code_ymm1, 8, 8},
+{SYMS_RegX64Code_ymm2, 8, 8},
+{SYMS_RegX64Code_ymm3, 8, 8},
+{SYMS_RegX64Code_ymm4, 8, 8},
+{SYMS_RegX64Code_ymm5, 8, 8},
+{SYMS_RegX64Code_ymm6, 8, 8},
+{SYMS_RegX64Code_ymm7, 8, 8},
+{SYMS_RegX64Code_fpr0, 0, 4},
+{SYMS_RegX64Code_fpr0, 4, 4},
+{SYMS_RegX64Code_fpr1, 4, 4},
+{SYMS_RegX64Code_fpr1, 4, 4},
+{SYMS_RegX64Code_fpr2, 4, 4},
+{SYMS_RegX64Code_fpr2, 4, 4},
+{SYMS_RegX64Code_fpr3, 4, 4},
+{SYMS_RegX64Code_fpr3, 4, 4},
+{SYMS_RegX64Code_fpr4, 4, 4},
+{SYMS_RegX64Code_fpr4, 4, 4},
+{SYMS_RegX64Code_fpr5, 4, 4},
+{SYMS_RegX64Code_fpr5, 4, 4},
+{SYMS_RegX64Code_fpr6, 4, 4},
+{SYMS_RegX64Code_fpr6, 4, 4},
+{SYMS_RegX64Code_fpr7, 4, 4},
+{SYMS_RegX64Code_fpr7, 4, 4},
+{SYMS_RegX64Code_ymm8, 0, 16},
+{SYMS_RegX64Code_ymm9, 0, 16},
+{SYMS_RegX64Code_ymm10, 0, 16},
+{SYMS_RegX64Code_ymm11, 0, 16},
+{SYMS_RegX64Code_ymm12, 0, 16},
+{SYMS_RegX64Code_ymm13, 0, 16},
+{SYMS_RegX64Code_ymm14, 0, 16},
+{SYMS_RegX64Code_ymm15, 0, 16},
+{SYMS_RegX64Code_ymm8, 0, 4},
+{SYMS_RegX64Code_ymm8, 4, 4},
+{SYMS_RegX64Code_ymm8, 8, 4},
+{SYMS_RegX64Code_ymm8, 12, 4},
+{SYMS_RegX64Code_ymm9, 0, 4},
+{SYMS_RegX64Code_ymm9, 4, 4},
+{SYMS_RegX64Code_ymm9, 8, 4},
+{SYMS_RegX64Code_ymm9, 12, 4},
+{SYMS_RegX64Code_ymm10, 0, 4},
+{SYMS_RegX64Code_ymm10, 4, 4},
+{SYMS_RegX64Code_ymm10, 8, 4},
+{SYMS_RegX64Code_ymm10, 12, 4},
+{SYMS_RegX64Code_ymm11, 0, 4},
+{SYMS_RegX64Code_ymm11, 4, 4},
+{SYMS_RegX64Code_ymm11, 8, 4},
+{SYMS_RegX64Code_ymm11, 12, 4},
+{SYMS_RegX64Code_ymm12, 0, 4},
+{SYMS_RegX64Code_ymm12, 4, 4},
+{SYMS_RegX64Code_ymm12, 8, 4},
+{SYMS_RegX64Code_ymm12, 12, 4},
+{SYMS_RegX64Code_ymm13, 0, 4},
+{SYMS_RegX64Code_ymm13, 4, 4},
+{SYMS_RegX64Code_ymm13, 8, 4},
+{SYMS_RegX64Code_ymm13, 12, 4},
+{SYMS_RegX64Code_ymm14, 0, 4},
+{SYMS_RegX64Code_ymm14, 4, 4},
+{SYMS_RegX64Code_ymm14, 8, 4},
+{SYMS_RegX64Code_ymm14, 12, 4},
+{SYMS_RegX64Code_ymm15, 0, 4},
+{SYMS_RegX64Code_ymm15, 4, 4},
+{SYMS_RegX64Code_ymm15, 8, 4},
+{SYMS_RegX64Code_ymm15, 12, 4},
+{SYMS_RegX64Code_ymm8, 0, 8},
+{SYMS_RegX64Code_ymm9, 0, 8},
+{SYMS_RegX64Code_ymm10, 0, 8},
+{SYMS_RegX64Code_ymm11, 0, 8},
+{SYMS_RegX64Code_ymm12, 0, 8},
+{SYMS_RegX64Code_ymm13, 0, 8},
+{SYMS_RegX64Code_ymm14, 0, 8},
+{SYMS_RegX64Code_ymm15, 0, 8},
+{SYMS_RegX64Code_ymm8, 8, 8},
+{SYMS_RegX64Code_ymm9, 8, 8},
+{SYMS_RegX64Code_ymm10, 8, 8},
+{SYMS_RegX64Code_ymm11, 8, 8},
+{SYMS_RegX64Code_ymm12, 8, 8},
+{SYMS_RegX64Code_ymm13, 8, 8},
+{SYMS_RegX64Code_ymm14, 8, 8},
+{SYMS_RegX64Code_ymm15, 8, 8},
+{SYMS_RegX64Code_ymm8, 0, 8},
+{SYMS_RegX64Code_ymm9, 0, 8},
+{SYMS_RegX64Code_ymm10, 0, 8},
+{SYMS_RegX64Code_ymm11, 0, 8},
+{SYMS_RegX64Code_ymm12, 0, 8},
+{SYMS_RegX64Code_ymm13, 0, 8},
+{SYMS_RegX64Code_ymm14, 0, 8},
+{SYMS_RegX64Code_ymm15, 0, 8},
+{SYMS_RegX64Code_ymm8, 8, 8},
+{SYMS_RegX64Code_ymm9, 8, 8},
+{SYMS_RegX64Code_ymm10, 8, 8},
+{SYMS_RegX64Code_ymm11, 8, 8},
+{SYMS_RegX64Code_ymm12, 8, 8},
+{SYMS_RegX64Code_ymm13, 8, 8},
+{SYMS_RegX64Code_ymm14, 8, 8},
+{SYMS_RegX64Code_ymm15, 8, 8},
+{SYMS_RegX64Code_rsi, 0, 1},
+{SYMS_RegX64Code_rdi, 0, 1},
+{SYMS_RegX64Code_rbp, 0, 1},
+{SYMS_RegX64Code_rsp, 0, 1},
+{SYMS_RegX64Code_rax, 0, 8},
+{SYMS_RegX64Code_rbx, 0, 8},
+{SYMS_RegX64Code_rcx, 0, 8},
+{SYMS_RegX64Code_rdx, 0, 8},
+{SYMS_RegX64Code_rsi, 0, 8},
+{SYMS_RegX64Code_rdi, 0, 8},
+{SYMS_RegX64Code_rbp, 0, 8},
+{SYMS_RegX64Code_rsp, 0, 8},
+{SYMS_RegX64Code_r8, 0, 8},
+{SYMS_RegX64Code_r9, 0, 8},
+{SYMS_RegX64Code_r10, 0, 8},
+{SYMS_RegX64Code_r11, 0, 8},
+{SYMS_RegX64Code_r12, 0, 8},
+{SYMS_RegX64Code_r13, 0, 8},
+{SYMS_RegX64Code_r14, 0, 8},
+{SYMS_RegX64Code_r15, 0, 8},
+{SYMS_RegX64Code_r8, 0, 1},
+{SYMS_RegX64Code_r9, 0, 1},
+{SYMS_RegX64Code_r10, 0, 1},
+{SYMS_RegX64Code_r11, 0, 1},
+{SYMS_RegX64Code_r12, 0, 1},
+{SYMS_RegX64Code_r13, 0, 1},
+{SYMS_RegX64Code_r14, 0, 1},
+{SYMS_RegX64Code_r15, 0, 1},
+{SYMS_RegX64Code_r8, 0, 2},
+{SYMS_RegX64Code_r9, 0, 2},
+{SYMS_RegX64Code_r10, 0, 2},
+{SYMS_RegX64Code_r11, 0, 2},
+{SYMS_RegX64Code_r12, 0, 2},
+{SYMS_RegX64Code_r13, 0, 2},
+{SYMS_RegX64Code_r14, 0, 2},
+{SYMS_RegX64Code_r15, 0, 2},
+{SYMS_RegX64Code_r8, 0, 4},
+{SYMS_RegX64Code_r9, 0, 4},
+{SYMS_RegX64Code_r10, 0, 4},
+{SYMS_RegX64Code_r11, 0, 4},
+{SYMS_RegX64Code_r12, 0, 4},
+{SYMS_RegX64Code_r13, 0, 4},
+{SYMS_RegX64Code_r14, 0, 4},
+{SYMS_RegX64Code_r15, 0, 4},
+{SYMS_RegX64Code_ymm0, 0, 32},
+{SYMS_RegX64Code_ymm1, 0, 32},
+{SYMS_RegX64Code_ymm2, 0, 32},
+{SYMS_RegX64Code_ymm3, 0, 32},
+{SYMS_RegX64Code_ymm4, 0, 32},
+{SYMS_RegX64Code_ymm5, 0, 32},
+{SYMS_RegX64Code_ymm6, 0, 32},
+{SYMS_RegX64Code_ymm7, 0, 32},
+{SYMS_RegX64Code_ymm8, 0, 32},
+{SYMS_RegX64Code_ymm9, 0, 32},
+{SYMS_RegX64Code_ymm10, 0, 32},
+{SYMS_RegX64Code_ymm11, 0, 32},
+{SYMS_RegX64Code_ymm12, 0, 32},
+{SYMS_RegX64Code_ymm13, 0, 32},
+{SYMS_RegX64Code_ymm14, 0, 32},
+{SYMS_RegX64Code_ymm15, 0, 32},
+{SYMS_RegX64Code_ymm0, 16, 16},
+{SYMS_RegX64Code_ymm1, 16, 16},
+{SYMS_RegX64Code_ymm2, 16, 16},
+{SYMS_RegX64Code_ymm3, 16, 16},
+{SYMS_RegX64Code_ymm4, 16, 16},
+{SYMS_RegX64Code_ymm5, 16, 16},
+{SYMS_RegX64Code_ymm6, 16, 16},
+{SYMS_RegX64Code_ymm7, 16, 16},
+{SYMS_RegX64Code_ymm8, 16, 16},
+{SYMS_RegX64Code_ymm9, 16, 16},
+{SYMS_RegX64Code_ymm10, 16, 16},
+{SYMS_RegX64Code_ymm11, 16, 16},
+{SYMS_RegX64Code_ymm12, 16, 16},
+{SYMS_RegX64Code_ymm13, 16, 16},
+{SYMS_RegX64Code_ymm14, 16, 16},
+{SYMS_RegX64Code_ymm15, 16, 16},
+{SYMS_RegX64Code_ymm0, 0, 8},
+{SYMS_RegX64Code_ymm1, 0, 8},
+{SYMS_RegX64Code_ymm2, 0, 8},
+{SYMS_RegX64Code_ymm3, 0, 8},
+{SYMS_RegX64Code_ymm4, 0, 8},
+{SYMS_RegX64Code_ymm5, 0, 8},
+{SYMS_RegX64Code_ymm6, 0, 8},
+{SYMS_RegX64Code_ymm7, 0, 8},
+{SYMS_RegX64Code_ymm8, 0, 8},
+{SYMS_RegX64Code_ymm9, 0, 8},
+{SYMS_RegX64Code_ymm10, 0, 8},
+{SYMS_RegX64Code_ymm11, 0, 8},
+{SYMS_RegX64Code_ymm12, 0, 8},
+{SYMS_RegX64Code_ymm13, 0, 8},
+{SYMS_RegX64Code_ymm14, 0, 8},
+{SYMS_RegX64Code_ymm15, 0, 8},
+{SYMS_RegX64Code_ymm0, 8, 8},
+{SYMS_RegX64Code_ymm1, 8, 8},
+{SYMS_RegX64Code_ymm2, 8, 8},
+{SYMS_RegX64Code_ymm3, 8, 8},
+{SYMS_RegX64Code_ymm4, 8, 8},
+{SYMS_RegX64Code_ymm5, 8, 8},
+{SYMS_RegX64Code_ymm6, 8, 8},
+{SYMS_RegX64Code_ymm7, 8, 8},
+{SYMS_RegX64Code_ymm8, 8, 8},
+{SYMS_RegX64Code_ymm9, 8, 8},
+{SYMS_RegX64Code_ymm10, 8, 8},
+{SYMS_RegX64Code_ymm11, 8, 8},
+{SYMS_RegX64Code_ymm12, 8, 8},
+{SYMS_RegX64Code_ymm13, 8, 8},
+{SYMS_RegX64Code_ymm14, 8, 8},
+{SYMS_RegX64Code_ymm15, 8, 8},
+{SYMS_RegX64Code_ymm0, 0, 8},
+{SYMS_RegX64Code_ymm0, 8, 8},
+{SYMS_RegX64Code_ymm0, 16, 8},
+{SYMS_RegX64Code_ymm0, 24, 8},
+{SYMS_RegX64Code_ymm1, 0, 8},
+{SYMS_RegX64Code_ymm1, 8, 8},
+{SYMS_RegX64Code_ymm1, 16, 8},
+{SYMS_RegX64Code_ymm1, 24, 8},
+{SYMS_RegX64Code_ymm2, 0, 8},
+{SYMS_RegX64Code_ymm2, 8, 8},
+{SYMS_RegX64Code_ymm2, 16, 8},
+{SYMS_RegX64Code_ymm2, 24, 8},
+{SYMS_RegX64Code_ymm3, 0, 8},
+{SYMS_RegX64Code_ymm3, 8, 8},
+{SYMS_RegX64Code_ymm3, 16, 8},
+{SYMS_RegX64Code_ymm3, 24, 8},
+{SYMS_RegX64Code_ymm4, 0, 8},
+{SYMS_RegX64Code_ymm4, 8, 8},
+{SYMS_RegX64Code_ymm4, 16, 8},
+{SYMS_RegX64Code_ymm4, 24, 8},
+{SYMS_RegX64Code_ymm5, 0, 8},
+{SYMS_RegX64Code_ymm5, 8, 8},
+{SYMS_RegX64Code_ymm5, 16, 8},
+{SYMS_RegX64Code_ymm5, 24, 8},
+{SYMS_RegX64Code_ymm6, 0, 8},
+{SYMS_RegX64Code_ymm6, 8, 8},
+{SYMS_RegX64Code_ymm6, 16, 8},
+{SYMS_RegX64Code_ymm6, 24, 8},
+{SYMS_RegX64Code_ymm7, 0, 8},
+{SYMS_RegX64Code_ymm7, 8, 8},
+{SYMS_RegX64Code_ymm7, 16, 8},
+{SYMS_RegX64Code_ymm7, 24, 8},
+{SYMS_RegX64Code_ymm8, 0, 8},
+{SYMS_RegX64Code_ymm8, 8, 8},
+{SYMS_RegX64Code_ymm8, 16, 8},
+{SYMS_RegX64Code_ymm8, 24, 8},
+{SYMS_RegX64Code_ymm9, 0, 8},
+{SYMS_RegX64Code_ymm9, 8, 8},
+{SYMS_RegX64Code_ymm9, 16, 8},
+{SYMS_RegX64Code_ymm9, 24, 8},
+{SYMS_RegX64Code_ymm10, 0, 8},
+{SYMS_RegX64Code_ymm10, 8, 8},
+{SYMS_RegX64Code_ymm10, 16, 8},
+{SYMS_RegX64Code_ymm10, 24, 8},
+{SYMS_RegX64Code_ymm11, 0, 8},
+{SYMS_RegX64Code_ymm11, 8, 8},
+{SYMS_RegX64Code_ymm11, 16, 8},
+{SYMS_RegX64Code_ymm11, 24, 8},
+{SYMS_RegX64Code_ymm12, 0, 8},
+{SYMS_RegX64Code_ymm12, 8, 8},
+{SYMS_RegX64Code_ymm12, 16, 8},
+{SYMS_RegX64Code_ymm12, 24, 8},
+{SYMS_RegX64Code_ymm13, 0, 8},
+{SYMS_RegX64Code_ymm13, 8, 8},
+{SYMS_RegX64Code_ymm13, 16, 8},
+{SYMS_RegX64Code_ymm13, 24, 8},
+{SYMS_RegX64Code_ymm14, 0, 8},
+{SYMS_RegX64Code_ymm14, 8, 8},
+{SYMS_RegX64Code_ymm14, 16, 8},
+{SYMS_RegX64Code_ymm14, 24, 8},
+{SYMS_RegX64Code_ymm15, 0, 8},
+{SYMS_RegX64Code_ymm15, 8, 8},
+{SYMS_RegX64Code_ymm15, 16, 8},
+{SYMS_RegX64Code_ymm15, 24, 8},
+{SYMS_RegX64Code_ymm0, 0, 4},
+{SYMS_RegX64Code_ymm0, 4, 4},
+{SYMS_RegX64Code_ymm0, 8, 4},
+{SYMS_RegX64Code_ymm0, 12, 4},
+{SYMS_RegX64Code_ymm0, 16, 4},
+{SYMS_RegX64Code_ymm0, 20, 4},
+{SYMS_RegX64Code_ymm0, 24, 4},
+{SYMS_RegX64Code_ymm0, 28, 4},
+{SYMS_RegX64Code_ymm1, 0, 4},
+{SYMS_RegX64Code_ymm1, 4, 4},
+{SYMS_RegX64Code_ymm1, 8, 4},
+{SYMS_RegX64Code_ymm1, 12, 4},
+{SYMS_RegX64Code_ymm1, 16, 4},
+{SYMS_RegX64Code_ymm1, 20, 4},
+{SYMS_RegX64Code_ymm1, 24, 4},
+{SYMS_RegX64Code_ymm1, 28, 4},
+{SYMS_RegX64Code_ymm2, 0, 4},
+{SYMS_RegX64Code_ymm2, 4, 4},
+{SYMS_RegX64Code_ymm2, 8, 4},
+{SYMS_RegX64Code_ymm2, 12, 4},
+{SYMS_RegX64Code_ymm2, 16, 4},
+{SYMS_RegX64Code_ymm2, 20, 4},
+{SYMS_RegX64Code_ymm2, 24, 4},
+{SYMS_RegX64Code_ymm2, 28, 4},
+{SYMS_RegX64Code_ymm3, 0, 4},
+{SYMS_RegX64Code_ymm3, 4, 4},
+{SYMS_RegX64Code_ymm3, 8, 4},
+{SYMS_RegX64Code_ymm3, 12, 4},
+{SYMS_RegX64Code_ymm3, 16, 4},
+{SYMS_RegX64Code_ymm3, 20, 4},
+{SYMS_RegX64Code_ymm3, 24, 4},
+{SYMS_RegX64Code_ymm3, 28, 4},
+{SYMS_RegX64Code_ymm4, 0, 4},
+{SYMS_RegX64Code_ymm4, 4, 4},
+{SYMS_RegX64Code_ymm4, 8, 4},
+{SYMS_RegX64Code_ymm4, 12, 4},
+{SYMS_RegX64Code_ymm4, 16, 4},
+{SYMS_RegX64Code_ymm4, 20, 4},
+{SYMS_RegX64Code_ymm4, 24, 4},
+{SYMS_RegX64Code_ymm4, 28, 4},
+{SYMS_RegX64Code_ymm5, 0, 4},
+{SYMS_RegX64Code_ymm5, 4, 4},
+{SYMS_RegX64Code_ymm5, 8, 4},
+{SYMS_RegX64Code_ymm5, 12, 4},
+{SYMS_RegX64Code_ymm5, 16, 4},
+{SYMS_RegX64Code_ymm5, 20, 4},
+{SYMS_RegX64Code_ymm5, 24, 4},
+{SYMS_RegX64Code_ymm5, 28, 4},
+{SYMS_RegX64Code_ymm6, 0, 4},
+{SYMS_RegX64Code_ymm6, 4, 4},
+{SYMS_RegX64Code_ymm6, 8, 4},
+{SYMS_RegX64Code_ymm6, 12, 4},
+{SYMS_RegX64Code_ymm6, 16, 4},
+{SYMS_RegX64Code_ymm6, 20, 4},
+{SYMS_RegX64Code_ymm6, 24, 4},
+{SYMS_RegX64Code_ymm6, 28, 4},
+{SYMS_RegX64Code_ymm7, 0, 4},
+{SYMS_RegX64Code_ymm7, 4, 4},
+{SYMS_RegX64Code_ymm7, 8, 4},
+{SYMS_RegX64Code_ymm7, 12, 4},
+{SYMS_RegX64Code_ymm7, 16, 4},
+{SYMS_RegX64Code_ymm7, 20, 4},
+{SYMS_RegX64Code_ymm7, 24, 4},
+{SYMS_RegX64Code_ymm7, 28, 4},
+{SYMS_RegX64Code_ymm8, 0, 4},
+{SYMS_RegX64Code_ymm8, 4, 4},
+{SYMS_RegX64Code_ymm8, 8, 4},
+{SYMS_RegX64Code_ymm8, 12, 4},
+{SYMS_RegX64Code_ymm8, 16, 4},
+{SYMS_RegX64Code_ymm8, 20, 4},
+{SYMS_RegX64Code_ymm8, 24, 4},
+{SYMS_RegX64Code_ymm8, 28, 4},
+{SYMS_RegX64Code_ymm9, 0, 4},
+{SYMS_RegX64Code_ymm9, 4, 4},
+{SYMS_RegX64Code_ymm9, 8, 4},
+{SYMS_RegX64Code_ymm9, 12, 4},
+{SYMS_RegX64Code_ymm9, 16, 4},
+{SYMS_RegX64Code_ymm9, 20, 4},
+{SYMS_RegX64Code_ymm9, 24, 4},
+{SYMS_RegX64Code_ymm9, 28, 4},
+{SYMS_RegX64Code_ymm10, 0, 4},
+{SYMS_RegX64Code_ymm10, 4, 4},
+{SYMS_RegX64Code_ymm10, 8, 4},
+{SYMS_RegX64Code_ymm10, 12, 4},
+{SYMS_RegX64Code_ymm10, 16, 4},
+{SYMS_RegX64Code_ymm10, 20, 4},
+{SYMS_RegX64Code_ymm10, 24, 4},
+{SYMS_RegX64Code_ymm10, 28, 4},
+{SYMS_RegX64Code_ymm11, 0, 4},
+{SYMS_RegX64Code_ymm11, 4, 4},
+{SYMS_RegX64Code_ymm11, 8, 4},
+{SYMS_RegX64Code_ymm11, 12, 4},
+{SYMS_RegX64Code_ymm11, 16, 4},
+{SYMS_RegX64Code_ymm11, 20, 4},
+{SYMS_RegX64Code_ymm11, 24, 4},
+{SYMS_RegX64Code_ymm11, 28, 4},
+{SYMS_RegX64Code_ymm12, 0, 4},
+{SYMS_RegX64Code_ymm12, 4, 4},
+{SYMS_RegX64Code_ymm12, 8, 4},
+{SYMS_RegX64Code_ymm12, 12, 4},
+{SYMS_RegX64Code_ymm12, 16, 4},
+{SYMS_RegX64Code_ymm12, 20, 4},
+{SYMS_RegX64Code_ymm12, 24, 4},
+{SYMS_RegX64Code_ymm12, 28, 4},
+{SYMS_RegX64Code_ymm13, 0, 4},
+{SYMS_RegX64Code_ymm13, 4, 4},
+{SYMS_RegX64Code_ymm13, 8, 4},
+{SYMS_RegX64Code_ymm13, 12, 4},
+{SYMS_RegX64Code_ymm13, 16, 4},
+{SYMS_RegX64Code_ymm13, 20, 4},
+{SYMS_RegX64Code_ymm13, 24, 4},
+{SYMS_RegX64Code_ymm13, 28, 4},
+{SYMS_RegX64Code_ymm14, 0, 4},
+{SYMS_RegX64Code_ymm14, 4, 4},
+{SYMS_RegX64Code_ymm14, 8, 4},
+{SYMS_RegX64Code_ymm14, 12, 4},
+{SYMS_RegX64Code_ymm14, 16, 4},
+{SYMS_RegX64Code_ymm14, 20, 4},
+{SYMS_RegX64Code_ymm14, 24, 4},
+{SYMS_RegX64Code_ymm14, 28, 4},
+{SYMS_RegX64Code_ymm15, 0, 4},
+{SYMS_RegX64Code_ymm15, 4, 4},
+{SYMS_RegX64Code_ymm15, 8, 4},
+{SYMS_RegX64Code_ymm15, 12, 4},
+{SYMS_RegX64Code_ymm15, 16, 4},
+{SYMS_RegX64Code_ymm15, 20, 4},
+{SYMS_RegX64Code_ymm15, 24, 4},
+{SYMS_RegX64Code_ymm15, 28, 4},
+{SYMS_RegX64Code_ymm0, 0, 8},
+{SYMS_RegX64Code_ymm0, 8, 8},
+{SYMS_RegX64Code_ymm0, 16, 8},
+{SYMS_RegX64Code_ymm0, 24, 8},
+{SYMS_RegX64Code_ymm1, 0, 8},
+{SYMS_RegX64Code_ymm1, 8, 8},
+{SYMS_RegX64Code_ymm1, 16, 8},
+{SYMS_RegX64Code_ymm1, 24, 8},
+{SYMS_RegX64Code_ymm2, 0, 8},
+{SYMS_RegX64Code_ymm2, 8, 8},
+{SYMS_RegX64Code_ymm2, 16, 8},
+{SYMS_RegX64Code_ymm2, 24, 8},
+{SYMS_RegX64Code_ymm3, 0, 8},
+{SYMS_RegX64Code_ymm3, 8, 8},
+{SYMS_RegX64Code_ymm3, 16, 8},
+{SYMS_RegX64Code_ymm3, 24, 8},
+{SYMS_RegX64Code_ymm4, 0, 8},
+{SYMS_RegX64Code_ymm4, 8, 8},
+{SYMS_RegX64Code_ymm4, 16, 8},
+{SYMS_RegX64Code_ymm4, 24, 8},
+{SYMS_RegX64Code_ymm5, 0, 8},
+{SYMS_RegX64Code_ymm5, 8, 8},
+{SYMS_RegX64Code_ymm5, 16, 8},
+{SYMS_RegX64Code_ymm5, 24, 8},
+{SYMS_RegX64Code_ymm6, 0, 8},
+{SYMS_RegX64Code_ymm6, 8, 8},
+{SYMS_RegX64Code_ymm6, 16, 8},
+{SYMS_RegX64Code_ymm6, 24, 8},
+{SYMS_RegX64Code_ymm7, 0, 8},
+{SYMS_RegX64Code_ymm7, 8, 8},
+{SYMS_RegX64Code_ymm7, 16, 8},
+{SYMS_RegX64Code_ymm7, 24, 8},
+{SYMS_RegX64Code_ymm8, 0, 8},
+{SYMS_RegX64Code_ymm8, 8, 8},
+{SYMS_RegX64Code_ymm8, 16, 8},
+{SYMS_RegX64Code_ymm8, 24, 8},
+{SYMS_RegX64Code_ymm9, 0, 8},
+{SYMS_RegX64Code_ymm9, 8, 8},
+{SYMS_RegX64Code_ymm9, 16, 8},
+{SYMS_RegX64Code_ymm9, 24, 8},
+{SYMS_RegX64Code_ymm10, 0, 8},
+{SYMS_RegX64Code_ymm10, 8, 8},
+{SYMS_RegX64Code_ymm10, 16, 8},
+{SYMS_RegX64Code_ymm10, 24, 8},
+{SYMS_RegX64Code_ymm11, 0, 8},
+{SYMS_RegX64Code_ymm11, 8, 8},
+{SYMS_RegX64Code_ymm11, 16, 8},
+{SYMS_RegX64Code_ymm11, 24, 8},
+{SYMS_RegX64Code_ymm12, 0, 8},
+{SYMS_RegX64Code_ymm12, 8, 8},
+{SYMS_RegX64Code_ymm12, 16, 8},
+{SYMS_RegX64Code_ymm12, 24, 8},
+{SYMS_RegX64Code_ymm13, 0, 8},
+{SYMS_RegX64Code_ymm13, 8, 8},
+{SYMS_RegX64Code_ymm13, 16, 8},
+{SYMS_RegX64Code_ymm13, 24, 8},
+{SYMS_RegX64Code_ymm14, 0, 8},
+{SYMS_RegX64Code_ymm14, 8, 8},
+{SYMS_RegX64Code_ymm14, 16, 8},
+{SYMS_RegX64Code_ymm14, 24, 8},
+{SYMS_RegX64Code_ymm15, 0, 8},
+{SYMS_RegX64Code_ymm15, 8, 8},
+{SYMS_RegX64Code_ymm15, 16, 8},
+{SYMS_RegX64Code_ymm15, 24, 8},
+};
+#endif

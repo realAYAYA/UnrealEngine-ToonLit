@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D12/AppCoreD3D12.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{30D9AFD7-C7A0-49AA-B6E5-DEF5AC20BA86}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>4_FrameMarkersD3D12</ProjectName>
+  </PropertyGroup>
+</Project>

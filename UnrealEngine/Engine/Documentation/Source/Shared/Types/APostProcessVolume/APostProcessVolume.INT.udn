@@ -1,0 +1,16 @@
+Availability:NoPublish
+Title:APostProcessVolume
+Crumbs:
+Description:Overview of the PostProcessVolume class
+
+[EXCERPT:APostProcessVolume]
+
+The PostProcessVolume applies post-processing effects to camera renderings, such as bloom, lens flares, exposure control, color correction, and so on.
+The effects start to apply when the camera is at a distance from the volume set by the Blend Radius setting, and are at full intensity when the camera is inside
+the bounds of the volume. You can blend different effects together by creating multiple overlapping PostProcessVolumes, and control their blending by assigning each 
+volume a relative priority and weight. You can also make a volume's settings apply to the entire level by enabling its Infinite Extent (Unbound) setting.
+
+[VAR:ToolTipFullLink]
+Engine/Rendering/PostProcessEffects
+[/VAR]
+[/EXCERPT:APostProcessVolume]

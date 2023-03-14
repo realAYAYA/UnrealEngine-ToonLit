@@ -1,0 +1,28 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// NOTE: The primary goal of this file is to separate out the decision around
+// which geometry gets binned into static/dynamic from other VSM code and dependencies
+// as much as possible.
+
+#pragma once
+
+#include "../Nanite/NaniteDataDecode.ush"
+
+
+bool ShouldCacheInstanceAsStatic(FInstanceSceneData InstanceData, bool bIsViewUncached)
+{
+#if 0
+	return false;
+#else
+	// TODO: Tweak mobility flag, but for testing for now
+	// This flag should be stable and not change, which is a requirement.
+	uint Flags = GetPrimitiveData(InstanceData.PrimitiveId).Flags;
+	//return (Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_CAST_CONTACT_SHADOW) != 0;
+	return (!bIsViewUncached) && (Flags & PRIMITIVE_SCENE_DATA_FLAG_CACHE_SHADOW_AS_STATIC) != 0u;
+#endif
+}
+
+bool ShouldCacheInstanceAsStatic(FInstanceSceneData InstanceData, FNaniteView NaniteView)
+{
+	return ShouldCacheInstanceAsStatic(InstanceData, (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED) != 0u);
+}

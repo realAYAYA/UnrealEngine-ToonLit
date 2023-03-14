@@ -1,0 +1,83 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "LandscapeCommon.ush"
+
+// ----------------------------------------------------------------------------------
+
+#if defined (__INTELLISENSE__)
+// Uncomment the appropriate define for enabling syntax highlighting with HLSL Tools for Visual Studio : 
+//#define MERGE_HEIGHTMAP 1
+//#define RESAMPLE_HEIGHTMAP 1
+#endif // defined (__INTELLISENSE__)
+
+// ----------------------------------------------------------------------------------
+
+#if MERGE_HEIGHTMAP
+// MergeHeightmap inputs/outputs :
+
+uint4 InHeightmapAtlasSubregion; // Subregion of the atlas texture that is being rendered to
+uint4 InHeightmapSubregion; // Subregion of the input heightmap that we copy from
+Texture2D<float4> InHeightmap; // Source texture (packed height in the .rg channels)
+#endif // MERGE_HEIGHTMAP
+
+#if RESAMPLE_HEIGHTMAP
+// ResampleHeightmap inputs/outputs :
+
+float4x4 InOutputUVToMergedHeightmapUV; // Transform to apply to the texture coordinates in order to resample the heightmap in the requested render area
+Texture2D<float> InMergedHeightmap; // Source texture (unpacked floating point height)
+SamplerState InMergedHeightmapSampler;
+uint2 InRenderAreaSize; // Size of the output render target
+#endif // RESAMPLE_HEIGHTMAP
+
+static const float LANDSCAPE_MAX_VALUE = 65535.0f;
+
+// ----------------------------------------------------------------------------------
+// Util functions : 
+
+#if MERGE_HEIGHTMAP
+
+void MergeHeightmap(in float4 SVPos : SV_POSITION, out float OutHeight : SV_Target0)
+{
+	// Input heightmap and output heightmap atlas may not be at the same resolution (different mips), so we need to renormalize the sample position before sampling the input heightmap :
+	uint2 AtlasSubregionSize = InHeightmapAtlasSubregion.zw - InHeightmapAtlasSubregion.xy;
+	float2 SampleCoordinatesNormalized = (SVPos.xy - InHeightmapAtlasSubregion.xy) / (float2) AtlasSubregionSize;
+	uint2 HeightmapSubregionSize = InHeightmapSubregion.zw - InHeightmapSubregion.xy;
+	uint2 SampleCoordinates = floor(InHeightmapSubregion.xy + SampleCoordinatesNormalized * HeightmapSubregionSize);
+		
+	float4 HeightmapSample = InHeightmap.Load(int3(SampleCoordinates, 0));
+	OutHeight = UnpackHeight(HeightmapSample.xy)/LANDSCAPE_MAX_VALUE;
+}
+
+#endif // MERGE_HEIGHTMAP
+
+
+// ----------------------------------------------------------------------------------
+
+#if RESAMPLE_HEIGHTMAP
+
+void ResampleHeightmap(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	OutColor = 0;
+
+	// Pixel coordinates to UV (SvPos is already offset by 0.5 to be at pixel center) :
+	float2 UV = SVPos.xy / (float2)InRenderAreaSize;
+	float4 SampleUV = float4(UV, 0.0f, 1.0f);
+	SampleUV = mul(SampleUV, InOutputUVToMergedHeightmapUV);
+
+	float Height = 0.0f;
+	if (all(SampleUV.xy >= 0.0f) && all(SampleUV.xy <= 1.0f))
+	{
+		Height = InMergedHeightmap.Sample(InMergedHeightmapSampler, SampleUV.xy);
+	}
+
+	Height *= LANDSCAPE_MAX_VALUE;
+
+#if COMPRESS_HEIGHT
+	OutColor.xy = PackHeight(Height);
+#else // COMPRESS_HEIGHT
+	OutColor.x = Height;
+#endif // !COMPRESS_HEIGHT
+}
+
+#endif // RESAMPLE_HEIGHTMAP

@@ -1,0 +1,4 @@
+pyside2==5.15.2
+python-osc==1.7.4
+requests==2.24.0
+six==1.15.0

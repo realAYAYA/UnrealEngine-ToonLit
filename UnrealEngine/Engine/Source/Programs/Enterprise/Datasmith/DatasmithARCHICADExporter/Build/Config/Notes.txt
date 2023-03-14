@@ -1,0 +1,29 @@
+Project information to come
+
+To build you need to define some user environment variables
+	UE_SDKS_ROOT=/Users/Shared/Dev/UE_SDKs_Root
+		Folder containing ARCHICAD DevKit
+			UE_SDKs_Root/HostMac/Mac/Archicad/23/Support/...
+			UE_SDKs_Root/HostMac/Mac/Archicad/24/Support/...
+			UE_SDKs_Root/HostMac/Mac/Archicad/25/Support/...
+			UE_SDKs_Root/HostWin64/Win64/Archicad/23/Support/...
+			UE_SDKs_Root/HostWin64/Win64/Archicad/24/Support/...
+			UE_SDKs_Root/HostWin64/Win64/Archicad/25/Support/...
+	UE_DatasmithArchicadDeveloperId='Organization (UserId)'
+		Released by Apple "Developer ID Certification Authority"
+			Must be valid for Application and for Installer
+
+Some defines affect the build
+	AUTO_SYNC // Set to 1 if you want to have an autosync version
+		Defined in UE_AC_xconfig/macOS or DatasmithArchicadExporter.props/Windows
+	UE_AC_NO_MENU // Set to 1 if you want to have a menu in the menu bar
+		Defined in Private/Menus.h
+
+Other defines are used to enable more on less traces.
+	Ex. UE_AC_DEBUGF_ON, UE_AC_TRACEF_ON and UE_AC_VERBOSEF_ON -- Control level for logs
+
+Enable some experimental code like PIVOT_0_5_0_5 (Bypass a Twinmotion limitation)
+
+...
+
+

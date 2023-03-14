@@ -1,0 +1,96 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "/Engine/Shared/RayTracingDefinitions.h"
+#include "/Engine/Shared/RayTracingTypes.h"
+#include "/Engine/Shared/PathTracingDefinitions.h"
+
+#define USE_ATTENUATION_TERM 0
+#define USE_IES_TERM 0
+#include "Light/PathTracingLightCommon.ush"
+
+uint SceneInfiniteLightCount;
+float3 SceneLightsTranslatedBoundMin;
+float3 SceneLightsTranslatedBoundMax;
+RWTexture2D<uint> RWLightGrid;
+RWBuffer<uint> RWLightGridData;
+uint LightGridResolution;
+uint LightGridMaxCount;
+int LightGridAxis;
+
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void PathTracingBuildLightGridCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (any(DispatchThreadId >= LightGridResolution))
+	{
+		return;
+	}
+	// figure out dimension of the 3d grid and the current ID to be filled
+	uint3 VoxelId = 0, VoxelRes = 1;
+	switch (LightGridAxis)
+	{
+		case 0: VoxelId.yz = DispatchThreadId; VoxelRes.yz = LightGridResolution; break;
+		case 1: VoxelId.xz = DispatchThreadId; VoxelRes.xz = LightGridResolution; break;
+		case 2: VoxelId.xy = DispatchThreadId; VoxelRes.xy = LightGridResolution; break;
+	}
+	// get bounding box of current voxel
+	float3 Lo = lerp(SceneLightsTranslatedBoundMin, SceneLightsTranslatedBoundMax, float3(VoxelId + 0) / float3(VoxelRes));
+	float3 Hi = lerp(SceneLightsTranslatedBoundMin, SceneLightsTranslatedBoundMax, float3(VoxelId + 1) / float3(VoxelRes));
+
+	uint NumVisible = 0;
+	uint MaxVisible = min(LightGridMaxCount, RAY_TRACING_LIGHT_COUNT_MAXIMUM - SceneInfiniteLightCount);
+	uint Offset = LightGridMaxCount * (DispatchThreadId.x + LightGridResolution * DispatchThreadId.y);
+	bool AllSingular = true;
+	for (uint LightIndex = SceneInfiniteLightCount; LightIndex < SceneLightCount; LightIndex++)
+	{
+		uint LightType = SceneLights[LightIndex].Flags & PATHTRACER_FLAG_TYPE_MASK;
+		float3 Center = GetTranslatedPosition(LightIndex);
+		float Radius = 1.0 / GetAttenuation(LightIndex);
+
+		float3 E = max(Lo - Center, 0) + max(Center - Hi, 0);
+		float D2 = dot(E, E);
+
+		// reject against normal
+		if (LightType != PATHTRACING_LIGHT_POINT)
+		{
+			float3 N = GetNormal(LightIndex);
+			float x = N.x > 0 ? Hi.x : Lo.x;
+			float y = N.y > 0 ? Hi.y : Lo.y;
+			float z = N.z > 0 ? Hi.z : Lo.z;
+
+			if (dot(float3(x, y, z) - Center, N) < 0)
+			{
+				continue;
+			}
+		}
+
+		if (LightType == PATHTRACING_LIGHT_SPOT)
+		{
+			float3 LightBoundLo = SceneLights[LightIndex].TranslatedBoundMin;
+			float3 LightBoundHi = SceneLights[LightIndex].TranslatedBoundMax;
+
+			if (any(Hi < LightBoundLo) || any(Lo > LightBoundHi))
+			{
+				continue;
+			}
+		}
+
+		if (D2 < Square(Radius))
+		{
+			AllSingular = AllSingular && all(SceneLights[LightIndex].Dimensions == 0);
+			RWLightGridData[Offset + NumVisible] = LightIndex;
+			NumVisible++;
+			// TODO: handle overflow better?
+			if (NumVisible >= MaxVisible)
+			{
+				break;
+			}
+		}
+	}
+	if (AllSingular)
+	{
+		NumVisible |= PATHTRACER_LIGHT_GRID_SINGULAR_MASK;
+	}
+	RWLightGrid[DispatchThreadId] = NumVisible;
+}

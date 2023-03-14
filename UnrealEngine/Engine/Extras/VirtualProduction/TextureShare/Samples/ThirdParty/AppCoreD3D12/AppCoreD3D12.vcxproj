@@ -1,0 +1,238 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{16B13BB4-D82D-4AC1-8B40-C6BCCC99954B}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>D3D12</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup  Condition="'$(Configuration)'=='Debug'">
+    <LinkIncremental>true</LinkIncremental>
+    <TargetName>$(ProjectName)-$(Configuration)</TargetName>
+  </PropertyGroup>
+  <PropertyGroup  Condition="'$(Configuration)'=='Release'">
+    <LinkIncremental>false</LinkIncremental>
+    <TargetName>$(ProjectName)</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='x64'">
+    <OutDir>$(ProjectDir)..\..\..\Binaries\Win64\</OutDir>
+    <IntDir>$(ProjectDir)..\..\..\Intermediate\Win64\$(ProjectName)\$(Configuration)\</IntDir>
+    <IncludePath>..\..\ThirdParty\AppCoreD3D12\Source;..\..\Helpers\Public;..\..\Helpers\Private;..\..\..\TextureShareSDK\Source;..\..\..\..\..\..\Source\ThirdParty\Windows\DirectX\Include;..\..\..\..\..\..\Source\ThirdParty\Windows\D3DX12\Include;..\..\..\..\..\..\..\..\..\Engine\Source\ThirdParty\Windows\DirectX\Include;..\..\..\..\..\..\..\..\..\..\Engine\Source\ThirdParty\Windows\D3DX12\Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <LibraryPath>..\..\..\TextureShareSDK\Binaries\Win64;..\..\..\..\..\..\Source\ThirdParty\Windows\DirectX\Lib\x64;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64)</LibraryPath>
+    <GenerateManifest>false</GenerateManifest>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <PostBuildEvent>
+      <Command>
+               xcopy ..\..\..\TextureShareSDK\Binaries\Win64\TextureShareSDK*.dll $(OutDir)  /Y 1&gt;nul
+               xcopy ..\..\..\TextureShareSDK\Binaries\Win64\TextureShareSDK*.pdb $(OutDir)  /Y 1&gt;nul
+               xcopy ..\..\..\TextureShareSDK\Binaries\Win64\tbb.dll $(OutDir)  /Y 1&gt;nul
+      </Command>
+    </PostBuildEvent>
+    <PreBuildEvent>
+      <Command>xcopy $(ProjectDir)\..\..\ThirdParty\AppCoreD3D12\Resources\*.hlsl $(OutDir)Resources /Y /I 1&gt;nul</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;TEXTURESHARE_PROJECT_NAME="$(ProjectName)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <SDLCheck>
+      </SDLCheck>
+      <AdditionalIncludeDirectories>
+      </AdditionalIncludeDirectories>
+      <CompileAsWinRT>false</CompileAsWinRT>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>dxguid.lib;D3D12.lib;d3dcompiler.lib;DXGI.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>d3d12.dll</DelayLoadDLLs>
+    </Link>
+    <CustomBuildStep>
+      <TreatOutputAsContent>true</TreatOutputAsContent>
+    </CustomBuildStep>
+    <CustomBuild>
+      <Command>copy %(Identity) "$(OutDir)" &gt; NUL</Command>
+      <Outputs>$(OutDir)\%(Identity)</Outputs>
+      <TreatOutputAsContent>true</TreatOutputAsContent>
+    </CustomBuild>
+    <FxCompile>
+      <EntryPointName />
+    </FxCompile>
+    <Manifest>
+      <OutputManifestFile />
+    </Manifest>
+    <ManifestResourceCompile>
+      <ResourceOutputFileName />
+    </ManifestResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;TEXTURESHARE_PROJECT_NAME="$(ProjectName)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>
+      </AdditionalIncludeDirectories>
+      <CompileAsWinRT>false</CompileAsWinRT>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>dxguid.lib;D3D12.lib;d3dcompiler.lib;DXGI.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>d3d12.dll</DelayLoadDLLs>
+    </Link>
+    <CustomBuildStep>
+      <TreatOutputAsContent>true</TreatOutputAsContent>
+    </CustomBuildStep>
+    <CustomBuild>
+      <Command>copy %(Identity) "$(OutDir)" &gt; NUL</Command>
+      <Outputs>$(OutDir)\%(Identity)</Outputs>
+      <TreatOutputAsContent>true</TreatOutputAsContent>
+    </CustomBuild>
+    <FxCompile>
+      <EntryPointName />
+    </FxCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_CustomData.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_Data.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_DeviceD3D11.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_DeviceD3D12.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_DeviceVulkan.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_FrameMarker.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ManualProjection.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ObjectDesc.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ProxyData.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ResourceDesc.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ResourceHandle.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ResourceRequest.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_SceneData.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_SyncSettings.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ViewDesc.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreEnums.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareSDKContainers.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineArray.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineContainers.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineEnums_PixelFormat.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineMath.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineString.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineTypes.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\ITextureShareSDK.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\ITextureShareSDKObject.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Misc\TextureShareCoreStrings.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Misc\TextureShareDisplayClusterStrings.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Misc\TextureShareStrings.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\ITextureShareSDKSerializeStream.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\ITextureShareSerialize.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\TextureShareCoreSerialize.h" />
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\TextureShareSDKDataWrappers.h" />
+    <ClInclude Include="..\..\Helpers\Private\TextureShareObject.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D11\TextureShareDeviceContextD3D11.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D11\TextureShareImageD3D11.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D11\TextureShareResourceD3D11.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D12\TextureShareDeviceContextD3D12.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D12\TextureShareImageD3D12.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D12\TextureShareResourceD3D12.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareCustomResource.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareResourceDesc.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareResourceRequest.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareResourceSyncStep.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareViewportResourceDesc.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\TextureShareContainers.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\TextureShareEnums.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\TextureShareObjectDesc.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Vulkan\TextureShareDeviceContextVulkan.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Vulkan\TextureShareImageVulkan.h" />
+    <ClInclude Include="..\..\Helpers\Public\Containers\Vulkan\TextureShareResourceVulkan.h" />
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareDeviceContext.h" />
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareImage.h" />
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareObject.h" />
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareResource.h" />
+    <ClInclude Include="..\..\Helpers\Public\Misc\TextureShareLog.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12AppSetup.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12HelloTexture.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\DXSample.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\DXSampleHelper.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\stdafx.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\Win32Application.h" />
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12TextureShareSample.h" />
+    <ClInclude Include="Source\D3D12TextureShareSampleSetup.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject.cpp" />
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_D3D11.cpp" />
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_D3D12.cpp" />
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_DataHelpers.cpp" />
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_Resources.cpp" />
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_Sync.cpp" />
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_Vulkan.cpp" />
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12HelloTexture.cpp" />
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\DXSample.cpp" />
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\Main.cpp" />
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\stdafx.cpp" />
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\Win32Application.cpp" />
+    <ClCompile Include="Source\D3D12TextureShareSample.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\..\ThirdParty\AppCoreD3D12\Resources\AppCoreD3D12.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="Resources\shaders.hlsl">
+      <FileType>Document</FileType>
+      <DeploymentContent>true</DeploymentContent>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(OutDir)\%(Identity)</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      </Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+      </Command>
+    </CustomBuild>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

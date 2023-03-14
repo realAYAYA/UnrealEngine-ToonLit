@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<TurnkeyManifest>
+	<!-- Some default values for Studio-wide settings. It's recommended you set these appropriately in one of the .xml files referenced below. "RunuAT Turnkey -command=ManageSettings -listvars" for more information.  -->
+	<SavedSettings>
+		<SavedSetting>
+			<Variable>Studio_AppleSigningCertPassword</Variable>
+			<Value></Value>
+		</SavedSetting>
+		<SavedSetting>
+			<Variable>Studio_GoogleDriveCredentials</Variable>
+			<Value>file:$(EngineDir)/Build/Turnkey/GoogleDriveCredentials.json</Value>
+		</SavedSetting>
+		<SavedSetting>
+			<Variable>Studio_GoogleDriveAppName</Variable>
+			<Value></Value>
+		</SavedSetting>
+		<SavedSetting>
+			<!-- By default, indicate that Turnkey cannot install any platforms. This can be a comma separated list, or All to indicate all platforms should try to install via Turnkey. -->
+			<Variable>Studio_FullInstallPlatforms</Variable>
+			<Value></Value>
+		</SavedSetting>
+		<SavedSetting>
+			<Variable>Studio_AutoSdkPlatforms</Variable>
+			<Value></Value>
+		</SavedSetting>
+	</SavedSettings>
+	<AdditionalManifests>
+		<Manifest>$(ThisManifestDir)/Licensee_TurnkeyStudioSettings.xml</Manifest>
+		<Manifest>file:$(EngineDir)/Restricted/NotForLicensees/Build/Turnkey/TurnkeyStudioSettings.xml</Manifest>
+		<Manifest>file:$(EngineDir)/Restricted/NoRedist/Build/Turnkey/TurnkeyStudioSettings.xml</Manifest>
+		<Manifest>$(UE_STUDIO_TURNKEY_SETTINGS_LOCATION)</Manifest>
+	</AdditionalManifests>
+</TurnkeyManifest>

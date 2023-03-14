@@ -1,0 +1,20 @@
+{
+	"name": "UE5",
+	"logo": "ue5.project.png",
+	"streams": [
+		{
+		  "id": "ue5-main",
+		  "path": "ue5-main.stream.json"
+		}
+	],
+	"categories": [
+		{
+			"name": "General",
+			"row": 0,
+			"showOnNavMenu": true,
+			"includePatterns": [
+				"//UE5/Main"
+			]
+		}
+	]
+}

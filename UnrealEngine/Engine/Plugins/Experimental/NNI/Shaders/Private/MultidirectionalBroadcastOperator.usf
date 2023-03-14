@@ -1,0 +1,100 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+
+// SRV/UAV variables
+Buffer<float> ASRV;
+Buffer<float> BSRV;
+RWBuffer<float> OutputUAV;
+// Input variables
+uint TensorSize;
+uint ShapeDimensions;
+Buffer<uint> ShapeOutput;
+Buffer<uint> ShapeA;
+Buffer<uint> ShapeB;
+
+[numthreads(THREADGROUP_SIZE_X, 1, 1)]
+void MultidirectionalBroadcastCS(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint GlobalIndex = DispatchThreadID.x;
+	if (GlobalIndex >= TensorSize)
+	{
+		return;
+	}
+
+	// Perform operation on the right indexes. E.g., MultidirectionalBroadcastFunction(X, Y) = "(X + Y)" or "pow(X, Y)"
+#if SHAPE_MODE == 0
+#if INLINED_MODE == 2
+	// Elementwise operation - Not inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[GlobalIndex], BSRV[GlobalIndex]);
+#elif INLINED_MODE == 0
+	// Elementwise operation - A inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(OutputUAV[GlobalIndex], BSRV[GlobalIndex]);
+#elif INLINED_MODE == 1
+	// Elementwise operation - B inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[GlobalIndex], OutputUAV[GlobalIndex]);
+#else
+	UNEXPECTED_CASE;
+#endif
+
+#elif SHAPE_MODE == 1
+#if INLINED_MODE == 2
+	// A scalar - Not inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[0], BSRV[GlobalIndex]);
+#elif INLINED_MODE == 0
+	// A_SHOULD_NEVER_BE_INLINED_IF_A_IS_SCALAR;
+#elif INLINED_MODE == 1
+	// A scalar - B inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[0], OutputUAV[GlobalIndex]);
+#else
+	UNEXPECTED_CASE_FOR_SHAPE_MODE_1;
+#endif
+
+#elif SHAPE_MODE == 2
+#if INLINED_MODE == 2
+	// B scalar - Not inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[GlobalIndex], BSRV[0]);
+#elif INLINED_MODE == 0
+	// B scalar - A inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(OutputUAV[GlobalIndex], BSRV[0]);
+#elif INLINED_MODE == 1
+	// B_SHOULD_NEVER_BE_INLINED_IF_B_IS_SCALAR;
+#else
+	UNEXPECTED_CASE_FOR_SHAPE_MODE_2;
+#endif
+
+#elif SHAPE_MODE == 3
+	/* Estimate multi-dimensional output index from GlobalIndex */
+	uint CurrentIndexArray[MAX_NUMBER_DIMENSIONS]; /* Only the first ShapeDimensions out of MAX_NUMBER_DIMENSIONS are used (initialization not required) */
+	uint LeftOver = GlobalIndex;
+	for (uint OutputShapeIndex = 0; OutputShapeIndex < ShapeDimensions; ++OutputShapeIndex)
+	{
+		const uint ActualIndex = ShapeDimensions - 1 - OutputShapeIndex;
+		CurrentIndexArray[ActualIndex] = LeftOver % ShapeOutput[ActualIndex]; /* IndexX = Index1D % W; IndexY = Index1D / W % H; IndexZ = Index1D / W / H * Z_size */
+		LeftOver /= ShapeOutput[ActualIndex];
+	}
+	/* Estimate right 1-D indexes */
+	uint IndexA1D = 0;
+	uint IndexB1D = 0;
+	for (uint InputShapeIndex = 0; InputShapeIndex < ShapeDimensions; ++InputShapeIndex)
+	{
+		IndexA1D = IndexA1D * ShapeA[InputShapeIndex] + (CurrentIndexArray[InputShapeIndex] % ShapeA[InputShapeIndex]); /* IndexA1D = [[[[...]P_3M + P3']P_2M + P_2']P_1M + P_1']P_0M + P0', P_i' = P_i%P_iM */
+		IndexB1D = IndexB1D * ShapeB[InputShapeIndex] + (CurrentIndexArray[InputShapeIndex] % ShapeB[InputShapeIndex]); /* IndexB1D = [[[[...]P_3M + P3']P_2M + P_2']P_1M + P_1']P_0M + P0', P_i' = P_i%P_iM */
+	}
+#if INLINED_MODE == 2
+	// Elementwise operation - Not inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[IndexA1D], BSRV[IndexB1D]);
+#elif INLINED_MODE == 0
+	// Elementwise operation - A inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(OutputUAV[GlobalIndex], BSRV[IndexB1D]);
+#elif INLINED_MODE == 1
+	// Elementwise operation - B inlined
+	OutputUAV[GlobalIndex] = MultidirectionalBroadcastFunction(ASRV[IndexA1D], OutputUAV[GlobalIndex]);
+#else
+	UNEXPECTED_CASE_FOR_SHAPE_MODE_3;
+#endif
+
+#else
+	UNEXPECTED_CASE_FOR_SHAPE_MODE;
+#endif
+}

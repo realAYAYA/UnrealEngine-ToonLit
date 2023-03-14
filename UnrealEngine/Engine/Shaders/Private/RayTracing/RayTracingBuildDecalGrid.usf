@@ -1,0 +1,62 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "/Engine/Shared/RayTracingDefinitions.h"
+#include "/Engine/Shared/RayTracingTypes.h"
+#include "/Engine/Shared/PathTracingDefinitions.h"
+
+StructuredBuffer<FRayTracingDecal> SceneDecals;
+uint SceneDecalCount;
+
+float3 SceneDecalsTranslatedBoundMin;
+float3 SceneDecalsTranslatedBoundMax;
+uint DecalGridResolution;
+uint DecalGridMaxCount;
+uint DecalGridAxis;
+
+RWTexture2D<uint> RWDecalGrid;
+RWBuffer<uint> RWDecalGridData;
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void BuildDecalGridCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (any(DispatchThreadId >= DecalGridResolution))
+	{
+		return;
+	}
+	// figure out dimension of the 3d grid and the current ID to be filled
+	uint3 VoxelId = 0, VoxelRes = 1;
+	switch (DecalGridAxis)
+	{
+	case 0: VoxelId.yz = DispatchThreadId; VoxelRes.yz = DecalGridResolution; break;
+	case 1: VoxelId.xz = DispatchThreadId; VoxelRes.xz = DecalGridResolution; break;
+	case 2: VoxelId.xy = DispatchThreadId; VoxelRes.xy = DecalGridResolution; break;
+	}
+	// get bounding box of current voxel
+	float3 Lo = lerp(SceneDecalsTranslatedBoundMin, SceneDecalsTranslatedBoundMax, float3(VoxelId + 0) / float3(VoxelRes));
+	float3 Hi = lerp(SceneDecalsTranslatedBoundMin, SceneDecalsTranslatedBoundMax, float3(VoxelId + 1) / float3(VoxelRes));
+
+	uint NumVisible = 0;
+	uint MaxVisible = min(DecalGridMaxCount, RAY_TRACING_DECAL_COUNT_MAXIMUM);
+	uint Offset = DecalGridMaxCount * (DispatchThreadId.x + DecalGridResolution * DispatchThreadId.y);
+
+	for (uint DecalIndex = 0; DecalIndex < SceneDecalCount; DecalIndex++)
+	{
+		FRayTracingDecal Decal = SceneDecals[DecalIndex];
+
+		if (any(Hi < Decal.TranslatedBoundMin) || any(Lo > Decal.TranslatedBoundMax))
+		{
+			continue;
+		}
+
+		RWDecalGridData[Offset + NumVisible] = Decal.CallableSlotIndex;
+		NumVisible++;
+		// TODO: handle overflow better?
+		if (NumVisible >= MaxVisible)
+		{
+			break;
+		}
+	}
+
+	RWDecalGrid[DispatchThreadId] = NumVisible;
+}

@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.26403.7
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "metrics_discovery_helper", "metrics_discovery_helper.vcxproj", "{7A18E62E-6200-413E-85E5-995D3B9E3A8C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		md-debug|x64 = md-debug|x64
+		md-debug|x86 = md-debug|x86
+		md-release|x64 = md-release|x64
+		md-release|x86 = md-release|x86
+		mt-debug|x64 = mt-debug|x64
+		mt-debug|x86 = mt-debug|x86
+		mt-release|x64 = mt-release|x64
+		mt-release|x86 = mt-release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-debug|x64.ActiveCfg = md-debug|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-debug|x64.Build.0 = md-debug|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-debug|x86.ActiveCfg = md-debug|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-debug|x86.Build.0 = md-debug|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-release|x64.ActiveCfg = md-release|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-release|x64.Build.0 = md-release|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-release|x86.ActiveCfg = md-release|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.md-release|x86.Build.0 = md-release|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-debug|x64.ActiveCfg = mt-debug|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-debug|x64.Build.0 = mt-debug|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-debug|x86.ActiveCfg = mt-debug|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-debug|x86.Build.0 = mt-debug|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-release|x64.ActiveCfg = mt-release|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-release|x64.Build.0 = mt-release|x64
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-release|x86.ActiveCfg = mt-release|Win32
+		{7A18E62E-6200-413E-85E5-995D3B9E3A8C}.mt-release|x86.Build.0 = mt-release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ROBOMERGE</title>
+<link rel="icon" href="/img/robo-r.png" type="image/png">
+<link rel="stylesheet" href="/css/fontawesome.5.9.0.all.min.css">
+<link rel="stylesheet" href="/css/bootstrap.min.css">
+<link rel="stylesheet" href="/css/main.css">
+<link rel="stylesheet" href="/css/table.css">
+
+	<script src="/js/jquery-3.4.1.min.js"></script>
+	<script src="/js/bootstrap.bundle.min.js"></script>
+
+<script src="/js/boilerplate.js"></script>
+<script src="/js/stomp.js"></script>
+<script language="javascript">
+
+    $(function() {
+        stompVerify()
+    });
+
+</script>
+</head>
+<body>
+
+<div style="margin-bottom: 1em;">
+    <h2 class="centered-text" style="text-align:center;  margin-bottom: .5em;"><a title="What's This?" data-toggle="collapse" href="#whatsthis" aria-expanded="false">Stomping Changes</a></h2>
+    <div id="whatsthis" class="collapse">
+        <div class="card card-single border-info centered-text" style="margin:auto">
+            <div class="card-header">What's Stomp Changes?</div>
+            <div class="card-body centered-text">
+                <p>When a conflict consists of only binary files, Robomerge will offer to 'stomp' those binary files in the target path (<strong class="targetName"></strong>) with the revisions in the source path (<strong class="sourceName"></strong>). If your conflict consists of more than just binary files, Robomerge will not be able to provide this functionality.</p>
+                <p>Once your stomp request is verified and you elect to use stomp, you should receive an email when the process is complete.</p>
+                <p>Please report any issues to <a href="https://epic.slack.com/messages/robomerge-help/"><code>#robomerge-help</code></a> on Slack.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- This div will hold everything to display to the user while the lengthy verification process starts. -->
+<div id="beforeVerification" class="text" >
+    <div id="branchPreviewBeforeVerify"></div>
+</div>
+
+<div id="loadingDiv" class="card card-single border-dark loading-box">
+    <div class="text-center card-body">
+        <h1 id="loadingText" class="align-self-center">Verifying Stomp Request...</h1>
+        <img id="loadingimg" class="mx-auto d-block" style="width:128px;" src="/img/robo-r-rotating.gif">
+    </div>
+</div>
+
+<!-- This div will hold the results of the verification process. -->
+<div class="text" id="afterVerification" style="display:none;">
+   <div id="verificationComplete">
+        <!-- This heading gets changed by the javascript. If the user sees this text without the Javascript being changed, it should warn the user. -->
+        <h2 class="centered-text" id="afterVerificationResultText" style="text-align:center; margin-bottom: .5em;">Stomp Verification May Have Encountered Issues.</h2>
+
+        <!-- Display error to user if the remaining files are not all binary, resulting in a refusal to stomp -->
+        <div id="verificationNotAllBinary" class="card card-single border-danger centered-text initiallyHidden">
+            <div class="card-header bg-danger text-white">
+                <span><i class="fas fa-exclamation-circle"></i></span>
+                <span class="sr-only">Error:</span>
+                Conflicts found in text files
+            </div>
+            <div class="card-body centered-text">
+                <p>Robomerge found conflicts in text files from changelist <strong class="changelist"></strong> integrating into <strong class="targetName"></strong>.</p>
+                <p>Since there are outstanding conflicts to text files, we cannot move forward with stomp. Here are the unresolved text files:</p>
+                <ul id="unresolvedTextFilesList"></ul>
+                <p>If you still require assistance, please <strong><a href="/contact">Contact Us</a></strong> for Robomerge help.</p>
+            </div> 
+        </div>
+
+        <!-- Display error to user if the remaining files are not all binary, resulting in a refusal to stomp -->
+        <div id="verificationBranchOrDeleteResolveRequired" class="card card-single border-danger centered-text initiallyHidden">
+            <div class="card-header bg-danger text-white">
+               <span><i class="fas fa-exclamation-circle"></i></span>
+                <span class="sr-only">Error:</span>
+                Merge requires branching or deleting binary files.
+            </div>
+            <div class="card-body centered-text">
+                <p>Robomerge found conflicts while integrating changelist <strong class="changelist"></strong> which require either branching new copies of files over previously deleted revisions and/or deleting revisions present in <strong class="targetName"></strong>:</p>
+                <ul id="branchOrDeleteResolveRequiredList"></ul>
+                <p>Robomerge does not support this operation at this time. (Sorry!) You'll need to resolve this by hand.</p> <!-- To get started, <a href="/op/createshelf?">Robomerge could create a shelf for you.</a> -->
+                <p>If you still require assistance, please <strong><a href="/contact">Contact Us</a></strong> for Robomerge help.</p>
+            </div> 
+        </div>
+
+        <!-- Display warning to user if some files had their stomped revision calculations skipped (task streams) -->
+        <div id="stompedRevisionsIssuesDiv" class="card card-single border-warning centered-text initiallyHidden">
+                <div class="card-header bg-warning text-white">
+                    <span><i class="fas fa-exclamation-circle"></i></span>
+                    <span class="sr-only">Warning:</span>
+                    Stomp Could Not Calculate Stomped Revisions For Some/All Files
+                </div>
+                <div class="card-body centered-text">
+                    <p>Robomerge could not calculate stomped revisions for some files while merging <strong class="changelist"></strong> to <strong class="targetName"></strong>:</p>
+                    <ul id="stompedRevisionsIssuesList"></ul>
+                    <p>This can happen when these files have complex integration paths where it is too hard to determine which changes will actually be stomped between two branches/streams.</p>
+                    <p>In this case, Robomerge cannot tell you what changes will be affected for the above files, nor will it be able to alert the affected authors for those changes.</p>
+                    <p>If you still wish to proceed, you will be responsible for reviewing the history of the above files in P4V and alert the authors of any changes you'll be overwriting.</p>
+                    <p>If you require assistance, please <strong><a href="/contact">Contact Us</a></strong> for Robomerge help.</p>
+                </div> 
+            </div>
+        
+        <!-- Dynamically generated div to hold visualization of stomp verification JSON -->
+        <div id="resultVisualization"></div>
+    </div>
+
+    <!-- Display warning to user if text files will be merged (already auto-resolved before stomp operation) alongside the stomp. -->
+    <div id="mixedMergeWarning" class="card card-single border-warning centered-text initiallyHidden">
+        <div class="card-header bg-warning text-white">
+           <span><i class="fas fa-exclamation-triangle"></i></span>
+            <span class="sr-only">Warning:</span>
+            Text files will be integrated alongside binary files.
+        </div>
+        <div class="card-body centered-text">
+            <p>Robomerge has detected changes to text files that were automatically resolved during the integration into <strong class="targetName"></strong>.</p>
+            <p>In the case of code or configuration files, they may have relied on the binary changes that will be stomped. Please take a moment to ensure this is a valid request by reviewing the merged files:</p>
+            <ul id="mixedMergeWarningList"></ul>
+        </div> 
+    </div>
+
+    <!-- Display warning to user if some files had their stomped revision calculations skipped (task streams) -->
+    <div id="stompedRevisionsSkippedDiv" class="card card-single border-warning centered-text centered-text initiallyHidden">
+        <div class="card-header bg-warning text-white">
+           <span><i class="fas fa-exclamation-triangle"></i></span>
+            <span class="sr-only">Warning:</span>
+            Stomp Did Not Calculate Stomped Revisions For Some/All Files
+        </div>
+        <div class="card-body centered-text">
+            <p>Robomerge skipped calculating stomped revisions for some files while merging <strong class="changelist"></strong> to <strong class="targetName"></strong>:</p>
+            <ul id="stompedRevisionsSkippedList"></ul>
+            <p>Robomerge does this for certain files where it isn't feasible to accurately determine which changes will actually be stomped (such as merge targets in tasks streams [//Tasks/]). If you are concerned with what changes are being stomped if you were to proceed, please review the history of those files in P4V.</p> 
+            <p>If you still require assistance, please <strong><a href="/contact">Contact Us</a></strong> for Robomerge help.</p>
+        </div> 
+    </div>
+
+    <div id="formButtons" style="text-align:center;"></div>
+
+    <!-- End afterVerification -->
+</div>
+
+<div class="centered-text" id="afterStomp" style="display:none;">
+    <h2 style="text-align:center; margin-bottom: .5em;">Stomp Request Processed.</h2>
+    <p>Robomerge will run the merge for the changelist again and stomp the binary file conflicts. You should receive an email when this process is complete.</p>
+    <p>If you do not receive an email, please <strong><a href="/contact">Contact Us</a></strong> for Robomerge help.</p>
+</div>
+
+<div id="singleBranchDisplay" style="display:none;"></div>
+
+<button id="returnbutton" class="centered-text initiallyHidden btn btn-lg btn-block btn-info" onclick="goHome()" style="margin-top: 2em;">Return to RoboMerge homepage</button>
+
+</body>
+</html>

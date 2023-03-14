@@ -1,0 +1,165 @@
+﻿INTSourceChangelist:3810557
+Title:C
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_C]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+级联
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Cascade]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+角色
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Character]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+电影序列
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_cinematic_sequence]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+类
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_class]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+蓝图类
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Class_Blueprint]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+碰撞
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_collision]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+组件
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_component]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+组件模式
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Components_Mode]
+
+		组件模式（Components Mode）是三种模式之一；其他两种模式为默认模式（Default Mode）和图表模式（Graph Mode）。
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+构造脚本
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Construction_Script]
+
+		构造脚本（Construction Script）在编辑器中处理对象时控制功能，而事件图表（Event Graph）则在游戏进程期间控制功能；构造脚本（Construction Script）不会在游戏进程期间执行。
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+内容浏览器
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Content_Browser]
+
+		[REGION:tip]
+		在 **内容浏览器（Content Browser）** 中，可以按类型对资源进行搜索和分类，您也可以通过在 **筛选器（Filters）** 下拉列表中选择特定类型的资源，或者在 **搜索资源（Search Assets）** 框中键入文本，以筛选资源视图。
+		[/REGION]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+控制器类
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Controller_Class]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_C]
+
+[COMMENT:none]
+[EXCERPT:Glossary_Cascade]
+ **级联（Cascade）** 是虚幻编辑器（Unreal Editor）中的粒子系统编辑器。您可以通过在 **内容浏览器（Content Browser）** 中创建或打开一个粒子系统来访问级联（Cascade）。在级联（Cascade）中，您可以添加、修改和删除粒子发射器（Particle Emitter），向粒子发射器添加模块，以及修改模块属性。
+[/EXCERPT:Glossary_Cascade]
+[EXCERPT:Glossary_Character]
+ **角色（Character）** 是Pawn Actor的子类，旨在用作玩家角色。角色子类包括碰撞设置、双足运动的输入绑定，以及由玩家控制的运动附加代码。
+[/EXCERPT:Glossary_Character]
+[EXCERPT:Glossary_cinematic_sequence]
+ **过场动画序列（cinematic sequence）**，也称过场动画，是游戏中播放的动画。一些过场动画序列会暂停游戏进程，并涉及摄像机视口中的一个或多个改变；这些叫做 **过场动画**。过场动画序列可以由Matinee创建和控制，也可以作为在外部应用程序中创建的预渲染视频导入。
+[/EXCERPT:Glossary_cinematic_sequence]
+[EXCERPT:Glossary_class]
+ **类（Class）** 用于定义在创建虚幻引擎游戏中使用的特定Actor或对象的行为和属性。类具有层级性，这意味着某个类从其父类（衍生或派生出该类的类）获得信息，然后再将信息传递给子项。类可用C++代码或蓝图创建。
+[/EXCERPT:Glossary_class]
+[EXCERPT:Glossary_Class_Blueprint]
+ **蓝图类（Blueprint Class）** 是一种资源，内容创建者可以使用它在现有的游戏进程类之上轻松添加功能。通常简称为_蓝图（Blueprint）_。蓝图在虚幻编辑器（Unreal Editor）中以可视化方式而非键入代码方式创建，并作为资源保存在内容包中。它们在本质上定义了一个新类或类型的Actor，后者随后可以作为其行为与任何其他类型Actor相似的实例放置到地图中。
+[/EXCERPT:Glossary_Class_Blueprint]
+[EXCERPT:Glossary_collision]
+ **碰撞（Collision）** 是在物理模拟过程中防止对象重叠的一种编程方法，给人一种物体坚固的错觉。也可以指碰撞网格体，它是几何体的简化版本，通常以不可见的壳体或外壳的形式存在于网格体周围。这种简化有助于提高性能，允许具有大量多边形计数的复杂对象用更简单的几何体计算它们的碰撞，这样处理起来更快。
+
+“碰撞（Collision）”也可以是非阻塞性的（重叠）。在这种情况下，碰撞可以简单地反映对象相互渗透（重叠），而不是防止对象相互渗透。
+
+[REGION:note]
+通过物理计算模拟对象需要一个碰撞面。
+[/REGION]
+[/EXCERPT:Glossary_collision]
+[EXCERPT:Glossary_component]
+ **组件（Component）** 是可添加到Actor的一项功能。组件不可独立存在，但在将其添加到Actor后，该Actor便可以访问并可以使用该组件所提供的功能。 
+
+例如，聚光灯组件（Spot Light Component）将允许您的Actor像聚光灯一样发光，旋转移动组件（Rotating Movement Component）将使您的Actor四处旋转，音频组件（Audio Component）将使您的Actor能够播放声音。 
+[/EXCERPT:Glossary_component]
+[EXCERPT:Glossary_Components_Mode]
+在 **组件模式（Components Mode）** 中，您可以将组件添加到蓝图中，管理现有组件的详细信息，并安排组件。组件模式（Components Mode）中的组件列表具有层级性。
+[/EXCERPT:Glossary_Components_Mode]
+[EXCERPT:Glossary_Construction_Script]
+创建蓝图类的实例时，**构造脚本（Construction Script）** 在组件列表 
+之后运行。它包含执行的节点图表，允许蓝图类实例执行初始化操作。 
+该脚本在功能上可能非常强大，因为诸如执行世界场景内跟踪、设置网格体和材质等操作都可用于 
+实现特定于上下文的设置。例如，光源蓝图可决定其所在地面的类型和从一组网格体中选择要使用的正确网格体， 
+或格栅蓝图可以执行各个方向延伸出去的跟踪， 
+以确定跨越这段距离需要多长的栅格。
+[/EXCERPT:Glossary_Construction_Script]
+[EXCERPT:Glossary_Content_Browser]
+ **内容浏览器（Content Browser）** 是虚幻编辑器的主要区域，用于在虚幻编辑器中创建、导入、组织、查看及修改内容资源。它还提供了管理内容文件夹和对资源执行其他有用操作（例如重命名、移动、复制和查看引用）的能力。**内容浏览器（Content Browser）** 可以搜索游戏中的所有资源并与其交互。
+[/EXCERPT:Glossary_Content_Browser]
+[EXCERPT:Glossary_Controller_Class]
+ **控制器（Controller）** 是可以拥有Pawn（或Pawn派生类，例如角色（Character））以控制其动作的非物理Actor。人类玩家使用PlayerController控制Pawn，而AIController则为他们控制的Pawn实施人工智能控制。控制器用Possess函数控制Pawn，用Unpossess函数放弃控制Pawn。
+[/EXCERPT:Glossary_Controller_Class]
+[/COMMENT]

@@ -1,0 +1,66 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+PathTracingMedium.usf: Volumetric phase function
+   To support atmosphere, we represent a blend of two components: rayleigh scattering and an HG lobe
+   In the future, we may add additional HG lobe for cases like cloud rendering
+===============================================================================================*/
+#pragma once
+
+#include "../../ParticipatingMediaCommon.ush"
+
+#define USE_UNIFORM_PHASE_FUNCTION 0
+
+FMaterialSample Medium_SampleMaterial(
+	float3 IncomingDirection,
+	FPathTracingPayload Payload,
+	float4 RandSample)
+{
+	const float3 RayleighWeight = Payload.BaseColor;
+	const float3 HGWeight = Payload.CustomData.xyz;
+	const float G = Payload.CustomData.w;
+
+#if USE_UNIFORM_PHASE_FUNCTION
+	const float4 Result = UniformSampleSphere(RandSample.xy);
+	// uniform scattering
+	return CreateMaterialSample(Result.xyz, RayleighWeight + HGWeight, Result.w, 1.0, 1.0);
+#else
+	const float LobeProb = LobeSelectionProb(RayleighWeight, HGWeight);
+
+	const float CosTheta = RandSample.x < LobeProb ?
+		RayleighPhaseInvertCdf(RandSample.x / LobeProb) :
+		HenyeyGreensteinPhaseInvertCDF((RandSample.x - LobeProb) / (1.0 - LobeProb), G);
+	const float SinTheta = sqrt(saturate(1.0 - CosTheta * CosTheta));
+	const float Phi = RandSample.y * (2.0 * PI);
+
+	FMaterialSample Result = NullMaterialSample();
+	Result.Direction = TangentToWorld(float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, CosTheta), -IncomingDirection);
+	Result.Roughness = 1.0;
+	AddLobeWithMIS(Result.Weight, Result.Pdf, RayleighWeight, RayleighPhase(CosTheta), LobeProb);
+	AddLobeWithMIS(Result.Weight, Result.Pdf, HGWeight      , HenyeyGreensteinPhase(G, CosTheta )  , 1.0 - LobeProb);
+	return Result;
+#endif
+}
+
+FMaterialEval Medium_EvalMaterial(
+	float3 IncomingDirection,
+	float3 OutgoingDirection,
+	FPathTracingPayload Payload
+)
+{
+	const float3 RayleighWeight = Payload.BaseColor;
+	const float3 HGWeight = Payload.CustomData.xyz;
+	const float G = Payload.CustomData.w;
+#if USE_UNIFORM_PHASE_FUNCTION
+	// simple omni-directional evaluation
+	return CreateMaterialEval(RayleighWeight + HGWeight, 1.0 / (4 * PI));
+#else
+	const float LobeProb = LobeSelectionProb(RayleighWeight, HGWeight);
+
+	const float CosTheta = -dot(IncomingDirection, OutgoingDirection);
+	FMaterialEval Result = NullMaterialEval();
+	AddLobeWithMIS(Result.Weight, Result.Pdf, RayleighWeight, RayleighPhase(CosTheta), LobeProb);
+	AddLobeWithMIS(Result.Weight, Result.Pdf, HGWeight      , HenyeyGreensteinPhase(G, CosTheta), 1.0 - LobeProb);
+	return Result;
+#endif
+}

@@ -1,0 +1,18 @@
+/* Bundle name */
+"CFBundleName" = "Live Link VCAM";
+
+/* Privacy - Bluetooth Always Usage Description */
+"NSBluetoothAlwaysUsageDescription" = "Tentacle Sync集成需要蓝牙。";
+
+/* Privacy - Bluetooth Peripheral Usage Description */
+"NSBluetoothPeripheralUsageDescription" = "Tentacle Sync集成需要蓝牙。";
+
+/* Privacy - Camera Usage Description */
+"NSCameraUsageDescription" = "Live Link VCAM使用摄像头进行AR追踪。";
+
+/* Copyright (human-readable) */
+"NSHumanReadableCopyright" = "© 2021 Epic Games, Inc.\n保留所有权利。";
+
+/* Privacy - Local Network Usage Description */
+"NSLocalNetworkUsageDescription" = "Live Link VCAM与虚幻引擎双向传输数据。";
+

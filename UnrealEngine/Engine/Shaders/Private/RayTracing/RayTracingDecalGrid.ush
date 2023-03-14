@@ -1,0 +1,109 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#ifndef USE_RAY_TRACING_DECAL_GRID
+#define USE_RAY_TRACING_DECAL_GRID 0
+#endif
+
+#include "../Common.ush"
+#include "../Visualization.ush"
+#include "/Engine/Shared/RayTracingDefinitions.h"
+
+struct FDecalLoopCount {
+	uint NumDecals;
+#if USE_RAY_TRACING_DECAL_GRID
+	uint DecalGridOffset;
+#endif
+};
+
+#if USE_RAY_TRACING_DECAL_GRID
+
+FDecalLoopCount DecalGridLookup(float3 TranslatedWorldPos)
+{
+	FDecalLoopCount Result;
+	Result.NumDecals = 0;
+	Result.DecalGridOffset = ~0u;
+
+	if (all(RayTracingDecals.TranslatedBoundMin <= TranslatedWorldPos) && all(TranslatedWorldPos <= RayTracingDecals.TranslatedBoundMax))
+	{
+		float3 P = TranslatedWorldPos - RayTracingDecals.TranslatedBoundMin;
+		float3 D = RayTracingDecals.TranslatedBoundMax - RayTracingDecals.TranslatedBoundMin;
+		int2 UV = 0;
+		switch (RayTracingDecals.GridAxis)
+		{
+		case 0: UV = int2(floor(RayTracingDecals.GridResolution * P.yz / D.yz)); break;
+		case 1: UV = int2(floor(RayTracingDecals.GridResolution * P.xz / D.xz)); break;
+		case 2: UV = int2(floor(RayTracingDecals.GridResolution * P.xy / D.xy)); break;
+		}
+		Result.DecalGridOffset = RayTracingDecals.GridMaxCount * (UV.x + UV.y * RayTracingDecals.GridResolution);
+		Result.NumDecals += RayTracingDecals.Grid.Load(int3(UV, 0));
+	}
+	return Result;
+}
+
+float3 DecalGridVisualize(FDecalLoopCount LoopCount, int VisualizeMode)
+{
+	const float3 OutsideColor = 0.18;
+	const float3 EmptyColor = 0.36;
+
+	if (LoopCount.DecalGridOffset != ~0u)
+	{
+		switch (VisualizeMode)
+		{
+		case 2:
+		{
+			// color by unique decal list
+			uint H = 0;
+			for (int Index = 0, Num = LoopCount.NumDecals; Index < Num; Index++)
+			{
+				H = MurmurMix(H + RayTracingDecals.GridData[LoopCount.DecalGridOffset + Index]);
+			}
+			return IntToColor(H);
+		}
+		default:
+		{
+			// default mode - color by decal count
+			uint N = LoopCount.NumDecals;
+			if (N < 1)
+			{
+				return EmptyColor;
+			}
+			float Max = RayTracingDecals.GridMaxCount;
+			float t = saturate(float(N) / Max);
+			return t * saturate(2.0 - abs(float3(4, 2, 0) - 4.0 * t));
+		}
+		}
+	}
+	// outside decal grid bounds
+	return OutsideColor;
+}
+
+uint GetDecalId(uint Index, FDecalLoopCount LoopCount)
+{
+	if (Index >= 0)
+	{
+		return RayTracingDecals.GridData[LoopCount.DecalGridOffset + Index];
+	}
+	return Index;
+}
+
+#else
+
+FDecalLoopCount DecalGridLookup(float3 TranslatedWorldPos)
+{
+	uint NumDecals = min(RayTracingDecals.Count, RAY_TRACING_DECAL_COUNT_MAXIMUM);
+	FDecalLoopCount Result;
+	Result.NumDecals = NumDecals;
+	return Result;
+}
+
+float3 DecalGridVisualize(FDecalLoopCount LoopCount, int VisualizeMode)
+{
+	return 0.5;
+}
+
+uint GetDecalId(uint Index, FDecalLoopCount LoopCount)
+{
+	return Index;
+}
+
+#endif

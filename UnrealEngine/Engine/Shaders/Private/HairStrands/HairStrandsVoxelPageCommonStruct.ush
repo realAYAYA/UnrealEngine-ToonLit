@@ -1,0 +1,20 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+struct FPackedVirtualVoxelNodeDesc  
+{
+	float3	TranslatedWorldMinAABB;
+	uint	PackedPageIndexResolution; // 8bits encoding   
+	float3	TranslatedWorldMaxAABB;
+	uint	PageIndexOffset_VoxelWorldSize;
+}; 
+
+struct FVoxelizationViewInfo
+{
+	float4x4 TranslatedWorldToClip;
+	float3   ViewForward;
+	float    Pad0;
+	uint2    RasterResolution;
+	float2   Pad1;
+};  

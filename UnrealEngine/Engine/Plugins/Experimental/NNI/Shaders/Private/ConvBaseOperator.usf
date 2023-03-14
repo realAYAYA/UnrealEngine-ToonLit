@@ -1,0 +1,233 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+
+// Input variables
+uint bIsTransposed;
+uint Group;
+uint MIntoGroup;
+uint CIntoGroup;
+uint OutputVolume;
+uint OutputBatchVolume;
+uint OutputImageArea;
+uint WBatchVolume;
+uint WImageArea;
+uint XOrXWithZerosBatchVolume;
+uint XOrXWithZerosImageArea;
+int NumberConvolutionalDimensions; // Optional - Only for nD convolution
+// Input SRV variables
+Buffer<uint> OutputSizes;
+Buffer<uint> XOrXWithZerosSizes;
+Buffer<uint> WSizes;
+Buffer<uint> Dilations;
+Buffer<uint> Strides;
+Buffer<uint> Pads;
+// SRV/UAV variables
+Buffer<float> XOrXWithZerosSRV;
+Buffer<float> WSRV;
+Buffer<float> BSRV; // Optional - Only if bias
+RWBuffer<float> OutputUAV;
+
+#define int32 int
+#define int64 int
+#define uint64 uint
+#define MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_INIT() \
+	/* Per batch N */ \
+	/*for (int64 BatchIndex = 0; BatchIndex < OutputSizes[0]; ++BatchIndex)*/ \
+	{ \
+		/* Per output channel M */ \
+		/*for (int64 OutputChannelIndex = 0; OutputChannelIndex < OutputSizes[1]; ++OutputChannelIndex)*/ \
+		{ \
+			const uint64 YPtrBatchChannelIndex = BatchIndex * OutputBatchVolume + OutputChannelIndex * OutputImageArea; \
+			/* Per input channel C */ \
+			for (uint64 InputChannelIndex = 0; InputChannelIndex < !bIsTransposed * WSizes[1] + bIsTransposed * WSizes[0] / Group; ++InputChannelIndex) /* WSizes[1] and not XOrXWithZerosSizes[1] for grouped convolution */ \
+			{ \
+				const uint64 GroupedInputChannelIndex = InputChannelIndex + bIsTransposed * (OutputChannelIndex / MIntoGroup * CIntoGroup); \
+				const uint64 WBatchChannelIndex = !bIsTransposed * (OutputChannelIndex * WBatchVolume + InputChannelIndex * WImageArea) + bIsTransposed * (InputChannelIndex * WBatchVolume + OutputChannelIndex * WImageArea); \
+				const uint64 XBatchChannelIndex = BatchIndex * XOrXWithZerosBatchVolume + GroupedInputChannelIndex * XOrXWithZerosImageArea \
+					+  /* For grouped convolution */ !bIsTransposed * (OutputChannelIndex/MIntoGroup * WSizes[1]);
+#define CPU_CONVOLUTION_FOR_LOOP_W1_INIT() \
+					/* Convolution - D1k */ \
+					for (uint64 W1Index = 0; W1Index < WSizes[2]; ++W1Index) \
+					{ \
+						const int64 X1Index = int(Dilations[0] * W1Index + OutputD1Index * Strides[0]) - int(Pads[0]); /* Pads[i] = 0 if no padding */ \
+						if (X1Index > -1 && X1Index < (int)XOrXWithZerosSizes[2]) /* Always true if no padding */ \
+						{
+#define CPU_CONVOLUTION_FOR_LOOP_W2_INIT() \
+							/* Convolution - D2k */ \
+							for (uint64 W2Index = 0; W2Index < WSizes[3]; ++W2Index) \
+							{ \
+								const int64 X2Index = int(Dilations[1] * W2Index + OutputD2Index * Strides[1]) - int(Pads[2]); /* Pads[i] = 0 if no padding */ \
+								if (X2Index > -1 && X2Index < (int)XOrXWithZerosSizes[3]) /* Always true if no padding */ \
+								{
+#define CPU_CONVOLUTION_FOR_LOOP_W3_INIT() \
+									/* Convolution - D3k */ \
+									for (uint64 W3Index = 0; W3Index < WSizes[4]; ++W3Index) \
+									{ \
+										const int64 X3Index = int(Dilations[2] * W3Index + OutputD3Index * Strides[2]) - int(Pads[4]); /* Pads[i] = 0 if no padding */ \
+										if (X3Index > -1 && X3Index < (int)XOrXWithZerosSizes[4]) /* Always true if no padding */ \
+										{
+
+#define CPU_CONVOLUTION_FOR_LOOP_W3_END() \
+										} \
+									}
+#define CPU_CONVOLUTION_FOR_LOOP_W2_END() \
+								} \
+							}
+#define CPU_CONVOLUTION_FOR_LOOP_W1_END() \
+						} \
+					}
+#define MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_END() \
+			} \
+		} \
+	}
+
+#define NDTensorIndexesPlus1(InOutImageAreaIndexes, InSizes, InNumberConvolutionalDimensions) \
+	/* Update ImageAreaIndexes */ \
+	int64 ImageAreaIndexesIndex = InNumberConvolutionalDimensions - 1; \
+	while (ImageAreaIndexesIndex > -1) \
+	{ \
+		++InOutImageAreaIndexes[ImageAreaIndexesIndex]; \
+		if (InOutImageAreaIndexes[ImageAreaIndexesIndex] == InSizes[ImageAreaIndexesIndex + 2]) \
+		{ \
+			InOutImageAreaIndexes[ImageAreaIndexesIndex] = 0; \
+			--ImageAreaIndexesIndex; \
+		} \
+		else \
+		{ \
+			break; \
+		} \
+	}
+
+[numthreads(THREADGROUP_SIZE_X, 1, 1)]
+void ConvBaseCS(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint YValueIndex = DispatchThreadID.x;
+	if (YValueIndex >= OutputVolume)
+	{
+		return;
+	}
+
+	// Set output to bias (or 0)
+	const uint64 BatchIndex = (YValueIndex / OutputBatchVolume) % OutputSizes[0];
+	const uint64 OutputChannelIndex = (YValueIndex / OutputImageArea) % OutputSizes[1];
+#if HAS_BIAS > 0
+	float YValue = BSRV[OutputChannelIndex];
+#else
+	float YValue = 0;
+#endif
+
+// 1D convolution
+#if CONV_MODE == 0
+	// Per batch N, output channel M, input channel C
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_INIT()
+		const uint64 OutputD1Index = YValueIndex % OutputSizes[2];
+		CPU_CONVOLUTION_FOR_LOOP_W1_INIT()
+			YValue += WSRV[WBatchChannelIndex + W1Index] * XOrXWithZerosSRV[XBatchChannelIndex + X1Index];
+		CPU_CONVOLUTION_FOR_LOOP_W1_END()
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_END()
+
+// 2D convolution
+#elif CONV_MODE == 1
+	// Per batch N, output channel M, input channel C
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_INIT()
+		const uint64 OutputD2Index = YValueIndex % OutputSizes[3];
+		const uint64 OutputD1Index = (YValueIndex / OutputSizes[3]) % OutputSizes[2];
+		CPU_CONVOLUTION_FOR_LOOP_W1_INIT()
+			CPU_CONVOLUTION_FOR_LOOP_W2_INIT()
+				const uint64 WIndex = W1Index * WSizes[3] + W2Index;
+				const uint64 XIndex = X1Index * XOrXWithZerosSizes[3] + X2Index;
+				YValue += WSRV[WBatchChannelIndex + WIndex] * XOrXWithZerosSRV[XBatchChannelIndex + XIndex];
+			CPU_CONVOLUTION_FOR_LOOP_W2_END()
+		CPU_CONVOLUTION_FOR_LOOP_W1_END()
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_END()
+
+// 3D convolution
+#elif CONV_MODE == 2
+	// Per batch N, output channel M, input channel C
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_INIT()
+		const uint64 OutputD3Index = YValueIndex % OutputSizes[4];
+		const uint64 OutputD2Index = (YValueIndex / OutputSizes[4]) % OutputSizes[3];
+		const uint64 OutputD1Index = (YValueIndex / (OutputSizes[3] * OutputSizes[4])) % OutputSizes[2];
+		CPU_CONVOLUTION_FOR_LOOP_W1_INIT()
+			CPU_CONVOLUTION_FOR_LOOP_W2_INIT()
+				CPU_CONVOLUTION_FOR_LOOP_W3_INIT()
+					const uint64 WIndex = (W1Index * WSizes[3] + W2Index) * WSizes[4] + W3Index;
+					const uint64 XIndex = (X1Index * XOrXWithZerosSizes[3] + X2Index) * XOrXWithZerosSizes[4] + X3Index; /* Pads[i] = 0 if no padding */
+					YValue += WSRV[WBatchChannelIndex + WIndex] * XOrXWithZerosSRV[XBatchChannelIndex + XIndex];
+				CPU_CONVOLUTION_FOR_LOOP_W3_END()
+			CPU_CONVOLUTION_FOR_LOOP_W2_END()
+		CPU_CONVOLUTION_FOR_LOOP_W1_END()
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_END()
+
+// nD convolution
+#elif CONV_MODE == 3
+	// CPU to GPU parameters
+	uint OutputImageAreaIndexes[MAX_NUMBER_DIMENSIONS]; /* Only the first NumberConvolutionalDimensions out of MAX_NUMBER_DIMENSIONS are used (initialization not required for the leftover ones) */
+	uint WImageAreaIndexes[MAX_NUMBER_DIMENSIONS]; /* Only the first NumberConvolutionalDimensions out of MAX_NUMBER_DIMENSIONS are used (initialization not required for the leftover ones) */
+	// Per batch N, output channel M, input channel C
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_INIT()
+		// nD convolution - D1, D2, ..., Dn
+		//OutputImageAreaIndexes.Init(0, NumberConvolutionalDimensions);
+		{
+			uint OutputImageAreaIndexesLeftOver = YValueIndex;
+			for (int OutputImageAreaIndexesIndex = NumberConvolutionalDimensions - 1; OutputImageAreaIndexesIndex > -1; --OutputImageAreaIndexesIndex)
+			{
+				OutputImageAreaIndexes[OutputImageAreaIndexesIndex] = OutputImageAreaIndexesLeftOver % OutputSizes[OutputImageAreaIndexesIndex+2];
+				OutputImageAreaIndexesLeftOver /= OutputSizes[OutputImageAreaIndexesIndex+2];
+			}
+		}
+		/*for (int64 OutputImageAreaIndex = 0; OutputImageAreaIndex < OutputImageArea; ++OutputImageAreaIndex)*/
+		{
+			//WImageAreaIndexes.Init(0, NumberConvolutionalDimensions);
+			for (int64 WImageAreaIndexesIndex = 0; WImageAreaIndexesIndex < NumberConvolutionalDimensions; ++WImageAreaIndexesIndex)
+			{
+				WImageAreaIndexes[WImageAreaIndexesIndex] = 0;
+			}
+			// nD convolution - D1k, D2k, ..., Dnk
+			for (uint64 WImageAreaIndex = 0; WImageAreaIndex < WImageArea; ++WImageAreaIndex)
+			{
+				// Get XIndex
+				int64 XIndex = int(Dilations[0] * WImageAreaIndexes[0] + OutputImageAreaIndexes[0] * Strides[0]) - int(Pads[0]); // Pads[i] = 0 if no padding
+				if (XIndex > -1 && XIndex < (int)XOrXWithZerosSizes[2]) // Always true if no padding
+				{
+					bool bIsPaddedRegionSoItShouldSkipPixel = false;
+					for (int64 XOrXWithZerosImageAreaIndex = 0; XOrXWithZerosImageAreaIndex < NumberConvolutionalDimensions - 1; ++XOrXWithZerosImageAreaIndex)
+					{
+						// For simplicity of the following formulas, ignoring Pads, Dilations, and Strides
+						// XOrXWithZerosImageAreaIndexes[Index] = (OutputImageAreaIndexes[Index] + Dilations[Index] * WImageAreaIndexes[Index])
+						// XIndex1D =   XOrXWithZerosImageAreaIndexes[0]
+						// XIndex2D =   XOrXWithZerosImageAreaIndexes[0] * XOrXWithZerosSizes[3] + XOrXWithZerosImageAreaIndexes[1]
+						// XIndex3D =  (XOrXWithZerosImageAreaIndexes[0] * XOrXWithZerosSizes[3] + XOrXWithZerosImageAreaIndexes[1]) * XOrXWithZerosSizes[4] + XOrXWithZerosImageAreaIndexes[2]
+						// XIndex4D = ((XOrXWithZerosImageAreaIndexes[0] * XOrXWithZerosSizes[3] + XOrXWithZerosImageAreaIndexes[1]) * XOrXWithZerosSizes[4] + XOrXWithZerosImageAreaIndexes[2]) * XOrXWithZerosSizes[5] + XOrXWithZerosImageAreaIndexes[3]
+						const int64 DimensionIndex = 1 + XOrXWithZerosImageAreaIndex;
+						const int64 DimensionValue = int(Dilations[DimensionIndex] * WImageAreaIndexes[DimensionIndex] + OutputImageAreaIndexes[DimensionIndex] * Strides[DimensionIndex])
+							- int(Pads[2 * DimensionIndex]); // Pads[i] = 0 if no padding
+						if (DimensionValue > -1 && DimensionValue < (int)XOrXWithZerosSizes[3 + XOrXWithZerosImageAreaIndex]) // Always true if no padding
+						{
+							XIndex = XIndex * (int)XOrXWithZerosSizes[3 + XOrXWithZerosImageAreaIndex] + DimensionValue;
+						}
+						else // Always false if no padding
+						{
+							bIsPaddedRegionSoItShouldSkipPixel = true;
+							break;
+						}
+					}
+					// Update output
+					if (!bIsPaddedRegionSoItShouldSkipPixel) // Always true if no padding
+					{
+						YValue += WSRV[WBatchChannelIndex + WImageAreaIndex] * XOrXWithZerosSRV[XBatchChannelIndex + XIndex];
+					}
+				}
+				// Update WeightImageAreaIndexes
+				NDTensorIndexesPlus1(WImageAreaIndexes, WSizes, NumberConvolutionalDimensions);
+			}
+		}
+	MULTICHANNEL_CPU_CONVOLUTION_FOR_LOOPS_END()
+#else
+	UNEXPECTED_CASE_FOR_CONV_MODE;
+#endif
+
+	// Update OutputUAV with final result
+	OutputUAV[YValueIndex] = YValue;
+}

@@ -1,0 +1,84 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMaps/VirtualShadowMapTransmissionCommon.ush:
+=============================================================================*/
+#pragma once
+
+#include "../Common.ush"
+#include "../SceneTexturesCommon.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../TransmissionCommon.ush"
+#include "VirtualShadowMapProjectionCommon.ush"
+
+float GetSubsurfaceOpacityFromGbuffer(uint2 PixelPos)
+{
+	float Opacity = 1.0;
+
+#if STRATA_ENABLED
+	Opacity = StrataGetOpacityFromSubSurface(StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelPos));
+#else // STRATA_ENABLED
+	FGBufferData GBufferData = GetGBufferDataUint(PixelPos);
+
+	// TODO: SUBSURFACE_PROFILE with fancy transmission
+	if (GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE ||
+		GBufferData.ShadingModelID == SHADINGMODELID_PREINTEGRATED_SKIN ||
+		GBufferData.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE)
+	{
+		// This clamp aligns with SubsurfaceDensityFromOpacity
+		// Various engine paths treat these subsurface materials differently
+		// even when they have Opacity = 1 in the material shader, so this is
+		// important to avoid things like backface transmission being shadowed by
+		// contact shadows and so on.
+		Opacity = min(GBufferData.CustomData.a, 0.99f);
+	}
+#endif // STRATA_ENABLED
+
+	return Opacity;
+}
+
+/* Compute Subsurface transmission */
+float GetShadowFactorSubsurface(float ShadowFactor, float OccluderDistance, float SubsurfaceOpacity)
+{
+	if (ShadowFactor < 1.0f)
+	{
+		float SSSTransmission = GetSubSurfaceTransmission(OccluderDistance, SubsurfaceDensityFromOpacity(SubsurfaceOpacity));
+
+		// NOTE: This 'square' is to compensate the ShadowMask encoding (i.e., sqrt) applied when compositing VSM to shadow mask. 
+		//       This allows to be consistent with the PCF path
+		return Square(lerp(SSSTransmission, 1, ShadowFactor));
+	}
+	return ShadowFactor;
+
+}
+
+/**
+* Sample VSM to determine approximate thickness and compute simple subsurface transmission matching the
+* PCF path.
+*/
+float ComputeSimpleSubsurfaceTransmissionFromVirtualShadowMap(
+	int VirtualShadowMapId, 
+	float3 TranslatedWorldPosition,
+	float SubsurfaceOpacity)
+{
+	// If the receiver is a subsurface material, we do a very simple transmission approximation
+	// This matches the logic in the PCF kernel (ShadowFilteringCommon.ush) and the contact
+	// shadows trace (DeferredLightingCommon.ush). Ideally these should all be unified in a single location.
+	// Could optimize this in the case where we are doing single-sample VSM lookup anyways, but we would need
+	// exclude contact shadows overwriting the occluder distance. Single sample direct shadows are not currently
+	// a common case.
+
+	// Do a separate unfiltered lookup to get approximate occluder distance
+	FVirtualShadowMapSampleResult SSSResult = SampleVirtualShadowMapTranslatedWorld(
+		VirtualShadowMapId,
+		TranslatedWorldPosition,
+		0.0f // RayStartDistance
+	);
+
+	if (SSSResult.bValid)
+	{
+		return GetShadowFactorSubsurface(SSSResult.ShadowFactor, SSSResult.OccluderDistance, SubsurfaceOpacity);
+	}
+
+	return 1.0f;
+}

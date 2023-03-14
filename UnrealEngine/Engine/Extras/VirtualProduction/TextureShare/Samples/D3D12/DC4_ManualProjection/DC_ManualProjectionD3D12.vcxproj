@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D12/AppCoreD3D12.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{D09A4D31-9736-4507-B408-938DDA43BC69}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>DC4_ManualProjectionD3D12</ProjectName>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,64 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenRadianceCacheTracingCommon.ush
+=============================================================================*/
+
+#define RADIANCE_CACHE_TRACE_TILE_SIZE_2D 8
+#define RADIANCE_CACHE_TRACE_TILE_SIZE_1D (RADIANCE_CACHE_TRACE_TILE_SIZE_2D * RADIANCE_CACHE_TRACE_TILE_SIZE_2D)
+
+#define TRACE_TILE_GROUP_STRIDE 128
+
+RWTexture2D<float3> RWRadianceProbeAtlasTexture;
+RWTexture2D<float> RWDepthProbeAtlasTexture;
+
+Buffer<float4> ProbeTraceData;
+Buffer<uint2> ProbeTraceTileData;
+Buffer<uint> ProbeTraceTileAllocator;
+
+float MinTraceDistance;
+float MaxTraceDistance;
+
+void GetProbeTraceDataNoOffset(uint ProbeTraceIndex, out float3 ProbeWorldCenter, out uint ClipmapIndex, out uint ProbeIndex)
+{
+	ProbeWorldCenter = ProbeTraceData[ProbeTraceIndex].xyz;
+	uint PackedW = asuint(ProbeTraceData[ProbeTraceIndex].w);
+	ClipmapIndex = PackedW >> 24;
+	ProbeIndex = PackedW & 0xFFFFFF;
+}
+
+void GetProbeTraceData(uint ProbeTraceIndex, out float3 ProbeWorldCenter, out uint ClipmapIndex, out uint ProbeIndex)
+{
+	float3 ProbeWorldCenterNoOffset;
+	GetProbeTraceDataNoOffset(ProbeTraceIndex, ProbeWorldCenterNoOffset, ClipmapIndex, ProbeIndex);
+	ProbeWorldCenter = ProbeWorldCenterNoOffset + ProbeWorldOffset[ProbeIndex].xyz;
+}
+
+uint GetProbeIndexFromProbeTraceData(uint ProbeTraceIndex)
+{
+	float3 ProbeWorldCenter;
+	uint ClipmapIndex;
+	uint ProbeIndex;
+	GetProbeTraceDataNoOffset(ProbeTraceIndex, ProbeWorldCenter, ClipmapIndex, ProbeIndex);
+	return ProbeIndex;
+}
+
+uint2 PackTraceTileInfo(uint2 TraceTileCoord, uint Level, uint ProbeTraceIndex)
+{
+	return uint2((TraceTileCoord.x & 0xFF) | ((TraceTileCoord.y & 0xFF) << 8) | ((Level & 0xFF) << 16), ProbeTraceIndex);
+}
+
+uint2 UnpackTraceTileInfo(uint2 TraceTileInfo)
+{
+	uint2 TraceTileCoord;
+	TraceTileCoord.x = TraceTileInfo.x & 0xFF;
+	TraceTileCoord.y = (TraceTileInfo.x >> 8) & 0xFF;
+	return TraceTileCoord;
+}
+
+void UnpackTraceTileInfo(uint2 TraceTileInfo, out uint2 TraceTileCoord, out uint Level, out uint ProbeTraceIndex)
+{
+	TraceTileCoord = UnpackTraceTileInfo(TraceTileInfo);
+	Level = (TraceTileInfo.x >> 16) & 0xFF;
+	ProbeTraceIndex = TraceTileInfo.y;
+}

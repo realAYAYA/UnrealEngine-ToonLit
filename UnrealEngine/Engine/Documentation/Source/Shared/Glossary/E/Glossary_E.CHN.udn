@@ -1,0 +1,52 @@
+﻿INTSourceChangelist:3810557
+Title:E
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_E]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+事件
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_event]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+事件图表
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_EventGraph]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+
+执行引脚
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_execution_pin]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_E]
+
+[COMMENT:none]
+[EXCERPT:Glossary_event]
+在蓝图中，**事件（event）** 是一个进入点，或者说是可视化脚本的第一个执行节点。该进入点通常由游戏中的事件触发。例如，玩家进入一个体积可以触发一个重叠（Overlap）事件，然后可以使用该事件来促使蓝图中发生任何功能，例如打开一扇门、点亮一盏灯等。
+[/EXCERPT:Glossary_event]
+[EXCERPT:Glossary_EventGraph]
+蓝图的 **事件图表（EventGraph）** 包含一个节点图表，该节点图表使用事件和函数调用来执行响应与蓝图关联之游戏进程事件的操作。它用于添加对蓝图的所有实例通用的功能。交互性和动态响应在这里进行设置。例如，光源蓝图可以通过关闭其`LightComponent`和更改其网格体使用的材质，来响应伤害事件。这将自动为光源蓝图的所有实例提供此行为。
+[/EXCERPT:Glossary_EventGraph]
+[EXCERPT:Glossary_execution_pin]
+![Blueprint Exec Pins](k2_pins_exec.png)
+
+ **执行引脚（Execution pins）** 用于将节点连接在一起以创建执行流程。当一个输入执行引脚被激活后，节点将被执行。一旦节点的执行完成，它将激活一个输出执行引脚来继续执行流程。执行引脚在未连接时显示为轮廓，在连接到另一个执行引脚时则显示为实心。函数调用节点始终只有一个输入执行引脚和一个输出执行引脚，因为函数只有一个进入点和一个退出点。其他类型的节点可以有多个输入执行引脚和输出执行引脚，从而允许不同的行为，具体取决于哪一个引脚被激活。
+[/EXCERPT:Glossary_execution_pin]
+[/COMMENT]

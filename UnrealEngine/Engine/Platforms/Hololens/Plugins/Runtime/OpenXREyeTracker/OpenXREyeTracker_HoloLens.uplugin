@@ -1,0 +1,16 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"SupportedTargetPlatforms": [
+		"HoloLens"
+	],
+	"Modules": [
+		{
+			"Name": "OpenXREyeTracker",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		}
+	]
+}

@@ -1,0 +1,35 @@
+{
+	"FileVersion" : 1,
+	"Version" : 1,
+	"VersionName" : "1",
+	"FriendlyName" : "MotorSimOutputMotoSynth",
+	"Description" : "A MotorSim Output component using MotoSynth.",
+	"Category" : "Audio",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"CanContainContent" : true,
+	"IsExperimentalVersion": true,
+	"Installed" : false,
+	"Modules" : 
+	[
+		{
+			"Name" : "MotorSimOutputMotoSynth",
+			"Type" : "Runtime",
+			"LoadingPhase" : "Default"
+		}
+	],
+	"Plugins" :
+		[
+			{
+				"Name" : "AudioMotorSim",
+				"Enabled": true
+			},
+			{
+				"Name" : "MotoSynth",
+				"Enabled": true
+			}
+		]
+}

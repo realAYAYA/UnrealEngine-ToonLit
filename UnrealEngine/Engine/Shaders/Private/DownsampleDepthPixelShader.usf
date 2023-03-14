@@ -1,0 +1,111 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DownSampleDepthPixelShader.usf: Downsamples scene depth by a factor of 2.
+=============================================================================*/
+
+#include "Common.ush"
+#include "DeferredShadingCommon.ush"
+#include "SceneTexturesCommon.ush"
+
+// This must match EDownsampleDepthFilter
+#define DOWNSAMPLE_DEPTH_FILTER_POINT		0
+#define DOWNSAMPLE_DEPTH_FILTER_MAX			1
+#define DOWNSAMPLE_DEPTH_FILTER_CBMINMAX	2
+
+Texture2D<float> DepthTexture;
+float2 DestinationTexelSize;
+float2 SourceMaxUV;
+float2 DestinationResolution;
+uint DownsampleDepthFilter;
+
+float GetDeviceZ(float2 UV)
+{
+	return DepthTexture.Sample(GlobalPointClampedSampler, min(UV, SourceMaxUV));
+}
+
+void Main(
+	noperspective float4 UV : TEXCOORD0,
+	out float OutDepth : SV_DEPTH,
+	out float4 OutColor : SV_Target0)
+{
+	OutColor = 0;
+	float Depth = 0;
+
+	// Lookup the four DeviceZ's of the full resolution pixels corresponding to this low resolution pixel
+	//
+	// Source texture texels:
+	//	|------||------|------(UV + DestinationTexelSize)
+	//	|      ||      |      |
+	//	|      ||      |      |
+	//	|      ||      |      |
+	//	|------||------|------|
+	//	|      ||      |      |
+	//	|  z0  ||  z2  |      |
+	//	|      ||      |      |
+	//	|------UV------|------(UV + float2(DestinationTexelSize.x, 0))
+	//	|      ||      |      |
+	//	|  z1  ||  z3  |      |
+	//	|      ||      |      |
+	//	|------||------|------|
+	// OffsetScale is 0.25 because:
+	//  - UV.xy is centered on a half resolution texel of the destination render target (in [0,1] uv space). 
+	//  - This texel includes 2x2 texels from the source texture (z0, z1, z2 and z3).
+	//  - Scaling the DestinationTexelSize by 0.5 will get us to the edge of the half resolution texel. 
+	//  - And to sample the center of each texel from the high resolution source texture we need to divide again the offset by half, leading to a final scale of 0.25.
+	const float OffsetScale = 0.25f;
+	float DeviceZ0 = GetDeviceZ(UV.xy + DestinationTexelSize * float2(-OffsetScale,-OffsetScale));
+	float DeviceZ1 = GetDeviceZ(UV.xy + DestinationTexelSize * float2(-OffsetScale, OffsetScale));
+	float DeviceZ2 = GetDeviceZ(UV.xy + DestinationTexelSize * float2( OffsetScale,-OffsetScale));
+	float DeviceZ3 = GetDeviceZ(UV.xy + DestinationTexelSize * float2( OffsetScale, OffsetScale));
+
+	if (DownsampleDepthFilter < DOWNSAMPLE_DEPTH_FILTER_CBMINMAX)
+	{
+#if HAS_INVERTED_Z_BUFFER
+		float FarDepth = min(min(DeviceZ0, DeviceZ1), min(DeviceZ2, DeviceZ3));
+#else
+		float FarDepth = max(max(DeviceZ0, DeviceZ1), max(DeviceZ2, DeviceZ3));
+#endif
+
+		// Max depth shrinks the silhouettes around foreground objects and is conservative for depth testing
+		// Sample 0 has consistent error, use whichever one is requested for this downsample
+		Depth = DownsampleDepthFilter == DOWNSAMPLE_DEPTH_FILTER_MAX ? FarDepth : DeviceZ0;
+	}
+	else // DownsampleDepthFilter == DOWNSAMPLE_DEPTH_FILTER_CBMINMAX
+	{
+		const float MaxDeviceZ = max(max(DeviceZ0, DeviceZ1), max(DeviceZ2, DeviceZ3));
+		const float MinDeviceZ = min(min(DeviceZ0, DeviceZ1), min(DeviceZ2, DeviceZ3));
+
+		const float2 Resolution = uint2(DestinationResolution * View.BufferSizeAndInvSize.xy * View.ViewSizeAndInvSize.zw); // need to clamp to respect ratios
+		const uint2 PixelPos = uint2(UV.xy * Resolution);
+
+		const uint2 PixelPosStep = (PixelPos >> 1) * 2;
+		uint CheckerBoard = (PixelPos.x - PixelPosStep.x);									// horizontal alternance of black and white
+		CheckerBoard = (PixelPos.y - PixelPosStep.y) == 0 ? CheckerBoard : 1 - CheckerBoard;// vertical toggle of horizontal checker on odd lines
+
+		Depth = CheckerBoard > 0 ? MaxDeviceZ : MinDeviceZ;
+	}
+
+	OutDepth = Depth;
+}
+
+#ifndef STENCIL_LIGHTING_CHANNELS_SHIFT 
+#define STENCIL_LIGHTING_CHANNELS_SHIFT 0
+#endif
+
+// Must match C++
+#define STENCIL_DISTANCE_FIELD_REPRESENTATION_BIT_ID 2
+
+void CopyStencilToLightingChannelsPS(  
+	noperspective float4 InUV : TEXCOORD0,
+	out uint4 OutValue : SV_Target0
+	)
+{
+	uint2 IntUV = (uint2)((float2)InUV.xy * (float2)View.BufferSizeAndInvSize.xy);
+	uint Stencil = SceneStencilTexture.Load(uint3(IntUV, 0)) STENCIL_COMPONENT_SWIZZLE;
+	uint ShiftedStencil = Stencil >> STENCIL_LIGHTING_CHANNELS_SHIFT;
+	// Flip the lowest channel bit, it was stored inverted so we can clear stencil to 0 as a default
+	uint LightingChannels = (ShiftedStencil & 0x6) | (~ShiftedStencil & 0x1);
+	uint HasDistanceFieldRepresentationMask = ((Stencil >> STENCIL_DISTANCE_FIELD_REPRESENTATION_BIT_ID) & 0x1) << LIGHTING_CHANNELS_TEXTURE_DISTANCE_FIELD_REPRESENTATION_BIT;
+	OutValue = LightingChannels | HasDistanceFieldRepresentationMask;
+}

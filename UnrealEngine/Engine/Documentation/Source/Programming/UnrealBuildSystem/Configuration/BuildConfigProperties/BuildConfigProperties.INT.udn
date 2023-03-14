@@ -1,0 +1,748 @@
+Availability: NoPublish
+Title: Build Configuration Properties Page
+Crumbs:
+Description: This is a procedurally generated markdown page.
+Version: 5.1
+
+### BuildConfiguration
+
+$ bIgnoreOutdatedImportLibraries : Whether to ignore import library files that are out of date when building targets. Set this to true to improve iteration time. By default, we do not bother re-linking targets if only a dependent .lib has changed, as chances are that the import library was not actually different unless a dependent header file of this target was also changed, in which case the target would automatically be rebuilt.
+
+$ bPrintDebugInfo : Whether debug info should be written to the console.
+
+$ bAllowHybridExecutor : Whether the hybrid executor will be used (a remote executor and local executor).
+
+$ bAllowHordeCompute : Whether Horde remote compute may be used. Highly experimental, disabled by default.
+
+$ bAllowXGE : Whether XGE may be used.
+
+$ bAllowFASTBuild : Whether FASTBuild may be used.
+
+$ bAllowSNDBS : Whether SN-DBS may be used.
+
+$ bUseUBTMakefiles : Enables support for very fast iterative builds by caching target data. Turning this on causes Unreal Build Tool to emit 'UBT Makefiles' for targets when they are built the first time. Subsequent builds will load these Makefiles and begin outdatedness checking and build invocation very quickly. The caveat is that if source files are added or removed to the project, UBT will need to gather information about those in order for your build to complete successfully. Currently, you must run the project file generator after adding/removing source files to tell UBT to re-gather this information. 
+    * Events that can invalidate the 'UBT Makefile':
+        * Adding/removing .cpp files
+        * Adding/removing .h files with UObjects
+        * Adding new UObject types to a file that did not previously have any
+        * Changing global build settings (most settings in this file qualify)
+        * Changed code that affects how Unreal Header Tool works 
+    * You can force regeneration of the 'UBT Makefile' by passing the '-gather' argument, or simply regenerating project files. 
+    * This also enables the fast include file dependency scanning and caching system that allows Unreal Build Tool to detect out of date dependencies very quickly. When enabled, a deep C++ include graph does not have to be generated, and instead, we only scan and cache indirect includes for after a dependent build product was already found to be out of date. During the next build, we will load those cached indirect includes and check for outdatedness.
+
+$ MaxParallelActions : Number of actions that can be executed in parallel. If 0 then code will pick a default based on the number of cores and memory available. Applies to the ParallelExecutor, HybridExecutor, and LocalExecutor
+
+$ bAllCores : Consider logical cores when determining how many total cpu cores are available.
+
+$ bCompactOutput : Instruct the executor to write compact output e.g. only errors, if supported by the executor. This field is used to hold the value when specified from the command line or XML
+
+$ bDebugBuildsActuallyUseDebugCRT : Enables the debug C++ runtime (CRT) for debug builds. By default we always use the release runtime, since the debug version isn't particularly useful when debugging Unreal Engine projects, and linking against the debug CRT libraries forces our third party library dependencies to also be compiled using the debug CRT (and often perform more slowly). Often it can be inconvenient to require a separate copy of the debug versions of third party static libraries simply so that you can debug your program's code.
+
+$ bLegalToDistributeBinary : Whether the output from this target can be publicly distributed, even if it has dependencies on modules that are in folders with special restrictions (eg. CarefullyRedist, NotForLicensees, NoRedist).
+
+$ bUseVerse : Whether to use the verse script interface.
+
+$ bUseInlining : Enable inlining for all modules.
+
+$ bUseDebugLiveCodingConsole : Whether to enable support for live coding
+
+$ bUseXGEController : Whether the XGE controller worker and modules should be included in the engine build. These are required for distributed shader compilation using the XGE interception interface.
+
+$ bUseUnityBuild : Whether to unify C++ code into larger files for faster compilation.
+
+$ bForceUnityBuild : Whether to force C++ source files to be combined into larger files for faster compilation.
+
+$ bMergeModuleAndGeneratedUnityFiles : Whether to merge module and generated unity files for faster compilation.
+
+$ bUseAdaptiveUnityBuild : Use a heuristic to determine which files are currently being iterated on and exclude them from unity blobs, result in faster incremental compile times. The current implementation uses the read-only flag to distinguish the working set, assuming that files will be made writable by the source control system if they are being modified. This is true for Perforce, but not for Git.
+
+$ bAdaptiveUnityDisablesOptimizations : Disable optimization for files that are in the adaptive non-unity working set.
+
+$ bAdaptiveUnityDisablesPCH : Disables force-included PCHs for files that are in the adaptive non-unity working set.
+
+$ bAdaptiveUnityDisablesProjectPCHForProjectPrivate : Backing storage for bAdaptiveUnityDisablesProjectPCH.
+
+$ bAdaptiveUnityCreatesDedicatedPCH : Creates a dedicated PCH for each source file in the working set, allowing faster iteration on cpp-only changes.
+
+$ bAdaptiveUnityEnablesEditAndContinue : Creates a dedicated PCH for each source file in the working set, allowing faster iteration on cpp-only changes.
+
+$ bAdaptiveUnityCompilesHeaderFiles : Creates a dedicated source file for each header file in the working set to detect missing includes in headers.
+
+$ MinGameModuleSourceFilesForUnityBuild : The number of source files in a game module before unity build will be activated for that module.  This allows small game modules to have faster iterative compile times for single files, at the expense of slower full rebuild times.  This setting can be overridden by the bFasterWithoutUnity option in a module's Build.cs file.
+
+$ DefaultWarningLevel : Default treatment of uncategorized warnings
+
+$ DeprecationWarningLevel : Level to report deprecation warnings as errors
+
+$ bWarningsAsErrors : Whether to enable all warnings as errors. UE enables most warnings as errors already, but disables a few (such as deprecation warnings).
+
+$ UnsafeTypeCastWarningLevel : Indicates what warning/error level to treat unsafe type casts as on platforms that support it (e.g., double->float or int64->int32)
+
+$ bUndefinedIdentifierErrors : Forces the use of undefined identifiers in conditional expressions to be treated as errors.
+
+$ bRetainFramePointers : Forces frame pointers to be retained this is usually required when you want reliable callstacks e.g. mallocframeprofiler
+
+$ bUseFastMonoCalls : New Monolithic Graphics drivers have optional "fast calls" replacing various D3d functions
+
+$ NumIncludedBytesPerUnityCPP : An approximate number of bytes of C++ code to target for inclusion in a single unified C++ file.
+
+$ bStressTestUnity : Whether to stress test the C++ unity build robustness by including all C++ files files in a project from a single unified file.
+
+$ bDetailedUnityFiles : Whether to add additional information to the unity files, such as '_of_X' in the file name.
+
+$ bDisableDebugInfo : Whether to globally disable debug info generation; see DebugInfoHeuristics.cs for per-config and per-platform options.
+
+$ bDisableDebugInfoForGeneratedCode : Whether to disable debug info generation for generated files. This improves link times for modules that have a lot of generated glue code.
+
+$ bOmitPCDebugInfoInDevelopment : Whether to disable debug info on PC/Mac in development builds (for faster developer iteration, as link times are extremely fast with debug info disabled).
+
+$ bUsePDBFiles : Whether PDB files should be used for Visual C++ builds.
+
+$ bUsePCHFiles : Whether PCH files should be used.
+
+$ bDeterministic : Set flags require for determinstic linking (experimental, may not be fully supported). Deterministic compiling is controlled via ModuleRules.
+
+$ bForceDeterministic : Force set flags require for determinstic compiling and linking (experimental, may not be fully supported). This setting is only recommended for testing, instead:
+        * Set bDeterministic on a per module basis in ModuleRules to control deterministic compiling.
+        * Set bDeterministic on a per target basis in TargetRules to control deterministic linking.
+
+$ bForceIncludePCHHeadersForGenCppFilesWhenPCHIsDisabled : Whether PCH headers should be force included for gen.cpp files when PCH is disabled.
+
+$ bPreprocessDepends : Generate dependency files by preprocessing. This is only recommended when distributing builds as it adds additional overhead.
+
+$ StaticAnalyzer : Whether static code analysis should be enabled.
+
+$ StaticAnalyzerOutputType : The output type to use for the static analyzer. This is only supported for Clang.
+
+$ StaticAnalyzerMode : The mode to use for the static analyzer. This is only supported for Clang. Shallow mode completes quicker but is generally not recommended.
+
+$ MinFilesUsingPrecompiledHeader : The minimum number of files that must use a pre-compiled header before it will be created and used.
+
+$ bForcePrecompiledHeaderForGameModules : When enabled, a precompiled header is always generated for game modules, even if there are only a few source files in the module.  This greatly improves compile times for iterative changes on a few files in the project, at the expense of slower full rebuild times for small game projects.  This can be overridden by setting MinFilesUsingPrecompiledHeaderOverride in a module's Build.cs file.
+
+$ bUseIncrementalLinking : Whether to use incremental linking or not. Incremental linking can yield faster iteration times when making small changes. Currently disabled by default because it tends to behave a bit buggy on some computers (PDB-related compile errors).
+
+$ bAllowLTCG : Whether to allow the use of link time code generation (LTCG).
+
+$ bPreferThinLTO : When Link Time Code Generation (LTCG) is enabled, whether to prefer using the lighter weight version on supported platforms.
+
+$ bPGOProfile : Whether to enable Profile Guided Optimization (PGO) instrumentation in this build.
+
+$ bPGOOptimize : Whether to optimize this build with Profile Guided Optimization (PGO).
+
+$ bSupportEditAndContinue : Whether to support edit and continue.  Only works on Microsoft compilers.
+
+$ bOmitFramePointers : Whether to omit frame pointers or not. Disabling is useful for e.g. memory profiling on the PC.
+
+$ bUseMallocProfiler : If true, then enable memory profiling in the build (defines USE_MALLOC_PROFILER=1 and forces bOmitFramePointers=false).
+
+$ bUseSharedPCHs : Enables "Shared PCHs", a feature which significantly speeds up compile times by attempting to share certain PCH files between modules that UBT detects is including those PCH's header files.
+
+$ bUseShippingPhysXLibraries : True if Development and Release builds should use the release configuration of PhysX/APEX.
+
+$ bUseCheckedPhysXLibraries : True if Development and Release builds should use the checked configuration of PhysX/APEX. if bUseShippingPhysXLibraries is true this is ignored.
+
+$ bCheckLicenseViolations : Tells the UBT to check if module currently being built is violating EULA.
+
+$ bBreakBuildOnLicenseViolation : Tells the UBT to break build if module currently being built is violating EULA.
+
+$ bUseFastPDBLinking : Whether to use the :FASTLINK option when building with /DEBUG to create local PDBs on Windows. Fast, but currently seems to have problems finding symbols in the debugger.
+
+$ bCreateMapFile : Outputs a map file as part of the build.
+
+$ bAllowRuntimeSymbolFiles : True if runtime symbols files should be generated as a post build step for some platforms. These files are used by the engine to resolve symbol names of callstack backtraces in logs.
+
+$ PackagePath : Package full path (directory + filename) where to store input files used at link time Normally used to debug a linker crash for platforms that support it
+
+$ CrashDiagnosticDirectory : Directory where to put crash report files for platforms that support it
+
+$ bCheckSystemHeadersForModification : Whether headers in system paths should be checked for modification when determining outdated actions.
+
+$ bFlushBuildDirOnRemoteMac : Whether to clean Builds directory on a remote Mac before building.
+
+$ bPrintToolChainTimingInfo : Whether to write detailed timing info from the compiler and linker.
+
+$ bParseTimingInfoForTracing : Whether to parse timing data into a tracing file compatible with chrome://tracing.
+
+$ bPublicSymbolsByDefault : Whether to expose all symbols as public by default on POSIX platforms
+
+$ CppStandard : Which C++ stanard to use for compiling this target
+
+$ CStandard : Which C standard to use for compiling this target
+
+$ bStopSNDBSCompilationAfterErrors : When enabled, SN-DBS will stop compiling targets after a compile error occurs.  Recommended, as it saves computing resources for others.
+
+$ bXGENoWatchdogThread : Whether to use the no_watchdog_thread option to prevent VS2015 toolchain stalls.
+
+$ bShowXGEMonitor : Whether to display the XGE build monitor.
+
+$ bStopXGECompilationAfterErrors : When enabled, XGE will stop compiling targets after a compile error occurs.  Recommended, as it saves computing resources for others.
+
+$ BaseLogFileName : Specifies the file to use for logging.
+
+$ bStripSymbols : Whether to strip iOS symbols or not (implied by Shipping config).
+
+$ bSkipClangValidation : Disables clang build verification checks on static libraries
+
+$ bEnableAddressSanitizer : Enables address sanitizer (ASan). Only supported for Visual Studio 2019 16.7.0 and up.
+
+$ bEnableThreadSanitizer : Enables thread sanitizer (TSan).
+
+$ bEnableUndefinedBehaviorSanitizer : Enables undefined behavior sanitizer (UBSan).
+
+$ bEnableMemorySanitizer : Enables memory sanitizer (MSan)
+
+$ bTuneDebugInfoForLLDB : Turns on tuning of debug info for LLDB
+
+$ bUseDSYMFiles : Enables the generation of .dsym files. This can be disabled to enable faster iteration times during development.
+
+$ bWriteSolutionOptionFile : Whether to write a solution option (suo) file for the sln.
+
+$ bVsConfigFile : Whether to write a .vsconfig file next to the sln to suggest components to install.
+
+$ bAddFastPDBToProjects : Whether to add the -FastPDB option to build command lines by default.
+
+$ bUsePerFileIntellisense : Whether to generate per-file intellisense data.
+
+$ bEditorDependsOnShaderCompileWorker : Whether to include a dependency on ShaderCompileWorker when generating project files for the editor.
+
+### UEBuildConfiguration
+
+$ bForceHeaderGeneration : If true, force header regeneration. Intended for the build machine.
+
+$ bDoNotBuildUHT : If true, do not build UHT, assume it is already built.
+
+$ bFailIfGeneratedCodeChanges : If true, fail if any of the generated header files is out of date.
+
+$ bAllowHotReloadFromIDE : True if hot-reload from IDE is allowed.
+
+$ bForceDebugUnrealHeaderTool : If true, the Debug version of UnrealHeaderTool will be built and run instead of the Development version.
+
+$ bUseBuiltInUnrealHeaderTool : If true, use C# UHT internal to UBT
+
+$ bWarnOnCppUnrealHeaderTool : If true, generate warnings when C++ UHT is used
+
+### WindowsPlatform
+
+$ MaxRootPathLength : Maximum recommended root path length.
+
+$ MaxNestedPathLength : Maximum length of a path relative to the root directory. Used on Windows to ensure paths are portable between machines. Defaults to off.
+
+$ Compiler : Version of the compiler toolchain to use on Windows platform. A value of "default" will be changed to a specific version at UBT start up.
+
+$ CompilerVersion : The specific toolchain version to use. This may be a specific version number (for example, "14.13.26128"), the string "Latest" to select the newest available version, or the string "Preview" to select the newest available preview version. By default, and if it is available, we use the toolchain version indicated by WindowsPlatform.DefaultToolChainVersion (otherwise, we use the latest version).
+
+$ WindowsSdkVersion : The specific Windows SDK version to use. This may be a specific version number (for example, "8.1", "10.0" or "10.0.10150.0"), or the string "Latest", to select the newest available version. By default, and if it is available, we use the Windows SDK version indicated by WindowsPlatform.DefaultWindowsSdkVersion (otherwise, we use the latest version).
+
+$ StaticAnalyzer : The static analyzer to use.
+
+$ StaticAnalyzerOutputType : The output type to use for the static analyzer.
+
+$ bStrictConformanceMode : Enables strict standard conformance mode (/permissive-).
+
+$ bUpdatedCPPMacro : Enables updated __cplusplus macro (/Zc:__cplusplus).
+
+$ bStrictInlineConformance : Enables inline conformance (Remove unreferenced COMDAT) (/Zc:inline).
+
+$ bStrictPreprocessorConformance : Enables new preprocessor conformance (/Zc:preprocessor).
+
+$ bStrictEnumTypesConformance : Enables enum types conformance (/Zc:enumTypes) in VS2022 17.4 Preview 4.0+.
+
+$ PCHMemoryAllocationFactor : Determines the amount of memory that the compiler allocates to construct precompiled headers (/Zm).
+
+$ AdditionalLinkerOptions : Allow the target to specify extra options for linking that aren't otherwise noted here
+
+$ bClangTimeTrace : (Experimental) Appends the -ftime-trace argument to the command line for Clang to output a JSON file containing a timeline for the compile. See http://aras-p.info/blog/2019/01/16/time-trace-timeline-flame-chart-profiler-for-Clang/ for more info.
+
+$ bCompilerTrace : Outputs compile timing information so that it can be analyzed.
+
+$ bShowIncludes : Print out files that are included by each source file
+
+### TargetRules
+
+$ bDisableInliningGenCpps : Disable supports for inlining gen.cpps
+
+### ModuleConfiguration
+
+$ DisableUnityBuild : List of modules to disable unity builds for
+
+$ EnableOptimizeCode : List of modules to enable optimizations for
+
+$ DisableOptimizeCode : List of modules to disable optimizations for
+
+### TestTargetRules
+
+$ bDisableInliningGenCpps : Disable supports for inlining gen.cpps
+
+### FASTBuild
+
+$ FBuildExecutablePath : Used to specify the location of fbuild.exe if the distributed binary isn't being used
+
+$ bEnableDistribution : Controls network build distribution
+
+$ FBuildBrokeragePath : Used to specify the location of the brokerage. If null, FASTBuild will fall back to checking FASTBUILD_BROKERAGE_PATH
+
+$ FBuildCoordinator : Used to specify the FASTBuild coordinator IP or network name. If null, FASTBuild will fall back to checking FASTBUILD_COORDINATOR
+
+$ bEnableCaching : Controls whether to use caching at all. CachePath and FASTCacheMode are only relevant if this is enabled.
+
+$ CacheMode : Cache access mode - only relevant if bEnableCaching is true;
+
+$ FBuildCachePath : Used to specify the location of the cache. If null, FASTBuild will fall back to checking FASTBUILD_CACHE_PATH
+
+$ bForceRemote : Whether to force remote
+
+$ bStopOnError : Whether to stop on error
+
+$ MsvcCRTRedistVersion : Which MSVC CRT Redist version to use
+
+### HordeExecutor
+
+$ NumRemoteParallelProcesses : How many processes that will be executed in parallel remotely
+
+$ RemoteProcessOnly : Only run work remotely, for testing
+
+$ RetryFailedRemote : Retry actions locally when failed remotely.
+
+### ParallelExecutor
+
+$ MaxProcessorCount : Maximum processor count for local execution.
+
+$ ProcessorCountMultiplier : Processor count multiplier for local execution. Can be below 1 to reserve CPU for other tasks. When using the local executor (not XGE), run a single action on each CPU core. Note that you can set this to a larger value to get slightly faster build times in many cases, but your computer's responsiveness during compiling may be much worse. This value is ignored if the CPU does not support hyper-threading.
+
+$ MemoryPerActionBytes : Free memory per action in bytes, used to limit the number of parallel actions if the machine is memory starved. Set to 0 to disable free memory checking.
+
+$ ProcessPriority : The priority to set for spawned processes. Valid Settings: Idle, BelowNormal, Normal, AboveNormal, High Default: BelowNormal
+
+$ bStopCompilationAfterErrors : When enabled, will stop compiling targets after a compile error occurs.
+
+$ bShowCompilationTimes : Whether to show compilation times along with worst offenders or not.
+
+$ bShowPerActionCompilationTimes : Whether to show compilation times for each executed action
+
+$ bLogActionCommandLines : Whether to log command lines for actions being executed
+
+$ bPrintActionTargetNames : Add target names for each action executed
+
+### SNDBS
+
+$ bAllowOverVpn : When set to false, SNDBS will not be enabled when running connected to the coordinator over VPN. Configure VPN-assigned subnets via the VpnSubnets parameter.
+
+$ VpnSubnets : List of subnets containing IP addresses assigned by VPN
+
+### XGE
+
+$ bAllowOverVpn : When set to false, XGE will not be enabled when running connected to the coordinator over VPN. Configure VPN-assigned subnets via the VpnSubnets parameter.
+
+$ VpnSubnets : List of subnets containing IP addresses assigned by VPN
+
+$ bAllowRemoteLinking : Whether to allow remote linking
+
+$ bUseVCCompilerMode : Whether to enable the VCCompiler=true setting. This requires an additional license for VC tools.
+
+$ MinActions : Minimum number of actions to use XGE execution.
+
+$ bUnavailableIfInUse : Check for a concurrent XGE build and treat the XGE executor as unavailable if it's in use. This will allow UBT to fall back to another executor such as the parallel executor.
+
+### BuildMode
+
+$ bIgnoreJunk : Whether to skip checking for files identified by the junk manifest.
+
+### ProjectFileGenerator
+
+$ DisablePlatformProjectGenerators : Disable native project file generators for platforms. Platforms with native project file generators typically require IDE extensions to be installed.
+
+$ Format : Default list of project file formats to generate.
+
+$ bGenerateIntelliSenseData : True if intellisense data should be generated (takes a while longer).
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bAllDocumentationLanguages : True if all documentation languages should be included in generated projects, otherwise only INT files will be included.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeBuildSystemFiles : True if build system files should be included.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeLocalizationFiles : True if we should include localization files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ bIncludeTempTargets : Whether to include temporary targets generated by UAT to support content only projects with non-default settings.
+
+$ bKeepSourceSubDirectories : True if we should reflect "Source" sub-directories on disk in the primary project as project directories. This (arguably) adds some visual clutter to the primary project but it is truer to the on-disk file organization.
+
+$ Platforms : Names of platforms to include in the generated project files
+
+$ Configurations : Names of configurations to include in the generated project files. See UnrealTargetConfiguration for valid entries
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+$ bIncludeTestAndShippingConfigs : Whether we should include configurations for "Test" and "Shipping" in generated projects. Pass "-NoShippingConfigs" to disable this.
+
+$ bIncludeDebugConfigs : Whether we should include configurations for "Debug" and "DebugGame" in generated projects. Pass "-NoDebugConfigs" to disable this.
+
+$ bIncludeDevelopmentConfigs : Whether we should include configurations for "Development" in generated projects. Pass "-NoDevelopmentConfigs" to disable this.
+
+### IOSToolChain
+
+$ IOSSDKVersion : The version of the iOS SDK to target at build time.
+
+$ BuildIOSVersion : The version of the iOS to allow at build time.
+
+$ bUseDangerouslyFastMode : If this is set, then we do not do any post-compile steps -- except moving the executable into the proper spot on Mac.
+
+### WindowsTargetRules
+
+$ ObjSrcMapFile : Whether we should export a file containing .obj to source file mappings.
+
+### CLionGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### CMakefileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### CodeLiteGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### EddieProjectFileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### KDevelopGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### MakefileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### QMakefileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### RiderProjectFileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### VSCodeProjectFileGenerator
+
+$ IncludeAllFiles : Includes all files in the generated workspace.
+
+$ AddDebugAttachConfig : Whether VS Code project generation should include debug configurations to allow attaching to already running processes
+
+$ AddDebugCoreConfig : Whether VS Code project generation should include debug configurations to allow core dump debugging
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### VCMacProjectFileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### VCProjectFileGenerator
+
+$ Version : The version of Visual Studio to generate project files for.
+
+$ MaxSharedIncludePaths : Puts the most common include paths in the IncludePath property in the MSBuild project. This significantly reduces Visual Studio memory usage (measured 1.1GB -> 500mb), but seems to be causing issues with Visual Assist. Value here specifies maximum length of the include path list in KB.
+
+$ ExcludedIncludePaths : Semi-colon separated list of paths that should not be added to the projects include paths. Useful for omitting third-party headers (e.g ThirdParty/WebRTC) from intellisense suggestions and reducing memory footprints.
+
+$ ExcludedFilePaths : Semi-colon separated list of paths that should not be added to the projects. Useful for omitting third-party files (e.g ThirdParty/WebRTC) from intellisense suggestions and reducing memory footprints.
+
+$ bBuildUBTInDebug : Forces UBT to be built in debug configuration, regardless of the solution configuration
+
+$ bBuildLiveCodingConsole : Whether to include a dependency on LiveCodingConsole when building targets that support live coding.
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### XcodeProjectFileGenerator
+
+$ bIncludeDocumentation : True if we should include documentation in the generated projects.
+
+$ bUsePrecompiled : True if build targets should pass the -useprecompiled argument.
+
+$ bIncludeEngineSource : True if we should include engine source in the generated solution.
+
+$ bIncludeShaderSource : True if shader source files should be included in generated projects.
+
+$ bIncludeConfigFiles : True if we should include config (.ini) files in the generated project.
+
+$ bIncludeTemplateFiles : True if we should include template files in the generated project.
+
+$ bIncludeEnginePrograms : True if we should include program projects in the generated solution.
+
+$ IncludeCppSource : Whether to include C++ targets
+
+$ bIncludeDotNetPrograms : True if we should include csharp program projects in the generated solution. Pass "-DotNet" to enable this.
+
+$ PrimaryProjectName : Name of the primary project file -- for example, the base file name for the Visual Studio solution file, or the Xcode project file on Mac.
+
+$ bPrimaryProjectNameFromFolder : If true, sets the primary project name according to the name of the folder it is in.
+
+### SourceFileWorkingSet
+
+$ Provider : Sets the provider to use for determining the working set.
+
+$ RepositoryPath : Sets the path to use for the repository. Interpreted relative to the Unreal Engine root directory (the folder above the Engine folder) -- if relative.
+
+$ GitPath : Sets the path to use for the Git executable. Defaults to "git" (assuming it is in the PATH).
+
+### RemoteMac
+
+$ ServerName : These two variables will be loaded from the XML config file in XmlConfigLoader.Init().
+
+$ UserName : The remote username.
+
+$ SshPrivateKey : If set, instead of looking for RemoteToolChainPrivate.key in the usual places (Documents/Unreal, Engine/UnrealBuildTool/SSHKeys or Engine/Build/SSHKeys), this private key will be used.
+
+$ RsyncAuthentication : The authentication used for Rsync (for the -e rsync flag).
+
+$ SshAuthentication : The authentication used for SSH (probably similar to RsyncAuthentication).
+
+### HoloLensPlatform
+
+$ Compiler : Version of the compiler toolchain to use on HoloLens. A value of "default" will be changed to a specific version at UBT startup.
+
+### Log
+
+$ bBackupLogFiles : Whether to backup an existing log file, rather than overwriting it.
+
+$ LogFileBackupCount : The number of log file backups to preserve. Older backups will be deleted.
+

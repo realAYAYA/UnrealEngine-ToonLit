@@ -1,0 +1,79 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "HTileEncoding.ush"
+
+// TODO: This shader shouldn't know about Nanite scene vs. material depth (just the HTile bits to visualize)
+#include "./Nanite/NaniteDataDecode.ush"
+
+#if PLATFORM_SUPPORTS_HTILE_LOOKUP
+
+// TODO: Move some place common
+
+uint BitMask(uint Count)
+{
+	return (1u << Count) - 1u;
+}
+
+int ExtractSigned(uint Bits, uint Offset, uint Count)
+{
+	return (Bits >> Offset) & BitMask(Count);
+}
+
+uint ExtractUnsigned(uint Bits, uint Offset, uint Count)
+{
+	return (Bits >> Offset) & BitMask(Count);
+}
+
+float ExtractFloat(uint Bits, uint Offset, uint Count)
+{
+	return ExtractUnsigned(Bits, Offset, Count) / (float)BitMask(Count);
+}
+
+#endif // PLATFORM_SUPPORTS_HTILE_LOOKUP
+
+StructuredBuffer<uint> HTileBuffer;
+RWTexture2D<float4>	HTileDisplay;
+uint4 HTileConfig;
+
+[numthreads(8, 8, 1)]
+void VisualizeHTile(uint3 PixelPos : SV_DispatchThreadID)
+{
+#if PLATFORM_SUPPORTS_HTILE_LOOKUP
+	const uint PlatformConfig	= HTileConfig.x;
+	const uint PixelsWide		= HTileConfig.y;
+	const uint VisualizeMode	= HTileConfig.z;
+	const bool HiStencil		= IsHiStencilTileConfig(PlatformConfig);
+	const bool CompareMinZ		= true;
+
+	const uint TileIndex = ComputeTileOffset(PixelPos.xy, PixelsWide, PlatformConfig);
+
+	const uint  HTileEnc = HTileBuffer[TileIndex];
+
+	// 14bit fixed point
+	const uint2 TileMinMaxFP = DecodeTileMinMax(HTileEnc, HiStencil, CompareMinZ);
+	const float2 TileMinMax = TileMinMaxFP / (float2)((1 << 14) - 1);
+
+	float Result = 0.0f;
+	if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MIN || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MIN)
+	{
+		Result = pow(TileMinMax.x, 0.11f);
+	}
+	else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MAX || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MAX)
+	{
+		Result = pow(TileMinMax.y, 0.11f);
+	}
+	else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_DELTA || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_DELTA)
+	{
+		Result = pow(TileMinMax.y - TileMinMax.x, 0.11f);
+	}
+	/*else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MASK || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MASK)
+	{
+		Result = ExtractFloat(HTileEnc, 0, 4) / 15.0f;
+	}*/
+
+	HTileDisplay[PixelPos.xy] = float4(Result, 0, 0, 0);
+#else
+	HTileDisplay[PixelPos.xy] = float4(0, 0, 0, 0);
+#endif
+}

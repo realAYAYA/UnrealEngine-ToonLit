@@ -1,0 +1,25 @@
+﻿INTSourceChangelist:3810557
+Title:V
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_V]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+viewport
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_viewport]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_V]
+
+[COMMENT:none]
+[EXCERPT:Glossary_viewport]
+**ビューポート** は、レベルエディタのユーザーのレベルをビジュアル表現します。レベルの作業中に、3D ビューポートまたは 2D ビューポート、もしくはこれらの組み合わせを使用することができます。ビューポートには、まさに必要なデータの可視化を支援する様々なツールやビジュアライザがあります。
+[/EXCERPT:Glossary_viewport]
+[/COMMENT]

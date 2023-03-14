@@ -1,0 +1,42 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../DeferredLightingCommon.ush"
+#include "../LightGridCommon.ush"
+
+FDeferredLightData LoadLightData(uint LightType, float VolumetricScatteringIntensity)
+{
+	FDeferredLightData LightData = (FDeferredLightData)0;
+	LightData.TranslatedWorldPosition = GetDeferredLightTranslatedWorldPosition();
+	LightData.InvRadius = DeferredLightUniforms.InvRadius;
+	LightData.Color = DeferredLightUniforms.Color * VolumetricScatteringIntensity;
+	LightData.FalloffExponent = DeferredLightUniforms.FalloffExponent;
+	LightData.Direction = DeferredLightUniforms.Direction;
+	LightData.Tangent = DeferredLightUniforms.Tangent;
+	LightData.SpotAngles = DeferredLightUniforms.SpotAngles;
+	LightData.SourceRadius = DeferredLightUniforms.SourceRadius;
+	LightData.SourceLength = DeferredLightUniforms.SourceLength;
+	LightData.SoftSourceRadius = DeferredLightUniforms.SoftSourceRadius;
+	LightData.SpecularScale = DeferredLightUniforms.SpecularScale;
+	LightData.ContactShadowLength = abs(DeferredLightUniforms.ContactShadowLength);
+	LightData.ContactShadowLengthInWS = DeferredLightUniforms.ContactShadowLength < 0.0f;
+	LightData.ContactShadowNonShadowCastingIntensity = DeferredLightUniforms.ContactShadowNonShadowCastingIntensity;
+	LightData.DistanceFadeMAD = DeferredLightUniforms.DistanceFadeMAD;
+	LightData.ShadowMapChannelMask = DeferredLightUniforms.ShadowMapChannelMask;
+	LightData.ShadowedBits = DeferredLightUniforms.ShadowedBits;
+	LightData.bInverseSquared = LightType != LIGHT_TYPE_DIRECTIONAL && DeferredLightUniforms.FalloffExponent == 0; // Directional lights don't use 'inverse squared attenuation'
+
+	LightData.RectLightBarnCosAngle = DeferredLightUniforms.RectLightBarnCosAngle;
+	LightData.RectLightBarnLength = DeferredLightUniforms.RectLightBarnLength;
+	LightData.RectLightAtlasMaxLevel = DeferredLightUniforms.RectLightAtlasMaxLevel;
+	LightData.RectLightAtlasUVOffset = DeferredLightUniforms.RectLightAtlasUVOffset;
+	LightData.RectLightAtlasUVScale = DeferredLightUniforms.RectLightAtlasUVScale;
+
+	// Lumen interpretation
+	LightData.bRadialLight = LightType != LIGHT_TYPE_DIRECTIONAL;
+	LightData.bSpotLight = LightType == LIGHT_TYPE_SPOT;
+	LightData.bRectLight = LightType == LIGHT_TYPE_RECT;
+
+	LightData.HairTransmittance = InitHairTransmittanceData();
+	return LightData;
+}

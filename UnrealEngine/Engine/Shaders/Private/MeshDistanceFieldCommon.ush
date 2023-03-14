@@ -1,0 +1,35 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	MeshDistanceFieldCommon.ush
+=============================================================================*/
+
+float DistanceToNearestSurfaceForObject(FDFObjectData DFObjectData, FLWCVector3 WorldPosition, float MaxDistance)
+{
+	float3 VolumePosition = LWCMultiply(WorldPosition, DFObjectData.WorldToVolume);
+
+	float3 ClampedVolumePosition = clamp(VolumePosition, -DFObjectData.VolumePositionExtent, DFObjectData.VolumePositionExtent);
+	float DistanceToBox = length((VolumePosition - ClampedVolumePosition) * DFObjectData.VolumeToWorldScale);
+
+	float DistanceToOccluder = MaxDistance;
+
+	BRANCH
+	if (DistanceToBox < MaxDistance)
+	{
+		DistanceToOccluder = DistanceToMeshSurfaceStandalone(ClampedVolumePosition, DFObjectData) * DFObjectData.VolumeScale + DistanceToBox;
+
+		// Don't allow negative SDF distance to stick out of the bounding box
+		if (DistanceToBox > 0.0f)
+		{
+			DistanceToOccluder = max(DistanceToOccluder, DistanceToBox);
+		}
+	}
+
+	return DistanceToOccluder;
+}
+
+float DistanceToNearestSurfaceForObject(uint ObjectIndex, FLWCVector3 WorldPosition, float MaxDistance)
+{
+	FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
+	return DistanceToNearestSurfaceForObject(DFObjectData, WorldPosition, MaxDistance);
+}

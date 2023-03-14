@@ -1,0 +1,84 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+struct FSurfaceCacheDepthData
+{
+	bool bValid;
+	float Depth;
+};
+
+float EncodeSurfaceCacheDepth(float Depth, bool bValid)
+{
+	// Reserve 1.0f for invalid pixels
+	float MaxValidDepth = float(0xFFFF - 1 - 0.5f) / float(0xFFFF);
+	Depth = min(Depth, MaxValidDepth);
+	return bValid ? Depth : 1.0f;
+}
+
+bool IsSurfaceCacheDepthValid(float Depth)
+{
+	return Depth < 1.0f;
+}
+
+#ifdef LUMEN_CARD_DATA_STRIDE
+float3 DecodeSurfaceCacheNormal(FLumenCardData Card, float2 EncodedNormal)
+{
+	float3 CardSpaceNormal;
+	CardSpaceNormal.xy = EncodedNormal.xy * 2.0f - 1.0f;
+	CardSpaceNormal.z = sqrt(max(1.0f - length2(CardSpaceNormal.xy), 0.0001f));
+	return normalize(mul(Card.WorldToLocalRotation, CardSpaceNormal));
+}
+#endif
+
+float DiffuseColorBoost;
+
+float3 DecodeSurfaceCacheAlbedo(float3 EncodedAlbedo)
+{
+	float3 Albedo = EncodedAlbedo * EncodedAlbedo;
+
+	// Optionally boost albedo, but don't allow it to reach 1 as multi-bounce would explode
+	Albedo = min(saturate(pow(Albedo, DiffuseColorBoost)), 0.99f);
+
+	return Albedo;
+}
+
+struct FLumenSurfaceCacheData
+{
+	bool bValid;
+
+	float Depth;
+	float3 Albedo;
+	float3 Emissive;
+
+	// Derived
+	float3 WorldPosition;
+	float3 WorldNormal;
+};
+
+#ifdef LUMEN_CARD_DATA_STRIDE
+FLumenSurfaceCacheData GetSurfaceCacheData(FLumenCardData Card, float2 CardUV, float2 AtlasUV)
+{
+	float Depth = Texture2DSampleLevel(LumenCardScene.DepthAtlas, GlobalPointClampedSampler, AtlasUV, 0).x;
+
+	FLumenSurfaceCacheData SurfaceCacheData;
+	SurfaceCacheData.Depth = Depth;
+	SurfaceCacheData.bValid = IsSurfaceCacheDepthValid(Depth);
+	SurfaceCacheData.Albedo = float3(0.0f, 0.0f, 0.0f);
+	SurfaceCacheData.Emissive = float3(0.0f, 0.0f, 0.0f);
+
+	float2 NormalXY = float2(0.5f, 0.5f);
+
+	if (SurfaceCacheData.bValid)
+	{
+		SurfaceCacheData.Albedo = DecodeSurfaceCacheAlbedo(Texture2DSampleLevel(LumenCardScene.AlbedoAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz);
+		SurfaceCacheData.Emissive = Texture2DSampleLevel(LumenCardScene.EmissiveAtlas, GlobalPointClampedSampler, AtlasUV, 0).x;
+		NormalXY = Texture2DSampleLevel(LumenCardScene.NormalAtlas, GlobalPointClampedSampler, AtlasUV, 0).xy;
+	}
+
+	SurfaceCacheData.WorldNormal = DecodeSurfaceCacheNormal(Card, NormalXY);
+	SurfaceCacheData.WorldPosition = GetCardWorldPosition(Card, CardUV, SurfaceCacheData.Depth);
+
+	return SurfaceCacheData;
+}
+#endif

@@ -1,0 +1,20 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+float {DataInterfaceName}_GameTime;
+float {DataInterfaceName}_GameTimeDelta;
+uint {DataInterfaceName}_FrameNumber;
+
+float ReadGameTime_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_GameTime;
+}
+
+float ReadGameTimeDelta_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_GameTimeDelta;
+}
+
+float ReadFrameNumber_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_FrameNumber;
+}

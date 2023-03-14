@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--LibOVRPlatform plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- init section is always evaluated once per architecture -->
+	<init>
+		<log text="OculusOpenXRLoader"/>
+		<setBool result="bCpuArchSupported" value="false"/>
+		<isArch arch="arm64-v8a">
+			<setBool result="bCpuArchSupported" value="true"/>
+		</isArch>
+		<setBoolFromPropertyContains result="bPackageForOculusQuest" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="PackageForOculusMobile" contains="Quest"/>
+		<setBoolFromPropertyContains result="bPackageForOculusQuest2" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="PackageForOculusMobile" contains="Quest2"/>
+		<setBoolOr result="bPackageForOculusMobile" arg1="$B(bPackageForOculusQuest)" arg2="$B(bPackageForOculusQuest2)"/>
+
+		<if condition="bCpuArchSupported">
+			<false>
+				<setBool result="bPackageForOculusMobile" value="false"/>
+			</false>
+		</if>
+	</init>
+
+	<!-- optional updates applied to AndroidManifest.xml -->
+	<androidManifestUpdates>
+		<if condition="bPackageForOculusMobile">
+			<true>
+				<addFeature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
+
+				<!-- Detect existence of intent-filter in either GameActivity or SplashActivity, game by default -->
+				<setString result="targetActivityName" value="com.epicgames.unreal.GameActivity"/>
+				<loopElements tag="activity">
+					<setStringFromAttribute result="scanActivityName" tag="$" name="android:name"/>
+					<setBoolIsEqual result="bSplashActivityExists" arg1="$S(scanActivityName)" arg2="com.epicgames.unreal.SplashActivity"/>
+
+					<if condition="bSplashActivityExists">
+						<true>
+							<log text="OculusOpenXR: SplashActivity detected!"/>
+							<setString result="targetActivityName" value="com.epicgames.unreal.SplashActivity"/>
+						</true>
+					</if>
+				</loopElements>
+				
+				<!-- Add Activity Specific Flags -->
+				<loopElements tag="activity">
+					<setStringFromAttribute result="activityName" tag="$" name="android:name"/>
+
+					<setBoolIsEqual result="bMatchTargetActivity" arg1="$S(activityName)" arg2="$S(targetActivityName)"/>
+
+					<if condition="bMatchTargetActivity">
+						<true>
+							<log text="OculusOpenXR: manifest updates for $S(targetActivityName)"/>
+
+							<!-- Add VR Intent Filter, Permissions, and Features -->
+							<setElement result="vrIntent" value="category"/>
+							<addAttribute tag="$vrIntent" name="android:name" value="com.oculus.intent.category.VR"/>
+							<addElement tag="intent-filter" name="vrIntent"/>
+
+							<addFeature android:name="android.hardware.usb.host"/>
+									
+							<setElement result="focusAware" value="meta-data" />
+							<addAttribute tag="$focusAware" name="android:name" value="com.oculus.vr.focusaware" />
+							<addAttribute tag="$focusAware" name="android:value" value="true" />
+							<addElement tag="activity" name="focusAware"/>
+						</true>
+					</if>
+				</loopElements>
+
+				<!-- Add Application Specific Flags -->
+				<loopElements tag="application">
+					<!-- Add SupportedDevices Tag -->
+					<setString result="devicesString" value="" />
+					<if condition="bPackageForOculusQuest">
+						<true>
+							<setStringAdd result="devicesString" arg1="$S(devicesString)" arg2="quest|" />
+						</true>
+					</if>
+					<if condition="bPackageForOculusQuest2">
+						<true>
+							<setStringAdd result="devicesString" arg1="$S(devicesString)" arg2="quest2|" />
+						</true>
+					</if>
+					<setIntLength result="devicesStringLength" source="$S(devicesString)"/>
+					<setBoolIsGreater result="bDevicesSupported" arg1="$I(devicesStringLength)" arg2="0"/>
+					<if condition="bDevicesSupported">
+						<true>
+							<!-- Check for an existing supported devices tag in manifest and append to that (duplicate devices are fine) -->
+							<loopElements tag="meta-data">
+								<setStringFromAttribute result="nameString" tag="meta-data" name="android:name"/>
+								<setBoolIsEqual result="bIsSupportedDevices" arg1="$S(nameString)" arg2="com.oculus.supportedDevices"/>
+								<if condition="bIsSupportedDevices">
+									<true>
+										<setStringFromAttribute result="existingDevicesString" tag="meta-data" name="android:value"/>
+										<log text="OculusOpenXRLoader: Found existing Meta Quest supported devices tag: $S(existingDevicesString)" />
+										<setStringAdd result="devicesString" arg1="$S(existingDevicesString)" arg2="|$S(devicesString)" />
+										<setIntLength result="devicesStringLength" source="$S(devicesString)"/>
+										<removeElement tag="$" />
+									</true>
+								</if>
+							</loopElements>
+							<setElement result="supportedDevices" value="meta-data" />
+							<addAttribute tag="$supportedDevices" name="android:name" value="com.oculus.supportedDevices" />
+							<setIntSubtract result="devicesStringLength" arg1="$I(devicesStringLength)" arg2="1"/>
+							<setStringSubstring result="devicesString" source="$S(devicesString)" start="0" length="$I(devicesStringLength)" />
+							<log text="OculusOpenXRLoader: Adding Meta Quest supported devices tag: $S(devicesString)" />
+							<addAttribute tag="$supportedDevices" name="android:value" value="$S(devicesString)" />
+							<addElement tag="application" name="supportedDevices"/>
+						</true>
+					</if>
+
+				</loopElements>
+			</true>
+		</if>
+	</androidManifestUpdates>
+
+	<!-- optional additions to the GameActivity class in GameActivity.java -->
+	<gameActivityClassAdditions>
+		<insert>
+			/** Whether this application was packaged for Oculus Mobile or not */
+			public boolean PackagedForOculusMobile = false;
+
+			// check the manifest to determine if we are a Oculus Mobile application
+			public boolean AndroidThunkJava_IsOculusMobileApplication()
+			{
+				return PackagedForOculusMobile;
+			}
+		</insert>
+	</gameActivityClassAdditions>
+
+	<!-- optional additions to GameActivity onCreate metadata reading in GameActivity.java -->
+	<gameActivityReadMetadataAdditions>
+		<if condition="bPackageForOculusMobile">
+			<true>
+				<insert>
+					boolean hasVR = false;
+
+					Intent vrIntent = new Intent(Intent.ACTION_MAIN, null);
+					vrIntent.addCategory("com.oculus.intent.category.VR");
+					vrIntent.addFlags(PackageManager.GET_INTENT_FILTERS);
+					vrIntent.setPackage(getApplicationContext().getPackageName());
+
+					PackageManager pkgManager = getApplicationContext().getPackageManager();
+					if (pkgManager != null)
+					{
+						if(!pkgManager.queryIntentActivities(vrIntent, PackageManager.GET_INTENT_FILTERS).isEmpty())
+						{
+							hasVR = true;
+						}
+					}
+
+					if (hasVR)
+					{
+						PackagedForOculusMobile = true;
+						Log.debug("Found OpenXR Oculus Mobile mode.");
+					}
+					else
+					{
+						PackagedForOculusMobile = false;
+						Log.debug("No OpenXR Oculus Mobile mode detected.");
+					}
+				</insert>
+			</true>
+		</if>
+	</gameActivityReadMetadataAdditions>
+	
+
+	<!-- optional files or directories to copy to Intermediate/Android/APK -->
+	<resourceCopies>
+		<if condition="bCpuArchSupported">
+			<true>
+				<log text="Copying libopenxr_loader.so"/>
+				<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/OculusOpenXRLoader/OculusOpenXRLoader/Lib/arm64-v8a/libopenxr_loader.so"
+							dst="$S(BuildDir)/libs/arm64-v8a/libopenxr_loader.so" />
+			</true>
+		</if>
+	</resourceCopies>
+
+
+	<!-- optional libraries to load in GameActivity.java before libUnreal.so -->
+	<soLoadLibrary>
+		<!-- need this if plugin enabled and supported architecture, even if not packaged for LibOVRPlatform -->
+		<if condition="bCpuArchSupported">
+			<true>
+				<loadLibrary name="openxr_loader" failmsg="openxr_loader library not loaded and may be required for Oculus VR." />
+			</true>
+		</if>
+	</soLoadLibrary>
+</root>

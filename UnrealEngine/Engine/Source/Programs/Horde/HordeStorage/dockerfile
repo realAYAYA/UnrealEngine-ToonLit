@@ -1,0 +1,62 @@
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
+
+WORKDIR /app
+
+ARG Project
+ARG UE_P4_CHANGELIST=0
+
+# Copy csprojs for nuget restore
+COPY Programs/Shared/EpicGames.Core/*.csproj ./Programs/Shared/EpicGames.Core/
+COPY Programs/Shared/EpicGames.Horde/*.csproj ./Programs/Shared/EpicGames.Horde/
+COPY Programs/Shared/EpicGames.IoHash/*.csproj ./Programs/Shared/EpicGames.IoHash/
+COPY Programs/Shared/EpicGames.Serialization/*.csproj ./Programs/Shared/EpicGames.Serialization/
+COPY Programs/Horde/HordeStorage/Jupiter.Common/*.csproj ./Programs/Horde/HordeStorage/Jupiter.Common/
+COPY Programs/Horde/HordeStorage/${Project}/*.csproj ./Programs/Horde/HordeStorage/${Project}/
+RUN dotnet restore Programs/Horde/HordeStorage/${Project}/${Project}.csproj
+# all nuget prereqs are now done
+
+# copy the source we need
+COPY Programs/Shared/ Programs/Shared/
+COPY Programs/Horde/HordeStorage/ Programs/Horde/HordeStorage/
+
+# build and create the dll
+RUN dotnet publish -c Release -o out Programs/Horde/HordeStorage/${Project}/${Project}.csproj
+
+# create the actual deployable image
+FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS runtime
+# add curl for the other commands below, plus it is useful to have
+RUN apt-get update && apt-get install curl -y
+
+# Add the datadog tracer
+RUN curl -LO https://github.com/DataDog/dd-trace-dotnet/releases/download/v2.11.0/datadog-dotnet-apm_2.11.0_amd64.deb
+RUN dpkg -i ./datadog-dotnet-apm_2.11.0_amd64.deb
+RUN /opt/datadog/createLogPath.sh
+
+# install remote debugger
+RUN apt-get install unzip && \
+    curl -sSL https://aka.ms/getvsdbgsh | /bin/sh /dev/stdin -v latest -l /vsdbg
+# install ps for remote debugging with vscode
+RUN apt-get -y install procps
+
+WORKDIR /app
+
+COPY --from=build /app/out ./
+ARG Project
+ENV ASSEMBLY_PROJECT_NAME ${Project}
+
+# datadog APM requirments
+ENV CORECLR_ENABLE_PROFILING=1
+ENV CORECLR_PROFILER={846F5F1C-F9AE-4B07-969E-05C26BC060D8}
+ENV CORECLR_PROFILER_PATH=/opt/datadog/Datadog.Trace.ClrProfiler.Native.so
+ENV DD_INTEGRATIONS=/opt/datadog/integrations.json
+ENV DD_DOTNET_TRACER_HOME=/opt/datadog
+# enable datadog continus profiler
+ENV LD_PRELOAD=/opt/datadog/continuousprofiler/Datadog.Linux.ApiWrapper.x64.so
+
+ENV DD_LOGS_INJECTION=true
+ENV DD_RUNTIME_METRICS_ENABLED=true
+# do not consider http 400-499 statuses errors
+ENV DD_HTTP_CLIENT_ERROR_STATUSES=500-599
+
+
+ENTRYPOINT dotnet $ASSEMBLY_PROJECT_NAME.dll

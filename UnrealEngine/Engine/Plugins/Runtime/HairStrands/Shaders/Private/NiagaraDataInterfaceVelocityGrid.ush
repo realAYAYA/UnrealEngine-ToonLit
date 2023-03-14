@@ -1,0 +1,14 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+NiagaraDataInterfaceVelocityGrid.ush 
+=============================================================================*/
+
+#pragma once
+
+#define FAST_MODE 1
+
+static const float FLOAT_PRECISION = 1e+4;
+
+static const int FLUID_MASS_OFFSET = 0;
+static const int FLUID_VELOCITY_OFFSET = 3;

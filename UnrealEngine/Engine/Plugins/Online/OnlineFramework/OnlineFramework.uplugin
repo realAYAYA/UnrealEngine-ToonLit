@@ -1,0 +1,68 @@
+{
+	"FileVersion" : 3,
+	
+	"FriendlyName" : "Online Framework Plugin",
+	"Version" : 2,
+	"VersionName" : "1.0",
+	"Description" : "Shared code for interacting with online gameplay services.",
+	"Category" : "Online Platform",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : false,
+
+	"Modules": [
+		{
+			"Name": "Qos",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "Party",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "Lobby",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "PatchCheck",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "Hotfix",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "Rejoin",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "PlayTimeLimit",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "LoginFlow",
+			"Type":  "ClientOnly"
+		}
+	],
+	"LocalizationTargets": [
+		{
+			"Name": "OnlineFramework",
+			"LoadingPolicy": "Always"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "OnlineSubsystem",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineSubsystemUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineTracing",
+			"Enabled": true,
+			"Optional": true
+		}
+	]
+}

@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "node",
+    "types": ["node"],
+    "lib": ["esnext"],
+    "target": "esnext",
+    "module": "commonjs",
+
+    "outDir": "./dist",
+    "baseUrl": "./src",
+
+    "inlineSources": true,
+    "inlineSourceMap": true,
+
+    "experimentalDecorators": true,
+    "preserveConstEnums": true,
+    "removeComments": false,
+    
+    "noImplicitAny": true,
+    "strictNullChecks": true,    
+    "alwaysStrict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "pretty": true
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

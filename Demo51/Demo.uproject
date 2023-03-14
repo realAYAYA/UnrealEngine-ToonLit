@@ -1,0 +1,26 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{31E7461A-447F-7EB0-2BE8-63859193AE36}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "Demo",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "RenderDocPlugin",
+			"Enabled": true
+		}
+	]
+}

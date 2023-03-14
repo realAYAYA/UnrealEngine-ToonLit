@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 0.2,
+	"VersionName": "0.2",
+	"FriendlyName": "HardwareEncoders",
+	"Description": "Adds support of hardware encoders to AVEncoder",
+	"Category": "Encoders",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "EncoderAMF",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		},
+		{
+			"Name": "EncoderNVENC",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Linux" ]
+		},
+	]
+}

@@ -1,0 +1,10 @@
+INTSourceChangelist:3108692
+Availability:NoPublish
+Title:ANavLinkProxy
+Crumbs:
+Description: NavLinkProxy クラスの概要
+
+[EXCERPT:ANavLinkProxy]
+
+NavLinkProxy アクタは、ポーンがジャンプまたは外壁から落ちることができる場所を指定するために使用します。これにより、アクタは一時的に NavMesh を離れてギャップを渡ることができます。
+[/EXCERPT:ANavLinkProxy]

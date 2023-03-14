@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "EOS Voice Chat",
+	"Version": 1,
+	"VersionName": "1.0",
+	"Description": "IVoiceChat integration of the EOS Voice service",
+	"Category": "Online Platform",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"EnabledByDefault": false,
+
+	"Modules": [
+		{
+			"Name": "EOSVoiceChat",
+			"Type": "ClientOnlyNoCommandlet",
+			"PlatformAllowList": [
+				"Android",
+				"Mac",
+				"Win64"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "EOSShared",
+			"Enabled": true
+		}
+	]
+}

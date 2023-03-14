@@ -1,0 +1,88 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Virtual Production Utilities",
+	"Description": "Utility classes and functions for Virtual Production",
+	"Category": "Virtual Production",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "VPUtilities",
+			"Type": "Runtime",
+			"LoadingPhase": "PostDefault"
+		},
+		{
+			"Name": "VPUtilitiesEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		},
+		{
+			"Name": "VPBookmark",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PostDefault"
+		},
+		{
+			"Name": "VPBookmarkEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault"
+		},
+		{
+			"Name": "VPMaterialsEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault"
+		},
+		{
+			"Name": "VPRoles",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "VPRolesEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "MultiUserClient",
+			"Enabled": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
+		},
+		{
+			"Name": "SequencerScripting",
+			"Enabled": true
+		},
+		{
+			"Name": "Takes",
+			"Enabled": true
+		},
+		{
+			"Name": "OSC",
+			"Enabled": true
+		},
+		{
+			"Name": "Composure",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayTagsEditor",
+			"Enabled": true
+		},
+		{
+			"Name": "ConsoleVariables",
+			"Enabled": true			
+		}
+
+	]
+}

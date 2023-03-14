@@ -1,0 +1,786 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "../ColorMap.ush"
+#include "HairStrandsAABBCommon.ush"
+#include "HairStrandsClusterCommon.ush"
+#include "HairStrandsVertexFactoryCommon.ush"
+
+#ifndef USE_HAIR_TRIANGLE_STRIP
+	#error Hair triangle geometry type needs to be defined
+#endif
+
+#define COMPACTCS_NUMTHREAD 64
+
+// According to https://docs.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-devices-downlevel-compute-shaders#thread-group-shared-memory-tgsm
+// A thread can access to 32 byte per thread when number of thread in a group is 512. This is largeley enough for this use case. 
+#define PREFIXSUM_PARALLEL  512
+#define PREFIXSUM_LASTTHREAD (PREFIXSUM_PARALLEL-1)
+
+#define D_USE_CONTINUOUSLOD  1
+#define D_LOD_DEBUG_SCALE 1000.0f
+
+// Cluster data in ClusterAABB buffers is packed as {uint3 AABBMin, uint3 AABBMax}
+
+uint ClusterCount;
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Utility functions
+
+uint DivideAndRoundUp(uint Dividend, uint Divisor)
+{
+	return (Dividend + Divisor - 1) / Divisor;
+}
+
+uint3 ComputeDispatchGroupCount2D(uint GroupCount)
+{
+	const uint DispatchCountX = int(floor(sqrt(float(GroupCount))));
+	const uint DispatchCountY = DispatchCountX + DivideAndRoundUp(GroupCount - DispatchCountX * DispatchCountX, DispatchCountX);
+
+	return uint3(DispatchCountX, DispatchCountY, 1);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Clear clusters AABB
+#ifdef SHADER_CLEARCLUSTERAABB
+
+uint bClearClusterAABBs;
+
+RWBuffer<int> OutClusterAABBBuffer; // Cluster data packed as {uint3 AABBMin, uint3 AABBMax}
+RWBuffer<int> OutGroupAABBBuffer; 	// Group data packed as {uint3 AABBMin, uint3 AABBMax}
+
+[numthreads(64, 1, 1)]
+void MainClearClusterAABBCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Clear 'clusters' AABB
+	if (bClearClusterAABBs > 0 && DispatchThreadId.x < ClusterCount*6)
+	{
+		const int ClusterId = DispatchThreadId.x / 6;
+		const bool bIsMin = (DispatchThreadId.x - ClusterId * 6) < 3 ? 1 : 0;
+		const int Value = bIsMin ? 2147483647 : -2147483648;
+		checkBufferAccessSlow(OutClusterAABBBuffer, DispatchThreadId.x);
+		OutClusterAABBBuffer[DispatchThreadId.x] = Value;
+	}
+
+	// Clear 'group' AABB
+	if (DispatchThreadId.x == 0)
+	{
+		OutGroupAABBBuffer[0] =  2147483647;
+		OutGroupAABBBuffer[1] =  2147483647;
+		OutGroupAABBBuffer[2] =  2147483647;
+		OutGroupAABBBuffer[3] = -2147483647;
+		OutGroupAABBBuffer[4] = -2147483647;
+		OutGroupAABBBuffer[5] = -2147483647;
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Debug draw clusters
+#ifdef SHADER_DRAWDEBUGAABB
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+
+#define MODE_CLUSTER	1
+#define MODE_CULLED		2
+#define MODE_LOD		3
+#define MODE_LOD_SIMPLE	4
+
+uint HairGroupId;
+uint TriangleCount;
+int ClusterDebugMode;
+
+Buffer<int> GroupAABBBuffer;
+Buffer<int> ClusterAABBBuffer;
+StructuredBuffer<FHairClusterDebugInfo> ClusterDebugInfoBuffer;
+
+Buffer<uint> CulledDrawIndirectParameters;
+Buffer<uint> CulledDispatchIndirectParametersClusterCountBuffer;
+
+[numthreads(64, 1, 1)]
+void MainDrawDebugAABBCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x == 0)
+	{
+		const bool bDrawClusterInfo = ClusterDebugMode == MODE_CLUSTER || ClusterDebugMode == MODE_CULLED || ClusterDebugMode == MODE_LOD;
+		const uint HairGroupHeight = bDrawClusterInfo ? 120u : 60u;
+
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50 + HairGroupId * HairGroupHeight));
+
+		if (bDrawClusterInfo)
+		{
+			const uint VisibleClusterCount  = CulledDispatchIndirectParametersClusterCountBuffer[0];
+			const uint VisibleTriangleCount = CulledDrawIndirectParameters[0] / 3; // CulledDrawIndirectParameters contains the total number of triangle indices (3 per triangle)
+
+			Print(Context, TEXT("HairGroup "), FontYellow);
+			Print(Context, HairGroupId);
+			Print(Context, TEXT("       Count        Percent"), FontYellow);
+			Newline(Context);
+
+			Print(Context, TEXT("Visible Clusters  "), FontYellow);
+			Print(Context, VisibleClusterCount);
+			Print(Context, TEXT(" "), FontYellow);
+			PrintSymbol(Context, _SPC_);
+			Print(Context, 100.0f * float(VisibleClusterCount) / float(ClusterCount));
+			Newline(Context);
+
+			Print(Context, TEXT("Visible Triangles "), FontYellow);
+			Print(Context, VisibleTriangleCount);
+			PrintSymbol(Context, _SPC_);
+			Print(Context, 100.0f * float(VisibleTriangleCount) / float(TriangleCount));
+			Newline(Context);
+		}
+
+		#if PERMUTATION_DEBUGAABBBUFFER
+		{
+			// Extra new line to seperate from previous block
+			Newline(Context);
+
+			Print(Context, TEXT("Screen Size       "), FontYellow);
+
+			float ScreenSize = 1;
+			{
+				const FHairAABB Bound = ReadHairAABB(0, GroupAABBBuffer);
+
+				const float3 SphereOrigin = (Bound.Min + Bound.Max) * 0.5f;
+				const float  SphereRadius = length(Bound.Max - SphereOrigin);
+				ScreenSize = ComputeBoundsScreenSize(SphereOrigin, SphereRadius, LWCHackToFloat(PrimaryView.WorldCameraOrigin), View.ViewToClip);
+			}
+			Print(Context, ScreenSize);
+			Newline(Context);
+
+			// Show actual LOD distribution for all clusters. Otherwise show the average LOD index
+			const bool bShowLODHistogram = false;
+
+			if (bShowLODHistogram)
+			{
+				Print(Context, TEXT("LOD0        LOD1        LOD2        LOD3        LOD4        LOD5        LOD6        LOD7"), FontYellow);
+				Newline(Context);
+			}
+		
+			// Aggregate all the cluster results
+			uint LODHistogram[MAX_HAIR_LOD] = { 0,0,0,0,0,0,0,0 };
+			uint TotalVertexCount = 0;
+			uint TotalVisibleCluster = 0;
+			float AvgLOD = 0;
+			for (uint ClusterIt = 0; ClusterIt < ClusterCount; ++ClusterIt)
+			{
+				const FHairClusterDebugInfo DebugInfo = ClusterDebugInfoBuffer[ClusterIt];
+				if (DebugInfo.LOD >= 0) // Not culled
+				{
+					const uint LOD = uint(DebugInfo.LOD + 0.5f);
+					LODHistogram[LOD] += 1;
+					AvgLOD += DebugInfo.LOD;
+					TotalVertexCount += DebugInfo.VertexCount;
+					TotalVisibleCluster++;
+				}
+			}		
+			AvgLOD /= max(1u, TotalVisibleCluster);
+
+			if (bShowLODHistogram)
+			{		
+				Print(Context, uint(LODHistogram[0] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[1] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[2] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[3] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[4] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[5] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[6] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Print(Context, uint(LODHistogram[7] / float(max(1u, TotalVisibleCluster)) * 100.f));
+			}
+			else
+			{
+				Print(Context, TEXT("LOD               "), FontYellow);
+
+				if (TotalVisibleCluster > 0)
+				{
+					Print(Context, AvgLOD);
+				}
+				else
+				{
+					Print(Context, TEXT("Culled"), FontYellow);
+				}
+			}
+
+			Newline(Context);
+
+			// Extra stats for validation purpose
+			// Print(Context, TotalVertexCount);
+			// Print(Context, TotalVisibleCluster);
+			// Print(Context, ScreenSize);
+		}
+		#endif
+
+	}
+
+	if (DispatchThreadId.x < ClusterCount)
+	{
+		const bool bDrawClusterAABB = ClusterDebugMode == MODE_CLUSTER || ClusterDebugMode == MODE_CULLED || ClusterDebugMode == MODE_LOD;
+		if (DispatchThreadId.x == 0 && bDrawClusterAABB)
+		{
+			const float4 GroupColor = float4(1.0f, 0.5f, 0.0f, 1.0f);
+			const FHairAABB Bound = ReadHairAABB(0, GroupAABBBuffer);
+			AddAABBTWS(Bound.Min, Bound.Max, GroupColor);
+		}
+
+		const uint ClusterId = DispatchThreadId;
+		const uint ClusterId6 = DispatchThreadId.x * 6;
+		float3 Min = float3(int3(ClusterAABBBuffer[ClusterId6    ], ClusterAABBBuffer[ClusterId6 + 1], ClusterAABBBuffer[ClusterId6 + 2]));
+		float3 Max = float3(int3(ClusterAABBBuffer[ClusterId6 + 3], ClusterAABBBuffer[ClusterId6 + 4], ClusterAABBBuffer[ClusterId6 + 5]));
+	
+		#if PERMUTATION_DEBUGAABBBUFFER
+		const FHairClusterDebugInfo DebugInfo = ClusterDebugInfoBuffer[ClusterId];
+		const bool bIsCulledState = DebugInfo.LOD < 0;
+		#endif
+
+		float4 Color = 0.0f;
+		if (ClusterDebugMode == MODE_CLUSTER)
+		{
+			Color = float4(0.5f, 1.0f, 0.0f, 0.1f);
+		}
+		#if PERMUTATION_DEBUGAABBBUFFER
+		else if (ClusterDebugMode == MODE_CULLED)
+		{
+			Color = float4(1.0f, 0.1f, 0.1f, 1.0f);
+			if (!bIsCulledState)
+			{
+				return;
+			}
+		}
+		else if (ClusterDebugMode == MODE_LOD_SIMPLE)
+		{
+			// No cluster AABB drawing
+			return;
+		}
+		else if (ClusterDebugMode == MODE_LOD)
+		{
+			if (bIsCulledState)
+			{
+				return;
+			}
+
+			float SelectedLod = float(DebugInfo.LOD) / D_LOD_DEBUG_SCALE;
+			Color = float4(GetHSVDebugColor(SelectedLod), 0.05f);
+		}
+		#endif
+
+		AddAABBTWS(Min, Max, Color);
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Reset indirect buffer args
+#ifdef SHADER_CLUSTERCULLINGINDCLEAR  
+
+RWBuffer<uint> DispatchIndirectParametersClusterCount;
+RWBuffer<uint> DrawIndirectParameters; 
+uint VertexCountPerInstance;
+
+[numthreads(1, 1, 1)]
+void MainClusterCullingIndClearCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+#if PERMUTATION_SETINDIRECTDRAW
+	DrawIndirectParameters[0] = VertexCountPerInstance;
+	DrawIndirectParameters[1] = 1;	// 1 instance
+	DrawIndirectParameters[2] = 0;
+	DrawIndirectParameters[3] = 0;
+#else
+	if (DispatchThreadId.x==0)
+	{
+		DispatchIndirectParametersClusterCount[0] = 0;
+		DispatchIndirectParametersClusterCount[1] = 1;
+		DispatchIndirectParametersClusterCount[2] = 1;
+
+		DrawIndirectParameters[0] = 0;	// 0 vertex (to be accumulated)
+		DrawIndirectParameters[1] = 1;	// 1 instance
+		DrawIndirectParameters[2] = 0;
+		DrawIndirectParameters[3] = 0;
+	}
+#endif
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 0. Cluster culling  and LOD selection
+#ifdef SHADER_CLUSTERCULLING
+
+float4x4 ProjectionMatrix;
+float4x4 WorldToClipMatrix;
+float3 CameraWorldPos;
+uint NumConvexHullPlanes;
+float LODForcedIndex;
+float LODBias;
+int bIsHairGroupVisible;
+float4 ViewFrustumConvexHull[6];
+
+Buffer<int> ClusterAABBBuffer;
+StructuredBuffer<FPackedHairClusterInfo> ClusterInfoBuffer;
+StructuredBuffer<FPackedHairClusterLODInfo> ClusterLODInfoBuffer; 
+
+RWBuffer<uint> GlobalClusterIdBuffer;
+RWBuffer<uint> GlobalIndexStartBuffer;
+RWBuffer<uint> GlobalIndexCountBuffer;
+RWBuffer<float>GlobalRadiusScaleBuffer;
+RWBuffer<uint> DispatchIndirectParametersClusterCount;
+RWBuffer<uint> DispatchIndirectParametersVertexCount;
+RWBuffer<uint> DrawIndirectParameters; 
+
+#if PERMUTATION_DEBUGAABBBUFFER
+RWStructuredBuffer<FHairClusterDebugInfo> ClusterDebugInfoBuffer;
+#endif
+
+bool ViewFrustumIntersectSphere(float3 SphereOrigin, float SphereRadius)
+{
+	for (uint PlaneIndex = 0; PlaneIndex < NumConvexHullPlanes; PlaneIndex++)
+	{
+		float4 PlaneData = ViewFrustumConvexHull[PlaneIndex];
+		float PlaneDistance = dot(PlaneData.xyz, SphereOrigin) - PlaneData.w;
+
+		if (PlaneDistance > SphereRadius)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+[numthreads(64, 1, 1)]
+void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint ClusterId = DispatchThreadId.x;
+	if (ClusterId < ClusterCount)
+	{
+		// Note on the cluster culling & LOD selection
+		// Run:
+		// 1. Frustum culling
+		// 2. LOD selection
+		//
+		// When a cluster is culled:
+		// . Cluster's strands position still updated (HairInterpolation), for the lowest LOD
+		// . Cluster's AABB is still updated, to be valid next frame (HairClusterAABB), with lowest LOD position
+		// . Cluster's strands are not rendered.
+		// However only the strands position of the selected LOD are updated
+
+		const uint ClusterId  = DispatchThreadId.x;
+		const uint ClusterId6 = ClusterId * 6;
+		checkBufferAccessSlow(ClusterAABBBuffer, ClusterId6 + 5);
+		const float3 Min = float3(int3(ClusterAABBBuffer[ClusterId6 + 0], ClusterAABBBuffer[ClusterId6 + 1], ClusterAABBBuffer[ClusterId6 + 2]));
+		const float3 Max = float3(int3(ClusterAABBBuffer[ClusterId6 + 3], ClusterAABBBuffer[ClusterId6 + 4], ClusterAABBBuffer[ClusterId6 + 5]));
+
+		const float3 SphereOrigin = (Min + Max)*0.5f;
+		const float  SphereRadius = length(Max - SphereOrigin);
+		const float  ScreenSize = ComputeBoundsScreenSize(SphereOrigin, SphereRadius, CameraWorldPos, ProjectionMatrix);
+		
+		const float3 CamToSphere = SphereOrigin - CameraWorldPos.xyz;
+		const float CamToSphereDistance = length(CamToSphere);
+		bool bVisible = (bIsHairGroupVisible == 1) && ViewFrustumIntersectSphere(CamToSphere, SphereRadius);
+		FHairClusterLOD ClusterLOD = (FHairClusterLOD)0;
+
+		// Always force clusters to be flagged as (forced) visible. If a cluster is not visible, its lowest LOD will be selected. 
+		// This ensures that clusters position are updated which is used for two things:
+		// * Update the cluster AABB, which are used for voxelization allocation purpose
+		// * Update vertex positions used for voxelization 
+		bool bForceVisible = bIsHairGroupVisible == 1;
+
+		if (bVisible || bForceVisible) 
+		{
+			float4 NotClampedRect = float4(0.0f, 1.0f, 0.0f, 1.0f);
+			if (bVisible || bForceVisible)
+			{
+				const FHairClusterInfo ClusterInfo = UnpackHairClusterInfo(ClusterInfoBuffer[ClusterId]);
+
+				const float ForceLOD = LODForcedIndex >= 0 ? LODForcedIndex : (bForceVisible && !bVisible ? float(ClusterInfo.LODCount-1) : -1.f);
+				if (ForceLOD < 0)
+				{
+					ClusterLOD = GetHairClusterLOD(ClusterInfo, ClusterLODInfoBuffer, ScreenSize, LODBias);
+				}
+				else
+				{
+					ClusterLOD = GetHairClusterLOD(ClusterInfo, ClusterLODInfoBuffer, ForceLOD);
+				}
+
+				// Update visibility based on the cluster visibility flag set up by users
+				bVisible = IsLODVisible(ClusterInfo, ClusterLOD.LOD);
+
+				if ((bVisible || bForceVisible) && ClusterLOD.VertexCount > 0)
+				{
+					uint VisibleClusterId = 0;
+					InterlockedAdd(DispatchIndirectParametersClusterCount[0], 1, VisibleClusterId);
+
+					//uint PreviousVertexCount = 0;
+				#if USE_HAIR_TRIANGLE_STRIP
+					InterlockedAdd(DrawIndirectParameters[0], ClusterLOD.VertexCount * 2/*, PreviousVertexCount*/);
+				#else
+					InterlockedAdd(DrawIndirectParameters[0], ClusterLOD.VertexCount * 6/*, PreviousVertexCount*/);
+				#endif
+
+					checkBufferAccessSlow(GlobalClusterIdBuffer, VisibleClusterId);
+					GlobalClusterIdBuffer[VisibleClusterId]	  = ClusterId;
+					checkBufferAccessSlow(GlobalIndexStartBuffer, VisibleClusterId);
+					GlobalIndexStartBuffer[VisibleClusterId]  = ClusterLOD.VertexOffset;
+					checkBufferAccessSlow(GlobalIndexCountBuffer, VisibleClusterId);
+					GlobalIndexCountBuffer[VisibleClusterId]  = ClusterLOD.VertexCount;
+					checkBufferAccessSlow(GlobalRadiusScaleBuffer, VisibleClusterId);
+					GlobalRadiusScaleBuffer[VisibleClusterId] = ClusterLOD.RadiusScale;
+				}
+			}
+		}
+
+		#if PERMUTATION_DEBUGAABBBUFFER
+		{
+			FHairClusterDebugInfo ClusterDebug;			
+			ClusterDebug.GroupIndex = 0;
+			ClusterDebug.LOD = bVisible ? ClusterLOD.LOD : -1;
+			ClusterDebug.VertexCount = ClusterLOD.VertexCount;
+			ClusterDebug.CurveCount=0;
+
+			ClusterDebugInfoBuffer[ClusterId] = ClusterDebug;
+		}
+		#endif
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 0. Indirect dispatch buffer preparation for compute raster visibility/voxel pass
+#ifdef SHADER_PREPAREINDIRECTDISPATCH
+
+RWBuffer<uint> DrawIndirectBuffer; 
+RWBuffer<uint> DispatchIndirectBuffer; 
+
+#if PERMUTATION_GROUP_SIZE == 64
+	#define GROUP_SIZE 64
+#elif PERMUTATION_GROUP_SIZE == 32
+	#define GROUP_SIZE 32
+#else
+	#error Unknown group size
+#endif
+
+[numthreads(1, 1, 1)]
+void MainClusterCullingPrepareIndirectDispatchCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID, 
+	uint3 GroupId : SV_GroupID, 
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if (GroupId.x == 0 && GroupThreadId.x == 0)
+	{
+		// DrawIndirectBuffer contains the total number of vertex count needed for drawing quad triangle strips, so 6 vertices per quad / control point
+		const uint VertexCount    = DrawIndirectBuffer[0];
+#if USE_HAIR_TRIANGLE_STRIP
+		const uint ControlPoint   = VertexCount / 2;
+#else
+		const uint ControlPoint	  = VertexCount / 6;
+#endif
+		const uint DispatchCount  = DivideAndRoundUp(ControlPoint, GROUP_SIZE);
+		const uint DispatchCountX = DispatchCount >= INDIRECT_GROUP_COUNT_X ? INDIRECT_GROUP_COUNT_X : (DispatchCount % INDIRECT_GROUP_COUNT_X);
+		const uint DispatchCountY = DivideAndRoundUp(DispatchCount, INDIRECT_GROUP_COUNT_X);
+
+		DispatchIndirectBuffer[0] = DispatchCountX;
+		DispatchIndirectBuffer[1] = DispatchCountY;
+		DispatchIndirectBuffer[2] = 1.0;
+		DispatchIndirectBuffer[3] = ControlPoint;
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 1. Indirect dispatch buffer preparation for rendering and prefix sums
+#ifdef SHADER_PREPAREINDIRECTDRAW
+
+uint GroupSize1D;
+Buffer<uint> DispatchIndirectParametersClusterCount;
+
+RWBuffer<uint> DispatchIndirectParametersClusterCount1D;
+RWBuffer<uint> DispatchIndirectParametersClusterCount2D;
+RWBuffer<uint> DispatchIndirectParametersClusterCountDiv512;
+RWBuffer<uint> DispatchIndirectParametersClusterCountDiv512Div512;
+
+[numthreads(1, 1, 1)]
+void MainClusterCullingPrepareIndirectDrawsCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if (GroupId.x == 0 && GroupThreadId.x == 0)
+	{
+		uint ClusterCount = DispatchIndirectParametersClusterCount[0];
+		uint ClusterCountDivUp512 = (ClusterCount + PREFIXSUM_PARALLEL - 1) / PREFIXSUM_PARALLEL;
+		uint ClusterCountDivUp512DivUp512 = (ClusterCountDivUp512 + PREFIXSUM_PARALLEL - 1) / PREFIXSUM_PARALLEL;
+
+		DispatchIndirectParametersClusterCountDiv512[0] = ClusterCountDivUp512;
+		DispatchIndirectParametersClusterCountDiv512[1] = 1;
+		DispatchIndirectParametersClusterCountDiv512[2] = 1;
+
+		DispatchIndirectParametersClusterCountDiv512Div512[0] = ClusterCountDivUp512DivUp512;
+		DispatchIndirectParametersClusterCountDiv512Div512[1] = 1;
+		DispatchIndirectParametersClusterCountDiv512Div512[2] = 1;
+
+		uint3 DispatchGroupCount2D = ComputeDispatchGroupCount2D(ClusterCount);
+		DispatchIndirectParametersClusterCount2D[0] = DispatchGroupCount2D.x;
+		DispatchIndirectParametersClusterCount2D[1] = DispatchGroupCount2D.y;
+		DispatchIndirectParametersClusterCount2D[2] = 1.0;
+
+		DispatchIndirectParametersClusterCount1D[0] = (ClusterCount + GroupSize1D - 1) / GroupSize1D;
+		DispatchIndirectParametersClusterCount1D[1] = 1;
+		DispatchIndirectParametersClusterCount1D[2] = 1;
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 2. PER BLOCK OPTIMISATION
+#ifdef SHADER_PERBLOCKPREFIXSUM
+
+Buffer<uint> DispatchIndirectParametersClusterCount;
+Buffer<uint> GlobalIndexCountBuffer;
+
+RWBuffer<uint2> PerBlocklIndexCountPreFixSumBuffer;
+RWBuffer<uint>  PerBlocklTotalIndexCountBuffer;
+
+groupshared uint PrefixSumClusterCount[2][PREFIXSUM_PARALLEL];
+
+[numthreads(PREFIXSUM_PARALLEL, 1, 1)] 
+void MainPerBlockPreFixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ItemCount = DispatchIndirectParametersClusterCount[0];
+	uint ItemCountRoundUp = PREFIXSUM_PARALLEL * ((ItemCount + PREFIXSUM_PARALLEL - 1) / PREFIXSUM_PARALLEL);
+	uint WaveStart = PREFIXSUM_PARALLEL * GroupId.x;
+
+	if (WaveStart < ItemCountRoundUp)
+	{
+		// Load current block data
+		uint GlobalIndex = WaveStart + GroupThreadId.x;
+		if (GlobalIndex < ItemCount)
+		{
+			checkBufferAccessSlow(GlobalIndexCountBuffer, GlobalIndex);
+
+			const uint IndexCount = GlobalIndexCountBuffer[GlobalIndex];
+			PrefixSumClusterCount[0][GroupThreadId.x] = IndexCount;
+		}
+		else
+		{
+			PrefixSumClusterCount[0][GroupThreadId.x] = 0;
+		}
+		GroupMemoryBarrierWithGroupSync();
+
+		// Pre fix sum the current block using ping-pong in shared memory
+		uint Src = 0;
+		for (uint i = 1; i <= (PREFIXSUM_PARALLEL / 2); i *= 2)
+		{
+			if (GroupThreadId.x >= i)
+			{
+				PrefixSumClusterCount[1 - Src][GroupThreadId.x] = PrefixSumClusterCount[Src][GroupThreadId.x] + PrefixSumClusterCount[Src][GroupThreadId.x - i];
+			}
+			else
+			{
+				PrefixSumClusterCount[1 - Src][GroupThreadId.x] = PrefixSumClusterCount[Src][GroupThreadId.x];
+			}
+			Src = 1 - Src;
+			GroupMemoryBarrierWithGroupSync();
+		}
+
+		// Write out result, taking into account previous blocks sum
+		uint Result = 0;
+		if (GlobalIndex < ItemCount)
+		{
+			Result = PrefixSumClusterCount[Src][GroupThreadId.x];
+
+			checkBufferAccessSlow(PerBlocklIndexCountPreFixSumBuffer, GlobalIndex);
+
+			if (GroupThreadId.x == 0)
+			{
+				PerBlocklIndexCountPreFixSumBuffer[GlobalIndex] = uint2(0, Result);
+			}
+			else
+			{
+				PerBlocklIndexCountPreFixSumBuffer[GlobalIndex] = uint2(PrefixSumClusterCount[Src][GroupThreadId.x - 1], Result);
+			}
+		}
+
+		if (GroupThreadId.x == PREFIXSUM_LASTTHREAD)
+		{
+			checkBufferAccessSlow(PerBlocklTotalIndexCountBuffer, GroupId.x);
+			PerBlocklTotalIndexCountBuffer[GroupId.x] = PrefixSumClusterCount[Src][GroupThreadId.x];
+		}
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 3. PREFIX SIUM
+#ifdef SHADER_CLUSTERCULLINGPREFIXSUM
+
+Buffer<uint> DispatchIndirectParametersClusterCount;
+Buffer<uint> GlobalIndexCountBuffer;
+
+RWBuffer<uint2> GlobalIndexCountPreFixSumBuffer;
+
+groupshared uint PreviousSum;
+groupshared uint PrefixSumClusterCount[2][PREFIXSUM_PARALLEL];
+
+[numthreads(PREFIXSUM_PARALLEL, 1, 1)]
+void MainClusterCullingPreFixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3 GroupId : SV_GroupID)
+{
+#if 0
+
+	// Slow reference
+	if (DispatchThreadId.x == 0)
+	{
+		// ugly linear 1 thread....
+		uint Sum = 0;
+		uint ItemCount = DispatchIndirectParametersClusterCount[0];
+		for (uint i = 0; i < ItemCount; ++i)
+		{
+			uint IndexCount = GlobalIndexCountBuffer[i];
+			GlobalIndexCountPreFixSumBuffer[i] = uint2(Sum, Sum + IndexCount);
+			Sum += IndexCount;
+		}
+	}
+
+#else
+
+	if (DispatchThreadId.x == 0)
+	{
+		// Reset previous block sum
+		PreviousSum = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	uint ItemCount = DispatchIndirectParametersClusterCount[0];
+	uint ItemCountRoundUp = PREFIXSUM_PARALLEL * ((ItemCount + PREFIXSUM_PARALLEL - 1) / PREFIXSUM_PARALLEL);
+	uint WaveStart = 0;
+
+	while (WaveStart < ItemCountRoundUp)
+	{
+		// Load current block data
+		uint GlobalIndex = WaveStart + DispatchThreadId.x;
+		if (GlobalIndex < ItemCount)
+		{
+			const uint IndexCount = GlobalIndexCountBuffer[GlobalIndex];
+			PrefixSumClusterCount[0][DispatchThreadId.x] = IndexCount;
+		}
+		else
+		{
+			PrefixSumClusterCount[0][DispatchThreadId.x] = 0;
+		}
+		GroupMemoryBarrierWithGroupSync();
+
+		// Pre fix sum the current block using ping-pong in shared memory
+		uint Src = 0;
+		for (uint i = 1; i <= (PREFIXSUM_PARALLEL/2); i *= 2)
+		{
+			if (DispatchThreadId.x >= i)
+			{
+				PrefixSumClusterCount[1 - Src][DispatchThreadId.x] = PrefixSumClusterCount[Src][DispatchThreadId.x] + PrefixSumClusterCount[Src][DispatchThreadId.x - i];
+			}
+			else
+			{
+				PrefixSumClusterCount[1 - Src][DispatchThreadId.x] = PrefixSumClusterCount[Src][DispatchThreadId.x];
+			}
+			Src = 1 - Src;
+			GroupMemoryBarrierWithGroupSync();
+		}
+
+		// Write out result, taking into account previous blocks sum
+		uint Result = 0;
+		if (GlobalIndex < ItemCount)
+		{
+			Result = PrefixSumClusterCount[Src][DispatchThreadId.x];
+
+			checkBufferAccessSlow(GlobalIndexCountPreFixSumBuffer, GlobalIndex);
+			if (DispatchThreadId.x == 0)
+			{
+				GlobalIndexCountPreFixSumBuffer[GlobalIndex] = uint2(0, Result) + PreviousSum;
+			}
+			else
+			{
+				GlobalIndexCountPreFixSumBuffer[GlobalIndex] = uint2(PrefixSumClusterCount[Src][DispatchThreadId.x - 1], Result) + PreviousSum;
+			}
+		}
+		GroupMemoryBarrierWithGroupSync();
+
+		// Update previous block sum
+		if (DispatchThreadId.x == PREFIXSUM_LASTTHREAD)
+		{
+			PreviousSum += Result;
+		}
+
+		WaveStart += PREFIXSUM_PARALLEL;
+	}
+
+#endif
+
+	// TODO try multiple pass parallelisation, with dispatch indirect
+	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch39.html
+	// http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.177.8755&rep=rep1&type=pdf
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 4. PER BLOCK OPTIMISATION
+/// PER BLOCK OPTIMISATION
+#if SHADER_CLUSTERCULLINGCOMPACTVERTEXIDLOCALBLOCK
+
+Buffer<uint> DispatchIndirectParametersClusterCount;
+Buffer<uint> DispatchIndirectParametersClusterCount2D;
+Buffer<uint> DispatchIndirectParametersClusterCountDiv512;
+
+Buffer<uint2> PerBlocklIndexCountPreFixSumBuffer;
+Buffer<uint2> PerBlocklTotalIndexCountPreFixSumBuffer;
+
+Buffer<uint> GlobalIndexStartBuffer;
+Buffer<uint> GlobalIndexCountBuffer;
+Buffer<float> GlobalRadiusScaleBuffer;
+Buffer<uint> ClusterVertexIdBuffer;
+
+RWBuffer<uint> CulledCompactedIndexBuffer;
+RWBuffer<float> CulledCompactedRadiusScaleBuffer;
+
+[numthreads(COMPACTCS_NUMTHREAD, 1, 1)]
+void MainClusterCullingCompactVertexIdsLocalBlockCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
+{
+	const uint LoadedClusterCount = DispatchIndirectParametersClusterCount[0];
+	const uint DispatchCountX = DispatchIndirectParametersClusterCount2D[0];
+	const uint ClusterId = GroupId.x + GroupId.y * DispatchCountX;
+	if (ClusterId >= LoadedClusterCount)
+	{
+		return;
+	}
+
+	// For each cluster, a group is splatting the indices inside its target range (evaluated after a prefix sum)
+
+	const uint ClusterSrcStartIndex = GlobalIndexStartBuffer[ClusterId];
+	const uint ClusterSrcIndexCount = GlobalIndexCountBuffer[ClusterId];
+	const float ClusterRadiusScale  = GlobalRadiusScaleBuffer[ClusterId];
+
+	uint2 TopBlockPrefixSum = PerBlocklTotalIndexCountPreFixSumBuffer[ClusterId / PREFIXSUM_PARALLEL];
+	uint2 PerBlockPrefixSum = PerBlocklIndexCountPreFixSumBuffer[ClusterId];
+
+	uint WriteToIndex = TopBlockPrefixSum.x + PerBlockPrefixSum.x;
+	uint LoopCount = (ClusterSrcIndexCount + COMPACTCS_NUMTHREAD - 1) / COMPACTCS_NUMTHREAD;
+
+	for (uint Loop = 0; Loop < LoopCount; ++Loop)
+	{
+		uint GroupWriteOffset = Loop * COMPACTCS_NUMTHREAD;
+		uint ThreadWriteOffset = GroupWriteOffset + GroupThreadId.x;
+
+		if (ThreadWriteOffset < ClusterSrcIndexCount)
+		{
+			checkBufferAccessSlow(CulledCompactedIndexBuffer, WriteToIndex + ThreadWriteOffset);
+			CulledCompactedIndexBuffer[WriteToIndex + ThreadWriteOffset] = ClusterVertexIdBuffer[ClusterSrcStartIndex + ThreadWriteOffset];
+			checkBufferAccessSlow(CulledCompactedRadiusScaleBuffer, WriteToIndex + ThreadWriteOffset);
+			CulledCompactedRadiusScaleBuffer[WriteToIndex + ThreadWriteOffset] = D_USE_CONTINUOUSLOD ? ClusterRadiusScale : 0;
+		}
+	}
+}
+
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

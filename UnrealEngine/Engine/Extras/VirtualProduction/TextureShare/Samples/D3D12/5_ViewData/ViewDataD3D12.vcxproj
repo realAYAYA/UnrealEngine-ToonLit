@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D12/AppCoreD3D12.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{70231EA0-C686-4A32-80FF-4ACC85F108D3}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>5_ViewDataD3D12</ProjectName>
+  </PropertyGroup>
+</Project>

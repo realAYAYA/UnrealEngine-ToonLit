@@ -1,0 +1,64 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Handheld AR"
+		},
+		{
+			"Language": "ko",
+			"Text": "휴대형 증강 현실"
+		},
+		{
+			"Language": "ja",
+			"Text": "携帯 AR"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "手持式AR应用"
+		}
+	],
+	"Description":
+	[
+    {
+      "Language": "en",
+      "Text": "A starting point for building Augmented Reality applications for Android and iOS devices. Includes runtime logic for toggling AR mode on and off, debug information regarding plane detection, example code for hit detection and handling light estimation."
+    },
+    {
+      "Language": "ko",
+      "Text": "Android 및 iOS 디바이스용 증강 현실 앱을 만들기 위한 템플릿입니다. AR 모드를 켜고 끄는 런타임 로직, 면 인식 관련 디버깅 정보, 히트 디텍션과 빛 추정 처리 관련 예제 코드가 포함되어 있습니다."
+    },
+    {
+      "Language": "ja",
+      "Text": "Android と iOS 向けの拡張現実アプリケーション作成の土台です。AR モードのオンオフを行う実行時のロジック、平面検出に関するデバッグ情報、ヒット検出のサンプルコード、ライト推定などを含んでいます。"
+    },
+    {
+      "Language": "zh-Hans",
+      "Text": "为安卓及iOS设备创建增强现实应用的良好起点，包含开启和关闭AR模式的运行逻辑，关于平面检测的调试信息，命中检测及处理预计光照的示例代码。"
+    }
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": "Static Mesh"
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": "AR, Mobile, Augmented Reality"
+		}
+	],
+	"ClassTypes": "Pawn, GameMode, Widget, Actor",
+	"Category": "BlueprintFeature",
+	"FocusAsset": "",
+	"Thumbnail": "TP_MFG_HandheldARBP.png",
+	"Screenshots":
+	[
+		"TP_MFG_HandheldARBP_Preview.png"
+	],
+	"SortKey": "TP_MFG_HandheldARBP"
+}

@@ -1,0 +1,63 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.1022
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HLMediaLibrary", "HLMediaLibrary\HLMediaLibrary.vcxproj", "{92A7EE26-FC50-43E7-A28C-517182E77824}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|ARM = Debug|ARM
+		Debug|ARM64 = Debug|ARM64
+		Debug|Win32 = Debug|Win32
+		Debug|x64 = Debug|x64
+		Debug-HoloLens|ARM = Debug-HoloLens|ARM
+		Debug-HoloLens|ARM64 = Debug-HoloLens|ARM64
+		Debug-HoloLens|Win32 = Debug-HoloLens|Win32
+		Debug-HoloLens|x64 = Debug-HoloLens|x64
+		Release|ARM = Release|ARM
+		Release|ARM64 = Release|ARM64
+		Release|Win32 = Release|Win32
+		Release|x64 = Release|x64
+		Release-HoloLens|ARM = Release-HoloLens|ARM
+		Release-HoloLens|ARM64 = Release-HoloLens|ARM64
+		Release-HoloLens|Win32 = Release-HoloLens|Win32
+		Release-HoloLens|x64 = Release-HoloLens|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug|ARM.ActiveCfg = Debug|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug|ARM64.ActiveCfg = Debug|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug|Win32.ActiveCfg = Debug|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug|Win32.Build.0 = Debug|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug|x64.ActiveCfg = Debug|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug|x64.Build.0 = Debug|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|ARM.ActiveCfg = Debug-HoloLens|ARM
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|ARM.Build.0 = Debug-HoloLens|ARM
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|ARM64.ActiveCfg = Debug-HoloLens|ARM64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|ARM64.Build.0 = Debug-HoloLens|ARM64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|Win32.ActiveCfg = Debug-HoloLens|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|Win32.Build.0 = Debug-HoloLens|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|x64.ActiveCfg = Debug-HoloLens|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Debug-HoloLens|x64.Build.0 = Debug-HoloLens|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release|ARM.ActiveCfg = Release|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release|ARM64.ActiveCfg = Release|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release|Win32.ActiveCfg = Release|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release|Win32.Build.0 = Release|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release|x64.ActiveCfg = Release|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release|x64.Build.0 = Release|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|ARM.ActiveCfg = Release-HoloLens|ARM
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|ARM.Build.0 = Release-HoloLens|ARM
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|ARM64.ActiveCfg = Release-HoloLens|ARM64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|ARM64.Build.0 = Release-HoloLens|ARM64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|Win32.ActiveCfg = Release-HoloLens|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|Win32.Build.0 = Release-HoloLens|Win32
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|x64.ActiveCfg = Release-HoloLens|x64
+		{92A7EE26-FC50-43E7-A28C-517182E77824}.Release-HoloLens|x64.Build.0 = Release-HoloLens|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {7B506141-85DC-4E32-9159-489143C5E206}
+	EndGlobalSection
+EndGlobal

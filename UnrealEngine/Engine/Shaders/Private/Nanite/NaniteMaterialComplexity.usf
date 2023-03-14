@@ -1,0 +1,102 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../DeferredShadingCommon.ush"
+
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+
+Texture2D<UlongType> VisBuffer64;
+ByteAddressBuffer MaterialSlotTable;
+ByteAddressBuffer MaterialDepthTable;
+RWTexture2D<uint> MaterialComplexity;
+
+// .xy = min, .zw = max
+uint4 ViewRect;
+
+groupshared uint2 TileMaterialIDs[64];
+
+[numthreads(8, 8, 1)]
+void CalculateMaterialComplexity(uint3 GTID : SV_GroupThreadID, uint3 GID : SV_GroupID, uint3 DTID : SV_DispatchThreadID)
+{
+	//const uint2 PixelPos = min(DTID.xy + ViewRect.xy, ViewRect.zw - 1);
+	const uint2 PixelPos = DTID.xy;
+
+	uint PixelMaterialID = 0;
+
+	const bool bInsideViewport = all(PixelPos.xy < ViewRect.zw);
+	//BRANCH
+	//if (bInsideViewport)
+	//{
+		UlongType VisPixel = VisBuffer64[PixelPos];
+
+		uint DepthInt = 0;
+		uint VisibleClusterIndex = 0;
+		uint TriIndex = 0;
+		UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+		const bool ValidClusterIndex = (VisibleClusterIndex != 0xFFFFFFFF);
+		if (ValidClusterIndex)
+		{
+			FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+			FInstanceSceneData InstanceData = GetInstanceSceneData(VisibleCluster, false);
+			FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+			const uint MaterialSlot = GetMaterialShadingSlot(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+			PixelMaterialID = GetMaterialDepthId(MaterialSlot, MaterialDepthTable);
+		}
+	//}
+
+	const uint FlattenedIndex = GTID.x + (GTID.y * 8);
+	TileMaterialIDs[FlattenedIndex] = uint2(PixelMaterialID, FlattenedIndex);
+
+	GroupMemoryBarrierWithGroupSync();
+
+	for (uint MergeSize = 2u; MergeSize <= 64u; MergeSize *= 2u)
+	{
+		for (uint MergeSubSize = MergeSize >> 1u; MergeSubSize > 0; MergeSubSize >>= 1)
+		{
+			uint IndexTemp = FlattenedIndex;
+			uint IndexLow = IndexTemp & (MergeSubSize - 1u);
+			uint IndexHigh = 2u * (IndexTemp - IndexLow);
+			uint Index = IndexHigh + IndexLow;
+
+			uint Swap = MergeSubSize == MergeSize >> 1u ? IndexHigh + (2u * MergeSubSize - 1u) - IndexLow : IndexHigh + MergeSubSize + IndexLow;
+			if (Swap < 64 && Index < 64)
+			{
+				const uint2 A = TileMaterialIDs[Index];
+				const uint2 B = TileMaterialIDs[Swap];
+				if (A.x > B.x)
+				{
+					TileMaterialIDs[Index] = B;
+					TileMaterialIDs[Swap]  = A;
+				}
+			}
+
+			GroupMemoryBarrierWithGroupSync();
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (all(GTID.xy == 0u))
+	{
+		uint TileMaterialCount = 0;
+		uint LastMaterialID = 0xFFFFFFFFu;
+		LOOP
+		for (uint Iter = 0; Iter < 64; ++Iter)
+		{
+			const uint IterMaterialID = TileMaterialIDs[Iter].x;
+			BRANCH
+			if (IterMaterialID != LastMaterialID && IterMaterialID != 0)
+			{
+				LastMaterialID = IterMaterialID;
+				++TileMaterialCount;
+			}
+		}
+
+		MaterialComplexity[GID.xy] = TileMaterialCount;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+}

@@ -1,0 +1,86 @@
+How to build libav
+------------------
+
+libav is a wrapper around libavcodec and libavutil to provide support for video
+and audio decoders to Unreal Engine's Media Framework on Linux.
+
+Due to the complexity of these libraries and their dependencies to additional
+libraries needed for hardware support, we do not provide pre-built libraries.
+
+We recommend you install the necessary packages matching your Linux distribution
+from the usual sources.
+
+Depending on your decoder needs you may need to install the "libavcodec-extra"
+package if the base package does not include those you require.
+This plugin is intended to provide the following decoders:
+Video: H.264 (AVC), H.265 (HEVC)
+Audio: AAC
+
+In addition you will need to install the development package "libavcodec-dev"
+to get the C header files matching the version of your libavcodec installation.
+These are required for compilation of this plugin.
+
+Due to the nature of the build system the standard system include folders are
+not searched when building.
+You should not add them to the build process either since this will result in
+conflicts with the provided toolchain sources.
+
+Instead it is recommended that you either copy the relevant files into this
+project here or create symbolic links to the original files.
+
+The locations where this plugin expects to find the libavcodec sources are:
+  {ThisFolder}/include/libavcodec/
+  {ThisFolder}/include/libavutil/
+  {ThisFolder}/lib/Linux/{Archictecture}/libavcodec.so
+  {ThisFolder}/lib/Linux/{Archictecture}/libavutil.so
+where {Archictecture} is either "x86_64-unknown-linux-gnu" or
+"aarch64-unknown-linux-gnueabi" as expected by Unreal Build Tool.
+
+At the time of this writing the versions of the libraries are as follows:
+libavcodec: 58.54.100
+libavutil: 56.31.100
+
+Be advised that you will need to have the correct C header files installed
+for whichever version of the libraries you plan to use.
+If there is a mismatch between what headers you made available when building
+this plugin versus the version found in the library you will get a warning
+message logged to the console when launching your project and libav will be
+unavailable.
+
+To install the packages on Ubuntu Linux enter the following commands in a shell:
+(1) Update the package list
+  sudo apt-get update -y
+
+(2) Install the package of a specific version
+    (where XX is the version you want to install, eg. 58)
+  sudo apt-get install libavcodec.XX
+
+(3) If you need the package with additional codecs
+  sudo apt-get install libavcodec-extra
+
+(4) Get the header files for development
+  sudo apt-get install -y libavcodec-dev
+
+You should then have (depending on the architecture, see above)
+  /usr/lib/x86_64-linux-gnu/libavcodec.so
+  /usr/lib/x86_64-linux-gnu/libavutil.so
+  /usr/include/x86_64-linux-gnu/libavcodec
+  /usr/include/x86_64-linux-gnu/libavutil
+
+To create the required symbolic links needed to build this project navigate to
+this location in a shell, eg. cd ~/Unreal/Engine/Source/ThirdParty/libav
+
+Then, depending on where the header and library files were installed and the
+desired architecture, enter:
+  ln -s /usr/include/x86_64-linux-gnu/libavcodec include/
+  ln -s /usr/include/x86_64-linux-gnu/libavutil include/
+  mkdir -p lib/Linux/x86_64-unknown-linux-gnu
+  ln -s /usr/lib/x86_64-linux-gnu/libavcodec.so lib/Linux/x86_64-unknown-linux-gnu/
+  ln -s /usr/lib/x86_64-linux-gnu/libavutil.so lib/Linux/x86_64-unknown-linux-gnu/
+
+you must then generate your project files again by issuing eg:
+  cd ~/Unreal/Engine
+  ./GenerateProjectFiles.sh
+
+The next build should then pick up on the existence of libavcodec and build this
+plugin with support for it.

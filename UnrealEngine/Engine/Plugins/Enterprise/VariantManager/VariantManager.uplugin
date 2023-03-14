@@ -1,0 +1,32 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Variant Manager",
+	"Description": "Manages scene actor variants",
+	"Category" : "Editor",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "https://docs.unrealengine.com/en-US/WorkingWithContent/Importing/Datasmith/",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault" : false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules" :
+	[
+		{
+			"Name" : "VariantManager",
+			"Type" : "Editor",
+			"LoadingPhase" : "Default"
+		}
+	],
+	"Plugins":
+	[
+		{
+			"Name": "VariantManagerContent",
+			"Enabled": true
+		},
+    ]
+}

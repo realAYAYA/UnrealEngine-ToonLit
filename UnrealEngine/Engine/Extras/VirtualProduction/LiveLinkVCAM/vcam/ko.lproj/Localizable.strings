@@ -1,0 +1,159 @@
+/* An Add button on an edit item screen. */
+"button-add" = "추가";
+
+/* A Back button to go back to the previous screen */
+"button-back" = "뒤로가기";
+
+/* A cancel button on an alert */
+"button-cancel" = "취소";
+
+/* A button to delete items. */
+"button-delete" = "삭제";
+
+/* A button to deselect all items in a list. */
+"button-deselectall" = "모두 선택 해제";
+
+/* A done button on an edit item screen. */
+"button-done" = "완료";
+
+/* A button to select items for sharing or delete. */
+"button-select" = "선택";
+
+/* A button to select all items in a list. */
+"button-selectall" = "모두 선택";
+
+/* Status message that the app is connecting. */
+"Connecting..." = "연결 중...";
+
+/* Button to disconnect from a UE instance */
+"Disconnect" = "연결 해제";
+
+/* Prompt disconnect from a remote session. */
+"Disconnect from the remote session?" = "원격 세션에서 연결을 해제할까요?";
+
+/* The name of the subject (a person, device, character) of the capture */
+"livelink-subjectname" = "대상 이름";
+
+/* Title of the application log screen */
+"log-title" = "로그";
+
+/* An OK button on an alert */
+"okbutton" = "확인";
+
+/* An option was disabled. */
+"option-disabled" = "비활성화";
+
+/* An option was enabled. */
+"option-enabled" = "활성화";
+
+/* Status message that the app is reconnecting. */
+"Reconnecting..." = "다시 연결 중...";
+
+/* Alert title to confirm reset settings. */
+"reset-confirm-title" = "재설정";
+
+/* Alert title to confirm reset settings. */
+"reset-message" = "모든 Live Link VCAM 설정을 기본값으로 복구하시겠습니까?";
+
+/* Alert message that reset was successful. */
+"reset-success-message" = "Live Link VCAM 설정이 기본값으로 재설정되었습니다.";
+
+/* Alert title that reset was successful. */
+"reset-success-title" = "재설정 성공";
+
+/* Alert title to confirm reset settings. */
+"reset-title" = "설정을 재설정할까요?";
+
+/* Option for setting the interface to always be visible */
+"settings-alwayson" = "항상 보기";
+
+/* Option for allowing the interface to fade out (to transparent/invisible) */
+"settings-fadeout" = "페이드 아웃";
+
+/* Option for displaying a string as a filename. */
+"settings-filename" = "파일명";
+
+/* Signifies a excellent connection quality. This is the highest quality. */
+"signal-excellent" = "우수";
+
+/* Signifies a fair connection quality -- This is lower than good, but higher than poor. */
+"signal-fair" = "양호";
+
+/* Signifies a good connection quality -- This is lower than excellent, but higher than fair. */
+"signal-good" = "보통";
+
+/* Signifies a poor connection quality -- This is lowest quality. */
+"signal-poor" = "약함";
+
+/* Battery level of the tentacle device. */
+"tentacle-battery" = "배터리";
+
+/* A button to connect to a tentacle sync device */
+"tentacle-connect" = "연결";
+
+/* A button to disconnect from a tentacle sync device */
+"tentacle-disconnect" = "연결 해제";
+
+/* The framerate for the tentacle device. */
+"tentacle-framerate" = "프레임 레이트";
+
+/* When the tentacle device last sent a message. */
+"tentacle-lastseen" = "최근 활동";
+
+/* The device was seen just a moment ago. */
+"tentacle-lastseen-justnow" = "방금 전";
+
+/* The operating mode for the tentacle device. */
+"tentacle-mode" = "모드";
+
+/* The operating mode for the tentacle device. */
+"tentacle-mode-green" = "그린 (생성)";
+
+/* The operating mode for the tentacle device. */
+"tentacle-mode-red" = "레드 (링크)";
+
+/* Signal strength indicator of the tentacle device. */
+"tentacle-signal-strength" = "신호 강도";
+
+/* A section footer explaining the timecode sources. */
+"timecode-current-footer" = "Live Link VCAM은 iPhone 시스템 시계를 타임코드에 사용할 수 있으며 NTP 서버에 연결하거나 블루투스를 통해 Tentacle Sync에서 타임코드를 수신할 수 있습니다.";
+
+/* An error string for NTP input */
+"timecode-error-ntp" = "데이터 없음";
+
+/* An error string for system timer input */
+"timecode-error-system" = "시스템 오류";
+
+/* An error string for tentacle sync input */
+"timecode-error-tentacle" = "기기 없음";
+
+/* A section title that shows the currently selected source.. */
+"timecode-section-current" = "현재 소스";
+
+/* A section title that lists other options for timecode source. */
+"timecode-section-other" = "기타 소스";
+
+/* An NTP (network time protocol) pool will be used as the timecode source */
+"timecode-source-ntp" = "NTP";
+
+/* The internal device timer will be used as the timecode source */
+"timecode-source-system" = "시스템 타이머";
+
+/* An Tentacle Sync will be used as the timecode source */
+"timecode-source-tentacle" = "Tentacle Sync";
+
+/* A screen to edit the NTP pool -- an address for Network Time Protocol data. */
+"timecode-title-ntp-pool" = "NTP 풀";
+
+/* An alert title for an error message. */
+"title-error" = "오류";
+
+/* A label that indicates a default value */
+"value-default" = "기본";
+
+/* An label that indicates no value is set or added -- an empty set. */
+"value-none" = "없음";
+
+/* An unknown or unsupported value was found */
+"value-unknown" = "알 수 없음";
+

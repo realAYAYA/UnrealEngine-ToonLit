@@ -1,0 +1,23 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+
+#if NIAGARA_CLEAR_COUNTS_INT_CS
+
+RWBuffer<int>	CountBuffer;
+Buffer<int>		CountsAndValuesBuffer;
+uint			NumCounts;
+
+[numthreads(64, 1, 1)]
+void ClearCountsIntCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint Index = DispatchThreadId.x;
+	if(Index < NumCounts)
+	{
+		int ClearIndex = CountsAndValuesBuffer[Index * 2];
+		int ClearValue = CountsAndValuesBuffer[(Index * 2) + 1];
+		CountBuffer[ClearIndex] = ClearValue;
+	}
+}
+
+#endif

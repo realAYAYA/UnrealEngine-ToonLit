@@ -1,0 +1,20 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Height is packed from a [0, 2^16-1] value to two bytes, each of which we need to provide as a 0-1 float for writing 
+float2 PackHeight(float InHeight)
+{
+	uint Height = (uint) clamp(InHeight, 0.0f, 65535.0f);
+	return float2((float) (Height >> 8) / 255.0, (float) (Height & 0xFF) / 255.0);
+}
+
+float UnpackHeight(float2 InPackedHeight)
+{
+	// We used to do the inverse of PackHeight here, like this:
+	// return float(((int) round(InPackedHeight.r * 255.0) << 8) | (int) round(InPackedHeight.g * 255.0));
+	
+	// However, this isn't great if you just interpolate between packed heights because that truncates the interpolation
+	// of the higher order byte. So instead we do it by multiplication, which ends up simpler.
+	return (InPackedHeight.r * 256 + InPackedHeight.g) * 255;
+}
