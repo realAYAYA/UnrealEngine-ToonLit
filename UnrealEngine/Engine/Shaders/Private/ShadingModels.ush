@@ -973,8 +973,8 @@ FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, fl
 	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
 	//Context.NoV = saturate(abs( Context.NoV ) + 1e-5);
 
-	float RampID = GBuffer.CustomData.a;
-	//GBuffer.Metallic;
+	float RampID = GBuffer.Metallic;
+	//GBuffer.CustomData.a;
 	//GBuffer.GBufferAO;
 	
 	// Diffuse
@@ -1020,7 +1020,7 @@ FDirectLighting ToonHairBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, f
 	//float SecondarySpecular = saturate(ToonKajiyaKay(T, N, H, SecondaryShift, SecondaryPower));
 
 	Lighting.Diffuse = Diffuse_Lambert(GBuffer.BaseColor) * Falloff * AreaLight.FalloffColor;
-	Lighting.Specular = PrimarySpecular * Falloff * AreaLight.FalloffColor;// * Strength;
+	Lighting.Specular = PrimarySpecular * Falloff * AreaLight.FalloffColor * Strength;
 	Lighting.Transmission = float3(0, 0, 0);
 
 	return Lighting;
