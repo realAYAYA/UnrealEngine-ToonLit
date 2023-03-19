@@ -119,8 +119,18 @@ void MainVS(
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
 	WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
 
+	float OutlineMask = 1.0f;// From Model's UV2.y
+
+#if NUM_MATERIAL_TEXCOORDS_VERTEX > 2
+	WorldNormal = float3(VertexParameters.TexCoords[2].y, VertexParameters.TexCoords[3].x, VertexParameters.TexCoords[3].y);
+	FLWCMatrix LocalToWorld = VertexParameters.SceneData.InstanceData.LocalToWorld;
+	float3 InvScale = VertexParameters.SceneData.InstanceData.InvNonUniformScale;
+ 	WorldNormal = RotateLocalToWorld(WorldNormal, LocalToWorld, InvScale);
+	//OutlineMask = VertexParameters.TexCoords[2].y;
+#endif
+
 	// Expand along WorldNormal
-	WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth);
+	WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth * OutlineMask);
 
 	// WorldToClip
 	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
