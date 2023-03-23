@@ -972,13 +972,13 @@ FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, fl
 	Init(Context, N, V, L);
 	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
 	//Context.NoV = saturate(abs( Context.NoV ) + 1e-5);
+	//GBuffer.CustomData.a;
 
 	float RampID = GBuffer.Metallic;
-	//GBuffer.CustomData.a;
-	//GBuffer.GBufferAO;
+	float Y = saturate(dot(N, L) * .5 + .5);
 	
 	// Diffuse
-	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(saturate(dot(N, L) * .5 + .5), RampID), 0).rgb;
+	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
 	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
 
 	// Specular
