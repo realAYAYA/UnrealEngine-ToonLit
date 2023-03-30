@@ -1002,24 +1002,24 @@ float ToonKajiyaKay(float3 T, float3 N, float3 H, float Shift, float Pow)
 FDirectLighting ToonHairBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, float NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
 	FDirectLighting Lighting;
-
-	float PrimaryShift = GBuffer.Anisotropy;
-	float PrimaryPower = GBuffer.Metallic * 10000.0f;
+	
+	float RampID = GBuffer.Metallic;
+	float PrimaryPower = GBuffer.Roughness * 10000.0f;
 	float Strength = GBuffer.Specular;
-	//GBuffer.Roughness  * 10000.0f;
+	float PrimaryShift = GBuffer.Anisotropy;
 	//GBuffer.CustomData.a;
-	
 	//GBuffer.GBufferAO;
-	
-	//float3 SecondaryColor = float3(0.0f, 0.0f, 0.9f);
-	
+
+	// Diffuse
+	float Y = saturate(dot(N, L) * .5 + .5);
+	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
+
+	// Primary Specular
 	float3 H = normalize(V + L);
 	float3 T = GBuffer.WorldTangent;
-
 	float PrimarySpecular = saturate(ToonKajiyaKay(T, N, H, PrimaryShift, PrimaryPower));
-	//float SecondarySpecular = saturate(ToonKajiyaKay(T, N, H, SecondaryShift, SecondaryPower));
 
-	Lighting.Diffuse = Diffuse_Lambert(GBuffer.BaseColor) * Falloff * AreaLight.FalloffColor;
+	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
 	Lighting.Specular = PrimarySpecular * Falloff * AreaLight.FalloffColor * Strength;
 	Lighting.Transmission = float3(0, 0, 0);
 
