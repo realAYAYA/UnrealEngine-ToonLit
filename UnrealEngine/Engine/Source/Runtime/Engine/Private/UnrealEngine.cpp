@@ -3134,6 +3134,8 @@ void UEngine::InitializeObjectReferences()
 
 	// Change-begin
 	ToonRampTexture = PreIntegratedSkinBRDFTexture;
+
+	GetDefault<UToonRenderingSettings>()->InitToonData();
 	// Change-end
 
 #if WITH_EDITOR
