@@ -1,1 +1,0 @@
-The PixelStreaming Samples files have been moved to an external repository at https://github.com/EpicGames/PixelStreamingInfrastructure

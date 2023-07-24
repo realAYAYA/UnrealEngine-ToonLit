@@ -1,3 +1,0 @@
-**/bin/Release
-**/bin/Debug
-*.csproj.user

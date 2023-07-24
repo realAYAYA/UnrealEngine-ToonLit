@@ -1,5 +1,0 @@
-R,"WARNING: The option 'android.enableD8' is deprecated and should not be used anymore.","WARNING: ",">> "
-R,"WARNING: The specified Android SDK Build Tools version","WARNING: ",">> "
-R,"Warning: Resigning with jarsigner.","Warning: ",">> "
-R,"Unable to strip library","due to error",""
-R,"To suppress this warning,"," warning,",","

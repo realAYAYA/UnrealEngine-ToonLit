@@ -1,8 +1,0 @@
-{
-	"configProperties": {
-		"System.GC.Server": true,
-		"System.GC.HeapCount": 32,
-		"System.Globalization.Invariant": true,
-		"System.Globalization.UseNls": true
-	}
-}

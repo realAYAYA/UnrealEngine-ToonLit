@@ -1,1 +1,0 @@
-%ANDROID_HOME%\platform-tools\adb.exe push UECommandLine.txt /mnt/sdcard/UnrealGame/UnrealGame/UECommandLine.txt

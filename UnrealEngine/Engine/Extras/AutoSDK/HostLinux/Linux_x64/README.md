@@ -1,3 +1,0 @@
-# Linux AutoSDK
-
-Details forthcoming.

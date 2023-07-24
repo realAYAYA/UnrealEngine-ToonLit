@@ -1,1 +1,0 @@
-Macros.h.patch shows a local change which was made to file: Engine\Source\ThirdParty\Eigen\Eigen\src\Core\util\Macros.h to fix a compiler warning for PS4

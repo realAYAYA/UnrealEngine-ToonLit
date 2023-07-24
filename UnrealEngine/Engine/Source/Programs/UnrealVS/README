@@ -1,3 +1,0 @@
-If nuget packages are updated, the minimum Visual Studio version needs to be updated to match in the .vsixmanifest.
-
-Ex. Microsoft.VisualStudio.SDK 16.9.31025.194 = Minimum Visual Studio version needs to be 16.9

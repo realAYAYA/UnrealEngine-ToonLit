@@ -1,7 +1,0 @@
-# Linux package dependencies
-
-Powershell: https://docs.microsoft.com/en-us/powershell/scripting/install/installing-powershell-core-on-linux?view=powershell-7.1
-
-AutoSDK is required to compile libs, however the host system needs a compiler installed to build host executable dependencies required for cross compiling
-
-Recommend environment: `MAKEFLAGS='-j <NUMPROCESSORS>'`
