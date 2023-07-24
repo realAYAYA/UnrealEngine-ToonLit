@@ -1,0 +1,138 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenHairTracing.ush
+=============================================================================*/
+
+#include "../Common.ush"
+
+////////////////////////////////////////////////////////////////////////////////
+// Screen tracing 
+
+#ifndef USE_HAIRSTRANDS_SCREEN
+#define USE_HAIRSTRANDS_SCREEN 0
+#endif
+
+#if USE_HAIRSTRANDS_SCREEN
+
+void TraceHairScreen(
+	float3 RayTranslatedWorldOrigin,
+	float3 RayWorldDirection,
+	float MaxWorldTraceDistance,
+	float4 HZBUvFactorAndInvFactor,
+	float MaxIterations,
+	float UncertainTraceRelativeDepthThreshold,
+	float NumThicknessStepsToDetermineCertainty,
+	inout bool bHit,
+	inout bool bUncertain,
+	inout float3 OutScreenUV,
+	inout float3 OutLastVisibleScreenUV,
+	inout float OutHitTileZ)
+{
+	InternalTraceScreen(
+		HairStrands.HairOnlyDepthTexture,
+		HairStrands.HairOnlyDepthClosestHZBTexture,
+		HZBBaseTexelSize,
+		HZBUVToScreenUVScaleBias,
+		RayTranslatedWorldOrigin,
+		RayWorldDirection,
+		MaxWorldTraceDistance,
+		HZBUvFactorAndInvFactor,
+		MaxIterations,
+		UncertainTraceRelativeDepthThreshold,
+		NumThicknessStepsToDetermineCertainty,
+		0,
+		bHit,
+		bUncertain,
+		OutScreenUV,
+		OutLastVisibleScreenUV,
+		OutHitTileZ);
+}
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
+// Voxel tracing 
+
+#ifndef USE_HAIRSTRANDS_VOXEL
+#define USE_HAIRSTRANDS_VOXEL 0
+#endif
+
+#if USE_HAIRSTRANDS_VOXEL
+
+#define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR_MIPMAP
+#define VOXEL_TRAVERSAL_DEBUG 0
+
+#include "../HairStrands/HairStrandsVoxelPageTraversal.ush"
+
+void TraceHairVoxels(
+	const uint2 PixelCoord,
+	const float SceneDepth,
+	const float3 SampleTranslatedWorldPosition,
+	const float3 SampleDirection,
+	const float TraceDistance,
+	const bool bIsReflectionTracing,
+	out bool bHit,
+	out float OutTransparency,
+	out float OutHitT)
+{
+	// Hair strands voxel to apply hair shadow on top of opaque geometry
+	float3 RayStart = SampleTranslatedWorldPosition;
+	float3 RayEnd = SampleTranslatedWorldPosition + SampleDirection * TraceDistance;
+	float4 Random = GetHairVoxelJitter2(PixelCoord.xy, View.StateFrameIndexMod8, VirtualVoxel.JitterMode);
+
+	// Jitter start position to mask/compensate coarse voxel resolution
+	float3 NormalizedDepthBias = 0;
+	{
+		const float PositionBiasScale = 0.5f;
+		NormalizedDepthBias = (VirtualVoxel.DepthBiasScale_Shadow * SampleDirection + PositionBiasScale * (Random.xyz * 2 - 1));
+	}
+
+	FVirtualVoxelCommonDesc CommonDesc;
+	CommonDesc.PageCountResolution = VirtualVoxel.PageCountResolution;
+	CommonDesc.PageTextureResolution = VirtualVoxel.PageTextureResolution;
+	CommonDesc.PageResolution = VirtualVoxel.PageResolution;
+	CommonDesc.PageResolutionLog2 = VirtualVoxel.PageResolutionLog2;
+
+	FHairTraversalSettings TraversalSettings = InitHairTraversalSettings();
+	TraversalSettings.DensityScale = bIsReflectionTracing ? VirtualVoxel.DensityScale_Shadow : VirtualVoxel.DensityScale_Environment;
+	TraversalSettings.CountThreshold = 1;
+	TraversalSettings.DistanceThreshold = TraceDistance;
+	TraversalSettings.bDebugEnabled = false;
+	TraversalSettings.SteppingScale = bIsReflectionTracing ? VirtualVoxel.SteppingScale_Shadow : VirtualVoxel.SteppingScale_Environment;
+	TraversalSettings.Random = Random.xyz;
+	TraversalSettings.PixelRadius = SceneDepth * VirtualVoxel.HairCoveragePixelRadiusAtDepth1;
+	TraversalSettings.bUseOpaqueVisibility = false;
+
+	float Transparency = 1;
+	float HitT = TraceDistance;
+	bool bHasValidHitT = false;
+	const uint VoxelDescCount = VirtualVoxel.NodeDescCount;
+	for (uint VoxelDescIt = 0; Transparency > 0.01f && VoxelDescIt < VoxelDescCount; ++VoxelDescIt)
+	{
+		const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(VirtualVoxel.NodeDescBuffer[VoxelDescIt], VirtualVoxel.PageResolution);
+
+		FHairTraversalResult Result = InitHairTraversalResult();
+		Result = ComputeHairCountVirtualVoxel(
+			RayStart + NormalizedDepthBias * NodeDesc.VoxelWorldSize,
+			RayEnd,
+			CommonDesc,
+			NodeDesc,
+			VirtualVoxel.PageIndexBuffer,
+			VirtualVoxel.PageIndexOccupancyBuffer,
+			VirtualVoxel.PageTexture,
+			TraversalSettings);
+
+		if (Result.HitT >= 0)
+		{
+			Transparency = min(Transparency, saturate(1 - Result.HairCount));
+			HitT = min(HitT, Result.HitT);
+			bHasValidHitT = true;
+		}
+	}
+
+	bHit = bHasValidHitT;
+	OutTransparency = Transparency;
+	OutHitT = HitT;
+}
+
+#endif // USE_HAIRSTRANDS_VOXEL

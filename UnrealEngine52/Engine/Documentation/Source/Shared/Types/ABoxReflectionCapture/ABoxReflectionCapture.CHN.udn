@@ -1,0 +1,10 @@
+INTSourceChangelist:19906333
+Availability:NoPublish
+Title:ABoxReflectionCapture
+Crumbs:
+Description:BoxReflectionCapture类的概述
+
+[EXCERPT:ABoxReflectionCapture]
+
+Box Reflection Capture Actor（盒体反射捕获Actor）会将周围区域的景象捕获为一张图片，然后用于反射。它适合用于长方形走廊和室内房间。你可以放置任意数量的这类Actor。它们对运行时性能影响不大。
+[/EXCERPT:ABoxReflectionCapture]

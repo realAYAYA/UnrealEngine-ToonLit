@@ -1,0 +1,7 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+void DivMod(uint op1, uint op2, out uint q, out uint r)
+{
+	q = op1 / op2;
+	r = op1 - (q * op2);
+}

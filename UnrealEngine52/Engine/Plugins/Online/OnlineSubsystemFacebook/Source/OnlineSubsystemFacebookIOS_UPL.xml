@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--OnlineSubsystemFacebook plugin additions-->
+<root>
+	<!-- init section is always evaluated once per architecture -->
+	<init>
+		<log text="Facebook SDK iOS init"/>
+		
+		<!-- get packaging for Facebook from ini and reset it if architecture not supported -->
+		<setBoolFromProperty result="bEnabled" ini="Engine" section="OnlineSubsystemFacebook" property="bEnabled" default="false"/>
+		<setStringFromProperty result="ClientId" ini="Engine" section="OnlineSubsystemFacebook" property="ClientId" default="0"/>
+		<setStringFromProperty result="ClientToken" ini="Engine" section="OnlineSubsystemFacebook" property="ClientToken" default="0"/>
+		<setStringFromProperty result="BundleDisplayName" ini="Engine" section="/Script/IOSRuntimeSettings.IOSRuntimeSettings" property="BundleDisplayName" defaule=""/>
+		<setBoolFromProperty result="bEnableAutomaticLogging" ini="Engine" section="OnlineSubsystemFacebook" property="bEnableAutomaticLogging" default="1"/>
+		<setBoolFromProperty result="bEnableAdvertisingId" ini="Engine" section="OnlineSubsystemFacebook" property="bEnableAdvertisingId" default="1"/>
+		<dumpvars/>
+	</init>
+	<iosPListUpdates>
+		<if condition="bEnabled">
+			<true>
+				<addElements tag="dict" once="true"> 
+					<key>FacebookAppID</key>
+				</addElements>
+				<setElement result="NewEntry" value="string" text="$S(ClientId)"/>
+				<addElement tag="dict" name="NewEntry" once="true"/> 
+
+				<addElements tag="dict" once="true"> 
+					<key>FacebookClientToken</key>
+				</addElements>
+				<setElement result="NewEntry" value="string" text="$S(ClientToken)"/>
+				<addElement tag="dict" name="NewEntry" once="true"/> 
+
+				<addElements tag="dict" once="true"> 
+					<key>FacebookDisplayName</key>
+				</addElements>
+				<setElement result="NewEntry" value="string" text="$S(BundleDisplayName)"/>
+				<addElement tag="dict" name="NewEntry" once="true"/> 
+
+				<if condition="bEnableAutomaticLogging">
+					<false>
+						<addElements tag="dict" once="true">
+							<key>FacebookAutoLogAppEventsEnabled</key>
+							<false/>
+						</addElements>
+					</false>
+				</if>
+
+				<!-- CFBundleURLTypes block -->
+				<addElements tag="dict" once="true"> 
+					<key>CFBundleURLTypes</key>
+				</addElements>
+
+				<setElement result="FbIdString" value="string" text="fb$S(ClientId)"/>
+				<setElement result="ValueForKey" value="array"/>
+				<addElement tag="$ValueForKey" name="FbIdString"/>
+
+				<setElement result="DictOnArray" value="dict"/>
+				<addElements tag="$DictOnArray">
+  					<key>CFBundleURLSchemes</key>
+				</addElements>
+				<addElement tag="$DictOnArray" name="ValueForKey"/>
+				<setElement result="NewEntry" value="array"/>				
+				<addElement tag="$NewEntry" name="DictOnArray"/>
+				<addElement tag="dict" name="NewEntry" once="true"/> 
+				<!-- End of CFBundleURLTypes block -->
+
+				<if condition="bEnableAdvertisingId">
+					<false>
+						<addElements tag="dict" once="true">
+							<key>FacebookAdvertiserIDCollectionEnabled</key>
+							<false/>
+						</addElements>
+					</false>
+				</if>
+
+				<addElements tag="dict" once="true">
+					<key>LSApplicationQueriesSchemes</key>
+					<array>
+					<string>fbapi</string>
+					<string>fb-messenger-share-api</string>
+					</array>
+				</addElements>
+			</true>
+		</if>
+	</iosPListUpdates>
+	
+</root>

@@ -1,0 +1,950 @@
+[1;33mFilters: ~[!nonportable]~[!benchmark]~[approvals] *
+[0mRandomness seeded to: 1
+Before Global - Default Group
+Before Global - Apples
+Before Global - Oranges
+Before All - Default Group
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[0;37mSelfTest.exe is a Catch2 v<version> host application.
+Run with -? for options
+
+[0m-------------------------------------------------------------------------------
+[0m# A test name that starts with a #
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  yay
+
+-------------------------------------------------------------------------------
+[0m#1027: Bitfields can be captured
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( y.v == 0 )
+[0mwith expansion:
+[1;33m  0 == 0
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( 0 == y.v )
+[0mwith expansion:
+[1;33m  0 == 0
+[0m
+-------------------------------------------------------------------------------
+[0m#1147
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( t1 == t2 )
+[0mwith expansion:
+[1;33m  {?} == {?}
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( t1 != t2 )
+[0mwith expansion:
+[1;33m  {?} != {?}
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( t1 < t2 )
+[0mwith expansion:
+[1;33m  {?} < {?}
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( t1 > t2 )
+[0mwith expansion:
+[1;33m  {?} > {?}
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( t1 <= t2 )
+[0mwith expansion:
+[1;33m  {?} <= {?}
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( t1 >= t2 )
+[0mwith expansion:
+[1;33m  {?} >= {?}
+[0m
+-------------------------------------------------------------------------------
+[0m#1175 - Hidden Test
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m
+-------------------------------------------------------------------------------
+[0m#1238
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( std::memcmp(uarr, "123", sizeof(uarr)) == 0 )
+[0mwith expansion:
+[1;33m  0 == 0
+[0mwith messages:
+  uarr := "123"
+  sarr := "456"
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( std::memcmp(sarr, "456", sizeof(sarr)) == 0 )
+[0mwith expansion:
+[1;33m  0 == 0
+[0mwith messages:
+  uarr := "123"
+  sarr := "456"
+
+-------------------------------------------------------------------------------
+[0m#1245
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m
+-------------------------------------------------------------------------------
+[0m#1319: Sections can have description (even if it is not saved
+[0m[0m  SectionName
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m
+-------------------------------------------------------------------------------
+[0m#1403
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( h1 == h2 )
+[0mwith expansion:
+[1;33m  [1403 helper] == [1403 helper]
+[0m
+-------------------------------------------------------------------------------
+[0m#1455 - INFO and WARN can start with a linebreak
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0mwarning:
+
+This info message starts with a linebreak
+
+This warning message starts with a linebreak
+
+[1;31m
+No assertions in test case '#1455 - INFO and WARN can start with a linebreak'
+
+[0mThis would not be caught previously
+Nor would this
+-------------------------------------------------------------------------------
+[0m#1514: stderr/stdout is not captured in tests aborted by an exception
+[0m-------------------------------------------------------------------------------
+Tricky.tests.cpp:<line number>
+...............................................................................
+
+Tricky.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  1514
+
+-------------------------------------------------------------------------------
+[0m#1548
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( std::is_same<TypeList<int>, TypeList<int>>::value )
+[0mwith expansion:
+[1;33m  true
+[0m
+-------------------------------------------------------------------------------
+[0m#1905 -- test spec parser properly clears internal state between compound tests
+[0m-------------------------------------------------------------------------------
+CmdLine.tests.cpp:<line number>
+...............................................................................
+
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( spec.matches(*fakeTestCase("spec . char")) )
+[0mwith expansion:
+[1;33m  true
+[0m
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( spec.matches(*fakeTestCase("spec , char")) )
+[0mwith expansion:
+[1;33m  true
+[0m
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE_FALSE( spec.matches(*fakeTestCase(R"(spec \, char)")) )
+[0mwith expansion:
+[1;33m  !false
+[0m
+-------------------------------------------------------------------------------
+[0m#1912 -- test spec parser handles escaping
+[0m[0m  Various parentheses
+[0m-------------------------------------------------------------------------------
+CmdLine.tests.cpp:<line number>
+...............................................................................
+
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( spec.matches(*fakeTestCase(R"(spec {a} char)")) )
+[0mwith expansion:
+[1;33m  true
+[0m
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( spec.matches(*fakeTestCase(R"(spec [a] char)")) )
+[0mwith expansion:
+[1;33m  true
+[0m
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE_FALSE( spec.matches(*fakeTestCase("differs but has similar tag", "[a]")) )
+[0mwith expansion:
+[1;33m  !false
+[0m
+-------------------------------------------------------------------------------
+[0m#1912 -- test spec parser handles escaping
+[0m[0m  backslash in test name
+[0m-------------------------------------------------------------------------------
+CmdLine.tests.cpp:<line number>
+...............................................................................
+
+CmdLine.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( spec.matches(*fakeTestCase(R"(spec \ char)")) )
+[0mwith expansion:
+[1;33m  true
+[0m
+-------------------------------------------------------------------------------
+[0m#1913 - GENERATE inside a for loop should not keep recreating the generator
+[0m-------------------------------------------------------------------------------
+Generators.tests.cpp:<line number>
+...............................................................................
+
+Generators.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( counter < 7 )
+[0mwith expansion:
+[1;33m  3 < 7
+[0m
+-------------------------------------------------------------------------------
+[0m#1913 - GENERATE inside a for loop should not keep recreating the generator
+[0m-------------------------------------------------------------------------------
+Generators.tests.cpp:<line number>
+...............................................................................
+
+Generators.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( counter < 7 )
+[0mwith expansion:
+[1;33m  6 < 7
+[0m
+-------------------------------------------------------------------------------
+[0m#1913 - GENERATEs can share a line
+[0m-------------------------------------------------------------------------------
+Generators.tests.cpp:<line number>
+...............................................................................
+
+Generators.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( i != j )
+[0mwith expansion:
+[1;33m  1 != 3
+[0m
+-------------------------------------------------------------------------------
+[0m#1913 - GENERATEs can share a line
+[0m-------------------------------------------------------------------------------
+Generators.tests.cpp:<line number>
+...............................................................................
+
+Generators.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( i != j )
+[0mwith expansion:
+[1;33m  1 != 4
+[0m
+-------------------------------------------------------------------------------
+[0m#1913 - GENERATEs can share a line
+[0m-------------------------------------------------------------------------------
+Generators.tests.cpp:<line number>
+...............................................................................
+
+Generators.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( i != j )
+[0mwith expansion:
+[1;33m  2 != 3
+[0m
+-------------------------------------------------------------------------------
+[0m#1913 - GENERATEs can share a line
+[0m-------------------------------------------------------------------------------
+Generators.tests.cpp:<line number>
+...............................................................................
+
+Generators.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( i != j )
+[0mwith expansion:
+[1;33m  2 != 4
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - GENERATE after a section
+[0m[0m  A
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  A
+
+-------------------------------------------------------------------------------
+[0m#1938 - GENERATE after a section
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  1
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - GENERATE after a section
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  2
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - GENERATE after a section
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  3
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - Section followed by flat generate
+[0m[0m  A
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( 1 )
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - Section followed by flat generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  2
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - Section followed by flat generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  3
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - flat generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  1
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - flat generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  2
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - flat generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  3
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m[0m  A
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  A
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 1
+  j := 3
+  k := 5
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  B
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 1
+  j := 3
+  k := 6
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  B
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 1
+  j := 4
+  k := 5
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 1
+  j := 4
+  k := 6
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m[0m  A
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  A
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 2
+  j := 3
+  k := 5
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  B
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 2
+  j := 3
+  k := 6
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m[0m  B
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  B
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 2
+  j := 4
+  k := 5
+
+-------------------------------------------------------------------------------
+[0m#1938 - mixed sections and generates
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith messages:
+  i := 2
+  j := 4
+  k := 6
+
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  1
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  1
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  1
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  2
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  1
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  3
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  2
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  1
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  2
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  2
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  2
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  3
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  3
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  1
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  3
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  2
+[0m
+-------------------------------------------------------------------------------
+[0m#1938 - nested generate
+[0m-------------------------------------------------------------------------------
+PartTracker.tests.cpp:<line number>
+...............................................................................
+
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( m )
+[0mwith expansion:
+[1;33m  3
+[0m
+PartTracker.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( n )
+[0mwith expansion:
+[1;33m  3
+[0m
+-------------------------------------------------------------------------------
+[0m#1954 - 7 arg template test case sig compiles - 1, 1, 1, 1, 1, 0, 0
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m
+-------------------------------------------------------------------------------
+[0m#1954 - 7 arg template test case sig compiles - 5, 1, 1, 1, 1, 0, 0
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m
+-------------------------------------------------------------------------------
+[0m#1954 - 7 arg template test case sig compiles - 5, 3, 1, 1, 1, 0, 0
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m
+-------------------------------------------------------------------------------
+[0m#2152 - ULP checks between differently signed values were wrong - double
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  CHECK_THAT( smallest_non_zero, WithinULP( -smallest_non_zero, 2 ) )
+[0mwith expansion:
+[1;33m  0.0 is within 2 ULPs of -4.9406564584124654e-324 ([-1.4821969375237396e-323,
+  4.9406564584124654e-324])
+[0m
+Matchers.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  CHECK_THAT( smallest_non_zero, !WithinULP( -smallest_non_zero, 1 ) )
+[0mwith expansion:
+[1;33m  0.0 not is within 1 ULPs of -4.9406564584124654e-324 ([-9.8813129168249309e-
+  324, -0.0000000000000000e+00])
+[0m
+-------------------------------------------------------------------------------
+[0m#2152 - ULP checks between differently signed values were wrong - float
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  CHECK_THAT( smallest_non_zero, WithinULP( -smallest_non_zero, 2 ) )
+[0mwith expansion:
+[1;33m  0.0f is within 2 ULPs of -1.40129846e-45f ([-4.20389539e-45, 1.40129846e-45])
+[0m
+Matchers.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  CHECK_THAT( smallest_non_zero, !WithinULP( -smallest_non_zero, 1 ) )
+[0mwith expansion:
+[1;33m  0.0f not is within 1 ULPs of -1.40129846e-45f ([-2.80259693e-45, -0.
+  00000000e+00])
+[0m
+-------------------------------------------------------------------------------
+[0m#748 - captures with unexpected exceptions
+[0m[0m  outside assertions
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with messages:
+  answer := 42
+  expected exception
+
+-------------------------------------------------------------------------------
+[0m#748 - captures with unexpected exceptions
+[0m[0m  inside REQUIRE_NOTHROW
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_NOTHROW( thisThrows() )
+[0mdue to unexpected exception with messages:
+  answer := 42
+  expected exception
+
+-------------------------------------------------------------------------------
+[0m#748 - captures with unexpected exceptions
+[0m[0m  inside REQUIRE_THROWS
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE_THROWS( thisThrows() )
+[0mwith message:
+  answer := 42
+
+-------------------------------------------------------------------------------
+[0m#809
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( 42 == f )
+[0mwith expansion:
+[1;33m  42 == {?}
+[0m
+-------------------------------------------------------------------------------
+[0m#833
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( a == t )
+[0mwith expansion:
+[1;33m  3 == 3
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  CHECK( a == t )
+[0mwith expansion:
+[1;33m  3 == 3
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE_THROWS( throws_int(true) )
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  CHECK_THROWS_AS( throws_int(true), int )
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE_NOTHROW( throws_int(false) )
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE_THAT( "aaa", Catch::Matchers::EndsWith("aaa") )
+[0mwith expansion:
+[1;33m  "aaa" ends with: "aaa"
+[0m
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( templated_tests<int>(3) )
+[0mwith expansion:
+[1;33m  true
+[0m
+-------------------------------------------------------------------------------
+[0m#835 -- errno should not be touched by Catch2
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( f() == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0m
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( errno_after == 1 )
+[0mwith expansion:
+[1;33m  1 == 1
+[0m
+-------------------------------------------------------------------------------
+[0m#872
+[0m-------------------------------------------------------------------------------
+Compilation.tests.cpp:<line number>
+...............................................................................
+
+Compilation.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0m[0;36m  REQUIRE( x == 4 )
+[0mwith expansion:
+[1;33m  {?} == 4
+[0mwith message:
+  dummy := 0
+
+-------------------------------------------------------------------------------
+[0m#961 -- Dynamically created sections should all be reported
+[0m[0m  Looped section 0
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  Everything is OK
+
+-------------------------------------------------------------------------------
+[0m#961 -- Dynamically created sections should all be reported
+[0m[0m  Looped section 1
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  Everything is OK
+
+-------------------------------------------------------------------------------
+[0m#961 -- Dynamically created sections should all be reported
+[0m[0m  Looped section 2
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  Everything is OK
+
+-------------------------------------------------------------------------------
+[0m#961 -- Dynamically created sections should all be reported
+[0m[0m  Looped section 3
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  Everything is OK
+
+-------------------------------------------------------------------------------
+[0m#961 -- Dynamically created sections should all be reported
+[0m[0m  Looped section 4
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[0;32mPASSED:
+[0mwith message:
+  Everything is OK
+
+-------------------------------------------------------------------------------
+[0m'Not' checks that should fail
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( false != false )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( true != true )
+[0m
+[1;31m=======[1;33m=====[0m[0m[0;32m===================================================================[0m
+test cases:  32[0;37m | [0;32m27 passed[0m[0m[0;37m | [1;31m3 failed[0m[0m[0;37m | [1;33m2 failed as expected[0m[0m
+assertions: 101[0;37m | [0;32m94 passed[0m[0m[0;37m | [1;31m4 failed[0m[0m[0;37m | [1;33m3 failed as expected[0m[0m
+

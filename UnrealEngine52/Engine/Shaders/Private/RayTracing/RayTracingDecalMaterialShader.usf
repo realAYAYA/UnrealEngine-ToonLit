@@ -1,0 +1,216 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define PATH_TRACING 1
+#define SCENE_TEXTURES_DISABLED 1 // Ray tracing shaders cannot access scene textures
+
+// This should be good enough for ray tracing and avoids having to bind an extra buffer
+#define EYE_ADAPTATION_PREV_FRAME_EXPOSURE 1
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+
+#define DecalTilePosition RayTracingDecalParameters.DecalTilePosition
+#define WorldToDecal RayTracingDecalParameters.WorldToDecal
+#define SvPositionToDecal WorldToDecal
+#define DecalToWorld RayTracingDecalParameters.DecalToWorld
+#define DecalToWorldInvScale RayTracingDecalParameters.DecalToWorldInvScale
+#define DecalOrientation RayTracingDecalParameters.DecalOrientation
+#define DecalParams RayTracingDecalParameters.DecalParams
+#define DecalColorParam RayTracingDecalParameters.DecalColorParam
+#define DecalWriteFlags RayTracingDecalParameters.DecalWriteFlags
+
+#include "/Engine/Generated/Material.ush"
+
+#if RAYCALLABLESHADER
+RAY_TRACING_ENTRY_CALLABLE(RayTracingDecalMaterialShader, FDecalShaderPayload, Payload)
+{
+	ResolvedView = ResolveView();
+
+	const float3 TranslatedWorldPosition = Payload.GetInputTranslatedWorldPosition();
+
+	float4 DecalPos = mul(float4(TranslatedWorldPosition.xyz, 1), WorldToDecal);
+
+	if (any(abs(DecalPos.xyz) > 1))
+	{
+		// clip content outside the decal
+		Payload.SetTransparency(1.0f);
+		return;
+	}
+
+	float3 CameraVector = normalize(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition.xyz);
+
+	// can be optimized
+	float3 DecalVector = DecalPos.xyz * 0.5f + 0.5f;
+
+	// Swizzle so that DecalVector.xy are perpendicular to the projection direction and DecalVector.z is distance along the projection direction
+	float3 SwizzlePos = DecalVector.zyx;
+
+	// By default, map textures using the vectors perpendicular to the projection direction
+	float2 DecalUVs = SwizzlePos.xy;
+
+	FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
+#if NUM_MATERIAL_TEXCOORDS
+	for (int CoordinateIndex = 0; CoordinateIndex < NUM_MATERIAL_TEXCOORDS; CoordinateIndex++)
+	{
+		MaterialParameters.TexCoords[CoordinateIndex] = DecalUVs;
+	}
+#endif
+	MaterialParameters.TwoSidedSign = 1;
+	MaterialParameters.VertexColor = 1;
+	MaterialParameters.CameraVector = CameraVector;
+	MaterialParameters.SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+	MaterialParameters.ScreenPosition = SvPositionToResolvedScreenPosition(MaterialParameters.SvPosition);
+	MaterialParameters.LightVector = SwizzlePos;
+
+	MaterialParameters.AbsoluteWorldPosition = MaterialParameters.WorldPosition_NoOffsets = LWCSubtract(TranslatedWorldPosition.xyz, PrimaryView.PreViewTranslation);
+	MaterialParameters.WorldPosition_CamRelative = MaterialParameters.WorldPosition_NoOffsets_CamRelative = TranslatedWorldPosition.xyz;
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcPixelMaterialInputs(MaterialParameters, PixelMaterialInputs);
+
+	const float DecalFading = saturate(4 - 4 * abs(SwizzlePos.z * 2 - 1)) * DecalParams.x;
+	const float Opacity = GetMaterialOpacity(PixelMaterialInputs) * DecalFading;
+	Payload.SetTransparency(1.0f - Opacity);
+
+	if (DecalWriteFlags & DECAL_WRITE_BASE_COLOR_FLAG)
+	{
+		Payload.SetBaseColor(GetMaterialBaseColor(PixelMaterialInputs) * Opacity);
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_NORMAL_FLAG)
+	{
+		Payload.SetWorldNormal(MaterialParameters.WorldNormal * Opacity);
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_ROUGHNESS_SPECULAR_METALLIC_FLAG)
+	{
+		Payload.SetMetallicSpecularRoughness(float3(GetMaterialMetallic(PixelMaterialInputs), GetMaterialSpecular(PixelMaterialInputs), GetMaterialRoughness(PixelMaterialInputs)) * Opacity);
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_EMISSIVE_FLAG)
+	{
+		Payload.SetEmissive(GetMaterialEmissive(PixelMaterialInputs) * Opacity);
+	}
+
+	Payload.SetFlags(DecalWriteFlags);
+}
+#endif // RAYCALLABLESHADER
+
+#if RAYHITGROUPSHADER
+
+#ifdef NEEDS_VERTEX_FACTORY_INTERPOLATION
+#undef NEEDS_VERTEX_FACTORY_INTERPOLATION
+#endif
+// Needed for VertexFactoryInterpolate to interpolate attributes from vertices to hit point
+#define NEEDS_VERTEX_FACTORY_INTERPOLATION 1
+
+#include "/Engine/Private/RayTracing/RayTracingHitGroupCommon.ush"
+
+#include "/Engine/Generated/VertexFactory.ush"
+
+#include "/Engine/Private/RayTracing/RayTracingCalcInterpolants.ush"
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDecalMaterialCHS,
+	FDecalShaderPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	Payload.HitT = RayTCurrent();
+
+	ResolvedView = ResolveView();
+
+	const float3 TranslatedWorldPosition = TranslatedWorldRayOrigin() + WorldRayDirection() * RayTCurrent();
+	const float4 SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+
+#if VF_SUPPORTS_RAYTRACING_PREPARE_MATERIAL_PIXEL_PARAMETERS
+	// this is a newer codepath that is both more flexible and allows for more direct calculation compared to the other codepath
+	// TODO: implement such a method for all vertex factories
+	float3 GeoNormal = 0;
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(TranslatedWorldRayOrigin(), WorldRayDirection(), RayTCurrent(), PrimitiveIndex(), Attributes, HitKind(), GeoNormal);
+#else
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+	float3 GeoNormal = 0;
+	CalcInterpolants((FRayCone)0, Attributes, Interpolants, GeoNormal);
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+#endif
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	{
+		const float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		const bool bIsFrontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+
+		// #dxr_todo: UE-72130 support world position offset 
+		// #if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+		// CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, BasePassInterpolants.PixelPositionExcludingWPO);
+		// #else
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+		// #endif
+	}
+
+	const float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+	Payload.SetTransparency(1.0f - Opacity);
+
+	if (DECAL_PAYLOAD_FLAGS & DECAL_WRITE_BASE_COLOR_FLAG)
+	{
+		Payload.SetBaseColor(GetMaterialBaseColor(PixelMaterialInputs) * Opacity);
+	}
+
+	if (DECAL_PAYLOAD_FLAGS & DECAL_WRITE_NORMAL_FLAG)
+	{
+		Payload.SetWorldNormal(MaterialParameters.WorldNormal * Opacity);
+	}
+
+	if (DECAL_PAYLOAD_FLAGS & DECAL_WRITE_ROUGHNESS_SPECULAR_METALLIC_FLAG)
+	{
+		Payload.SetMetallicSpecularRoughness(float3(GetMaterialMetallic(PixelMaterialInputs), GetMaterialSpecular(PixelMaterialInputs), GetMaterialRoughness(PixelMaterialInputs)) * Opacity);
+	}
+
+	if (DECAL_PAYLOAD_FLAGS & DECAL_WRITE_EMISSIVE_FLAG)
+	{
+		Payload.SetEmissive(GetMaterialEmissive(PixelMaterialInputs) * Opacity);
+	}
+
+	Payload.SetFlags(DECAL_PAYLOAD_FLAGS);
+
+	return;
+}
+
+#if USE_MATERIAL_ANY_HIT_SHADER
+
+RAY_TRACING_ENTRY_ANY_HIT(RayTracingDecalMaterialAHS,
+	FDecalShaderPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	ResolvedView = ResolveView();
+
+	const float3 TranslatedWorldPosition = TranslatedWorldRayOrigin() + WorldRayDirection() * RayTCurrent();
+	const float4 SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+
+	CalcInterpolants((FRayCone)0, Attributes, Interpolants);
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	const bool bIsFrontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+
+	{
+		const float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+
+		MaterialParameters.CameraVector = -WorldRayDirection();
+
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+	if (Opacity <= 0.00001f)
+	{
+		IgnoreHit();
+		return;
+	}
+}
+
+#endif // USE_MATERIAL_ANY_HIT_SHADER
+
+#endif // RAYHITGROUPSHADER

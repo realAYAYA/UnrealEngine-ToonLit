@@ -1,0 +1,301 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "NaniteRasterizer.ush"
+#include "NaniteAttributeDecode.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapPageAccessCommon.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapStaticCaching.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapPageOverlap.ush"
+#include "NaniteWritePixel.ush"
+
+// Material includes
+#include "/Engine/Generated/Material.ush"
+#include "NaniteVertexFactory.ush"
+
+#ifndef NANITE_TWO_SIDED
+#define NANITE_TWO_SIDED 0
+#endif
+
+#define ENABLE_EARLY_Z_TEST (NANITE_PIXEL_PROGRAMMABLE)
+
+
+// State encompassing mapping a pixel position to memory address
+struct FRaster
+{
+	float2	ViewportScale;
+	float2	ViewportBias;
+	int4	ScissorRect;
+
+#if VIRTUAL_TEXTURE_TARGET
+	uint2	pPage;
+	uint2	vPage;
+	float2	vTranslation;
+	bool	bSinglePage;
+	uint	ArrayIndex;
+#endif
+};
+
+float4 CalculateSubpixelCoordinates( FRaster Raster, float4 PointClip )
+{
+	float4 Subpixel = float4( PointClip.xyz, 1 ) / PointClip.w;
+	Subpixel.xy = Subpixel.xy * Raster.ViewportScale + Raster.ViewportBias;
+	Subpixel.xy = floor(Subpixel.xy);
+	return Subpixel;
+}
+
+float3 GetPerspectiveCorrectBarycentrics( float3 C, float3 InvW )
+{
+	float3 CInvW = C * InvW; // Perspective weighting by (1/w0, 1/w1, 1/w2)
+	float3 UVW = CInvW * rcp(CInvW.x + CInvW.y + CInvW.z); // renormalize
+
+	return UVW;
+}
+
+FBarycentrics CalculateBarycentrics( FRasterTri Tri, float3 C )
+{
+	FBarycentrics Barycentrics = (FBarycentrics)0;
+
+	const float3 OffsetX	= { -Tri.Edge12.y, -Tri.Edge20.y, -Tri.Edge01.y };
+	const float3 OffsetY	= {  Tri.Edge12.x,  Tri.Edge20.x,  Tri.Edge01.x };
+	const float3 UVW		= GetPerspectiveCorrectBarycentrics( C,				Tri.InvW );
+	const float3 UVW_X		= GetPerspectiveCorrectBarycentrics( C + OffsetX,	Tri.InvW );
+	const float3 UVW_Y		= GetPerspectiveCorrectBarycentrics( C + OffsetY,	Tri.InvW );
+
+	Barycentrics.UVW 	= UVW;
+	Barycentrics.UVW_dx	= UVW_X - UVW;
+	Barycentrics.UVW_dy	= UVW_Y - UVW;
+
+	return Barycentrics;
+}
+
+
+struct FNullTranslation
+{
+	bool operator()( inout FVisBufferPixel Pixel )
+	{
+		return true;
+	}
+};
+
+template< typename FSoftwareShader, typename FPageTranslation = FNullTranslation >
+struct TNaniteWritePixel
+{
+	FRaster				Raster;
+	FSoftwareShader		Shader;
+	uint				PixelValue;
+	uint2				VisualizeValues;
+	FPageTranslation	PageTranslation;
+
+	void operator()( uint2 PixelPos, float3 C, FRasterTri Tri )
+	{
+		float DeviceZ = Tri.DepthPlane.x + Tri.DepthPlane.y * C.y + Tri.DepthPlane.z * C.z;
+
+		FVisBufferPixel Pixel = CreateVisBufferPixel( PixelPos, PixelValue, DeviceZ );
+	
+	#if VISUALIZE
+		Pixel.VisualizeValues = VisualizeValues;
+	#endif
+	
+	#if VIRTUAL_TEXTURE_TARGET
+		Pixel.PhysicalPosition.xy = Pixel.Position;
+		Pixel.PhysicalPosition.z = Raster.ArrayIndex;
+
+		if( !PageTranslation( Pixel ) )
+		{
+			return;
+		}
+	#endif
+
+	#if ENABLE_EARLY_Z_TEST
+		BRANCH
+		if( !Pixel.EarlyDepthTest() )
+		{
+			return;
+		}
+	#endif
+
+	#if NANITE_PIXEL_PROGRAMMABLE
+		FBarycentrics Barycentrics = CalculateBarycentrics( Tri, C );
+
+		float4 SvPosition = float4( Pixel.Position.xy + 0.5, Pixel.Depth, 1.0 );
+	#if VIRTUAL_TEXTURE_TARGET
+		// Translate it to virtual page
+		SvPosition.xy = SvPosition.xy - Raster.vTranslation;
+	#endif
+
+		BRANCH
+		if( !Shader.EvaluatePixel( Barycentrics, SvPosition, Pixel ) )
+		{
+			return;
+		}
+	#endif
+
+		Pixel.Write();
+	}
+};
+
+
+struct FMaterialShader
+{
+#if NANITE_VERTEX_PROGRAMMABLE || NANITE_PIXEL_PROGRAMMABLE
+	FNaniteView					NaniteView;
+	FInstanceSceneData			InstanceData;
+	FInstanceDynamicData		InstanceDynamicData;
+	FCluster					Cluster;
+	FNaniteVertTransforms		VertTransforms;
+	FNaniteTransformedTri		TransformedTri;
+#endif
+
+	float3 EvaluateWorldPositionOffset( uint VertIndex, float3 PointLocal )
+	{
+		float3 WorldPositionOffset = 0.0f;
+	#if NANITE_VERTEX_PROGRAMMABLE
+		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+		BRANCH
+		if ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_EVALUATE_WORLD_POSITION_OFFSET) != 0u)
+		{
+			const FNaniteRawAttributeData RawAttributeData = GetRawAttributeData(Cluster, VertIndex, NANITE_NUM_TEXCOORDS_TO_DECODE);
+
+			// Should be Pow2(InvScale) but that requires renormalization
+			float3x3 LocalToWorld = LWCToFloat3x3(InstanceData.LocalToWorld);
+			float3 InvScale = InstanceData.InvNonUniformScale;
+			LocalToWorld[0] *= InvScale.x;
+			LocalToWorld[1] *= InvScale.y;
+			LocalToWorld[2] *= InvScale.z;
+
+			FMaterialVertexParameters VertexParameters = (FMaterialVertexParameters)0;
+			SetVertexParameterInstanceData(VertexParameters, InstanceData, PrimitiveData, true /* WPO */);
+			SetVertexParameterAttributeData(VertexParameters, RawAttributeData, InstanceDynamicData.LocalToTranslatedWorld, LocalToWorld, PointLocal);
+
+			WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
+		}
+	#endif
+		return WorldPositionOffset;
+	}
+
+#if NANITE_VERTEX_PROGRAMMABLE || NANITE_PIXEL_PROGRAMMABLE
+	float4 EvaluateDomain( float3 UVW )
+	{
+		float3 PointLocal;
+		PointLocal  = TransformedTri.Verts[0].PointLocal * UVW[0];
+		PointLocal += TransformedTri.Verts[1].PointLocal * UVW[1];
+		PointLocal += TransformedTri.Verts[2].PointLocal * UVW[2];
+
+	#if NANITE_PIXEL_PROGRAMMABLE && MATERIALBLENDING_MASKED
+		float3 Normal;
+		Normal  = TransformedTri.Verts[0].RawAttributeData.TangentZ * UVW[0];
+		Normal += TransformedTri.Verts[1].RawAttributeData.TangentZ * UVW[1];
+		Normal += TransformedTri.Verts[2].RawAttributeData.TangentZ * UVW[2];
+		Normal = normalize( Normal );
+
+		float4 SvPosition = 0;
+
+		FBarycentrics Barycentrics;
+		Barycentrics.UVW 	= UVW;
+		Barycentrics.UVW_dx	= 0;
+		Barycentrics.UVW_dy	= 0;
+					
+		FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+		FMaterialPixelParameters MaterialParameters = FetchNaniteMaterialPixelParameters( InstanceData, InstanceDynamicData, NaniteView, TransformedTri, Cluster, Barycentrics, Interpolants, SvPosition );
+
+		FPixelMaterialInputs PixelMaterialInputs;
+		CalcMaterialParameters( MaterialParameters, PixelMaterialInputs, SvPosition, true /*bIsFrontFace*/ );
+
+		float Displacement = GetMaterialMaskInputRaw( PixelMaterialInputs );
+
+		const float DisplacementBase = 0.8;
+		const float DisplacementScale = 5.0;
+
+		Displacement -= DisplacementBase;
+		Displacement *= DisplacementScale;
+
+		PointLocal += Normal * Displacement;
+	#endif
+
+		// Transform from view space
+		//float4 PointClip = mul( float4( PointView, 1 ), NaniteView.ViewToClip );
+
+		float3 PointWorld = mul( float4( PointLocal, 1 ), InstanceDynamicData.LocalToTranslatedWorld ).xyz;
+		float4 PointClip = mul( float4( PointWorld, 1 ), NaniteView.TranslatedWorldToClip );
+		return PointClip;
+	}
+#endif
+
+	bool EvaluatePixel( FBarycentrics Barycentrics, float4 SvPosition, inout FVisBufferPixel Pixel )
+	{
+	#if NANITE_PIXEL_PROGRAMMABLE
+		FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	
+		FMaterialPixelParameters MaterialParameters = FetchNaniteMaterialPixelParameters( InstanceData, InstanceDynamicData, NaniteView, TransformedTri, Cluster, Barycentrics, Interpolants, SvPosition );
+
+		FPixelMaterialInputs PixelMaterialInputs;
+		CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, true /*bIsFrontFace*/);
+
+		#if WANT_PIXEL_DEPTH_OFFSET
+		ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, Pixel.Depth);
+		#endif
+
+		#if MATERIALBLENDING_MASKED
+		return GetMaterialMask(PixelMaterialInputs) >= 0.0;
+		#endif
+	#endif
+		
+		return true;
+	}
+};
+
+
+#if VIRTUAL_TEXTURE_TARGET && NANITE_LATE_VSM_PAGE_TRANSLATION
+
+groupshared uint GroupVsmPageTableCache[NANITE_VSM_PAGE_TABLE_CACHE_DIM * NANITE_VSM_PAGE_TABLE_CACHE_DIM];
+
+void VsmPageTableStore(uint2 pPage, uint2 Coords)
+{
+	uint pPagePacked = (pPage.y << 16) | pPage.x;
+	uint Index = Coords.y * NANITE_VSM_PAGE_TABLE_CACHE_DIM + Coords.x;
+	GroupVsmPageTableCache[Index] = pPagePacked;
+}
+
+uint2 VsmPageTableLoad(uint2 Coords)
+{
+	uint Index = Coords.y * NANITE_VSM_PAGE_TABLE_CACHE_DIM + Coords.x;
+	uint pPagePacked = GroupVsmPageTableCache[Index];
+	return uint2(pPagePacked & 0xffff, pPagePacked >> 16);
+}
+
+void FetchAndCachePageTableEntry(FNaniteView NaniteView, uint2 vPageStart, uint2 vPageEnd, uint PageFlagMask, uint CacheIndex)
+{
+	uint2 CacheCoords = uint2(CacheIndex & 0x7, CacheIndex >> 3);
+	if (all(vPageStart + CacheCoords <= vPageEnd))
+	{
+		uint PageEntryOffset = CalcPageOffset(NaniteView.TargetLayerIndex, NaniteView.TargetMipLevel, vPageStart + CacheCoords);
+		uint PageFlag = VirtualShadowMap.PageFlags[PageEntryOffset];
+		uint2 pPageAddress = 0xffff;
+		if ((PageFlag & PageFlagMask) != 0)
+		{
+			pPageAddress = ShadowGetPhysicalPage(PageEntryOffset).PhysicalAddress;	
+		}
+		VsmPageTableStore(pPageAddress, CacheCoords);
+	}
+}
+
+struct FCachedPageTable
+{
+	bool operator()( inout FVisBufferPixel Pixel )
+	{
+	#if VIRTUAL_TEXTURE_TARGET && NANITE_LATE_VSM_PAGE_TRANSLATION
+		uint2 pPage = VsmPageTableLoad(Pixel.Position / VSM_PAGE_SIZE);
+		if (pPage.x == 0xffff)
+		{
+			return false;
+		}
+		Pixel.PhysicalPosition.xy = pPage * VSM_PAGE_SIZE + (Pixel.Position & VSM_PAGE_SIZE_MASK);
+	#endif
+		return true;
+	}
+};
+
+#endif // VIRTUAL_TEXTURE_TARGET &&  NANITE_LATE_VSM_PAGE_TRANSLATION

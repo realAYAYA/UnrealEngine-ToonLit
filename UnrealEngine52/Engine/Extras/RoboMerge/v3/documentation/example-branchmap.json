@@ -1,0 +1,30 @@
+{
+     "defaultStreamDepot": "depot",
+     "isDefaultBot": true,
+     "branches": [
+         {
+             "name": "TestA",
+             "aliases": ["A"],
+             "flowsTo": ["TestB", "TestC"]
+         },
+         {
+             "name": "TestB",
+             "aliases": ["B"],
+             "flowsTo": ["TestA"],
+             "forceAll": true
+         },
+         {
+             "name": "TestC",
+             "aliases": ["C"],
+             "flowsTo": ["TestA"],
+             "forceAll": true
+         }
+     ],
+     "branchspecs": [
+         {
+             "name": "ROBO:TestA->TestC",
+             "from": "TestA",
+             "to": "TestC"
+         }
+     ]
+ }

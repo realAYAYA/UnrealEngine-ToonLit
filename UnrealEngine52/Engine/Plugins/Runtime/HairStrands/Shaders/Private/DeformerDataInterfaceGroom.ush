@@ -1,0 +1,107 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+#include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
+#include "/Engine/Private/HairStrands/HairStrandsAttributeCommon.ush"
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Bindings
+
+uint				{DataInterfaceName}_NumControlPoints;
+uint				{DataInterfaceName}_NumCurves;
+float				{DataInterfaceName}_VF_HairRadius;
+float				{DataInterfaceName}_VF_HairLength;
+float				{DataInterfaceName}_VF_RootScale;
+float				{DataInterfaceName}_VF_TipScale;
+uint				{DataInterfaceName}_VF_GroupIndex;
+uint4				{DataInterfaceName}_VF_AttributeOffsets[HAIR_ATTRIBUTE_OFFSET_COUNT];
+Buffer<uint4>		{DataInterfaceName}_PositionBuffer;
+ByteAddressBuffer	{DataInterfaceName}_AttributeBuffer;
+Buffer<uint>		{DataInterfaceName}_VertexToCurveBuffer;
+Buffer<uint>		{DataInterfaceName}_CurveBuffer;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Helpers
+
+FHairControlPoint ReadControlPointData(uint VertexIndex)
+{
+	const uint MaxVertices = {DataInterfaceName}_NumControlPoints;
+	if (VertexIndex >= MaxVertices)
+	{
+		return (FHairControlPoint)0;
+	}
+
+	// Hair deformer work in local space so no need for position offset
+	return UnpackHairControlPoint(
+		{DataInterfaceName}_PositionBuffer[VertexIndex], 
+		float3(0, 0, 0) /*InVF_PositionOffset*/,
+		{DataInterfaceName}_VF_HairRadius, 
+		1.0f /*RootScale*/, 
+		1.0f /*TipScale*/);
+}
+
+FHairCurve ReadCurveData(uint CurveIndex)
+{
+	const uint MaxCurve = {DataInterfaceName}_NumCurves;
+	if (CurveIndex >= MaxCurve)
+	{
+		return (FHairCurve)0;
+	}
+
+	return UnpackHairCurve({DataInterfaceName}_CurveBuffer[CurveIndex]);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Interface
+
+uint ReadNumControlPoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumControlPoints;
+}
+
+uint ReadNumCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumCurves;
+}
+
+float3 ReadPosition_{DataInterfaceName}(uint VertexIndex)
+{
+	return ReadControlPointData(VertexIndex).Position;
+}
+
+float ReadRadius_{DataInterfaceName}(uint VertexIndex)
+{
+	return ReadControlPointData(VertexIndex).WorldRadius;
+}
+
+float ReadCoordU_{DataInterfaceName}(uint VertexIndex)
+{
+	return ReadControlPointData(VertexIndex).UCoord;
+}
+
+float ReadLength_{DataInterfaceName}(uint VertexIndex)
+{
+	const float CoordU      = ReadControlPointData(VertexIndex).UCoord;
+	const float CurveLength = UnpackHairLength(InternalGetHairStrandsAttributesPerCurve(VertexIndex, HAIR_ATTRIBUTE_OFFSET_LENGTH({DataInterfaceName}_VF_AttributeOffsets), HAIR_ATTRIBUTE_STRIDE_LENGTH, {DataInterfaceName}_AttributeBuffer, {DataInterfaceName}_VertexToCurveBuffer));
+	return CurveLength * CoordU;
+}
+
+float2 ReadRootUV_{DataInterfaceName}(uint VertexIndex)
+{
+	return UnpackHairRootUV(InternalGetHairStrandsAttributesPerCurve(VertexIndex, HAIR_ATTRIBUTE_OFFSET_ROOTUV({DataInterfaceName}_VF_AttributeOffsets), HAIR_ATTRIBUTE_STRIDE_ROOTUV, {DataInterfaceName}_AttributeBuffer, {DataInterfaceName}_VertexToCurveBuffer));
+}
+
+float ReadSeed_{DataInterfaceName}(uint VertexIndex)
+{
+	return UnpackHairSeed(InternalGetHairStrandsAttributesPerCurve(VertexIndex, HAIR_ATTRIBUTE_OFFSET_SEED({DataInterfaceName}_VF_AttributeOffsets), HAIR_ATTRIBUTE_STRIDE_SEED, {DataInterfaceName}_AttributeBuffer, {DataInterfaceName}_VertexToCurveBuffer));
+}
+
+float ReadCurveOffsetPoint_{DataInterfaceName}(uint CurveIndex)
+{
+	return ReadCurveData(CurveIndex).PointIndex;
+}
+
+float ReadCurveNumPoint_{DataInterfaceName}(uint CurveIndex)
+{
+	return ReadCurveData(CurveIndex).PointCount;
+}
+

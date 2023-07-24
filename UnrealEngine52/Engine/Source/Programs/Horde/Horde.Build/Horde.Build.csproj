@@ -1,0 +1,132 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+    <AssemblyName>Horde.Build</AssemblyName>
+    <DocumentationFile>Horde.Build.xml</DocumentationFile>
+    <ApplicationIcon>HordeServer.ico</ApplicationIcon>
+    <RunAnalyzersDuringBuild>False</RunAnalyzersDuringBuild>
+    <Configurations>Debug;Release;Analyze</Configurations>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Analyze|AnyCPU' ">
+    <RunAnalyzersDuringBuild>True</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <DocumentationFile></DocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.AutoScaling" Version="3.7.100" />
+    <PackageReference Include="AWSSDK.CloudWatch" Version="3.7.100" />
+    <PackageReference Include="AWSSDK.EC2" Version="3.7.100" />
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="3.7.2" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.100" />
+    <PackageReference Include="AWSSDK.SecurityToken" Version="3.7.100" />
+    <PackageReference Include="Datadog.Trace.OpenTracing" Version="2.14.0" />
+    <PackageReference Include="DogStatsD-CSharp-Client" Version="7.0.1" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.49.0" />
+    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.49.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.49.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.50.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="JetBrains.Profiler.SelfApi" Version="2.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Cookies" Version="2.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="6.0.10" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="6.0.10" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="6.0.10" />
+    <PackageReference Include="Microsoft.AspNetCore.SpaServices.Extensions" Version="6.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="6.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="6.0.0" />
+    <PackageReference Include="MongoDB.Driver" Version="2.18.0" />
+    <PackageReference Include="OpenTracing" Version="0.12.1" />
+    <PackageReference Include="OpenTracing.Contrib.Grpc" Version="0.4.0" />
+    <PackageReference Include="Polly" Version="7.2.3" />
+    <PackageReference Include="Polly.Extensions.Http" Version="3.0.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="6.0.1" />
+    <PackageReference Include="Serilog.Enrichers.OpenTracing" Version="0.0.2" />
+    <PackageReference Include="Serilog.Exceptions.Grpc" Version="8.4.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="5.0.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="4.1.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageReference Include="SerilogAnalyzer" Version="0.15.0" />
+    <PackageReference Include="SharpZipLib" Version="1.4.0" />
+    <PackageReference Include="StackExchange.Redis" Version="2.6.70" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
+    <PackageReference Include="System.Linq.Async" Version="6.0.1" />
+    <PackageReference Include="TimeZoneConverter" Version="6.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\Shared\EpicGames.Horde.Common\Protos\**\*.*">
+      <Link>Protos\%(RecursiveDir)%(FileName)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="HordeServer.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\horde\horde_rpc.proto" ProtoRoot="Protos" GrpcServices="Server" />
+    <Protobuf Include="Protos\horde\horde_rpc_messages.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\log_rpc.proto" ProtoRoot="Protos" GrpcServices="Server" />
+    <Protobuf Include="Protos\horde\log_rpc_messages.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\agent_status.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\bucket_id.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\event_severity.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\io_hash.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\jobstep_outcome.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\jobstep_state.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\label_change.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\lease_outcome.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\lease_state.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\namespace_id.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\priority.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\qualified_ref_id.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\common\ref_id.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\messages\agent_capabilities.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\messages\agent_requirements.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\messages\agent_workspace.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\messages\lease.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\compute_task.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\compute_task_v2.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\conform_task.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\job_task.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\restart_task.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\shutdown_task.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\horde\tasks\upgrade_task.proto" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\grpc\health\v1\health.proto" ProtoRoot="Protos" GrpcServices="Server" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\EpicGames.AspNet\EpicGames.AspNet.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.BuildGraph\EpicGames.BuildGraph.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Core\EpicGames.Core.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Horde\EpicGames.Horde.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.IoHash\EpicGames.IoHash.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Perforce.Managed\EpicGames.Perforce.Managed.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Perforce\EpicGames.Perforce.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Redis\EpicGames.Redis.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Serialization\EpicGames.Serialization.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Slack\EpicGames.Slack.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\ThirdParty\**" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <Link>ThirdParty/%(RecursiveDir)/%(Filename)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Defaults\ue5.project.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

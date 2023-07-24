@@ -1,0 +1,4 @@
+../../../Templates/TP_BlankBP/manifest.json
+../../../Templates/TP_BlankBP/Config/config.ini
+../../../Templates/TP_BlankBP/Media/TP_BlankBP.png
+../../../Templates/TP_BlankBP/Media/TP_BlankBP_Preview.png

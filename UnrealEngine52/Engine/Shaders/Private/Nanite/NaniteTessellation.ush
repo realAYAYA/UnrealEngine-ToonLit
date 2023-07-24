@@ -1,0 +1,394 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "NaniteRasterizationCommon.ush"
+#include "NaniteRasterizer.ush"
+#include "NaniteAttributeDecode.ush"
+
+// Material includes
+#include "NaniteVertexFactory.ush"
+
+
+#define TESS			0//NANITE_PIXEL_PROGRAMMABLE && MATERIALBLENDING_MASKED
+
+ByteAddressBuffer TessellationTable_Offsets;
+ByteAddressBuffer TessellationTable_Verts;
+ByteAddressBuffer TessellationTable_Indexes;
+
+#if TESS
+
+float3 GetTessFactors( FNaniteView NaniteView, float3 PointView[3] )
+{
+	// Back face cull
+	//float3x3 M = { PointView[0], PointView[1], PointView[2] };
+	//bool bVisible = determinant( M ) > 0;
+
+	// Verts are in view space
+	float3 TessFactors = float3(
+		length( PointView[0] - PointView[1] ) / ( PointView[0].z + PointView[1].z ),
+		length( PointView[1] - PointView[2] ) / ( PointView[1].z + PointView[2].z ),
+		length( PointView[2] - PointView[0] ) / ( PointView[2].z + PointView[0].z ) );
+
+	bool bOrtho = NaniteView.ViewToClip[3][3] >= 1;
+	if( bOrtho )
+	{
+		TessFactors = float3(
+			length( PointView[0] - PointView[1] ),
+			length( PointView[1] - PointView[2] ),
+			length( PointView[2] - PointView[0] ) );
+		TessFactors *= 2;
+	}
+
+	//TessFactors *= 2 * NaniteView.LODScale * View.GeneralPurposeTweak;
+	TessFactors *= NaniteView.ViewToClip[1][1] * NaniteView.ViewSizeAndInvSize.y / View.GeneralPurposeTweak;
+	
+	return TessFactors;
+}
+
+#define THREADGROUP_SIZE	32//SWRASTER_NUM_THREADS
+
+#include "../WorkDistribution.ush"
+
+struct FDiceTask
+{
+	FRaster			Raster;
+	FMaterialShader	Shader;
+	uint			PixelValue;
+	uint2			VisualizeValues;
+	
+#if 1//NANITE_VERT_REUSE_BATCH
+	FNaniteTransformedVert	Vert;
+#endif
+
+	uint	PatchData;
+	uint	TessellationPattern;
+
+	// Vertex cache
+	//uint	FirstVert;
+	//uint	NumCached;
+
+	void		Create( float3 TessFactors, uint3 VertIndexes, uint TriIndex, inout uint NumVerts, inout uint NumTris );
+	FDiceTask	CreateLocalTask( uint SourceIndex );
+	void		Run( uint LocalItemIndex );
+
+	FRasterTri	GetTriangle_UniformSnap( uint TriIndex );
+	FRasterTri	GetTriangle_Table( uint TriIndex );
+	
+	float4		TransformTessellatedVert( uint2 TableOffsets, uint VertIndex );
+};
+
+void FDiceTask::Create( float3 TessFactors, uint3 VertIndexes, uint TriIndex, inout uint NumVerts, inout uint NumTris )
+{
+#if 0
+	TessFactors = clamp( ceil( TessFactors ), 1, 64 );
+
+	float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
+
+	TessellationPattern  = uint( TessFactors.x ) << 0;
+	TessellationPattern |= uint( TessFactors.y ) << 10;
+	TessellationPattern |= uint( TessFactors.z ) << 20;
+
+	NumTris = uint( MaxTessFactor * MaxTessFactor );
+	NumVerts = ( MaxTessFactor + 1 ) * ( MaxTessFactor + 2 ) / 2;
+#else
+	const float TableMax = 8;
+	TessFactors = clamp( ceil( TessFactors ), 1, TableMax );
+
+	float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
+
+	// TessFactors in descending order to reduce size of table.
+	// Rotate patch so TessFactors.x == MaxTessFactor
+	if( TessFactors.y == MaxTessFactor )
+	{
+		VertIndexes = VertIndexes.yzx;
+		TessFactors = TessFactors.yzx;
+	}
+	else if( TessFactors.z == MaxTessFactor )
+	{
+		VertIndexes = VertIndexes.zxy;
+		TessFactors = TessFactors.zxy;
+	}
+
+	// Sorting can flip winding which we need to undo later.
+	bool bFlipWinding = false;
+	if( TessFactors.y < TessFactors.z )
+	{
+		VertIndexes.xy = VertIndexes.yx;
+		TessFactors.yz = TessFactors.zy;
+		bFlipWinding = true;
+	}
+
+	// TODO Don't need to swap values. Can change the shifts we use for packing.
+
+	TessellationPattern = uint(
+		TessFactors.x +
+		TessFactors.y * TableMax +
+		TessFactors.z * TableMax * TableMax -
+		(1 + TableMax + TableMax * TableMax) );
+
+	uint4 Offsets = TessellationTable_Offsets.Load4( 4*2 * TessellationPattern );
+	NumVerts = Offsets[2] - Offsets[0];
+	NumTris  = Offsets[3] - Offsets[1];
+
+	TessellationPattern |= bFlipWinding ? 0x1000 : 0;
+#endif
+
+	PatchData  = VertIndexes.x << 0;
+	PatchData |= VertIndexes.y << 8;
+	PatchData |= VertIndexes.z << 16;
+	PatchData |= TriIndex << 24;
+}
+
+
+FDiceTask FDiceTask::CreateLocalTask( uint SourceIndex )
+{
+#if 0	// "this" is broken: https://github.com/microsoft/DirectXShaderCompiler/issues/4914
+	FDiceTask LocalTask = this;
+#else
+	FDiceTask LocalTask;
+	LocalTask.Raster			= Raster;
+	LocalTask.Shader			= Shader;
+	LocalTask.PixelValue		= PixelValue;
+	LocalTask.VisualizeValues	= VisualizeValues;
+#endif
+	LocalTask.PatchData				= WaveReadLaneAt( PatchData, SourceIndex );
+	LocalTask.TessellationPattern	= WaveReadLaneAt( TessellationPattern, SourceIndex );
+	//LocalTask.FirstVert				= WaveReadLaneAt( FirstVert, SourceIndex );
+
+	uint3 PatchVertIndexes;
+	PatchVertIndexes.x = ( LocalTask.PatchData >>  0 ) & 0xff;
+	PatchVertIndexes.y = ( LocalTask.PatchData >>  8 ) & 0xff;
+	PatchVertIndexes.z = ( LocalTask.PatchData >> 16 ) & 0xff;
+
+	FNaniteTransformedTri TransformedTri = MakeTransformedNaniteTriangle( Vert, PatchVertIndexes );
+	LocalTask.Shader.TransformedTri = TransformedTri;	// TODO mutable. This is weird
+
+	return LocalTask;
+}
+
+void FDiceTask::Run( uint LocalItemIndex )
+{
+	//FRasterTri Tri = GetTriangle_UniformSnap( LocalItemIndex );
+	FRasterTri Tri = GetTriangle_Table( LocalItemIndex );
+
+	if( Tri.bIsValid )
+	{
+		uint PatchIndex = PatchData >> 24;
+
+	#if VIRTUAL_TEXTURE_TARGET && NANITE_LATE_VSM_PAGE_TRANSLATION
+		if (!Raster.bSinglePage)
+		{
+			TNaniteWritePixel< FMaterialShader, FCachedPageTable > NaniteWritePixel = { Raster, Shader, PixelValue | PatchIndex, VisualizeValues };
+			RasterizeTri_Rect( Tri, NaniteWritePixel );
+		}
+		else
+	#endif
+		{
+			TNaniteWritePixel< FMaterialShader > NaniteWritePixel = { Raster, Shader, PixelValue | PatchIndex, VisualizeValues };
+		#if VISUALIZE
+			NaniteWritePixel.VisualizeValues.x = LocalItemIndex;
+		#endif
+			//Shader.TransformedTri = TransformedTri;	// FIXME this should be the diced tri not the patch
+				
+			RasterizeTri_Rect( Tri, NaniteWritePixel );
+		}
+	}
+}
+
+FRasterTri FDiceTask::GetTriangle_UniformSnap( uint TriIndex )
+{
+	uint3 TessFactors;
+	TessFactors.x = ( TessellationPattern >>  0 ) & 1023;
+	TessFactors.y = ( TessellationPattern >> 10 ) & 1023;
+	TessFactors.z = ( TessellationPattern >> 20 ) & 1023;
+
+	float4 Verts[3];
+	
+	/*
+		Starts from top point. Adds rows of verts and corresponding rows of tri strips.
+
+		|\
+	row |\|\
+		|\|\|\
+		column
+	*/
+
+	// Find largest tessellation with NumTris <= TriIndex. These are the preceding tris before this row.
+	uint TriRow = (uint)floor( sqrt( (float)TriIndex ) );
+	uint TriCol = TriIndex - TriRow * TriRow;
+	/*
+		Vert order:
+		0    0__1
+		|\   \  |
+		| \   \ |  <= flip triangle
+		|__\   \|
+		2   1   2
+	*/
+	uint FlipTri = TriCol & 1;
+	uint VertCol = TriCol >> 1;
+
+	float2 VertRowCol[] =
+	{
+		{ TriRow,		VertCol		},
+		{ TriRow + 1,	VertCol + 1	},
+		{ TriRow + 1,	VertCol		},
+	};
+	VertRowCol[1].x -= FlipTri;
+	VertRowCol[2].y += FlipTri;
+
+	float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
+	float InvTess = rcp( MaxTessFactor );
+
+	UNROLL
+	for( uint i = 0; i < 3; i++ )
+	{
+		/*
+			b0
+			|\
+		t2  | \  t0
+			|__\
+		   b2   b1
+			 t1
+		*/
+		float3 Barycentrics;
+		Barycentrics.x = MaxTessFactor - VertRowCol[i].x;
+		Barycentrics.y = VertRowCol[i].y;
+		Barycentrics.z = VertRowCol[i].x - VertRowCol[i].y;
+		Barycentrics *= InvTess;
+
+		if(0)
+		{
+			FLATTEN
+			if( Barycentrics.x > Barycentrics.y && Barycentrics.x > Barycentrics.z )
+				Barycentrics.x = 1.0 - Barycentrics.y - Barycentrics.z;
+			else if( Barycentrics.y > Barycentrics.z )
+				Barycentrics.y = 1.0 - Barycentrics.x - Barycentrics.z;
+			else
+				Barycentrics.z = 1.0 - Barycentrics.x - Barycentrics.y;
+		}
+
+		UNROLL
+		for( uint j = 0; j < 3; j++ )
+		{
+			if( any( Barycentrics < 1e-4 ) )
+				break;
+
+			const uint e0 = j;
+			const uint e1 = (1u << e0) & 3;
+
+			float Sum = Barycentrics[ e0 ] + Barycentrics[ e1 ];
+
+			Barycentrics[ e0 ] = min( Sum, round( Barycentrics[ e0 ] * TessFactors[j] ) / TessFactors[j] );
+			Barycentrics[ e1 ] = Sum - Barycentrics[ e0 ];
+		}
+
+		// Round down from MaxTessFactor to TessFactor at the edges
+		UNROLL
+		for( uint j = 0; j < 3; j++ )
+		{
+			const uint e0 = j;
+			const uint e1 = (1u << e0) & 3;
+
+			// Am I on this edge?
+			if( Barycentrics[ e0 ] + Barycentrics[ e1 ] > 0.9999 )
+			{
+				// Snap toward min barycentric means snapping mirrors. Adjacent patches will thus match.
+				uint MinIndex = Barycentrics[ e0 ] <  Barycentrics[ e1 ] ? e0 : e1;
+				uint MaxIndex = Barycentrics[ e0 ] >= Barycentrics[ e1 ] ? e0 : e1;
+
+				Barycentrics[ MinIndex ] = round( Barycentrics[ MinIndex ] * TessFactors[j] ) / TessFactors[j];
+				Barycentrics[ MaxIndex ] = 1.0 - Barycentrics[ MinIndex ];
+			}
+		}
+
+		Verts[i] = CalculateSubpixelCoordinates( Raster, Shader.EvaluateDomain( Barycentrics ) );
+	}
+
+	return SetupTriangle< NANITE_SUBPIXEL_SAMPLES, !NANITE_TWO_SIDED >( Raster.ScissorRect, Verts );
+}
+
+
+float4 FDiceTask::TransformTessellatedVert( uint2 TableOffsets, uint VertIndex )
+{
+	uint BarycentricsEncoded = TessellationTable_Verts.Load( 4 * ( TableOffsets.x + VertIndex ) );
+
+	const float BarycentricMax = (1 << 15);
+
+	float3 Barycentrics;
+	Barycentrics.x = BarycentricsEncoded & 0xffff;
+	Barycentrics.y = BarycentricsEncoded >> 16;
+	Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
+	Barycentrics  /= BarycentricMax;
+
+	return CalculateSubpixelCoordinates( Raster, Shader.EvaluateDomain( Barycentrics ) );
+}
+
+//groupshared float3			VertexCache[ THREADGROUP_SIZE ];
+//#define VertCache(x)		VertexCache[ QueueOffset + ( (x) & ( LaneCount - 1 ) ) ]
+
+FRasterTri FDiceTask::GetTriangle_Table( uint TriIndex )
+{
+	uint2 TableOffsets	= TessellationTable_Offsets.Load2( 4*2 * ( TessellationPattern & 0xfff ) );
+	uint  PackedIndexes	= TessellationTable_Indexes.Load( 4 * ( TableOffsets.y + TriIndex ) );
+
+	uint3 VertIndexes;
+	VertIndexes[0] = ( PackedIndexes >>  0 ) & 1023;
+	VertIndexes[1] = ( PackedIndexes >> 10 ) & 1023;
+	VertIndexes[2] = ( PackedIndexes >> 20 ) & 1023;
+			
+	// Sorting TessFactors might have flipped the patch winding.
+	bool bFlipWinding = TessellationPattern > 0xfff;
+	if( bFlipWinding )
+		VertIndexes.yz = VertIndexes.zy;
+	
+	float4 Verts[3];
+	
+#if 0
+	// Grab what's there for this triangle before updating cache. Otherwise cache would need to be double size.
+	bool3 VertRead = false;
+
+	UNROLL
+	for( uint k = 0; k < 3; k++ )
+	{
+		if( FirstVert + VertIndexes[k] < NumCached )
+		{
+			Verts[k] = VertCache( FirstVert + VertIndexes[k] );
+			VertRead[k] = true;
+		}
+	}
+
+	GroupMemoryBarrier();
+			
+	bool bNewVertex = PackedIndexes & (1 << 30);
+	if( bNewVertex )
+	{
+		uint MaxVertIndex = max3( VertIndexes.x, VertIndexes.y, VertIndexes.z );
+
+		VertCache( FirstVert + MaxVertIndex ) = TransformTessellatedVert( TableOffsets, MaxVertIndex );
+	}
+			
+	GroupMemoryBarrier();
+
+	NumCached += WaveActiveCountBits( bNewVertex );		//FIXME this increments LocalTask.NumCached which goes no where.
+
+	UNROLL
+	for( uint k = 0; k < 3; k++ )
+	{
+		if( !VertRead[k] )
+			Verts[k] = VertCache( FirstVert + VertIndexes[k] );
+	}
+#else
+	UNROLL
+	for( uint i = 0; i < 3; i++ )
+	{
+		Verts[i] = TransformTessellatedVert( TableOffsets, VertIndexes[i] );
+	}
+#endif
+
+	return SetupTriangle< NANITE_SUBPIXEL_SAMPLES, !NANITE_TWO_SIDED >( Raster.ScissorRect, Verts );
+}
+
+#endif

@@ -1,0 +1,29 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+uint {DataInterfaceName}_NumVertices;
+uint {DataInterfaceName}_NumTriangles;
+uint {DataInterfaceName}_IndexBufferStart;
+uint {DataInterfaceName}_InputStreamStart;
+StructuredBuffer<int> {DataInterfaceName}_VertexToEdgeBuffer;
+StructuredBuffer<int> {DataInterfaceName}_EdgeToTwinEdgeBuffer;
+
+uint ReadNumVertices_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumVertices;
+}
+
+uint ReadNumTriangles_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumTriangles;
+}
+
+int ReadEdge_{DataInterfaceName}(uint VertexIndex)
+{
+	return {DataInterfaceName}_VertexToEdgeBuffer[VertexIndex + {DataInterfaceName}_InputStreamStart] - {DataInterfaceName}_IndexBufferStart;
+}
+
+int ReadTwinEdge_{DataInterfaceName}(uint EdgeIndex)
+{
+	int TwinEdge = {DataInterfaceName}_EdgeToTwinEdgeBuffer[EdgeIndex + {DataInterfaceName}_IndexBufferStart];
+	return TwinEdge == -1 ? -1 : TwinEdge - {DataInterfaceName}_IndexBufferStart;
+}

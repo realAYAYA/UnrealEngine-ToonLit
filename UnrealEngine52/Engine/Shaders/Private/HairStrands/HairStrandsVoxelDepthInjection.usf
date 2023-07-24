@@ -1,0 +1,179 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneTextureParameters.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../ShaderPrint.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsVoxelPageCommon.ush"
+#include "HairStrandsDeepShadowCommonStruct.ush"
+
+#include "HairStrandsVoxelPageCommon.ush"
+
+#if SHADER_DEPTH_INJECTION
+float4x4 CPU_TranslatedWorldToClip;
+
+float2 OutputResolution;
+uint MacroGroupId;
+uint AtlasSlotIndex;
+
+float3 LightDirection;
+uint bIsDirectional;
+float3 TranslatedLightPosition;
+uint bIsGPUDriven;
+
+StructuredBuffer<FDeepShadowViewInfo> DeepShadowViewInfoBuffer;
+
+void MainVS(
+	uint VertexId : SV_VertexID,
+	out float4 OutPosition : SV_POSITION,
+	out float3 OutTranslatedWorldPosition : WORLD_POSITION)
+{
+	const FPackedVirtualVoxelNodeDesc PackedNode = VirtualVoxel.NodeDescBuffer[MacroGroupId];
+	const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(PackedNode, VirtualVoxel.PageResolution);
+
+	// Move this to an actual vertex/index buffer
+	const float3 Min = NodeDesc.TranslatedWorldMinAABB;
+	const float3 Max = NodeDesc.TranslatedWorldMaxAABB;
+
+	const float3 Center = (Min + Max) * 0.5f;
+	const float3 Extent = (Max - Min) * 0.5f;
+
+	const float3 Position0 = Center + float3(-Extent.x, -Extent.y, -Extent.z);
+	const float3 Position1 = Center + float3(+Extent.x, -Extent.y, -Extent.z);
+	const float3 Position2 = Center + float3(+Extent.x, +Extent.y, -Extent.z);
+	const float3 Position3 = Center + float3(-Extent.x, +Extent.y, -Extent.z);
+	const float3 Position4 = Center + float3(-Extent.x, -Extent.y, +Extent.z);
+	const float3 Position5 = Center + float3(+Extent.x, -Extent.y, +Extent.z);
+	const float3 Position6 = Center + float3(+Extent.x, +Extent.y, +Extent.z);
+	const float3 Position7 = Center + float3(-Extent.x, +Extent.y, +Extent.z);
+
+	float3 TranslatedWorldPosition = 0;
+	switch (VertexId)
+	{
+	case  0: TranslatedWorldPosition = Position0; break;
+	case  1: TranslatedWorldPosition = Position1; break;
+	case  2: TranslatedWorldPosition = Position2; break;
+	case  3: TranslatedWorldPosition = Position0; break;
+	case  4: TranslatedWorldPosition = Position2; break;
+	case  5: TranslatedWorldPosition = Position3; break;
+
+	case  6: TranslatedWorldPosition = Position4; break;
+	case  7: TranslatedWorldPosition = Position5; break;
+	case  8: TranslatedWorldPosition = Position6; break;
+	case  9: TranslatedWorldPosition = Position4; break;
+	case 10: TranslatedWorldPosition = Position6; break;
+	case 11: TranslatedWorldPosition = Position7; break;
+
+	case 12: TranslatedWorldPosition = Position0; break;
+	case 13: TranslatedWorldPosition = Position1; break;
+	case 14: TranslatedWorldPosition = Position5; break;
+	case 15: TranslatedWorldPosition = Position0; break;
+	case 16: TranslatedWorldPosition = Position5; break;
+	case 17: TranslatedWorldPosition = Position4; break;
+
+	case 18: TranslatedWorldPosition = Position2; break;
+	case 19: TranslatedWorldPosition = Position3; break;
+	case 20: TranslatedWorldPosition = Position7; break;
+	case 21: TranslatedWorldPosition = Position2; break;
+	case 22: TranslatedWorldPosition = Position7; break;
+	case 23: TranslatedWorldPosition = Position6; break;
+
+	case 24: TranslatedWorldPosition = Position1; break;
+	case 25: TranslatedWorldPosition = Position2; break;
+	case 26: TranslatedWorldPosition = Position6; break;
+	case 27: TranslatedWorldPosition = Position1; break;
+	case 28: TranslatedWorldPosition = Position6; break;
+	case 29: TranslatedWorldPosition = Position5; break;
+
+	case 30: TranslatedWorldPosition = Position3; break;
+	case 31: TranslatedWorldPosition = Position0; break;
+	case 32: TranslatedWorldPosition = Position4; break;
+	case 33: TranslatedWorldPosition = Position3; break;
+	case 34: TranslatedWorldPosition = Position4; break;
+	case 35: TranslatedWorldPosition = Position7; break;
+	}
+
+	float4x4 TranslatedWorldToClipMatrix = CPU_TranslatedWorldToClip;
+	if (bIsGPUDriven)
+	{
+		FDeepShadowViewInfo DeepShadowViewInfo = DeepShadowViewInfoBuffer[AtlasSlotIndex];
+		TranslatedWorldToClipMatrix = DeepShadowViewInfo.TranslatedWorldToClipScaledBiased;
+	}
+
+	OutTranslatedWorldPosition = TranslatedWorldPosition;
+	OutPosition = mul(float4(TranslatedWorldPosition, 1), TranslatedWorldToClipMatrix);
+}
+
+#define VOXEL_TRAVERSAL_DEBUG_PAGEOCCUPANCY 0
+//#define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR_MIPMAP
+#define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR
+#include "HairStrandsVoxelPageTraversal.ush"
+
+void MainPS(
+	in float4 InPosition : SV_POSITION,
+	in float3 InTranslatedWorldPosition : WORLD_POSITION,
+	out float OutDepth : SV_DEPTH)
+{
+	const float2 PixelCoord = InPosition.xy;
+	const float2 UV = PixelCoord / float2(OutputResolution); // todo view rect offset
+
+	const float DistanceThreshold = 1000;
+	const bool bDebugEnabled = false;
+	const float3 SampleRandom = GetHairVoxelJitter(PixelCoord, View.StateFrameIndexMod8, VirtualVoxel.JitterMode);
+
+	const float3 TracingDirection = bIsDirectional ? LightDirection : normalize(InTranslatedWorldPosition - TranslatedLightPosition);
+	const float3 TranslatedWP0 = InTranslatedWorldPosition;
+	const float3 TranslatedWP1 = InTranslatedWorldPosition + TracingDirection * DistanceThreshold;
+
+	FVirtualVoxelCommonDesc CommonDesc;
+	CommonDesc.PageCountResolution = VirtualVoxel.PageCountResolution;
+	CommonDesc.PageTextureResolution = VirtualVoxel.PageTextureResolution;
+	CommonDesc.PageResolution = VirtualVoxel.PageResolution;
+	CommonDesc.PageResolutionLog2 = VirtualVoxel.PageResolutionLog2;
+
+	const FPackedVirtualVoxelNodeDesc PackedNode = VirtualVoxel.NodeDescBuffer[MacroGroupId];
+	const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(PackedNode, VirtualVoxel.PageResolution);
+
+	FHairTraversalSettings TraversalSettings = InitHairTraversalSettings();
+	TraversalSettings.DensityScale = VirtualVoxel.DensityScale;
+	TraversalSettings.CountThreshold = 0.9f; // GetOpaqueVoxelValue();
+	TraversalSettings.DistanceThreshold = DistanceThreshold;
+	TraversalSettings.bDebugEnabled = bDebugEnabled;
+	TraversalSettings.SteppingScale = VirtualVoxel.SteppingScale_Shadow;
+	TraversalSettings.Random = SampleRandom;
+	TraversalSettings.TanConeAngle = 0;
+	TraversalSettings.bIsPrimaryRay = true;
+	TraversalSettings.bUseOpaqueVisibility = true;
+	TraversalSettings.PixelRadius = -1;
+	TraversalSettings.ForcedMip = -1;
+
+	const FHairTraversalResult TraversalResult = ComputeHairCountVirtualVoxel(
+		TranslatedWP0,
+		TranslatedWP1,
+		CommonDesc,
+		NodeDesc,
+		VirtualVoxel.PageIndexBuffer,
+		VirtualVoxel.PageIndexOccupancyBuffer,
+		VirtualVoxel.PageTexture,
+		TraversalSettings);
+	bool bIsValid = TraversalResult.HairCount > 0;
+
+	if (bIsValid)
+	{
+		float4x4 TranslatedWorldToClipMatrix = CPU_TranslatedWorldToClip;
+		if (bIsGPUDriven)
+		{
+			FDeepShadowViewInfo DeepShadowViewInfo = DeepShadowViewInfoBuffer[AtlasSlotIndex];
+			TranslatedWorldToClipMatrix = DeepShadowViewInfo.TranslatedWorldToClipScaledBiased;
+		}
+		const float3 HitP = TranslatedWP0 + normalize(TranslatedWP1 - TranslatedWP0) * TraversalResult.HitT;
+		float4 ClipP = mul(float4(HitP, 1), TranslatedWorldToClipMatrix);
+		OutDepth = ClipP.z /= ClipP.w;
+	}
+	else
+	{
+		discard;
+	}
+}
+#endif //SHADER_DEPTH_INJECTION

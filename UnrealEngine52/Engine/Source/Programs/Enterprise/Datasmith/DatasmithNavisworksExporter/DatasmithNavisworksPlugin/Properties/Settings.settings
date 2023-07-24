@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="DatasmithNavisworks.Properties" GeneratedClassName="Settings">
+  <Profiles />
+  <Settings>
+    <Setting Name="MergeLevel" Type="System.Int32" Scope="User">
+      <Value Profile="(Default)">0</Value>
+    </Setting>
+    <Setting Name="Origin" Type="System.Decimal[]" Scope="User">
+      <Value Profile="(Default)">&lt;?xml version="1.0" encoding="utf-16"?&gt;
+&lt;ArrayOfDecimal xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"&gt;
+  &lt;decimal&gt;0&lt;/decimal&gt;
+  &lt;decimal&gt;0&lt;/decimal&gt;
+  &lt;decimal&gt;0&lt;/decimal&gt;
+&lt;/ArrayOfDecimal&gt;</Value>
+    </Setting>
+  </Settings>
+</SettingsFile>

@@ -1,0 +1,13 @@
+// STRUCT_SPECIFIER(<specifier name>)
+//
+// Must be listed such that the strings are in lexicographical order!
+
+// [[ IncludeTool: Inline ]] // Markup to tell IncludeTool that this file is state changing and cannot be optimized out.
+
+STRUCT_SPECIFIER(Atomic)
+STRUCT_SPECIFIER(HasDefaults)
+STRUCT_SPECIFIER(HasNoOpConstructor)
+STRUCT_SPECIFIER(Immutable)
+STRUCT_SPECIFIER(IsAlwaysAccessible)
+STRUCT_SPECIFIER(IsCoreType)
+STRUCT_SPECIFIER(NoExport)

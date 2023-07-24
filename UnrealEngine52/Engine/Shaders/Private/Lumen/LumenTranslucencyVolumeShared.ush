@@ -1,0 +1,85 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenTranslucencyShared.usf
+=============================================================================*/
+
+#include "LumenRadianceCacheInterpolation.ush"
+#include "../SHCommon.ush"
+
+// Temp version GUID to force rebuild of shaders using the FLumenTranslucencyLightingParameters
+// uniform buffer, until versioning of uniform buffer structs works properly.
+// GUID = 62C0F6D1-F9BB-46A8-9E0C-9E72345B722A
+
+bool IsLumenTranslucencyGIEnabled()
+{
+	return LumenGIVolumeStruct.TranslucencyGIGridSize.z > 0;
+}
+
+float3 ComputeTranslucencyGIVolumeUV(FLWCVector3 WorldPosition, FLWCInverseMatrix WorldToClip) 
+{
+	float4 NDCPosition = LWCMultiply(MakeLWCVector4(WorldPosition, 1.0f), WorldToClip);
+	NDCPosition.xy /= NDCPosition.w;
+	float NormalizedZSlice = log2(NDCPosition.w * LumenGIVolumeStruct.TranslucencyGIGridZParams.x + LumenGIVolumeStruct.TranslucencyGIGridZParams.y) * LumenGIVolumeStruct.TranslucencyGIGridZParams.z / (float)LumenGIVolumeStruct.TranslucencyGIGridSize.z;
+	return float3(NDCPosition.xy * float2(.5f, -.5f) + .5f, NormalizedZSlice);
+}
+
+FTwoBandSHVectorRGB GetTranslucencyGIVolumeLighting(FLWCVector3 WorldPosition, FLWCInverseMatrix WorldToClip, bool bTemporalFiltered)
+{
+	float3 VolumeUV = ComputeTranslucencyGIVolumeUV(WorldPosition, WorldToClip);
+
+	float3 AmbientLightingVector;
+	float3 DirectionalLightingVector;
+	
+	if (bTemporalFiltered)
+	{
+		AmbientLightingVector = Texture3DSampleLevel(LumenGIVolumeStruct.TranslucencyGIVolumeHistory0, LumenGIVolumeStruct.TranslucencyGIVolumeSampler, VolumeUV, 0).xyz;
+		DirectionalLightingVector = Texture3DSampleLevel(LumenGIVolumeStruct.TranslucencyGIVolumeHistory1, LumenGIVolumeStruct.TranslucencyGIVolumeSampler, VolumeUV, 0).xyz;
+	}
+	else
+	{
+		AmbientLightingVector = Texture3DSampleLevel(LumenGIVolumeStruct.TranslucencyGIVolume0, LumenGIVolumeStruct.TranslucencyGIVolumeSampler, VolumeUV, 0).xyz;
+		DirectionalLightingVector = Texture3DSampleLevel(LumenGIVolumeStruct.TranslucencyGIVolume1, LumenGIVolumeStruct.TranslucencyGIVolumeSampler, VolumeUV, 0).xyz;
+	}
+
+	// Reconstruct the SH coefficients based on what was encoded
+	FTwoBandSHVectorRGB TranslucentLighting;
+	TranslucentLighting.R.V.x = AmbientLightingVector.r;
+	TranslucentLighting.G.V.x = AmbientLightingVector.g;
+	TranslucentLighting.B.V.x = AmbientLightingVector.b;
+	float3 NormalizedAmbientColor = AmbientLightingVector.rgb / ( Luminance( AmbientLightingVector.rgb ) + 0.00001f );
+
+	// Scale the monochrome directional coefficients with the normalized ambient color as an approximation to the uncompressed values
+	TranslucentLighting.R.V.yzw = DirectionalLightingVector.rgb * NormalizedAmbientColor.r;
+	TranslucentLighting.G.V.yzw = DirectionalLightingVector.rgb * NormalizedAmbientColor.g;
+	TranslucentLighting.B.V.yzw = DirectionalLightingVector.rgb * NormalizedAmbientColor.b;
+	return TranslucentLighting;
+}
+
+bool UseFrontLayerReflection(float2 BufferUV, float SceneDepth)
+{
+	bool bValid = false;
+
+	#if TRANSLUCENT_WRITING_FRONT_LAYER_TRANSPARENCY
+	if (FrontLayerTranslucencyReflectionsStruct.Enabled > 0)
+	{
+		float SingleLayerDeviceZ = Texture2DSampleLevel(FrontLayerTranslucencyReflectionsStruct.SceneDepth, GlobalPointClampedSampler, BufferUV, 0.0f).x;
+		float DeviceZ = ConvertToDeviceZ(SceneDepth);
+		
+		if (abs(SingleLayerDeviceZ - DeviceZ) < FrontLayerTranslucencyReflectionsStruct.RelativeDepthThreshold)
+		{
+			bValid = true;
+		}
+	}
+	#endif
+
+	return bValid;
+}
+
+float3 SampleFrontLayerReflection(float2 BufferUV)
+{
+	const float3 Radiance = Texture2DSampleLevel(FrontLayerTranslucencyReflectionsStruct.Radiance, GlobalPointClampedSampler, BufferUV, 0.0f).xyz * View.OneOverPreExposure;
+	
+	// Constrast adjustment with mid-grey as 'anchor' point so that overall exposure don't change
+	return (pow(Radiance * (1.f / 0.18f), FrontLayerTranslucencyReflectionsStruct.Contrast) * 0.18f) * FrontLayerTranslucencyReflectionsStruct.SpecularScale;
+}

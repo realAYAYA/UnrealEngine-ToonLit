@@ -1,0 +1,63 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+#define SUPPORT_CONTACT_SHADOWS 0
+
+#include "/Engine/Generated/Material.ush"
+#include "../PositionReconstructionCommon.ush"
+#include "HeterogeneousVolumesLiveShadingUtils.ush"
+
+#ifndef THREADGROUP_SIZE_3D
+#define THREADGROUP_SIZE_3D 1
+#endif // THREADGROUP_SIZE_3D
+
+// Object data
+float4x4 LocalToWorld;
+float4x4 WorldToLocal;
+float3 LocalBoundsOrigin;
+float3 LocalBoundsExtent;
+int PrimitiveId;
+
+// Volume data
+int3 VolumeResolution;
+
+// Output
+RWTexture3D<float3> RWExtinctionTexture;
+RWTexture3D<float3> RWEmissionTexture;
+RWTexture3D<float3> RWAlbedoTexture;
+
+FPrimitiveSceneData GetPrimitiveData(FMaterialPixelParameters Parameters)
+{
+	return GetPrimitiveData(Parameters, LocalToWorld, WorldToLocal, LocalBoundsOrigin, LocalBoundsExtent);
+}
+
+[numthreads(THREADGROUP_SIZE_3D, THREADGROUP_SIZE_3D, THREADGROUP_SIZE_3D)]
+void HeterogeneousVolumesBakeMaterialCS(
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID
+)
+{
+	uint3 VoxelIndex = DispatchThreadId;
+	if (all(VoxelIndex < VolumeResolution))
+	{
+		float3 UVW = (VoxelIndex + 0.5) / float3(VolumeResolution);
+		float3 LocalBoundsMin = LocalBoundsOrigin - LocalBoundsExtent;
+		float3 LocalPosition = UVW * 2.0 * LocalBoundsExtent + LocalBoundsMin;
+		float3 WorldPosition = mul(float4(LocalPosition, 1.0), LocalToWorld).xyz;
+
+		// Setup evaluation context
+		FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
+		MaterialParameters.PrimitiveId = PrimitiveId;
+		MaterialParameters.AbsoluteWorldPosition = LWCPromote(WorldPosition);
+
+		// Evaluate material graph
+		FPixelMaterialInputs PixelMaterialInputs;
+		CalcPixelMaterialInputs(MaterialParameters, PixelMaterialInputs);
+
+		// Extract volume rendering coefficients
+		RWExtinctionTexture[VoxelIndex] = SampleExtinctionCoefficients(PixelMaterialInputs);
+		RWEmissionTexture[VoxelIndex] = SampleEmissive(PixelMaterialInputs);
+		RWAlbedoTexture[VoxelIndex] = SampleAlbedo(PixelMaterialInputs);
+	}
+}

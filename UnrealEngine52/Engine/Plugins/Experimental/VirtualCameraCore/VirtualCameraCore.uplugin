@@ -1,0 +1,137 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "VirtualCameraCore",
+	"Description": "Code for actors, components, and utilities for controlling and viewing cameras via physical devices. See VirtualCamera for content.",
+	"Category": "Virtual Production",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"EnabledByDefault": false,
+	"Modules": [
+		{
+			"Name": "PixelStreamingVCam",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault",
+			"PlatformAllowList": [ "Win64", "Linux" ],
+			"TargetDenyList": [ "Server" ]
+		},
+		{
+			"Name": "VCamBlueprintNodes",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "VCamCore",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformDenyList": [
+				"TVOS"
+			]
+		},
+		{
+			"Name": "VCamCoreEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformDenyList": [
+				"TVOS"
+			]
+		},
+		{
+			"Name": "VCamExtensions",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformDenyList": [
+				"TVOS"
+			]
+		},
+		{
+			"Name": "VCamExtensionsEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformDenyList": [
+				"TVOS"
+			]
+		},
+		{
+			"Name": "VCamInput",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault",
+			"PlatformDenyList": [
+				"TVOS"
+			]
+		},
+		{
+			"Name": "VirtualCamera",
+			"Type": "Runtime",
+			"LoadingPhase": "PostDefault",
+			"PlatformAllowList": [
+				"Win64",
+				"Linux"
+			]
+		},
+		{
+			"Name": "VirtualCameraEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "MediaIOFramework",
+			"Enabled": true
+		},
+		{
+			"Name": "MediaFrameworkUtilities",
+			"Enabled": true
+		},
+		{
+			"Name": "RemoteSession",
+			"Enabled": true
+		},
+		{
+			"Name": "LevelSequenceEditor",
+			"Enabled": true
+		},
+		{
+			"Name": "Takes",
+			"Enabled": true
+		},
+		{
+			"Name": "VirtualProductionUtilities",
+			"Enabled": true
+		},
+		{
+			"Name": "VPRoles",
+			"Enabled": true
+		},
+		{
+			"Name": "LiveLink",
+			"Enabled": true
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		},
+		{
+			"Name": "CommonUI",
+			"Enabled": true
+		},
+		{
+			"Name": "PixelStreaming",
+			"Enabled": true,
+			"PlatformAllowList" : [ "Win64", "Linux" ]
+		},
+		{
+			"Name" : "PixelCapture",
+			"Enabled": true,
+            "PlatformAllowList" : [ "Win64", "Linux" ]
+		}
+	]
+}

@@ -1,0 +1,62 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+
+// SRV/UAV variables
+Buffer<float> ASRV;
+Buffer<float> BSRV;
+Buffer<float> CSRV;
+float BetaTimesCScalar;
+RWBuffer<float> OutputUAV;
+// Input variables
+float Alpha;
+float Beta;
+uint OutputRows;
+uint OutputColumns;
+uint AColsOrBRows;
+uint AStrideX;
+uint AStrideY;
+uint BStrideX;
+uint BStrideY;
+uint CSizeX;
+uint CSizeY;
+uint OutputStride;
+
+[numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, 1)]
+void GemmCS(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint XOutput = DispatchThreadID.x;
+	const uint YOutput = DispatchThreadID.y;
+
+	if (YOutput >= OutputRows || XOutput >= OutputColumns)
+	{
+		return;
+	}
+
+	// Column major
+	// Loop over the rows of Output
+	//for (uint YOutput = 0; YOutput < OutputRows; ++YOutput)
+	{
+		// Loop over the columns of Output
+		//for (uint XOutput = 0; XOutput < OutputColumns; ++XOutput)
+		{
+			const uint OutputIndex = YOutput * OutputStride + XOutput; // Row-major
+			const uint CIndex = (YOutput % CSizeY) * CSizeX + (XOutput % CSizeX);
+#if GEMM_MODE == 0
+			OutputUAV[OutputIndex] = Beta * CSRV[CIndex];
+#elif GEMM_MODE == 1
+			OutputUAV[OutputIndex] = BetaTimesCScalar;
+#else
+			UNEXPECTED_CASE_FOR_GEMM_MODE_NOT_0_OR_1;
+#endif
+			// Update Output( YOutput,XOutput ) with the inner product of the ith row of A and the jth column of B
+			for (uint AColOrBRow = 0; AColOrBRow < AColsOrBRows; ++AColOrBRow)
+			{
+				// C(i,j) += A(i,p) * B(p,j);
+				const uint AIndex = YOutput * AStrideY + AColOrBRow * AStrideX; // Row-major (AStrideX == 1) or column-major (AStrideY == 1)
+				const uint BIndex = AColOrBRow * BStrideY + XOutput * BStrideX; // Row-major (BStrideX == 1) or column-major (BStrideY == 1)
+				OutputUAV[OutputIndex] += Alpha * ASRV[AIndex] * BSRV[BIndex];
+			}
+		}
+	}
+}

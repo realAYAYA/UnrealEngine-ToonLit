@@ -1,0 +1,86 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneTextureParameters.ush"
+#include "../PositionReconstructionCommon.ush" 
+#include "HairStrandsVoxelPageCommon.ush"
+
+#if SHADER_INJECTOPAQUE_VIRTUALVOXEL
+uint MacroGroupId;
+float2 SceneDepthResolution;
+uint VoxelBiasCount;
+uint VoxelMarkCount;
+RWTexture3D<uint> OutPageTexture;
+
+uint		 VirtualVoxelParams_PageIndexCount;
+uint		 VirtualVoxelParams_PageResolution;
+uint3		 VirtualVoxelParams_PageCountResolution;
+Buffer<uint> VirtualVoxelParams_PageIndexBuffer;
+Buffer<uint4>VirtualVoxelParams_PageIndexCoordBuffer;
+StructuredBuffer<FPackedVirtualVoxelNodeDesc> VirtualVoxelParams_NodeDescBuffer;
+
+#define GROUP_SIZE 64
+[numthreads(1, 1, GROUP_SIZE)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint  MaxDispatchCountPerDim = 65535u;
+	const uint  AllocatedPageIndex  = DispatchThreadId.x + DispatchThreadId.y * MaxDispatchCountPerDim;
+	const uint  LinearVoxelCoord = DispatchThreadId.z;
+	const uint3 VoxelCoordOffset = IndexToCoord(LinearVoxelCoord, VirtualVoxelParams_PageResolution.xxx);
+
+	const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(VirtualVoxelParams_NodeDescBuffer[MacroGroupId], VirtualVoxelParams_PageResolution);
+
+	const uint4 PageIndexCoord = VirtualVoxelParams_PageIndexCoordBuffer[NodeDesc.PageIndexOffset + AllocatedPageIndex];
+	const uint  LinearPageIndexCoord = CoordToIndex(PageIndexCoord.xyz, NodeDesc.PageIndexResolution, NodeDesc.PageIndexOffset);
+
+	// PageIndexCoord have invalid .w component if we run out of available page during the allocation
+	const bool bIsValid = LinearPageIndexCoord < VirtualVoxelParams_PageIndexCount && PageIndexCoord.w != INVALID_MACRO_GROUP_ID;
+	if (bIsValid)
+	{
+		const uint PageIndex = VirtualVoxelParams_PageIndexBuffer.Load(LinearPageIndexCoord);
+		if (PageIndex != INVALID_VOXEL_PAGE_INDEX)
+		{
+			const uint3 VoxelCoordBase = PageIndexCoord.xyz * VirtualVoxelParams_PageResolution;
+			const uint3 VoxelCoord = VoxelCoordBase + VoxelCoordOffset;
+			const float3 TranslatedWorldPosition = VoxelCoord / float3(NodeDesc.VirtualResolution) * (NodeDesc.TranslatedWorldMaxAABB - NodeDesc.TranslatedWorldMinAABB) + NodeDesc.TranslatedWorldMinAABB;
+
+			float4 ClipPos = mul(float4(TranslatedWorldPosition, 1), PrimaryView.TranslatedWorldToClip);
+			ClipPos /= ClipPos.w;
+			const float DepthBias = VoxelBiasCount * NodeDesc.VoxelWorldSize;
+			const float VoxelDepth = ConvertFromDeviceZ(ClipPos.z) - DepthBias;
+			float2 SceneUV = float2(0.5f*(ClipPos.x + 1), 1 - 0.5f*(ClipPos.y + 1));
+			SceneUV = ViewportUVToBufferUV(SceneUV);
+			const float2 ScenePixelCoord = SceneUV * SceneDepthResolution;
+
+			const bool bIsOnScreen = SceneUV.x >= 0 && SceneUV.x < 1 && SceneUV.y >= 0 && SceneUV.y < 1;
+			if (!bIsOnScreen)
+				return;
+
+			const float ClosestDepth = ConvertFromDeviceZ(SceneDepthTexture.Load(uint3(ScenePixelCoord, 0)).x);
+			const float3 SceneTranslatedWorldPos = ReconstructTranslatedWorldPositionFromDepth(SceneUV, ClosestDepth);
+			
+			const bool bIsInVolume =
+				SceneTranslatedWorldPos.x >= NodeDesc.TranslatedWorldMinAABB.x && SceneTranslatedWorldPos.x < NodeDesc.TranslatedWorldMaxAABB.x&&
+				SceneTranslatedWorldPos.y >= NodeDesc.TranslatedWorldMinAABB.y && SceneTranslatedWorldPos.y < NodeDesc.TranslatedWorldMaxAABB.y&&
+				SceneTranslatedWorldPos.z >= NodeDesc.TranslatedWorldMinAABB.z && SceneTranslatedWorldPos.z < NodeDesc.TranslatedWorldMaxAABB.z;
+
+			if (!bIsInVolume)
+				return;
+
+			// Inject opaque depth on a thin layer (Dist < DistThreshold) for avoiding weird projection
+			if (ClosestDepth < VoxelDepth && abs(ClosestDepth - VoxelDepth) < VoxelMarkCount * NodeDesc.VoxelWorldSize)
+			{
+				const uint3 VoxelPageIndexCoord = VoxelCoord / VirtualVoxelParams_PageResolution;
+				const uint3 VoxelIndexCoordBase = VoxelPageIndexCoord * VirtualVoxelParams_PageResolution;
+				const uint3 VoxelPageOffset = VoxelCoord - VoxelIndexCoordBase;
+
+				const uint3 PageCoord = IndexToCoord(PageIndex, VirtualVoxelParams_PageCountResolution);
+				const int3 VoxelPageBase = PageCoord * VirtualVoxelParams_PageResolution;
+				const int3 VoxelPageCoord = VoxelPageOffset + VoxelPageBase;
+
+				InterlockedOr(OutPageTexture[VoxelPageCoord], VOXEL_OPAQUE_ADD);
+			}
+		}
+	}
+}
+#endif

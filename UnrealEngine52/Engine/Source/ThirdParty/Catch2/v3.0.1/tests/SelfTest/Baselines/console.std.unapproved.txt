@@ -1,0 +1,1429 @@
+[1;33mFilters: ~[!nonportable]~[!benchmark]~[approvals] *
+[0mRandomness seeded to: 1
+Before Global - Default Group
+Before Global - Apples
+Before Global - Oranges
+Before All - Default Group
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[0;37mSelfTest.exe is a Catch2 v<version> host application.
+Run with -? for options
+
+[0m-------------------------------------------------------------------------------
+[0m#1455 - INFO and WARN can start with a linebreak
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0mwarning:
+
+This warning message starts with a linebreak
+
+This would not be caught previously
+Nor would this
+-------------------------------------------------------------------------------
+[0m#1514: stderr/stdout is not captured in tests aborted by an exception
+[0m-------------------------------------------------------------------------------
+Tricky.tests.cpp:<line number>
+...............................................................................
+
+Tricky.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  1514
+
+-------------------------------------------------------------------------------
+[0m#748 - captures with unexpected exceptions
+[0m[0m  outside assertions
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with messages:
+  answer := 42
+  expected exception
+
+-------------------------------------------------------------------------------
+[0m#748 - captures with unexpected exceptions
+[0m[0m  inside REQUIRE_NOTHROW
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_NOTHROW( thisThrows() )
+[0mdue to unexpected exception with messages:
+  answer := 42
+  expected exception
+
+-------------------------------------------------------------------------------
+[0m#835 -- errno should not be touched by Catch2
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( f() == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0m
+-------------------------------------------------------------------------------
+[0m'Not' checks that should fail
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( false != false )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( true != true )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( !true )
+[0mwith expansion:
+[1;33m  false
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_FALSE( true )
+[0mwith expansion:
+[1;33m  !true
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( !trueValue )
+[0mwith expansion:
+[1;33m  false
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_FALSE( trueValue )
+[0mwith expansion:
+[1;33m  !true
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( !(1 == 1) )
+[0mwith expansion:
+[1;33m  false
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_FALSE( 1 == 1 )
+[0m
+-------------------------------------------------------------------------------
+[0mA METHOD_AS_TEST_CASE based test run that fails
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( s == "world" )
+[0mwith expansion:
+[1;33m  "hello" == "world"
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD based test run that fails - Template_Foo
+<float>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>::m_a.size() == 1 )
+[0mwith expansion:
+[1;33m  0 == 1
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD based test run that fails - Template_Foo
+<int>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>::m_a.size() == 1 )
+[0mwith expansion:
+[1;33m  0 == 1
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD based test run that fails - std::vector
+<float>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>::m_a.size() == 1 )
+[0mwith expansion:
+[1;33m  0 == 1
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD based test run that fails - std::vector
+<int>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>::m_a.size() == 1 )
+[0mwith expansion:
+[1;33m  0 == 1
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD_SIG based test run that fails -
+Template_Foo_2<float, 6>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>{}.m_a.size() < 2 )
+[0mwith expansion:
+[1;33m  6 < 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD_SIG based test run that fails -
+Template_Foo_2<int, 2>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>{}.m_a.size() < 2 )
+[0mwith expansion:
+[1;33m  2 < 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD_SIG based test run that fails - std::array
+<float, 6>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>{}.m_a.size() < 2 )
+[0mwith expansion:
+[1;33m  6 < 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_PRODUCT_TEST_CASE_METHOD_SIG based test run that fails - std::array
+<int, 2>
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture_2<TestType>{}.m_a.size() < 2 )
+[0mwith expansion:
+[1;33m  2 < 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_TEST_CASE_METHOD based test run that fails - double
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture<TestType>::m_a == 2 )
+[0mwith expansion:
+[1;33m  1.0 == 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_TEST_CASE_METHOD based test run that fails - float
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture<TestType>::m_a == 2 )
+[0mwith expansion:
+[1;33m  1.0f == 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_TEST_CASE_METHOD based test run that fails - int
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Template_Fixture<TestType>::m_a == 2 )
+[0mwith expansion:
+[1;33m  1 == 2
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_TEST_CASE_METHOD_SIG based test run that fails - 1
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Nttp_Fixture<V>::value == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_TEST_CASE_METHOD_SIG based test run that fails - 3
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Nttp_Fixture<V>::value == 0 )
+[0mwith expansion:
+[1;33m  3 == 0
+[0m
+-------------------------------------------------------------------------------
+[0mA TEMPLATE_TEST_CASE_METHOD_SIG based test run that fails - 6
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( Nttp_Fixture<V>::value == 0 )
+[0mwith expansion:
+[1;33m  6 == 0
+[0m
+-------------------------------------------------------------------------------
+[0mA TEST_CASE_METHOD based test run that fails
+[0m-------------------------------------------------------------------------------
+Class.tests.cpp:<line number>
+...............................................................................
+
+Class.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( m_a == 2 )
+[0mwith expansion:
+[1;33m  1 == 2
+[0m
+-------------------------------------------------------------------------------
+[0mA couple of nested sections followed by a failure
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  to infinity and beyond
+
+-------------------------------------------------------------------------------
+[0mA failing expression with a non streamable type is still captured
+[0m-------------------------------------------------------------------------------
+Tricky.tests.cpp:<line number>
+...............................................................................
+
+Tricky.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( &o1 == &o2 )
+[0mwith expansion:
+[1;33m  0x<hex digits> == 0x<hex digits>
+[0m
+Tricky.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( o1 == o2 )
+[0mwith expansion:
+[1;33m  {?} == {?}
+[0m
+-------------------------------------------------------------------------------
+[0mAn unchecked exception reports the line of the last assertion
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  {Unknown expression after the reported line}
+[0mdue to unexpected exception with message:
+  unexpected exception
+
+-------------------------------------------------------------------------------
+[0mContains string matcher
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), ContainsSubstring( "not there", Catch::CaseSensitive::No ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" contains: "not there" (case
+  insensitive)
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), ContainsSubstring( "STRING" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" contains: "STRING"
+[0m
+-------------------------------------------------------------------------------
+[0mCustom exceptions can be translated when testing for nothrow
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_NOTHROW( throwCustom() )
+[0mdue to unexpected exception with message:
+  custom exception - not std
+
+-------------------------------------------------------------------------------
+[0mCustom exceptions can be translated when testing for throwing as something else
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_THROWS_AS( throwCustom(), std::exception )
+[0mdue to unexpected exception with message:
+  custom exception - not std
+
+-------------------------------------------------------------------------------
+[0mCustom std-exceptions can be custom translated
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  custom std exception
+
+-------------------------------------------------------------------------------
+[0mEndsWith string matcher
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), EndsWith( "Substring" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" ends with: "Substring"
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), EndsWith( "this", Catch::CaseSensitive::No ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" ends with: "this" (case
+  insensitive)
+[0m
+-------------------------------------------------------------------------------
+[0mEquality checks that should fail
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven == 6 )
+[0mwith expansion:
+[1;33m  7 == 6
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven == 8 )
+[0mwith expansion:
+[1;33m  7 == 8
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven == 0 )
+[0mwith expansion:
+[1;33m  7 == 0
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one == Approx( 9.11f ) )
+[0mwith expansion:
+[1;33m  9.1f == Approx( 9.1099996567 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one == Approx( 9.0f ) )
+[0mwith expansion:
+[1;33m  9.1f == Approx( 9.0 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one == Approx( 1 ) )
+[0mwith expansion:
+[1;33m  9.1f == Approx( 1.0 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one == Approx( 0 ) )
+[0mwith expansion:
+[1;33m  9.1f == Approx( 0.0 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.double_pi == Approx( 3.1415 ) )
+[0mwith expansion:
+[1;33m  3.1415926535 == Approx( 3.1415 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello == "goodbye" )
+[0mwith expansion:
+[1;33m  "hello" == "goodbye"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello == "hell" )
+[0mwith expansion:
+[1;33m  "hello" == "hell"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello == "hello1" )
+[0mwith expansion:
+[1;33m  "hello" == "hello1"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello.size() == 6 )
+[0mwith expansion:
+[1;33m  5 == 6
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( x == Approx( 1.301 ) )
+[0mwith expansion:
+[1;33m  1.3 == Approx( 1.301 )
+[0m
+-------------------------------------------------------------------------------
+[0mEquals string matcher
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), Equals( "this string contains 'ABC' as a substring" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" equals: "this string contains
+  'ABC' as a substring"
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), Equals( "something else", Catch::CaseSensitive::No ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" equals: "something else" (case
+  insensitive)
+[0m
+-------------------------------------------------------------------------------
+[0mException matchers that fail
+[0m[0m  No exception
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THROWS_MATCHES( doesNotThrow(), SpecialException, ExceptionMatcher{ 1 } )
+[0mbecause no exception was thrown where one was expected:
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_THROWS_MATCHES( doesNotThrow(), SpecialException, ExceptionMatcher{ 1 } )
+[0mbecause no exception was thrown where one was expected:
+
+-------------------------------------------------------------------------------
+[0mException matchers that fail
+[0m[0m  Type mismatch
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THROWS_MATCHES( throwsAsInt( 1 ), SpecialException, ExceptionMatcher{ 1 } )
+[0mdue to unexpected exception with message:
+  Unknown exception
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_THROWS_MATCHES( throwsAsInt( 1 ), SpecialException, ExceptionMatcher{ 1 } )
+[0mdue to unexpected exception with message:
+  Unknown exception
+
+-------------------------------------------------------------------------------
+[0mException matchers that fail
+[0m[0m  Contents are wrong
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THROWS_MATCHES( throwsSpecialException( 3 ), SpecialException, ExceptionMatcher{ 1 } )
+[0mwith expansion:
+[1;33m  SpecialException::what special exception has value of 1
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_THROWS_MATCHES( throwsSpecialException( 4 ), SpecialException, ExceptionMatcher{ 1 } )
+[0mwith expansion:
+[1;33m  SpecialException::what special exception has value of 1
+[0m
+-------------------------------------------------------------------------------
+[0mExpected exceptions that don't throw or unexpected exceptions fail the test
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THROWS_AS( thisThrows(), std::string )
+[0mdue to unexpected exception with message:
+  expected exception
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THROWS_AS( thisDoesntThrow(), std::domain_error )
+[0mbecause no exception was thrown where one was expected:
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_NOTHROW( thisThrows() )
+[0mdue to unexpected exception with message:
+  expected exception
+
+-------------------------------------------------------------------------------
+[0mFAIL aborts the test
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  This is a failure
+
+-------------------------------------------------------------------------------
+[0mFAIL does not require an argument
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mFAIL_CHECK does not abort the test
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  This is a failure
+
+Message.tests.cpp:<line number>: [0mwarning:
+  This message appears in the output
+
+-------------------------------------------------------------------------------
+[0mINFO and WARN do not abort tests
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0mwarning:
+  this is a warning
+
+-------------------------------------------------------------------------------
+[0mINFO gets logged on failure
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( a == 1 )
+[0mwith expansion:
+[1;33m  2 == 1
+[0mwith messages:
+  this message should be logged
+  so should this
+
+-------------------------------------------------------------------------------
+[0mINFO gets logged on failure, even if captured before successful assertions
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( a == 1 )
+[0mwith expansion:
+[1;33m  2 == 1
+[0mwith messages:
+  this message may be logged later
+  this message should be logged
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( a == 0 )
+[0mwith expansion:
+[1;33m  2 == 0
+[0mwith messages:
+  this message may be logged later
+  this message should be logged
+  and this, but later
+
+-------------------------------------------------------------------------------
+[0mINFO is reset for each loop
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( i < 10 )
+[0mwith expansion:
+[1;33m  10 < 10
+[0mwith messages:
+  current counter 10
+  i := 10
+
+-------------------------------------------------------------------------------
+[0mInequality checks that should fail
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven != 7 )
+[0mwith expansion:
+[1;33m  7 != 7
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one != Approx( 9.1f ) )
+[0mwith expansion:
+[1;33m  9.1f != Approx( 9.1000003815 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.double_pi != Approx( 3.1415926535 ) )
+[0mwith expansion:
+[1;33m  3.1415926535 != Approx( 3.1415926535 )
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello != "hello" )
+[0mwith expansion:
+[1;33m  "hello" != "hello"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello.size() != 5 )
+[0mwith expansion:
+[1;33m  5 != 5
+[0m
+-------------------------------------------------------------------------------
+[0mMatchers can be composed with both && and || - failing
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), ( ContainsSubstring( "string" ) || ContainsSubstring( "different" ) ) && ContainsSubstring( "random" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" ( ( contains: "string" or
+  contains: "different" ) and contains: "random" )
+[0m
+-------------------------------------------------------------------------------
+[0mMatchers can be negated (Not) with the ! operator - failing
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), !ContainsSubstring( "substring" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" not contains: "substring"
+[0m
+-------------------------------------------------------------------------------
+[0mMayfail test case with nested sections
+[0m[0m  A
+  1
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mMayfail test case with nested sections
+[0m[0m  A
+  2
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mMayfail test case with nested sections
+[0m[0m  B
+  1
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mMayfail test case with nested sections
+[0m[0m  B
+  2
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mMismatching exception messages failing the test
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE_THROWS_WITH( thisThrows(), "should fail" )
+[0mwith expansion:
+[1;33m  "expected exception" equals: "should fail"
+[0m
+-------------------------------------------------------------------------------
+[0mNice descriptive name
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0mwarning:
+  This one ran
+
+-------------------------------------------------------------------------------
+[0mNon-std exceptions can be translated
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  custom exception
+
+-------------------------------------------------------------------------------
+[0mOrdering comparison checks that should fail
+[0m-------------------------------------------------------------------------------
+Condition.tests.cpp:<line number>
+...............................................................................
+
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven > 7 )
+[0mwith expansion:
+[1;33m  7 > 7
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven < 7 )
+[0mwith expansion:
+[1;33m  7 < 7
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven > 8 )
+[0mwith expansion:
+[1;33m  7 > 8
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven < 6 )
+[0mwith expansion:
+[1;33m  7 < 6
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven < 0 )
+[0mwith expansion:
+[1;33m  7 < 0
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven < -1 )
+[0mwith expansion:
+[1;33m  7 < -1
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven >= 8 )
+[0mwith expansion:
+[1;33m  7 >= 8
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.int_seven <= 6 )
+[0mwith expansion:
+[1;33m  7 <= 6
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one < 9 )
+[0mwith expansion:
+[1;33m  9.1f < 9
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one > 10 )
+[0mwith expansion:
+[1;33m  9.1f > 10
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.float_nine_point_one > 9.2 )
+[0mwith expansion:
+[1;33m  9.1f > 9.2
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello > "hello" )
+[0mwith expansion:
+[1;33m  "hello" > "hello"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello < "hello" )
+[0mwith expansion:
+[1;33m  "hello" < "hello"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello > "hellp" )
+[0mwith expansion:
+[1;33m  "hello" > "hellp"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello > "z" )
+[0mwith expansion:
+[1;33m  "hello" > "z"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello < "hellm" )
+[0mwith expansion:
+[1;33m  "hello" < "hellm"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello < "a" )
+[0mwith expansion:
+[1;33m  "hello" < "a"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello >= "z" )
+[0mwith expansion:
+[1;33m  "hello" >= "z"
+[0m
+Condition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( data.str_hello <= "a" )
+[0mwith expansion:
+[1;33m  "hello" <= "a"
+[0m
+-------------------------------------------------------------------------------
+[0mOutput from all sections is reported
+[0m[0m  one
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  Message from section one
+
+-------------------------------------------------------------------------------
+[0mOutput from all sections is reported
+[0m[0m  two
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  Message from section two
+
+-------------------------------------------------------------------------------
+[0mReconstruction should be based on stringification: #914
+[0m-------------------------------------------------------------------------------
+Decomposition.tests.cpp:<line number>
+...............................................................................
+
+Decomposition.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( truthy(false) )
+[0mwith expansion:
+[1;33m  Hey, its truthy!
+[0m
+-------------------------------------------------------------------------------
+[0mRegex string matcher
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), Matches( "this STRING contains 'abc' as a substring" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" matches "this STRING contains
+  'abc' as a substring" case sensitively
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), Matches( "contains 'abc' as a substring" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" matches "contains 'abc' as a
+  substring" case sensitively
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), Matches( "this string contains 'abc' as a" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" matches "this string contains
+  'abc' as a" case sensitively
+[0m
+A string sent directly to stdout
+A string sent directly to stderr
+A string sent to stderr via clog
+Message from section one
+Message from section two
+-------------------------------------------------------------------------------
+[0mStartsWith string matcher
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), StartsWith( "This String" ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" starts with: "This String"
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( testStringForMatching(), StartsWith( "string", Catch::CaseSensitive::No ) )
+[0mwith expansion:
+[1;33m  "this string contains 'abc' as a substring" starts with: "string" (case
+  insensitive)
+[0m
+-------------------------------------------------------------------------------
+[0mTabs and newlines show in output
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( s1 == s2 )
+[0mwith expansion:
+[1;33m  "if ($b == 10) {
+  		$a	= 20;
+  }"
+  ==
+  "if ($b == 10) {
+  	$a = 20;
+  }
+  "
+[0m
+-------------------------------------------------------------------------------
+[0mTesting checked-if 2
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mTesting checked-if 3
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m
+-------------------------------------------------------------------------------
+[0mThrown string literals are translated
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  For some reason someone is throwing a string literal!
+
+-------------------------------------------------------------------------------
+[0mUnexpected exceptions can be translated
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  3.14
+
+-------------------------------------------------------------------------------
+[0mVector Approx matcher -- failing
+[0m[0m  Empty and non empty vectors are not approx equal
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( empty, Approx( t1 ) )
+[0mwith expansion:
+[1;33m  {  } is approx: { 1.0, 2.0 }
+[0m
+-------------------------------------------------------------------------------
+[0mVector Approx matcher -- failing
+[0m[0m  Just different vectors
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v1, Approx( v2 ) )
+[0mwith expansion:
+[1;33m  { 2.0, 4.0, 6.0 } is approx: { 1.0, 3.0, 5.0 }
+[0m
+-------------------------------------------------------------------------------
+[0mVector matchers that fail
+[0m[0m  Contains (element)
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v, VectorContains( -1 ) )
+[0mwith expansion:
+[1;33m  { 1, 2, 3 } Contains: -1
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( empty, VectorContains( 1 ) )
+[0mwith expansion:
+[1;33m  {  } Contains: 1
+[0m
+-------------------------------------------------------------------------------
+[0mVector matchers that fail
+[0m[0m  Contains (vector)
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( empty, Contains( v ) )
+[0mwith expansion:
+[1;33m  {  } Contains: { 1, 2, 3 }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v, Contains( v2 ) )
+[0mwith expansion:
+[1;33m  { 1, 2, 3 } Contains: { 1, 2, 4 }
+[0m
+-------------------------------------------------------------------------------
+[0mVector matchers that fail
+[0m[0m  Equals
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v, Equals( v2 ) )
+[0mwith expansion:
+[1;33m  { 1, 2, 3 } Equals: { 1, 2 }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v2, Equals( v ) )
+[0mwith expansion:
+[1;33m  { 1, 2 } Equals: { 1, 2, 3 }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( empty, Equals( v ) )
+[0mwith expansion:
+[1;33m  {  } Equals: { 1, 2, 3 }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v, Equals( empty ) )
+[0mwith expansion:
+[1;33m  { 1, 2, 3 } Equals: {  }
+[0m
+-------------------------------------------------------------------------------
+[0mVector matchers that fail
+[0m[0m  UnorderedEquals
+[0m-------------------------------------------------------------------------------
+Matchers.tests.cpp:<line number>
+...............................................................................
+
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( v, UnorderedEquals( empty ) )
+[0mwith expansion:
+[1;33m  { 1, 2, 3 } UnorderedEquals: {  }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( empty, UnorderedEquals( v ) )
+[0mwith expansion:
+[1;33m  {  } UnorderedEquals: { 1, 2, 3 }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( permuted, UnorderedEquals( v ) )
+[0mwith expansion:
+[1;33m  { 1, 3 } UnorderedEquals: { 1, 2, 3 }
+[0m
+Matchers.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK_THAT( permuted, UnorderedEquals( v ) )
+[0mwith expansion:
+[1;33m  { 3, 1 } UnorderedEquals: { 1, 2, 3 }
+[0m
+-------------------------------------------------------------------------------
+[0mWhen unchecked exceptions are thrown directly they are always failures
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  unexpected exception
+
+-------------------------------------------------------------------------------
+[0mWhen unchecked exceptions are thrown during a CHECK the test should continue
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( thisThrows() == 0 )
+[0mdue to unexpected exception with message:
+  expected exception
+
+-------------------------------------------------------------------------------
+[0mWhen unchecked exceptions are thrown during a REQUIRE the test should abort
+fail
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( thisThrows() == 0 )
+[0mdue to unexpected exception with message:
+  expected exception
+
+-------------------------------------------------------------------------------
+[0mWhen unchecked exceptions are thrown from functions they are always failures
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( thisThrows() == 0 )
+[0mdue to unexpected exception with message:
+  expected exception
+
+-------------------------------------------------------------------------------
+[0mWhen unchecked exceptions are thrown from sections they are always failures
+[0m[0m  section name
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  unexpected exception
+
+-------------------------------------------------------------------------------
+[0mcheckedElse, failing
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( testCheckedElse( false ) )
+[0mwith expansion:
+[1;33m  false
+[0m
+-------------------------------------------------------------------------------
+[0mcheckedIf, failing
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( testCheckedIf( false ) )
+[0mwith expansion:
+[1;33m  false
+[0m
+loose text artifact
+-------------------------------------------------------------------------------
+[0mjust failure
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  Previous info should not be seen
+
+-------------------------------------------------------------------------------
+[0mjust failure after unscoped info
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mexplicitly with message:
+  previous unscoped info SHOULD not be seen
+
+-------------------------------------------------------------------------------
+[0mlooped SECTION tests
+[0m[0m  b is currently: 0
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( b > a )
+[0mwith expansion:
+[1;33m  0 > 1
+[0m
+-------------------------------------------------------------------------------
+[0mlooped SECTION tests
+[0m[0m  b is currently: 1
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( b > a )
+[0mwith expansion:
+[1;33m  1 > 1
+[0m
+-------------------------------------------------------------------------------
+[0mlooped tests
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( ( fib[i] % 2 ) == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0mwith message:
+  Testing if fib[0] (1) is even
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( ( fib[i] % 2 ) == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0mwith message:
+  Testing if fib[1] (1) is even
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( ( fib[i] % 2 ) == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0mwith message:
+  Testing if fib[3] (3) is even
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( ( fib[i] % 2 ) == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0mwith message:
+  Testing if fib[4] (5) is even
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( ( fib[i] % 2 ) == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0mwith message:
+  Testing if fib[6] (13) is even
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( ( fib[i] % 2 ) == 0 )
+[0mwith expansion:
+[1;33m  1 == 0
+[0mwith message:
+  Testing if fib[7] (21) is even
+
+-------------------------------------------------------------------------------
+[0mmix info, unscoped info and warning
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0mwarning:
+  and warn may mix
+
+Message.tests.cpp:<line number>: [0mwarning:
+  they are not cleared after warnings
+
+-------------------------------------------------------------------------------
+[0mmore nested SECTION tests
+[0m[0m  doesn't equal
+  equal
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( a == b )
+[0mwith expansion:
+[1;33m  1 == 2
+[0m
+-------------------------------------------------------------------------------
+[0mnot prints unscoped info from previous failures
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( false )
+[0mwith message:
+  this SHOULD be seen
+
+-------------------------------------------------------------------------------
+[0mprints unscoped info on failure
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( false )
+[0mwith messages:
+  this SHOULD be seen
+  this SHOULD also be seen
+
+-------------------------------------------------------------------------------
+[0mprints unscoped info only for the first assertion
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( false )
+[0mwith message:
+  this SHOULD be seen only ONCE
+
+-------------------------------------------------------------------------------
+[0msend a single char to INFO
+[0m-------------------------------------------------------------------------------
+Misc.tests.cpp:<line number>
+...............................................................................
+
+Misc.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( false )
+[0mwith message:
+  3
+
+-------------------------------------------------------------------------------
+[0msends information to INFO
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  REQUIRE( false )
+[0mwith messages:
+  hi
+  i := 7
+
+-------------------------------------------------------------------------------
+[0mstacks unscoped info in loops
+[0m-------------------------------------------------------------------------------
+Message.tests.cpp:<line number>
+...............................................................................
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( false )
+[0mwith messages:
+  Count 1 to 3...
+  1
+  2
+  3
+
+Message.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0m[0;36m  CHECK( false )
+[0mwith messages:
+  Count 4 to 6...
+  4
+  5
+  6
+
+-------------------------------------------------------------------------------
+[0mthrown std::strings are translated
+[0m-------------------------------------------------------------------------------
+Exception.tests.cpp:<line number>
+...............................................................................
+
+Exception.tests.cpp:<line number>: [0m[1;31mFAILED:
+[0mdue to unexpected exception with message:
+  Why would you throw a std::string?
+
+After All - Default Group
+Before All - Apples
+Before Each - Apples
+1 Apples group
+After Each - Apples
+Before Each - Apples
+2 Apples group
+After Each - Apples
+Before Each - Apples
+3 Apples group
+After Each - Apples
+After All - Apples
+Before All - Oranges
+Before Each - Oranges
+1 Oranges group
+After Each - Oranges
+Before Each - Oranges
+2 Oranges group
+After Each - Oranges
+Before Each - Oranges
+3 Oranges group
+After Each - Oranges
+After All - Oranges
+After Global - Default Group
+After Global - Apples
+After Global - Oranges
+[1;31m=============[1;33m=[0m[0m[0;32m=================================================================[0m
+test cases:  397[0;37m | [0;32m 321 passed[0m[0m[0;37m | [1;31m 69 failed[0m[0m[0;37m | [1;33m 7 failed as expected[0m[0m
+assertions: 2233[0;37m | [0;32m2078 passed[0m[0m[0;37m | [1;31m128 failed[0m[0m[0;37m | [1;33m27 failed as expected[0m[0m
+

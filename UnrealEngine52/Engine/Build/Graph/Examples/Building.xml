@@ -1,0 +1,15 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+	<Agent Name="Properties Agent" Type="CompileWin64">
+
+		<!-- Compile UnrealPak -->
+		<Node Name="Compile UnrealPak">
+			<Compile Target="UnrealPak" Platform="Win64" Configuration="Development" Tag="#UnrealPakFiles"/>
+			<Log Message="The following files are part of UnrealPak:" Files="#UnrealPakFiles"/>
+		</Node>
+		
+	</Agent>
+	
+	<Aggregate Name="Building Examples" Requires="Compile UnrealPak"/>
+</BuildGraph>

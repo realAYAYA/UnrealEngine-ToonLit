@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.3.32825.248
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnrealVS.2019", "UnrealVS.2019\UnrealVS.2019.csproj", "{C0EE3E24-0255-4D0E-9369-82247AD5E2DD}"
+EndProject
+Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "UnrealVS.Shared", "UnrealVS.Shared\UnrealVS.Shared.shproj", "{EBA9D441-80F1-4A49-87F0-4E2EC713A4F2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnrealVS.2022", "UnrealVS.2022\UnrealVS.2022.csproj", "{706654CD-5918-429F-970A-011916302127}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{9F62E546-30CC-4715-9EFE-4BBFC8B3FD7A}"
+	ProjectSection(SolutionItems) = preProject
+		ReleaseNotes.txt = ReleaseNotes.txt
+		UpdateInstructions.txt = UpdateInstructions.txt
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Unreal.TestAdapter", "Unreal.TestAdapter\Unreal.TestAdapter.csproj", "{2571AF3D-AFEE-4A45-B612-2795D5A5FE6B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C0EE3E24-0255-4D0E-9369-82247AD5E2DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C0EE3E24-0255-4D0E-9369-82247AD5E2DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C0EE3E24-0255-4D0E-9369-82247AD5E2DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0EE3E24-0255-4D0E-9369-82247AD5E2DD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{706654CD-5918-429F-970A-011916302127}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{706654CD-5918-429F-970A-011916302127}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{706654CD-5918-429F-970A-011916302127}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{706654CD-5918-429F-970A-011916302127}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2571AF3D-AFEE-4A45-B612-2795D5A5FE6B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2571AF3D-AFEE-4A45-B612-2795D5A5FE6B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2571AF3D-AFEE-4A45-B612-2795D5A5FE6B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2571AF3D-AFEE-4A45-B612-2795D5A5FE6B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {648A646E-29B5-4383-A23E-7754BA4CD43D}
+	EndGlobalSection
+	GlobalSection(SharedMSBuildProjectFiles) = preSolution
+		UnrealVS.Shared\UnrealVS.Shared.projitems*{706654cd-5918-429f-970a-011916302127}*SharedItemsImports = 4
+		UnrealVS.Shared\UnrealVS.Shared.projitems*{c0ee3e24-0255-4d0e-9369-82247ad5e2dd}*SharedItemsImports = 4
+		UnrealVS.Shared\UnrealVS.Shared.projitems*{eba9d441-80f1-4a49-87f0-4e2ec713a4f2}*SharedItemsImports = 13
+	EndGlobalSection
+EndGlobal

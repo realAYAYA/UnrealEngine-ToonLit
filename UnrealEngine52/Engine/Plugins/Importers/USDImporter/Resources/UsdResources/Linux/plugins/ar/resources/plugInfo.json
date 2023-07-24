@@ -1,0 +1,23 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "ArResolver": {},
+                    "ArDefaultResolver": {
+                        "bases": [
+                            "ArResolver"
+                        ],
+                        "implementsContexts": true
+                    },
+                    "ArPackageResolver": {}
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Linux/bin/x86_64-unknown-linux-gnu/libusd_ar.so", 
+            "Name": "ar", 
+            "ResourcePath": "resources", 
+            "Root": "..", 
+            "Type": "library"
+        }
+    ]
+}

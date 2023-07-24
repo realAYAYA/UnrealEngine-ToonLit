@@ -1,0 +1,21 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<!-- add us to the platform list-->
+	<!-- Linux not currently supported. Gauntlet PGO automation has not been implemented.
+	<Property Name="AllPGOPlatforms" Value="$(AllPGOPlatforms);Linux" If="ContainsItem('$(TargetPlatforms)', 'Linux', '+')"/>
+	-->
+
+	<!-- set platform-specific properties -->
+	<Property Name="PGOBinaryStagingPathLinux" Value="$(ProjectName)/Binaries/Linux/"/>
+	<Property Name="PGOProfileOutputLinux" Value="$(ProjectPath)/Build/Linux/PGO"/>
+	<Property Name="PGOProfileOutputFilterLinux" Value="*.profdata"/>
+	<Property Name="PGOProfileCommandLineLinux" Value=""/>
+	<Property Name="PGOCompileArgsLinux" Value=""/>
+	<Property Name="PGOCompileExtraBinariesLinux" Value=""/>
+
+	<!-- no special preprocessing required for this platform -->
+	<Macro Name="PGOPrepareBuildForProfilingLinux" Arguments="LocalStagingDir;Configuration"/>
+
+
+</BuildGraph>

@@ -1,0 +1,74 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="source\context.cpp">
+      <Filter>metrics_discovery_helper</Filter>
+    </ClCompile>
+    <ClCompile Include="source\equations.cpp">
+      <Filter>metrics_discovery_helper</Filter>
+    </ClCompile>
+    <ClCompile Include="source\values.cpp">
+      <Filter>metrics_discovery_helper</Filter>
+    </ClCompile>
+    <ClCompile Include="source\periodic_metrics.cpp">
+      <Filter>metrics_discovery_helper</Filter>
+    </ClCompile>
+    <ClCompile Include="source\range_metrics_dx11.cpp">
+      <Filter>metrics_discovery_helper</Filter>
+    </ClCompile>
+    <ClCompile Include="source\report_memory.cpp">
+      <Filter>metrics_discovery_helper</Filter>
+    </ClCompile>
+    <ClCompile Include="metrics-discovery\instrumentation\metrics_discovery\common\md_calculation.cpp">
+      <Filter>metrics-discovery</Filter>
+    </ClCompile>
+    <ClCompile Include="metrics-discovery\instrumentation\utils\common\iu_debug.c">
+      <Filter>metrics-discovery</Filter>
+    </ClCompile>
+    <ClCompile Include="metrics-discovery\instrumentation\utils\win\iu_std_win.cpp">
+      <Filter>metrics-discovery</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{58840be4-d7d9-409c-8426-5296da3bc957}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="metrics-discovery">
+      <UniqueIdentifier>{c673c3cd-ab73-41cb-9f8f-c7a4c5704cb5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="metrics_discovery_helper">
+      <UniqueIdentifier>{565a4093-b320-4f89-9f23-573e8ebe378e}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="metrics-discovery\inc\common\instrumentation\api\metrics_discovery_api.h">
+      <Filter>metrics-discovery</Filter>
+    </CustomBuild>
+    <CustomBuild Include="source\metrics_discovery_helper.h">
+      <Filter>metrics_discovery_helper</Filter>
+    </CustomBuild>
+    <CustomBuild Include="source\metrics_discovery_helper_dx11.h">
+      <Filter>metrics_discovery_helper</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="metrics-discovery\instrumentation\utils\common\inc\iu_debug.h">
+      <Filter>metrics-discovery</Filter>
+    </ClInclude>
+    <ClInclude Include="metrics-discovery\instrumentation\utils\common\inc\iu_std.h">
+      <Filter>metrics-discovery</Filter>
+    </ClInclude>
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_calculation.h">
+      <Filter>metrics-discovery</Filter>
+    </ClInclude>
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_debug.h">
+      <Filter>metrics-discovery</Filter>
+    </ClInclude>
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_utils.h">
+      <Filter>metrics-discovery</Filter>
+    </ClInclude>
+    <ClInclude Include="metrics-discovery\instrumentation\metrics_discovery\common\inc\md_types.h">
+      <Filter>metrics-discovery</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

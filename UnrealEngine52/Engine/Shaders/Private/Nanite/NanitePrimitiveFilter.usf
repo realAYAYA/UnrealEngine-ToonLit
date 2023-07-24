@@ -1,0 +1,93 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+#include "../ComputeShaderUtils.ush"
+
+#include "NaniteDataDecode.ush"
+
+uint NumPrimitives;
+uint HiddenFilterFlags;
+
+#if HAS_HIDDEN_PRIMITIVES_LIST
+uint NumHiddenPrimitives;
+Buffer<uint> HiddenPrimitivesList;
+#endif
+
+#if HAS_SHOW_ONLY_PRIMITIVES_LIST
+uint NumShowOnlyPrimitives;
+Buffer<uint> ShowOnlyPrimitivesList;
+#endif
+
+RWStructuredBuffer<uint> PrimitiveFilterBuffer;
+
+uint LowerBoundLoop(Buffer<uint> SearchBuffer, uint BufferCount, uint Key)
+{
+	uint Index = 0u;
+	uint Width = BufferCount >> 1u;
+	
+	LOOP
+	while (Width > 0u)
+	{
+		Index += (Key < SearchBuffer[Index + Width]) ? 0u : Width;
+		Width = Width >> 1u;
+	}
+	
+	return Index;
+}
+
+bool BinarySearchLoop(Buffer<uint> SearchBuffer, uint BufferCount, uint Key)
+{
+	uint Index = LowerBoundLoop(SearchBuffer, BufferCount, Key);
+	return SearchBuffer[Index] == Key;
+}
+
+uint GetNaniteFilterFlags(const FPrimitiveSceneData PrimitiveData)
+{
+	return (PrimitiveData.PackedNaniteFlags >> NANITE_IMPOSTER_INDEX_NUM_BITS);
+}
+
+[numthreads(64, 1, 1)]
+void PrimitiveFilter
+(
+	uint3 GroupId   : SV_GroupID,
+	uint GroupIndex : SV_GroupIndex
+)
+{
+	const uint PrimitiveId = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, 64);
+
+	// GPU Scene version of IsPrimitiveHidden() from SceneVisibility.cpp
+	if (PrimitiveId < NumPrimitives)
+	{
+		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(PrimitiveId);
+		const uint PrimitiveComponentId = PrimitiveData.PrimitiveComponentId;
+
+		// Allow arbitrary flag matching on the primitive (used for the ViewFamily's EngineShowFlags)
+		const uint NaniteFilterFlags = GetNaniteFilterFlags(PrimitiveData);
+		bool bHidden = ((NaniteFilterFlags & ~HiddenFilterFlags) != NaniteFilterFlags);
+
+	#if HAS_HIDDEN_PRIMITIVES_LIST
+		// If any primitives are explicitly hidden, remove them now.
+		BRANCH
+		if (!bHidden && NumHiddenPrimitives > 0)
+		{
+			bHidden = BinarySearchLoop(HiddenPrimitivesList, NumHiddenPrimitives, PrimitiveComponentId);
+		}
+	#endif
+
+	#if HAS_SHOW_ONLY_PRIMITIVES_LIST
+		// If the view has any show only primitives, hide everything else
+		BRANCH
+		if (!bHidden && NumShowOnlyPrimitives > 0)
+		{
+			bHidden = !BinarySearchLoop(ShowOnlyPrimitivesList, NumShowOnlyPrimitives, PrimitiveComponentId);
+		}
+	#endif
+
+		if (bHidden)
+		{
+			InterlockedOr(PrimitiveFilterBuffer[PrimitiveId >> 5u], BitFieldMaskU32(1u, PrimitiveId & 31u));
+		}
+	}
+}

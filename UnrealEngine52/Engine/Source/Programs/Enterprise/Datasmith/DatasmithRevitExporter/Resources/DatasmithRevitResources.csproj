@@ -1,0 +1,76 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+      None
+    </ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+    <TargetFrameworkProfile />
+  </PropertyGroup>
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{BC17D734-8F8F-44C1-A84E-AF0E616FBE9E}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>DatasmithRevitResources</RootNamespace>
+    <AssemblyName>DatasmithRevitResources</AssemblyName>
+    <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>TRACE;DEBUG;REVIT_API_2020</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <PostBuildEvent>set PUBLISH_DIR=$(ProjectDir)..\..\..\..\..\..\Binaries\Win64\Revit\Localization\
+xcopy "$(ProjectDir)$(OutputPath)fr" "%25PUBLISH_DIR%25"fr /Y /i
+xcopy "$(ProjectDir)$(OutputPath)de" "%25PUBLISH_DIR%25"de /Y /i
+xcopy "$(ProjectDir)$(OutputPath)es" "%25PUBLISH_DIR%25"es /Y /i
+xcopy "$(ProjectDir)$(OutputPath)ja" "%25PUBLISH_DIR%25"ja /Y /i
+xcopy "$(ProjectDir)$(OutputPath)ko" "%25PUBLISH_DIR%25"ko /Y /i
+xcopy "$(ProjectDir)$(OutputPath)pt" "%25PUBLISH_DIR%25"pt /Y /i
+xcopy "$(ProjectDir)$(OutputPath)zh" "%25PUBLISH_DIR%25"zh /Y /i</PostBuildEvent>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Strings.de.resx" />
+    <EmbeddedResource Include="Strings.es.resx" />
+    <EmbeddedResource Include="Strings.fr.resx">
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Strings.ja.resx" />
+    <EmbeddedResource Include="Strings.ko.resx" />
+    <EmbeddedResource Include="Strings.pt.resx" />
+    <EmbeddedResource Include="Strings.resx">
+      <Generator>PublicResXFileCodeGenerator</Generator>
+      <LastGenOutput>Strings.Designer.cs</LastGenOutput>
+      <CustomToolNamespace>DatasmithRevitResources</CustomToolNamespace>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Strings.zh.resx" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Strings.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Strings.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+  </ItemGroup>
+</Project>

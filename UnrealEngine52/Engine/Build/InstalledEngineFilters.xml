@@ -1,0 +1,641 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Engine/Build/Graph/Schema.xsd" >
+
+	<!-- List of patterns that should always be excluded when making an installed build. Filter the default list of exclusions to include confidential platforms if they're enabled. -->
+	<Property Name="ConfidentialExceptions" Value=""/>
+	<ForEach Name="RestrictedFolderName" Values="$(RestrictedFolderNames)">
+		<Expand Name="Platform_FilterRestrictedFolders"/>
+
+		<Do If="'$(RestrictedFolderName)' != ''">
+			<Property Name="ConfidentialExceptions" Value="$(ConfidentialExceptions);" If="'$(ConfidentialExceptions)' != ''"/>
+			<Property Name="ConfidentialExceptions" Value="$(ConfidentialExceptions).../$(RestrictedFolderName)/..."/>
+		</Do>
+	</ForEach>
+
+	<!-- List of file types to be stripped and signed for different platforms -->
+	<Property Name="Win64StripFilter" Value="*.pdb"/>
+	<Property Name="Win64StripExceptions" Value="Engine\Binaries\Win64\UnrealEditor*.pdb;Engine\Plugins\...\Binaries\Win64\UnrealEditor*.pdb"/>
+	<Property Name="MacStripFilter" Value="*.a;"/>
+	<Property Name="AndroidStripFilter" Value="*.a;*.so"/>
+	<Property Name="IOSStripFilter" Value="*.a;"/>
+	<Property Name="TVOSStripFilter" Value="*.a;"/>
+	<Property Name="LinuxStripFilter" Value="Engine\Binaries\Linux\*."/>
+	<Property Name="HoloLensStripFilter" Value="*.pdb"/>
+
+
+	<Property Name="WindowsSignFilter" Value="*.exe;*.dll"/>
+
+	<Property Name="PluginsExceptions">
+		Engine/Plugins/Enterprise/DatasmithCADImporter/...
+		Engine/Plugins/Enterprise/DatasmithIFCImporter/...
+		Engine/Plugins/Enterprise/DatasmithC4DImporter/...
+		Engine/Plugins/Enterprise/AxFImporter/...
+		Engine/Plugins/Enterprise/MDLImporter/...
+	</Property>
+	<Property Name="MacSignFilter" Value="*.dylib;*.app"/>
+	<Property Name="SignExceptions" Value=".../ThirdParty/..."/>
+
+	<!-- List of project to build Feature packs -->
+	<Property Name="ProjectsToFeaturePack">
+		TP_HandheldARBP
+		TP_ThirdPerson
+		TP_ThirdPersonBP
+		TP_FirstPerson
+		TP_FirstPersonBP
+		TP_TopDown
+		TP_TopDownBP
+		TP_VehicleAdvBP
+		TP_VirtualRealityBP
+	</Property>
+
+	<!-- List of projects to build DDC for -->
+	<Property Name="ProjectsToBuildDDC">
+		Templates/TP_AEC_ArchvisBP/TP_AEC_ArchvisBP.uproject
+		Templates/TP_AEC_BlankBP/TP_AEC_BlankBP.uproject
+		Templates/TP_AEC_CollabBP/TP_AEC_CollabBP.uproject
+		Templates/TP_AEC_ProdConfigBP/TP_AEC_ProdConfigBP.uproject
+		Templates/TP_FirstPersonBP/TP_FirstPersonBP.uproject
+		Templates/TP_HandheldARBP/TP_HandheldARBP.uproject
+		Templates/TP_AEC_HandheldARBP/TP_AEC_HandheldARBP.uproject
+		Templates/TP_MFG_HandheldARBP/TP_MFG_HandheldARBP.uproject
+		Templates/TP_MFG_CollabBP/TP_MFG_CollabBP.uproject
+		Templates/TP_MFG_ProdConfigBP/TP_MFG_ProdConfigBP.uproject
+		Templates/TP_PhotoStudioBP/TP_PhotoStudioBP.uproject
+		Templates/TP_ThirdPersonBP/TP_ThirdPersonBP.uproject
+		Templates/TP_TopDownBP/TP_TopDownBP.uproject
+		Templates/TP_VehicleAdvBP/TP_VehicleAdvBP.uproject
+		Templates/TP_VirtualRealityBP/TP_VirtualRealityBP.uproject
+		Templates/TP_SIM_BlankBP/TP_SIM_BlankBP.uproject
+		Samples/StarterContent/StarterContent.uproject
+	</Property>
+	<!-- Win64 specific DDC -->
+	<Property Name="ProjectsToBuildDDCWin64" Value="$(ProjectsToBuildDDC)">
+		Templates/TP_InCamVFXBP/TP_InCamVFXBP.uproject
+		Templates/TP_DMXBP/TP_DMXBP.uproject
+	</Property>
+	
+	<!-- Define Editor Filters -->
+	<Property Name="CopyEditorFilter">
+		<!-- This assembly is normally embedded into the UBT executable, but it can technically be rebuilt from an installed build -->
+		Engine/Binaries/ThirdParty/Newtonsoft/...
+		Engine/Binaries/ThirdParty/VisualStudio/...
+
+		<!-- In-editor documentation -->
+		Engine/Documentation/Source/Shared/...
+		Engine/Documentation/Extras/...
+
+		<!-- Content folders -->
+		Engine/Content/...
+
+		<!-- Plugins -->
+		Engine/Extras/ThirdPartyNotUE/SwitchboardThirdParty/...
+		Engine/Plugins/VirtualProduction/RemoteControlWebInterface/WebApp/...
+		Engine/Plugins/Experimental/Web/WebAPI/WebAPIGeneratorApp/...
+
+		<!-- Source code -->
+		Engine/Source/UnrealGame.Target.cs
+		Engine/Source/UnrealEditor.Target.cs
+
+		<!-- Starter content -->
+		Samples/StarterContent/Content/...
+
+		<!-- Templates -->
+
+		Templates/TemplateCategories.ini
+		Templates/Media/...
+
+		<!-- Game Templates -->
+		Templates/TP_Blank/...
+		Templates/TP_BlankBP/...
+		Templates/TP_HandheldARBP/...
+		Templates/TP_FirstPerson/...
+		Templates/TP_FirstPersonBP/...
+		Templates/TP_ThirdPerson/...
+		Templates/TP_ThirdPersonBP/...
+		Templates/TP_TopDown/...
+		Templates/TP_TopDownBP/...
+		Templates/TP_VehicleAdvBP/...
+		Templates/TP_VirtualRealityBP/...
+
+		<!-- Enterprise Templates -->
+		Templates/TP_AEC_BlankBP/...
+		Templates/TP_AEC_ArchvisBP/...
+		Templates/TP_PhotoStudioBP/...
+		Templates/TP_ME_BlankBP/...
+		Templates/TP_ME_VProdBP/...
+
+		Templates/TP_AEC_CollabBP/...
+		Templates/TP_MFG_CollabBP/...
+
+		Templates/TP_AEC_ProdConfigBP/...
+		Templates/TP_MFG_ProdConfigBP/...
+
+		Templates/TP_AEC_HandheldARBP/...
+		Templates/TP_MFG_HandheldARBP/...
+
+		Templates/TP_SIM_Blank/...
+		Templates/TP_SIM_BlankBP/...
+
+		<!-- Shared template resources -->
+		Templates/TemplateResources/...
+
+		<!-- Build files -->
+		Engine/Build/Build.version
+		Engine/Build/Target.cs.template
+		
+		<!-- Source code and demos for container images -->
+		Engine/Extras/Containers/...
+	</Property>
+	
+	<!-- Files which can exist under any engine or engine-platform directory -->
+	<Property Name="CopyEditorEngineOrPlatformFilter" Value="">
+		<!-- Config files -->
+		Config/...
+
+		<!-- Programs -->
+		Programs/...
+
+		<!-- Plugins -->
+		Plugins/....uplugin
+		Plugins/.../Content/...
+		Plugins/.../Config/...
+		Plugins/.../Resources/...
+		Plugins/.../Shaders/...
+		Plugins/.../Source/...
+		Plugins/.../Templates/...
+
+		<!-- Source code -->
+		Source/Runtime/...
+		Source/Developer/...
+		Source/Editor/...
+		Source/ThirdParty/Licenses/...
+		Source/Programs/AutomationTool/...
+		Source/Programs/AutomationToolLauncher/...
+		Source/Programs/Shared/...
+		Source/Programs/UnrealBuildTool/...
+		Source/Programs/UnrealHeaderTool/...
+
+		<!-- Third Party Software description files -->
+		.../*.tps
+
+		<!-- Shaders -->
+		Shaders/...
+	</Property>
+	
+	<!-- Projects to be compiled for UAT -->
+	<Property Name="AutomationToolPaths" Value="Engine/Source/Programs/AutomationTool/..."/>
+	
+	<!-- Platform extensions filter overrides -->
+	<Expand Name="Platform_FilterOverrides"/>
+	
+	<ForEach Name="Filter" Values="$(CopyEditorEngineOrPlatformFilter)">
+		<Property Name="CopyEditorFilter" Value="$(CopyEditorFilter);Engine/$(Filter);Engine/Platforms/*/$(Filter)"/>
+	</ForEach>
+	<!-- Optional target files -->
+	<Property Name="CopyEditorFilter" Value="$(CopyEditorFilter);Engine/Source/UnrealClient.Target.cs" If="$(WithClient)"/>
+	<Property Name="CopyEditorFilter" Value="$(CopyEditorFilter);Engine/Source/UnrealServer.Target.cs" If="$(WithServer)"/>
+	<!-- Optional API docs -->
+	<Property Name="CopyEditorFilter" Value="$(CopyEditorFilter);Engine/Documentation/Builds/CppAPI-HTML.tgz"/>
+	<Property Name="CopyEditorFilter" Value="$(CopyEditorFilter);Engine/Documentation/Builds/BlueprintAPI-HTML.tgz"/>
+	<!-- Define Editor Exceptions -->
+	<Property Name="CopyEditorExceptions">
+	
+		<!-- Content -->
+		Engine/Content/....psd
+		Engine/Content/....pdn
+		Engine/Content/....po
+
+		<!-- Programs -->
+		Engine/Programs/UnrealGameSync/...
+
+		<!-- Plugins -->
+		Engine/Plugins/Bridge/...
+		Engine/Plugins/Runtime/TwitchLiveStreaming/...
+		Engine/Plugins/Runtime/PacketHandlers/CompressionComponents/Oodle/...
+		Engine/Platforms/*/Plugins/Runtime/PacketHandlers/CompressionComponents/Oodle/...
+
+		<!-- Source code -->
+		Engine/Source/Runtime/SQLiteSupport/...
+
+		<!-- Exclude all the intermediate files in the Engine/Saved folder -->
+		Engine/Saved/...
+			<!-- Exclude generated config files/intermediates from Engine/Programs folder -->
+		Engine/Programs/AutomationTool/...
+		Engine/Programs/UnrealBuildTool/...
+		Engine/Programs/UnrealHeaderTool/Intermediate/...
+		Engine/Programs/UnrealHeaderTool/Saved/...
+
+		<!-- Exclude Template intermediates and other files not needed in installed build-->
+		Templates/*/Binaries/...
+		Templates/*/Build/Receipts/...
+		Templates/*/Content/Developers/...
+		Templates/*/Intermediate/...
+		Templates/*/DerivedDataCache/...
+		Templates/*/Saved/...
+		Templates/*/manifest.json
+		Templates/*/contents.txt
+	</Property>
+
+	<!-- Filters for installed DDC -->
+	<Property Name="InstalledDDCEngineContent" Value="Content\..."/>
+	<Property Name="InstalledDDCEngineContentExcept" Value="....psd;....pdn;....fbx;....po"/>
+	<Property Name="InstalledDDCEngineConfig" Value="Config\..."/>
+	<Property Name="InstalledDDCEngineConfigExcept" Value="....vdf"/>
+	<Property Name="InstalledDDCEnginePlugins" Value="Plugins\....uplugin;Plugins\...\Config\...;Plugins\...\Content\...;Plugins\...\Resources\...;Plugins\...\Shaders\...;Plugins\...\Templates\..."/>
+	<Property Name="InstalledDDCEnginePluginsExcept" Value="Plugins\Runtime\TwitchLiveStreaming\..."/>
+	<Property Name="InstalledDDCEngineShaders" Value="Shaders\..."/>
+	<Property Name="InstalledDDCEngineShadersExcept" Value=""/>
+
+
+	<!-- Win64 editor specific dependencies -->
+	<Property Name="ExtraSignFilesWin64">
+		<!-- CsvTools binaries which are manually updated in P4 -->
+		Engine/Binaries/DotNET/CsvTools/...
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/windows/...
+		Engine/Binaries/ThirdParty/Python3/...
+		Engine/Binaries/ThirdParty/PresentMon/Win64/PresentMon-1.8.0-x64.exe
+		Engine/Binaries/ThirdParty/svn/Win64/...
+		Engine/Binaries/Win64/UnrealTraceServer.exe
+		Engine/Binaries/Win64/EpicWebHelper.exe
+		Engine/Binaries/Win64/embree.dll
+		Engine/Build/Windows/cl-filter/...
+		Engine/Extras/ThirdPartyNotUE/cwrsync/bin/...
+	</Property>
+	
+	<Property Name="CopyEditorFilterWin64" Value="$(CopyEditorFilter)">
+		<!-- Build batch files -->
+		Engine/Build/BatchFiles/Build.bat
+		Engine/Build/BatchFiles/Clean.bat
+		Engine/Build/BatchFiles/Rebuild.bat
+		Engine/Build/BatchFiles/RunUAT.bat
+		Engine/Build/BatchFiles/GetMSBuildPath.bat
+		Engine/Build/BatchFiles/GetDotnetPath.bat
+
+		<!-- Build utilities -->
+		Engine/Build/Windows/cl-filter/cl-filter.exe
+		Engine/Source/ThirdParty/Intel/ISPC/bin/Windows/ispc.exe
+
+		<!-- Default resource files -->
+		Engine/Build/Windows/Resources/...
+
+		<!-- Binaries which are explicitly staged by UAT rather than listing runtime dependencies -->
+		Engine/Binaries/ThirdParty/OpenSSL/...
+
+		<!-- Extra tools -->
+		Engine/Extras/3dsMaxScripts/...
+		Engine/Extras/VisualStudioDebugging/Unreal.natvis
+		Engine/Extras/MayaLiveLink/...
+		Engine/Extras/MayaVelocityGridExporter/...
+		Engine/Extras/UnrealVS/...
+		Engine/Extras/Redist/en-us/*
+		Engine/Extras/VirtualProduction/TextureShare/...
+
+		<!-- Virtual Production Templates -->
+		Templates/TP_nDisplayBP/...
+		Templates/TP_InCamVFXBP/...
+
+		<!-- Enterprise Templates Win64 Only -->
+		Templates/TP_DMXBP/...
+
+		<!-- DotNet -->
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/windows/...
+		Engine/Binaries/ThirdParty/VisualStudio/...
+
+		<!-- CsvTools binaries which are manually updated in P4 -->
+		Engine/Binaries/DotNET/CsvTools/...
+
+		<!-- Binaries required to make Bink2 videos -->
+		Engine/Binaries/ThirdParty/Bink/...
+		
+		<!-- UnrealTraceServer is the tool that records Unreal Insights trace files -->
+		Engine/Binaries/Win64/UnrealTraceServer.exe
+
+		<!-- Used by Switchboard application, and by iOS/tvOS build automation -->
+		Engine/Extras/ThirdPartyNotUE/cwrsync/...
+		Engine/Binaries/ThirdParty/PresentMon/Win64/PresentMon-1.8.0-x64.exe
+
+		<!-- nanosvg -->
+		Engine/Source/ThirdParty/nanosvg/...
+	</Property>
+
+	<Property Name="CopyEditorExceptionsWin64" Value="$(CopyEditorExceptions)">
+		<!-- Exclude Mac binaries on windows here, because previous wildcard for plugin resources matches OSX dsym resources on Windows -->
+		Engine/Plugins/.../Binaries/Mac/...
+	</Property>
+
+	<!-- Mac editor specific dependencies -->
+
+	<!-- Files needed to build on Mac, either natively or via the remote toolchain -->
+	<Property Name="MacBuildFiles">
+		<!-- Build batch files -->
+		Engine/Build/BatchFiles/Mac/Build.sh
+		Engine/Build/BatchFiles/Mac/GenerateLLDBInit.sh
+		Engine/Build/BatchFiles/Mac/FixDependencyFiles.sh
+		Engine/Build/BatchFiles/Mac/GenerateProjectFiles.sh
+		Engine/Build/BatchFiles/Mac/SetupEnvironment.sh
+		Engine/Build/BatchFiles/Mac/SetupMono.sh
+		Engine/Build/BatchFiles/Mac/SetupDotnet.sh
+		Engine/Build/BatchFiles/Mac/FixMonoFiles.sh
+		Engine/Build/BatchFiles/Mac/RunMono.sh
+		Engine/Build/BatchFiles/Mac/RunXBuild.sh
+		Engine/Build/BatchFiles/Mac/XcodeBuild.sh
+		Engine/Build/BatchFiles/RunUAT.command
+		Engine/Build/BatchFiles/RunUAT.sh
+		Engine/Build/BatchFiles/RunUBT.sh
+
+		<!-- Mono -->
+		Engine/Binaries/ThirdParty/Mono/Mac/...
+
+		<!-- DotNet -->
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-arm64/...
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-x64/...
+		Engine/Binaries/ThirdParty/VisualStudio/...
+	</Property>
+
+	<Property Name="CopyEditorFilterMac" Value="$(CopyEditorFilter);$(MacBuildFiles)">
+		<!-- Extra tools -->
+		Engine/Extras/LLDBDataFormatters/UEDataFormatters_2ByteChars.py
+	</Property>
+
+	<Property Name="CopyEditorExceptionsMac" Value="$(CopyEditorExceptions)">
+		<!-- Exclude Windows binaries on Mac here -->
+		Engine/Plugins/.../Binaries/Win64/...
+
+		<!-- Don't want these folders, even if they're part of Windows tools -->
+		Engine/Binaries/Win64/...
+
+		<!-- Don't want The Windows/Linux Python packages -->
+		Engine/Plugins/Experimental/PythonFoundationPackages/Content/Python/Lib/Win64/...
+		Engine/Plugins/Experimental/PythonFoundationPackages/Content/Python/Lib/Linux/...
+	</Property>
+
+	<!-- Linux editor specific dependencies -->
+	
+	<Property Name="CopyEditorFilterLinux" Value="$(CopyEditorFilter)">
+		<!-- Build batch files -->
+		Engine/Build/BatchFiles/Linux/Build.sh
+		Engine/Build/BatchFiles/Linux/GenerateGDBInit.sh
+		Engine/Build/BatchFiles/Linux/GenerateLLDBInit.sh
+		Engine/Build/BatchFiles/Linux/FixDependencyFiles.sh
+		Engine/Build/BatchFiles/Linux/GenerateProjectFiles.sh
+		Engine/Build/BatchFiles/Linux/QASmokeManual.sh
+		Engine/Build/BatchFiles/Linux/Setup.sh
+		Engine/Build/BatchFiles/Linux/SetupEnvironment.sh
+		Engine/Build/BatchFiles/Linux/SetupMono.sh
+		Engine/Build/BatchFiles/Linux/SetupDotnet.sh
+		Engine/Build/BatchFiles/Linux/FixMonoFiles.sh
+		Engine/Build/BatchFiles/Linux/RunMono.sh
+		Engine/Build/BatchFiles/Linux/RunXBuild.sh
+		Engine/Build/BatchFiles/RunUAT.sh
+		Engine/Build/BatchFiles/RunUBT.sh
+
+		<!-- Debug tools -->
+		Engine/Binaries/Linux/dump_syms
+		Engine/Binaries/Linux/BreakpadSymbolEncoder
+
+		<!-- Mono -->
+		Engine/Binaries/ThirdParty/Mono/...
+
+		<!-- DotNet -->
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/linux/...
+		Engine/Binaries/ThirdParty/VisualStudio/...
+
+		<!-- DotNet bundled Requirements -->
+		Engine/Binaries/ThirdParty/ICU/icu4c-64_1/...
+		Engine/Binaries/ThirdParty/OpenSSL/...
+
+		<!-- Extra tools -->
+		Engine/Extras/GDBPrinters/UEPrinters.py
+
+		<!-- Bundled libcxx -->
+		Engine/Source/ThirdParty/Unix/LibCxx/...
+	</Property>
+	<Property Name="CopyEditorExceptionsLinux" Value="$(CopyEditorExceptions)">
+		<!-- Exclude Windows/Mac binaries on Linux here -->
+		Engine/Plugins/.../Binaries/Win64/...
+		Engine/Plugins/.../Binaries/Mac/...
+
+		<!-- Don't want these folders, even if they're part of Windows/Mac tools -->
+		Engine/Binaries/Win64/...
+		Engine/Binaries/Mac/...
+
+		<!-- Don't want The Windows/Mac Python packages -->
+		Engine/Plugins/Experimental/PythonFoundationPackages/Content/Python/Lib/Win64/...
+		Engine/Plugins/Experimental/PythonFoundationPackages/Content/Python/Lib/Mac/...
+	</Property>
+
+	<!-- Target Platform Filters/Exceptions -->
+
+	<!-- Win64 -->
+	<Property Name="CopyWin64Filter">
+		<!-- Natvis helpers for live coding -->
+		Engine/Extras/NatvisHelpers/Win64/NatvisHelpers.lib
+
+		<!-- App local dependencies -->
+		Engine/Binaries/ThirdParty/AppLocalDependencies/...
+		
+		<!-- Oculus Libraries & Build Files -->
+		Engine/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/win64/*.lib
+		Engine/Source/ThirdParty/Oculus/LibOVRAudio/*.tps
+		Engine/Source/ThirdParty/Oculus/LibOVRAvatar/LibOVRAvatar/lib/win64/*.lib
+		Engine/Source/ThirdParty/Oculus/LibOVRAvatar/*.tps
+		Engine/Source/ThirdParty/Oculus/LibOVRPlatform/LibOVRPlatform/lib/*.lib
+		Engine/Source/ThirdParty/Oculus/LibOVRPlatform/*.tps
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/OVRPlugin/lib/Win64/*.lib
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/*.tps
+		
+		<!-- EOSSDK -->
+		Engine/Source/ThirdParty/EOSSDK/SDK/Bin/x64/xaudio2_9redist.dll
+	</Property>
+	<Property Name="CopyWin64Exceptions">
+		Engine/Platforms/*/Source/Programs/AutomationTool/obj/...
+		Engine/Platforms/*/Source/Programs/AutomationTool/*/obj/...	
+		Engine/Platforms/*/Source/Programs/UnrealBuildTool/obj/...
+		Engine/Source/Programs/AutomationTool/obj/...
+		Engine/Source/Programs/AutomationTool/*/obj/...
+		Engine/Source/Programs/UnrealBuildTool/obj/...
+		Engine/Source/Programs/Shared/*/bin/...
+		Engine/Source/Programs/Shared/*/obj/...
+	</Property>
+	<Property Name="CopyWin64CsToolsExceptions">
+		Engine/Saved/CsTools/Engine/Source/Programs/Shared/*/bin/...
+		Engine/Saved/CsTools/Engine/Source/Programs/Shared/*/obj/...
+	</Property>
+
+	<!-- Mac -->
+	<Property Name="CopyMacFilter">
+		Engine/Binaries/Mac/BootstrapPackagedGame.app/...
+		Engine/Extras/ThirdPartyNotUE/libimobiledevice/Mac/...
+		<!-- PLCrashReporter needs to be specificed manually as there are two versions of the library -->
+		Engine/Source/ThirdParty/PLCrashReporter/lib/lib-Xcode-11.3.1/Mac/...
+		Engine/Source/ThirdParty/PLCrashReporter/lib/lib-Xcode-12.4/Mac/...
+	</Property>
+	<Property Name="CopyMacExceptions">
+		Engine/Platforms/*/Source/Programs/AutomationTool/obj/...
+		Engine/Platforms/*/Source/Programs/AutomationTool/*/obj/...
+		Engine/Platforms/*/Source/Programs/UnrealBuildTool/obj/...
+		Engine/Source/Programs/AutomationTool/obj/...
+		Engine/Source/Programs/AutomationTool/*/obj/...
+		Engine/Source/Programs/UnrealBuildTool/obj/...
+		Engine/Source/Programs/Shared/*/bin/...
+		Engine/Source/Programs/Shared/*/obj/...
+	</Property>
+	<Property Name="CopyMacCsToolsExceptions">
+		Engine/Saved/CsTools/Engine/Source/Programs/Shared/*/bin/...
+		Engine/Saved/CsTools/Engine/Source/Programs/Shared/*/obj/...
+	</Property>
+
+	<!-- Android -->
+	<Property Name="ExtraSignFilesAndroid">
+		Engine/Binaries/DotNET/Android/...
+	</Property>
+
+	<Property Name="CopyAndroidFilter">
+		<!-- Build Files -->
+		Engine/Binaries/DotNET/Android/...
+		Engine/Build/Android/...
+		Engine/Extras/Android/...
+		Engine/Plugins/Runtime/OpenXR/*.xml
+		Engine/Source/ThirdParty/Android/...
+		Engine/Source/ThirdParty/AndroidPermission/...
+		Engine/Source/ThirdParty/EOSSDK/*.xml
+		Engine/Source/ThirdParty/EOSSDK/....aar
+		Engine/Source/ThirdParty/GoogleARCore/...
+		Engine/Source/ThirdParty/GoogleGameSDK/...
+		Engine/Source/ThirdParty/heapprofd/...
+		Engine/Source/ThirdParty/HWCPipe/...
+		Engine/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/*/*.so
+		Engine/Source/ThirdParty/Oculus/LibOVRAudio/*.tps
+		Engine/Source/ThirdParty/Oculus/LibOVRAudio/*.xml
+		Engine/Source/ThirdParty/Oculus/LibOVRAvatar/LibOVRAvatar/lib/*/*.so
+		Engine/Source/ThirdParty/Oculus/LibOVRAvatar/*.tps
+		Engine/Source/ThirdParty/Oculus/LibOVRAvatar/*.xml
+		Engine/Source/ThirdParty/Oculus/LibOVRPlatform/LibOVRPlatform/lib/*.so
+		Engine/Source/ThirdParty/Oculus/LibOVRPlatform/*.tps
+		Engine/Source/ThirdParty/Oculus/LibOVRPlatform/*.xml
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/OVRPlugin/lib/*/*.so
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/OVRPlugin/ExtLibs/*/*.so
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/OVRPlugin/ExtLibs/*.jar
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/*.tps
+		Engine/Source/ThirdParty/Oculus/OVRPlugin/*.xml
+		Engine/Source/ThirdParty/Oculus/OculusOpenXRLoader/*.tps
+		Engine/Source/ThirdParty/Oculus/OculusOpenXRLoader/OculusOpenXRLoader/*.xml
+		Engine/Source/ThirdParty/Oculus/OculusOpenXRLoader/OculusOpenXRLoader/Lib/*/*.so
+		Engine/Source/ThirdParty/ResonanceAudioApi/...
+		Engine/Source/ThirdParty/TangoSDK/...
+	</Property>
+	
+	<Property Name="CopyAndroidExceptions">
+		Engine/Binaries/Android/....apk
+	</Property>
+
+	<!-- IOS -->
+	<Property Name="ExtraSignFilesIOS">
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-arm64/...
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-x64/...
+		Engine/Binaries/ThirdParty/Mono/Mac/...
+		Engine/Extras/ThirdPartyNotUE/libimobiledevice/x64/...
+	</Property>
+
+	<Property Name="CopyIOSFilter" Value="$(MacBuildFiles)">
+		<!-- Build Files -->
+		Engine/Build/IOS/...
+		Engine/Source/ThirdParty/IOS/SoundSwitch/...
+		Engine/Source/ThirdParty/Eigen/...
+		Engine/Source/ThirdParty/Facebook/IOS/...
+		Engine/Source/ThirdParty/libJPG/...
+		Engine/Source/ThirdParty/mtlpp/...
+		Engine/Source/ThirdParty/libSampleRate/...
+		<!-- EOSSDK needs to be specified manually as we don't pick up the full .framework folder automatically -->
+		Engine/Source/ThirdParty/EOSSDK/SDK/Bin/IOS/EOSSDK.framework/...
+		<!-- PLCrashReporter needs to be specificed manually as there are two versions of the library -->
+		Engine/Source/ThirdParty/PLCrashReporter/lib/lib-Xcode-11.3.1/iOS/...
+		Engine/Source/ThirdParty/PLCrashReporter/lib/lib-Xcode-12.4/iOS/...
+	</Property>
+	<Property Name="CopyIOSFilterWin64" Value="$(CopyIOSFilter)">
+		Engine/Binaries/DotNET/IOS/openssl.exe
+		Engine/Binaries/Mac/DsymExporter*
+		Engine/Binaries/ThirdParty/ICU/icu4c-53_1/Mac/...
+		Engine/Binaries/ThirdParty/IOS/*
+		Engine/Build/BatchFiles/MakeAndInstallSSHKey.bat
+		Engine/Build/Rsync/...
+		Engine/Extras/ThirdPartyNotUE/libimobiledevice/x64/...	
+	</Property>
+
+	<Property Name="CopyIOSExceptions">
+		<!-- Build Files -->
+		Engine/Build/IOS/....psd
+		Engine/Build/IOS/....mobileprovision
+		Engine/Build/IOS/UnrealRemoteTool
+	</Property>
+
+	<!-- TVOS -->
+	<Property Name="ExtraSignFilesTVOS">
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-arm64/...
+		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-x64/...
+		Engine/Binaries/ThirdParty/Mono/Mac/...
+		Engine/Extras/ThirdPartyNotUE/libimobiledevice/x64/...
+	</Property>
+
+	<Property Name="CopyTVOSFilter" Value="$(MacBuildFiles)">
+		<!-- Build Files -->
+		Engine/Build/TVOS/...
+	</Property>
+
+	<!-- TVOS on Win64 specific -->
+	<Property Name="CopyTVOSFilterWin64" Value="$(CopyTVOSFilter)">
+		Engine/Binaries/DotNET/IOS/openssl.exe
+		Engine/Binaries/ThirdParty/IOS/*
+		Engine/Build/BatchFiles/MakeAndInstallSSHKey.bat
+		Engine/Extras/ThirdPartyNotUE/libimobiledevice/x64/...
+	</Property>
+
+	<Property Name="CopyTVOSExceptions">
+		<!-- Build Files -->
+		Engine/Build/TVOS/....psd
+		Engine/Build/TVOS/....mobileprovision
+	</Property>
+
+	<!-- Linux -->
+	<Property Name="ExtraSignFilesLinux">
+		<!-- Linux cross build Debug tools -->
+		Engine/Binaries/Linux/AgentInterface.dll
+		Engine/Binaries/Linux/dump_syms.exe
+		Engine/Binaries/Linux/BreakpadSymbolEncoder.exe
+		Engine/Binaries/ThirdParty/Mono/Linux/...
+	</Property>
+
+	<Property Name="CopyLinuxFilter">
+		Engine/Binaries/ThirdParty/OpenAL/...
+		Engine/Binaries/ThirdParty/ICU/icu4c-53_1/Unix/x86_64-unknown-linux-gnu/*.so
+		Engine/Source/ThirdParty/Unix/LibCxx/...
+		Engine/Source/ThirdParty/Unix/HaveLinuxDependencies
+	</Property>
+
+	<Property Name="CopyLinuxFilterWin64" Value="$(CopyLinuxFilter)">
+		<!-- Linux cross build Debug tools -->
+		Engine/Binaries/Linux/dump_syms.exe
+		Engine/Binaries/Linux/BreakpadSymbolEncoder.exe
+	</Property>
+
+	<Property Name="CopyLinuxExceptions">
+		Engine/Platforms/*/Source/Programs/AutomationTool/obj/...
+		Engine/Platforms/*/Source/Programs/AutomationTool/*/obj/...
+		Engine/Platforms/*/Source/Programs/UnrealBuildTool/obj/...
+		Engine/Source/Programs/AutomationTool/obj/...
+		Engine/Source/Programs/AutomationTool/*/obj/...
+		Engine/Source/Programs/UnrealBuildTool/obj/...
+		Engine/Source/Programs/Shared/*/bin/...
+		Engine/Source/Programs/Shared/*/obj/...
+	</Property>
+
+	<Property Name="CopyLinuxCsToolsExceptions">
+		Engine/Saved/CsTools/Engine/Source/Programs/Shared/*/bin/...
+		Engine/Saved/CsTools/Engine/Source/Programs/Shared/*/obj/...
+	</Property>
+
+	<Property Name="CopyLinuxFilter" Value="$(CopyLinuxFilter);Engine/Extras/ThirdPartyNotUE/putty/..."/>	
+
+	<!-- Win64 specific -->
+
+</BuildGraph>

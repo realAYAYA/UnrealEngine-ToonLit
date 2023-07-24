@@ -1,0 +1,7 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define NUM_PDF_SH_COEFFICIENTS 9
+Buffer<float> BRDFProbabilityDensityFunctionSH;
+

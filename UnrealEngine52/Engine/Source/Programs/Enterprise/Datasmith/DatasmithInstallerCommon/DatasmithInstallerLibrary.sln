@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.1401
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "DatasmithInstallerLibrary", "DatasmithInstallerLibrary.wixproj", "{D3974BD7-9EE2-4821-8384-6389CDAD19BC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x86 = Debug|x86
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D3974BD7-9EE2-4821-8384-6389CDAD19BC}.Debug|x86.ActiveCfg = Debug|x86
+		{D3974BD7-9EE2-4821-8384-6389CDAD19BC}.Debug|x86.Build.0 = Debug|x86
+		{D3974BD7-9EE2-4821-8384-6389CDAD19BC}.Release|x86.ActiveCfg = Release|x86
+		{D3974BD7-9EE2-4821-8384-6389CDAD19BC}.Release|x86.Build.0 = Release|x86
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F6272AE2-E52D-4008-B3D5-44F62C50690E}
+	EndGlobalSection
+EndGlobal

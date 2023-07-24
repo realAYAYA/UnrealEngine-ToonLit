@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\EpicGames.Build\EpicGames.Build.csproj" />
+    <ProjectReference Include="..\..\..\UnrealBuildTool\UnrealBuildTool.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,114 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	RayTracingInstanceCopy.usf: Build ray tracing instances in the GPU 
+===============================================================================================*/
+
+#include "RayTracingCommon.ush"
+#include "../SceneData.ush"
+#include "../Common.ush"
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 1
+#endif
+
+struct FRayTracingInstanceDescriptorInput
+{
+	uint GPUSceneInstanceOrTransformIndex;
+	uint OutputDescriptorIndex;
+	uint AccelerationStructureIndex;
+	uint InstanceId;
+	uint InstanceMaskAndFlags;
+	uint InstanceContributionToHitGroupIndex;
+	uint bApplyLocalBoundsTransform;
+};
+
+uint NumInstances;
+uint InputDescOffset;
+
+uint InstanceSceneDataSOAStride;
+
+float3 FarFieldReferencePos;
+
+float3 ViewTilePosition;
+float3 RelativePreViewTranslation;
+
+RWStructuredBuffer<FRayTracingInstanceDescriptor> InstancesDescriptors;
+
+StructuredBuffer<FRayTracingInstanceDescriptorInput> InputInstanceDescriptors;
+ByteAddressBuffer AccelerationStructureAddresses;
+// Transforms are float3x4 row-major matrices stored as 3 float4
+// because of FXC matrix packing issues when using StructuredBuffer<float3x4>
+StructuredBuffer<float4> InstanceTransforms;
+
+// Extra per instance debug data
+RWStructuredBuffer<uint> RWDebugInstanceGPUSceneIndices;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void RayTracingBuildInstanceBufferCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+
+	const uint Index = DispatchThreadId.x;
+
+	if (Index < NumInstances)
+	{
+		FRayTracingInstanceDescriptorInput InputDesc = InputInstanceDescriptors[InputDescOffset + Index];
+
+#if USE_GPUSCENE
+		FInstanceSceneData InstanceSceneData = GetInstanceSceneData(InputDesc.GPUSceneInstanceOrTransformIndex, InstanceSceneDataSOAStride);
+
+		float4x4 LocalToTranslatedWorld4x4 = LWCMultiplyTranslation(InstanceSceneData.LocalToWorld, PreViewTranslation);
+
+		if (InstanceSceneData.Flags & INSTANCE_SCENE_DATA_FLAG_IS_RAYTRACING_FAR_FIELD)
+		{
+			LocalToTranslatedWorld4x4[3].xyz += FarFieldReferencePos;
+		}
+
+		if (InputDesc.bApplyLocalBoundsTransform)
+		{
+			float4x4 ProcT;
+			ProcT[0] = float4(InstanceSceneData.LocalBoundsExtent.x * 2, 0, 0, 0);
+			ProcT[1] = float4(0, InstanceSceneData.LocalBoundsExtent.y * 2, 0, 0);
+			ProcT[2] = float4(0, 0, InstanceSceneData.LocalBoundsExtent.z * 2, 0);
+			ProcT[3] = float4(InstanceSceneData.LocalBoundsCenter, 1);
+
+			LocalToTranslatedWorld4x4 = mul(ProcT, LocalToTranslatedWorld4x4);
+		}
+
+		LocalToTranslatedWorld4x4 = transpose(LocalToTranslatedWorld4x4);
+
+		float3x4 LocalToTranslatedWorld;
+		LocalToTranslatedWorld[0] = LocalToTranslatedWorld4x4[0];
+		LocalToTranslatedWorld[1] = LocalToTranslatedWorld4x4[1];
+		LocalToTranslatedWorld[2] = LocalToTranslatedWorld4x4[2];
+
+#if OUTPUT_INSTANCE_GPUSCENE_INDEX
+		{
+			RWDebugInstanceGPUSceneIndices[InputDesc.OutputDescriptorIndex] = InputDesc.GPUSceneInstanceOrTransformIndex;
+		}
+#endif // OUTPUT_INSTANCE_GPUSCENE_INDEX
+
+#else
+		float3x4 LocalToTranslatedWorld;
+		LocalToTranslatedWorld[0] = InstanceTransforms[InputDesc.GPUSceneInstanceOrTransformIndex * 3 + 0];
+		LocalToTranslatedWorld[1] = InstanceTransforms[InputDesc.GPUSceneInstanceOrTransformIndex * 3 + 1];
+		LocalToTranslatedWorld[2] = InstanceTransforms[InputDesc.GPUSceneInstanceOrTransformIndex * 3 + 2];
+#endif // USE_GPUSCENE
+
+		uint2 BlasAddress = 0;
+
+		if (InputDesc.AccelerationStructureIndex != 0xFFFFFFFF)
+		{
+			BlasAddress = AccelerationStructureAddresses.Load2(InputDesc.AccelerationStructureIndex * 8);
+		}
+
+		InstancesDescriptors[InputDesc.OutputDescriptorIndex] = BuildPlatformRayTracingInstanceDesc(
+			InputDesc.InstanceMaskAndFlags & 0xFF,
+			InputDesc.InstanceId,
+			TranslateRayTracingInstanceFlags((InputDesc.InstanceMaskAndFlags >> 8) & 0xFF),
+			InputDesc.InstanceContributionToHitGroupIndex,
+			LocalToTranslatedWorld,
+			BlasAddress);
+	}
+}

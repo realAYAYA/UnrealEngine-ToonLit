@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Google Cloud Messaging plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- init section is always evaluated once per architecture -->
+	<init>
+		<log text="AndroidFetchBackgroundDownload init"/>
+	</init>
+	
+	<buildGradleAdditions>
+		<insert>
+//AndroidFetchBackgroundDownload -- START
+	dependencies {
+		//Fetch2 library used to manage downloads at java level
+		implementation "androidx.tonyodev.fetch2:xfetch2:3.1.6"
+		
+		//Used for parsing from JSON files in DownloadDescription.java
+		//excluding hamcrest to avoid collision with junit that also includes hamcrest
+		implementation ('com.googlecode.json-simple:json-simple:1.1.1') {
+			exclude group: 'org.hamcrest', module: 'hamcrest-core'
+		}
+	}
+//AndroidFetchBackgroundDownload -- STOP
+		</insert>
+	</buildGradleAdditions>
+
+	<!-- optional additions to proguard -->
+	<proguardAdditions>
+		<insert>
+			# AndroidFetchBackgroundDownload UPL Additions -- START
+
+			# Android Background HTTP Classes with native calls ...
+
+			-keep class com.epicgames.unreal.download.UEDownloadWorker {
+			public *;
+			}
+
+			-keep class com.epicgames.unreal.download.datastructs.DownloadDescription {
+			public *;
+			}
+
+			# AndroidFetchBackgroundDownload UPL Additions -- STOP
+		</insert>
+	</proguardAdditions>
+	
+	<!-- optional files or directories to copy or delete from Intermediate/Android/APK before ndk-build -->
+	<prebuildCopies>
+		<log text="Copying AndroidFetchBackgroundDownload files to staging"/>
+		<copyDir src="$S(PluginDir)/Java" dst="$S(BuildDir)/src/com/epicgames/unreal" />
+	</prebuildCopies>
+</root>

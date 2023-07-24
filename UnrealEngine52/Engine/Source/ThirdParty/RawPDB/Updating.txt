@@ -1,0 +1,9 @@
+1. Check out the git directory.
+2. Copy the latest version of rawpdb on top of the git directory
+3. Resolve any local modifications and add any new files to perforce.
+4. Build the release configuration from the RawPDB.sln in git/build 
+    e.g. msbuild RawPDB.sln -p:Configuration=Release from a vs command prompt 
+5. Run Update.ps1 to copy the built binaries and headers into (requires Powershell 7)
+
+TODO: Automate more of this process with the Powershell script 
+    (use vswhere to find msbuild and build, auto-check-out and resolve changes where possible)

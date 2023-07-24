@@ -1,0 +1,43 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../Hash.ush"
+
+#include "RayTracingCommon.ush"
+#include "RayTracingDebugUtils.ush"
+#include "RayTracingHitGroupCommon.ush"
+
+
+float3 ComputeWorldNormal()
+{
+	FTriangleBaseAttributes Tri = LoadTriangleBaseAttributes(PrimitiveIndex());
+
+	float3 LocalEdges[2] = {
+		Tri.LocalPositions[1] - Tri.LocalPositions[0],
+		Tri.LocalPositions[2] - Tri.LocalPositions[0]
+	};
+	float3 LocalNormal = cross(LocalEdges[1], LocalEdges[0]);
+
+	float3x3 InverseTranspose3x3 = transpose((float3x3)WorldToObject4x3());
+	float3 WorldNormal = normalize(mul(LocalNormal, InverseTranspose3x3));
+
+	return WorldNormal;
+}
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDebugMainCHS,
+	FRayTracingDebugPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	Payload.HitT = RayTCurrent();
+
+	const int ScenePrimitiveIndex = GetInstanceUserData();
+	const int ScenePrimitiveInstanceIndex = InstanceIndex() - GetBaseInstanceIndex();
+	Payload.InstanceHash = MurmurAdd(ScenePrimitiveIndex, ScenePrimitiveInstanceIndex);
+
+	Payload.TriangleIndex = PrimitiveIndex();
+
+	Payload.WorldNormal = ComputeWorldNormal();
+	Payload.GeometryInstanceIndex = GetHitGroupUserData();
+	Payload.InstanceIndex = InstanceIndex();
+	Payload.GeometryIndex = 0; // GeometryIndex();
+}

@@ -1,0 +1,13 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"Modules": [
+		{
+			"Name": "OnlineServicesEOS",
+			"Type": "Runtime",
+			"PlatformDenyList": [
+				"HoloLens"
+			]
+		}
+	]
+}

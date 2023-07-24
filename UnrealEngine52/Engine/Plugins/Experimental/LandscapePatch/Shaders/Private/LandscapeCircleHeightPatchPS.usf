@@ -1,0 +1,35 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/Landscape/LandscapeCommon.ush"
+
+float3 InCenter;
+float InRadius;
+float InFalloff;
+Texture2D<float4> InSourceHeightmap;
+
+void ApplyLandscapeCircleHeightPatch(in float4 SVPos : SV_POSITION, out float2 OutColor : SV_Target0)
+{
+	const float KINDA_SMALL_NUMBER = 0.0001;
+	const float ClampedFalloff = max(InFalloff, KINDA_SMALL_NUMBER);
+	
+	int2 TextureCoordinates = floor(SVPos.xy);
+	float4 CurrentPackedHeight = InSourceHeightmap.Load(int3(TextureCoordinates, 0));
+	float CurrentHeight = UnpackHeight(CurrentPackedHeight.xy);
+	
+	float PatchHeight = InCenter.z;
+	
+	float Distance = distance(TextureCoordinates, InCenter.xy);
+	
+	float Alpha = 1.0;
+	if (Distance > InRadius)
+	{
+		Alpha = 1 - min((Distance - InRadius) / ClampedFalloff, 1.0);
+	}
+	
+	float NewHeight = lerp(CurrentHeight, PatchHeight, Alpha);
+	
+	OutColor = PackHeight(NewHeight);
+}

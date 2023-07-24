@@ -1,0 +1,1857 @@
+{
+	"$schema": "./NNEQATestDescSchema.json",
+	"model_test_categories": [
+		{
+			"category": "StyleTransfer.FixInputSize",
+			"is_model_test": true,
+			"targets": [
+				{
+					"target": "udnie-160-small-720p",
+					"absolute_tolerance": 5.0e-2
+				}
+			]
+		},
+		{
+			"category": "StyleTransfer.VariableInputSize",
+			"is_model_test": true,
+			"targets": [
+				{
+					"target": "udnie-160-small-dyn",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml",  "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 5.0e-2,
+					"relative_tolerance": 5.0e-2
+				}
+			]
+		},
+		{
+			"category": "InHouse",
+			"is_model_test": true,
+			"targets": [
+				{
+					"target": "NeuralMorphModel_global",
+					"tags": [ "SmokeTest" ],
+					"absolute_tolerance": 1e-5
+				},
+				{
+					"target": "NeuralMorphModel_global_Dax",
+					"tags": [ "SmokeTest" ],
+					"runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance": 1e-4 },
+						{ "name": "NNERuntimeRDGDml", "absolute_tolerance": 1e-4 },
+						{ "name": "NNERuntimeRDGHlsl", "absolute_tolerance": 1e-6 }
+					]
+				},
+				{
+					"target": "NeuralMorphModel_Local",
+					"tags": [ "SmokeTest" ],
+					"absolute_tolerance": 1e-6,
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "Model not supported yet." }
+					]
+				},
+				{
+					"target": "NeuralMorphModel_Local-sim",
+					"tags": [ "SmokeTest" ],
+					"absolute_tolerance": 1e-6
+				},
+				{
+					"target": "VertexDeltaModel",
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m01",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m02",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m03",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m04",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m05",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m06",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m07",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m08",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m09",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				},
+				{
+					"target": "hs_m10",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Model not supported yet." }
+					],
+					"absolute_tolerance": 1e-4
+				}
+			]
+		},
+		{
+			"category": "SimpleTests",
+			"is_model_test": true,
+			"targets": [
+				{
+					"target": "OneLayerWithWeights"
+				},
+				{
+					"target": "TwoLayersNoWeight",
+					"tags": [ "SmokeTest" ]
+				},
+				{
+					"target": "MultiInput",
+					"tags": [ "SmokeTest" ]
+				},
+				{
+					"target": "MultiOutput",
+					"tags": [ "SmokeTest" ],
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml",  "skip": true, "comment": "Model not supported yet." }
+					]
+				},
+				{
+					"target": "ConstOutput",
+					"comment": "Model contain a 2nd output (Y1) constant from an initializer."
+				}
+			]
+		},
+		{
+			"category": "VariableInputShapes",
+			"is_model_test": true,
+			"targets": [
+				{
+					"target": "OneLayerNoWeightVariableInputShape",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml",  "skip": true, "comment": "RDG does not support variable input sized tensor" }
+					]
+				},
+				{
+					"target": "TwoLayersNoWeightVariableInputShape",
+					"tags": [ "SmokeTest" ],
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml",  "skip": true, "comment": "RDG does not support variable input sized tensor" }
+					]
+				}
+			]
+		},
+		{
+			"category": "SingleOp",
+			"is_model_test": true,
+			"targets": [
+				{
+					"target": "Slice",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Not implemented" }
+					]
+				},
+				{
+					"target": "SliceNoSteps",
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Not implemented" }
+					]
+				}
+			]
+		}
+	],
+
+	"operator_test_categories": [
+		{
+			"category": "Elementwise.Unary",
+			"targets": [
+				{	"target": "Abs", "additional_datasets": [ "Elementwise.Slow.OneInput" ]},
+				{	"target": "Acos", "tags": [ "SmokeTest" ], "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  2e-4}
+					]},
+				{	"target": "Acosh" },
+				{	"target": "Asin", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  2e-4}
+					]},
+				{	"target": "Asinh", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  2e-4}
+					]},
+				{	"target": "Atan", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  1.5e-3}
+					]},
+				{	"target": "Atanh" },
+				{	"target": "BitShift", "skip": true, "comment": "TODO need attributes" },
+				{	"target": "Ceil" },
+				{	"target": "Clip", "additional_datasets": [ "Elementwise.Clip.AttributeTest" ] },
+				{	"target": "Cos" },
+				{	"target": "Cosh" },
+				{	"target": "Elu", "additional_datasets": [ "Elementwise.Elu.AttributeTest" ], "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  1e-4}
+					]},
+				{	"target": "Erf", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  5e-4, "comment": "NNERuntimeRDGHlsl Erf implementation is less precise than the DML one"}
+					]},
+				{	"target": "Exp" },
+				{	"target": "Floor" },
+				{	"target": "IsInf", "skip": true, "comment": "TODO add flexibility in test data setup + bool tensors" },
+				{	"target": "IsNan", "skip": true, "comment": "TODO add flexibility in test data setup + bool tensors" },
+				{	"target": "HardSigmoid", "additional_datasets": [ "Elementwise.HardSigmoid.AttributeTest" ] },
+				{	"target": "HardSwish", "runtimes": [ { "name": "NNERuntimeRDGDml", "skip": true, "comment": "Not implemented atm on NNERuntimeRDGDml."} ]},
+				{	"target": "LeakyRelu", "additional_datasets": [ "Elementwise.LeakyRelu.AttributeTest" ] },
+				{	"target": "Log", "runtimes": [
+						{ "name": "NNERuntimeORTDml"},
+						{ "name": "NNERuntimeRDGDml"},
+						{ "name": "NNERuntimeRDGHlsl"}
+					], "absolute_tolerance": 1e-6 },
+				{	"target": "LogSoftmax", 
+					"runtimes": [{ "name": "NNERuntimeRDGHlsl",   "skip": true }],
+					"additional_datasets": [ "Elementwise.Softmax.AttributeTest" ]
+				},
+				{	"target": "Neg" },
+				{	"target": "Not", "input_type": "boolean", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "Reciprocal"},
+				{	"target": "Relu"},
+				{	"target": "Round"},
+				{	"target": "Selu", "additional_datasets": [ "Elementwise.Selu.AttributeTest" ], "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  1e-4}
+					]},
+				{	"target": "Sigmoid"},
+				{	"target": "Sign" },
+				{	"target": "Sin", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  1e-4}
+					]},
+				{	"target": "Sinh" },
+				{	"target": "Softmax", 
+					"runtimes": [{ "name": "NNERuntimeRDGHlsl",   "skip": true }],
+					"additional_datasets": [ "Elementwise.Softmax.AttributeTest" ]
+				},
+				{	"target": "Softplus"},
+				{	"target": "Softsign"},
+				{	"target": "Sqrt"},
+				{	"target": "Tan", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  1e-4}
+					]},
+				{	"target": "Tanh", "runtimes": [
+						{ "name": "NNERuntimeORTDml", "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGDml",    "absolute_tolerance":  1e-4},
+						{ "name": "NNERuntimeRDGHlsl",   "absolute_tolerance":  1e-4}
+					]}
+			]
+		},
+		{
+			"category": "Elementwise.Binary",
+			"targets": [
+				{	"target": "Add", "additional_datasets": [ "Elementwise.Slow.TwoInputs" ]},
+				{	"target": "And", "input_type": "boolean", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "Div", "tags": [ "SmokeTest" ]},
+				{	"target": "Equal", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "Greater", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "GreaterOrEqual", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "Less", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "LessOrEqual", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "Mod", "skip": true, "comment": "TODO need to set fmod attribute to 1 for floating point tensors"},
+				{	"target": "Mul"},
+				{	"target": "Or", "input_type": "boolean", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]},
+				{	"target": "PRelu", "removed_datasets": [ 
+						"Elementwise.Binary.BidirectionalBroadcast", 
+						"Elementwise.Binary.LHSToRHSBroadcast" ], 
+					"comment": "Prelu does not support bidirectional broadcast. It only support slope(RHS) to input0(LHS)"},
+				{	"target": "Pow", "absolute_tolerance": 1e-4},
+				{	"target": "Sub"},
+				{	"target": "Xor", "input_type": "boolean", "output_type": "boolean", "runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need bool tensor support"},
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG need bool tensor support"}						
+					]}
+			]
+		},
+		{
+			"category": "Elementwise.Variadic",
+			"additional_datasets": [ "Elementwise.Binary" ],
+			"runtimes": [ { "name": "NNERuntimeRDGDml", "skip": true} ],
+			"targets": [
+				{	"target": "Max", "additional_datasets": [ "Elementwise.Slow.TwoInputs" ]},
+				{	"target": "Mean", "tags": [ "SmokeTest" ]},
+				{	"target": "Min"},
+				{	"target": "Sum"}
+			]
+		},
+		{
+			"category": "Gemm",
+			"targets": [
+				{ "target": "Gemm", "tags": [ "SmokeTest" ] }
+			]
+		},
+		{
+			"category": "CastOp",
+			"runtimes": [	
+				{ "name": "NNERuntimeRDGHlsl", "skip": true }
+			],
+			"targets": [
+				{ "target": "Cast", "tags": [ "SmokeTest" ] }
+			]
+		},
+		{
+			"category": "Convolution",
+			"targets": [
+				{ "target": "Conv", "absolute_tolerance": 1e-4, "relative_tolerance": 1e-4 }
+			]
+		},
+		{
+			"category": "ConvTranspose",
+			"targets": [
+				{ "target": "ConvTranspose", "absolute_tolerance": 1e-6 }
+			]
+		},
+		{
+			"category": "MatMul",
+			"runtimes": [ { "name": "NNERuntimeRDGDml" } ],
+			"targets": [
+				{ "target": "MatMul" }
+			]
+		},
+		{
+			"category": "PadOp",
+			"targets": [
+				{ "target": "Pad" }
+			]
+		},
+		{
+			"category": "Identity",
+			"targets": [
+				{ "target": "Identity" }
+			]
+		},
+		{
+			"category": "Dropout",
+			"targets": [
+				{ "target": "Dropout" }
+			]
+		},
+		{
+			"category": "Flatten",
+			"targets": [
+				{ "target": "Flatten" }
+			]
+		},
+		{
+			"category": "BatchNormalization",
+			"targets": [
+				{ "target": "BatchNormalization", "relative_tolerance": 5e-1 }
+			]
+		},
+		{
+			"category": "InstanceNormalization",
+			"targets": [
+				{ "target": "InstanceNormalization", "absolute_tolerance": 1e-5 }
+			]
+		},
+		{
+			"category": "Upsample",
+			"targets": [
+				{ "target": "Upsample" }
+			]
+		},
+		{
+			"category": "Resize",
+			"runtimes": [	
+				{ "name": "NNERuntimeRDGHlsl", "skip": true },
+				{ "name": "NNERuntimeORTDml", "skip": true }
+			],
+			"targets": [
+				{ "target": "Resize", "absolute_tolerance": 1e-5 }
+			]
+		},
+		{
+			"category": "Gather",
+			"runtimes": [	
+				{ "name": "NNERuntimeRDGHlsl", "skip": true }
+			],
+			"targets": [
+				{ "target": "Gather" }
+			]
+		},
+		{
+			"category": "GRU",
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true }
+			],
+			"targets": [
+				{ "target": "GRU", "absolute_tolerance": 1e-6 }
+			]
+		},
+		{
+			"category": "TransposeOp",
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true }
+			],
+			"targets": [
+				{ "target": "Transpose" }
+			]
+		},
+		{
+			"category": "ShapeOp",
+			"runtimes": [
+				{ "name": "NNERuntimeRDGDml", "skip": true },
+				{ "name": "NNERuntimeRDGHlsl", "skip_static_test": true  }
+			],
+			"targets": [
+				{ "target": "Shape" }
+			]
+		},
+		{
+			"category": "SizeOp",
+			"runtimes": [
+				{ "name": "NNERuntimeRDGDml", "skip": true },
+				{ "name": "NNERuntimeRDGHlsl", "skip_static_test": true  }
+			],
+			"targets": [
+				{ "target": "Size" }
+			]
+		},
+		{
+			"category": "Concat",
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true }
+			],
+			"targets": [
+				{ "target": "Concat" }
+			]
+		},
+		{
+			"category": "Reduce",
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true }
+			],
+			"targets": [
+				{ "target": "ReduceL1" },
+				{ "target": "ReduceL2" },
+				{ "target": "ReduceLogSum" },
+				{ "target": "ReduceLogSumExp" },
+				{ "target": "ReduceMin" },
+				{ "target": "ReduceMax" },
+				{ "target": "ReduceMean" },
+				{ "target": "ReduceProd" },
+				{ "target": "ReduceSum" },
+				{ "target": "ReduceSumSquare" }
+			]
+		},
+		{
+			"category": "Reshape",
+			"targets": [
+				{ "target": "Reshape" }
+			]
+		},
+		{
+			"category": "SqueezeOp",
+			"targets": [
+				{ "target": "Squeeze" }
+			]
+		},
+		{
+			"category": "Unsqueeze",
+			"targets": [
+				{ "target": "Unsqueeze" }
+			]
+		},
+		{
+			"category": "PoolOp",
+			"targets": [
+				{ "target": "MaxPool" },
+				{ "target": "AveragePool", "absolute_tolerance": 1e-6 },
+				{ "target": "LpPool", "absolute_tolerance": 1e-6 }
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Not supported" }
+			]
+		},
+		{
+			"category": "GlobalPool",
+			"targets": [
+				{ "target": "GlobalMaxPool" },
+				{ "target": "GlobalAveragePool", "absolute_tolerance": 1e-6 },
+				{ "target": "GlobalLpPool", "absolute_tolerance": 1e-6 }
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Not supported" }
+			]
+		},
+		{
+			"category": "Split",
+			"targets": [
+				{ "target": "Split" }
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Not supported" }
+			]
+		}
+	],
+
+	"input_output_sets": [
+		{
+			"name": "VariableInputShapes.Regular",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1,1 ] } ], "comment": "if not specified output is defaulted as the first input" },
+				{ "inputs": [ { "shape": [ 2,3 ] } ] }
+			]
+		},
+		{
+			"name": "StyleTransfer.VariableInputSize",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1,3,224,224 ] } ] },
+				{ "inputs": [ { "shape": [ 1,3,128,64 ] } ] },
+				{ "inputs": [ { "shape": [ 1,3,720,1280] } ] }
+			]
+		},
+		{
+			"name": "CastOp",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 32 ] } ] , "outputs": [ { "shape": [ 32 ], "type": "float" } ]}
+			]
+		},
+		{
+			"name": "Elementwise.Unary.Regular",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1 ] } ] },
+				{ "inputs": [ { "shape": [ 1,2,3,4 ] } ] },
+				{ "inputs": [ { "shape": [ 1,512 ] } ] }
+			]
+		},
+		{
+			"name": "Elementwise.Unary.ZeroSized",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1,0,3 ] } ],
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG does not support 0 sized tensor" },
+						{ "name": "NNERuntimeRDGDml",  "skip": true, "comment": "RDG does not support 0 sized tensor" }
+					]}
+			]
+		},
+		{
+			"name": "Elementwise.ClipTestWithExtraInput",
+			"datasets": [
+				{ "inputs": [ { "shape": [1], "comment": "input" }, { "shape": [1], "comment": "min" } ] },
+				{ "inputs": [ { "shape": [1], "comment": "input" }, { "shape": [1], "comment": "min" }, { "shape": [1], "comment": "max" } ] }
+			],
+			"runtimes": [{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "RDG need scalar tensor support"}]
+		},
+		{
+			"name": "Elementwise.Slow.OneInput",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 65536, 513 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.Elu.AttributeTest",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 4 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.Selu.AttributeTest",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 4 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.Softmax.AttributeTest",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 4, 3, 5, 2 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.HardSigmoid.AttributeTest",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 4 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.Clip.AttributeTest",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 4 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.LeakyRelu.AttributeTest",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 4 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Elementwise.Binary.NoBroadcast",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1 ] }, { "shape": [ 1 ] } ]},
+				{ "inputs": [ { "shape": [ 4 ] }, { "shape": [ 4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4,5,6 ] }, { "shape": [ 2,3,4,5,6 ] } ] }
+			]
+		},
+		{
+			"name": "Elementwise.Variadic.NoBroadcast",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1 ] }, { "shape": [ 1 ] }, { "shape": [ 1 ] } ]},
+				{ "inputs": [ { "shape": [ 1 ] }, { "shape": [ 1 ] }, { "shape": [ 1 ] }, { "shape": [ 1 ] } ]},
+				{ "inputs": [ { "shape": [ 4 ] }, { "shape": [ 4 ] }, { "shape": [ 4 ] } ]},
+				{ "inputs": [ { "shape": [ 5 ] }, { "shape": [ 5 ] }, { "shape": [ 5 ] }, { "shape": [ 5 ] }, { "shape": [ 5 ] }, { "shape": [ 5 ] }, { "shape": [ 5 ] }, { "shape": [ 5 ] } ]}
+			]
+		},
+		{
+			"name": "Elementwise.Binary.ZeroSized",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1,0 ] }, { "shape": [ 1,1 ] } ],
+					"runtimes": [
+						{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "RDG does not support 0 sized tensor" },
+						{ "name": "NNERuntimeRDGDml",  "skip": true, "comment": "RDG does not support 0 sized tensor" }
+					]}
+			]
+		},
+		{
+			"name": "Elementwise.Binary.RHSToLHSBroadcast",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1,1,1 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 2,1,1 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1,1,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1,3,1 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 2,1,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1 ]     } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 4 ]     } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1,1 ]   } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 3,1 ]   } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 1,4 ]   } ]},
+				{ "inputs": [ { "shape": [ 2,3,4 ] }, { "shape": [ 3,4 ]   } ]}
+			]
+		},
+		{
+			"name": "Elementwise.Binary.BidirectionalBroadcast",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2,3,1 ] }, { "shape": [ 1,1,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,1,4 ] }, { "shape": [ 2,3,1 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,1 ] }, { "shape": [ 4 ]     } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,1 ] }, { "shape": [ 1,4 ]   } ], "outputs": [ { "shape": [ 2,3,4 ] } ]}
+			]
+		},
+		{
+			"name": "Elementwise.Variadic.MultiDirectionalBroadcast",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2,3,1 ] }, { "shape": [ 1,1,4 ] }, { "shape": [ 1,1,1 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,1,4 ] }, { "shape": [ 1,3,4 ] }, { "shape": [ 2,3,1 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,1 ] }, { "shape": [ 4 ]     }, { "shape": [ 3,1 ]   } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,3,1 ] }, { "shape": [ 3,1 ]   }, { "shape": [ 4 ]     } ], "outputs": [ { "shape": [ 2,3,4 ] } ]}
+			]
+		},
+		{
+			"name": "Elementwise.Binary.LHSToRHSBroadcast",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1,1,1 ] }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,1,1 ] }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 1,1,4 ] }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 1,3,1 ] }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 1,3,4 ] }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 2,1,4 ] }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 1 ]     }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 4 ]     }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 1,1 ]   }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 3,1 ]   }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 1,4 ]   }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]},
+				{ "inputs": [ { "shape": [ 3,4 ]   }, { "shape": [ 2,3,4 ] } ], "outputs": [ { "shape": [ 2,3,4 ] } ]}
+			]
+		},
+		{
+			"name": "Elementwise.Slow.TwoInputs",
+			"datasets": [
+				{
+					"inputs": [ { "shape": [ 65536, 513 ] }, { "shape": [ 1 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.NoTranspose",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2 ] }, { "shape": [ 2, 2 ] } ], "outputs": [ { "shape": [ 2, 2 ] } ]},
+				{ "inputs": [ { "shape": [ 3, 4 ] }, { "shape": [ 4, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]}
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Variable dimension without bias is failing for NNERuntimeORTDml" }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.TransposedA",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2 ] }, { "shape": [ 2, 2 ] } ], "outputs": [ { "shape": [ 2, 2 ] } ]},
+				{ "inputs": [ { "shape": [ 4, 3 ] }, { "shape": [ 4, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]}
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Variable dimension without bias is failing for NNERuntimeORTDml" }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.TransposedB",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2 ] }, { "shape": [ 2, 2 ] } ], "outputs": [ { "shape": [ 2, 2 ] } ]},
+				{ "inputs": [ { "shape": [ 3, 4 ] }, { "shape": [ 5, 4 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]}
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Variable dimension without bias is failing for NNERuntimeORTDml" }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.AllTransposed",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2 ] }, { "shape": [ 2, 2 ] } ], "outputs": [ { "shape": [ 2, 2 ] } ]},
+				{ "inputs": [ { "shape": [ 4, 3 ] }, { "shape": [ 5, 4 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]}
+			],
+			"runtimes": [
+				{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Variable dimension without bias is failing for NNERuntimeORTDml" }
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.NoTranspose",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 3, 4 ] }, { "shape": [ 4, 5 ] }, { "shape": [ 3, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 1 ] }, { "shape": [ 1, 5 ] }, { "shape": [ 5 ] } ], "outputs": [ { "shape": [ 1, 5 ] } ]}
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.TransposedA",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 4, 3 ] }, { "shape": [ 4, 5 ] }, { "shape": [ 3, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 1 ] }, { "shape": [ 1, 5 ] }, { "shape": [ 5 ] } ], "outputs": [ { "shape": [ 1, 5 ] } ]}
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.TransposedB",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 3, 4 ] }, { "shape": [ 5, 4 ] }, { "shape": [ 3, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 1 ] }, { "shape": [ 5, 1 ] }, { "shape": [ 5 ] } ], "outputs": [ { "shape": [ 1, 5 ] } ]}
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.AllTransposed",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 4, 3 ] }, { "shape": [ 5, 4 ] }, { "shape": [ 3, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 1 ] }, { "shape": [ 5, 1 ] }, { "shape": [ 5 ] } ], "outputs": [ { "shape": [ 1, 5 ] } ]}
+			]
+		},
+		{ 
+			"name": "Convolution.DefaultPadding",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 1, 5, 5 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 5, 5 ] } ] },
+				{ "inputs": [ { "shape": [ 1, 3, 5, 5 ] }, { "shape": [ 1, 3, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 5, 5 ] } ], "comment": "With channels" },
+				{ "inputs": [ { "shape": [ 1, 1, 5, 5 ] }, { "shape": [ 3, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 3, 5, 5 ] } ], "comment": "With out-channels" },
+				{ "inputs": [ { "shape": [ 1, 1, 5, 5 ] }, { "shape": [ 3, 1, 3, 3 ] }, { "shape": [ 3 ] } ], "outputs": [ { "shape": [ 1, 3, 5, 5 ] } ], "comment": "With bias" },
+				{ "inputs": [ { "shape": [ 1, 64, 72, 128] }, { "shape": [ 64, 64, 3, 3 ] }, { "shape": [ 64 ] } ], "outputs": [ { "shape": [ 1, 64, 72, 128 ] } ] },
+				{ "inputs": [ { "shape": [ 3, 1, 5, 5 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 3, 1, 5, 5 ] } ], "comment": "Batches" }
+			]
+		},
+		{ "name": "Convolution.WithoutOrAutoPadding", 			"datasets": [ { "inputs": [ { "shape": [ 1, 1, 5, 5 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 3, 3 ] } ] } ] },
+		{ "name": "Convolution.WithStridesAndPadding", 			
+			"datasets": [ 
+				{ "inputs": [ { "shape": [ 1, 1, 7, 5 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 4, 3 ] } ] },
+				{ "inputs": [ { "shape": [ 1, 32, 1, 64 ] }, { "shape": [ 32, 32, 3, 3 ] }, { "shape": [ 32 ] } ], "outputs": [ { "shape": [ 1, 32, 1, 32 ] } ] }
+			] 
+		},
+		{ "name": "Convolution.WithoutPaddingAndStrides",
+	 		"datasets": [ 
+				{ "inputs": [ { "shape": [ 1, 1, 7, 5 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 3, 2 ] } ] },
+				{ "inputs": [ { "shape": [ 1, 32, 1, 64 ] }, { "shape": [ 32, 32, 1, 1 ] }, { "shape": [ 32 ] } ], "outputs": [ { "shape": [ 1, 32, 1, 32 ] } ] }
+			]
+		},
+		{ "name": "Convolution.AsymmetricPaddingAndStrides",
+		 	"datasets": [
+				{ "inputs": [ { "shape": [ 1, 1, 7, 5 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 4, 2 ] } ] },
+				{ "inputs": [ { "shape": [ 1, 64, 70, 66] }, { "shape": [ 64, 64, 3, 3 ] }, { "shape": [ 64 ] } ], "outputs": [ { "shape": [ 1, 64, 35, 32 ] } ] }
+			]
+		},
+		{ "name": "Convolution.WithGroups", 					"datasets": [ { "inputs": [ { "shape": [ 1, 3, 5, 5 ] }, { "shape": [ 3, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 3, 5, 5 ] } ] } ] },
+		{ "name": "Convolution.Large1", 						"datasets": [ { "inputs": [ { "shape": [ 1, 1, 17, 17 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 17, 17 ] } ] } ] },
+		{ "name": "Convolution.Large2", 						"datasets": [ { "inputs": [ { "shape": [ 1, 1, 37, 37 ] }, { "shape": [ 1, 1, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 1, 17, 17 ] } ] } ] },
+		{ "name": "ConvTranspose.Default", 		"datasets": [ { "inputs": [ { "shape": [ 1, 1, 3, 3 ] }, { "shape": [ 1, 2, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 2, 5, 5 ] } ] } ] },
+		{ "name": "ConvTranspose.1D", 			"datasets": [ { "inputs": [ { "shape": [ 1, 1, 3 ] }, { "shape": [ 1, 2, 3 ] } ], "outputs": [ { "shape": [ 1, 2, 5 ] } ] } ] },
+		{ "name": "ConvTranspose.3D", 			"datasets": [ { "inputs": [ { "shape": [ 1, 1, 3, 4, 5 ] }, { "shape": [ 1, 2, 3, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 2, 5, 6, 7 ] } ] } ] },
+		{ "name": "ConvTranspose.Attributes", 	"datasets": [ { "inputs": [ { "shape": [ 1, 1, 3, 3 ] }, { "shape": [ 1, 2, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 2, 10, 8 ] } ] } ] },
+		{
+			"name": "ConvTranspose.Autopad",
+			"datasets": [ { "inputs": [ { "shape": [ 1, 1, 3, 3 ] }, { "shape": [ 1, 2, 3, 3 ] } ], "outputs": [ { "shape": [ 1, 2, 6, 6 ] } ] } ],
+			"runtimes": [
+				{ "name": "NNERuntimeORTDml", "skip": true, "comment": "TODO INVESTIGATE Returns 'The parameter is incorrect'" }
+			]
+		},
+		{
+			"name": "MatMul.Regular",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2 ] }, { "shape": [ 2, 2 ] } ], "outputs": [ { "shape": [ 2, 2 ] } ]},
+				{ "inputs": [ { "shape": [ 3, 4 ] }, { "shape": [ 4, 5 ] } ], "outputs": [ { "shape": [ 3, 5 ] } ]},
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] }, { "shape": [ 2, 4, 5 ] } ], "outputs": [ { "shape": [ 2, 3, 5 ] } ]},
+				{ "inputs": [ { "shape": [ 5, 4 ] }, { "shape": [ 2, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 5, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 2, 5, 4 ] }, { "shape": [ 4, 3 ] } ], "outputs": [ { "shape": [ 2, 5, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 4 ] }, { "shape": [ 4, 3 ] } ], "outputs": [ { "shape": [ 1, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 4 ] }, { "shape": [ 2, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 1, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 3, 4 ] }, { "shape": [ 4, 1 ] } ], "outputs": [ { "shape": [ 3, 1 ] } ]},
+				{ "inputs": [ { "shape": [ 2, 2, 3, 4 ] }, { "shape": [ 4, 1 ] } ], "outputs": [ { "shape": [ 2, 2, 3, 1 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 6 ] }, { "shape": [ 6, 1 ] } ], "outputs": [ { "shape": [ 1, 1 ] } ]}
+			]
+		},
+		{
+			"name": "MatMul.Rank5",
+			"runtimes": [	
+				{ "name": "NNERuntimeORTDml", "skip": true, "comment": "DML metacommand only support 2 to 4 for inputs rank" }
+			],
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2, 3, 5, 4 ] }, { "shape": [ 2, 1, 3, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 2, 3, 5, 3 ] } ], "runtimes": [ {"name": "NNERuntimeRDGDml", "skip": true, "comment": "Not Supported"} ]},
+				{ "inputs": [ { "shape": [ 2, 1, 2, 5, 4 ] }, { "shape": [ 1, 3, 2, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 3, 2, 5, 3 ] } ], "runtimes": [ {"name": "NNERuntimeRDGDml", "skip": true, "comment": "Not Supported"} ]},
+				{ "inputs": [ { "shape": [ 1, 1, 2, 5, 4 ] }, { "shape": [ 2, 3, 2, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 3, 2, 5, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 1, 2, 5, 4 ] }, { "shape": [ 2, 3, 2, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 3, 2, 5, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 5, 4 ] }, { "shape": [ 2, 1, 3, 4, 3 ] } ], "outputs": [ { "shape": [ 2, 1, 3, 5, 3 ] } ]},
+				{ "inputs": [ { "shape": [ 2, 1, 3, 5, 4 ] }, { "shape": [ 4, 3 ] } ], "outputs": [ { "shape": [ 2, 1, 3, 5, 3 ] } ]}
+			]
+		},
+		{
+			"name": "PadOp.Pad00Rank1",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 3 ] } ], "outputs": [ { "shape": [ 3 ] } ] }
+			]
+		},
+		{
+			"name": "PadOp.Pad03Rank1",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 4 ] } ], "outputs": [ { "shape": [ 7 ] } ] }
+			]
+		},
+		{
+			"name": "PadOp.Pad20Rank1",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 4 ] } ], "outputs": [ { "shape": [ 6 ] } ] }
+			]
+		},
+		{
+			"name": "PadOp.Pad41Rank1",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 5 ] } ], "outputs": [ { "shape": [ 10 ] } ] }
+			]
+		},
+		{
+			"name": "PadOp.Pad00_10_12_34_Rank4",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 1,32,224,128 ] } ], "outputs": [ { "shape": [ 1,33,227,135 ] } ] }
+			]
+		},
+		{
+			"name": "Gather",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 2, 3, 4 ] },  { "shape": [ 1 ], "source": [ "1" ], "type": "int32" } ], "outputs": [ { "shape": [ 1, 3, 4 ]} ] }
+			]
+		},
+		{
+			"name": "Upsample.ScaleFromInput",
+			"runtimes": [	
+				{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "Scale should be a constant tensor for RDG" },
+				{ "name": "NNERuntimeRDGHlsl", "skip": true, "comment": "Scale should be a constant tensor for RDG" }
+			],
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 1 ] },                            { "shape": [ 1 ], "source": [ "3"    ],                  "type": "float" } ], "outputs": [ { "shape": [ 3 ]} ] },
+				{ "inputs":  [ { "shape": [ 2 ] },                            { "shape": [ 1 ], "source": [ "2"    ],                  "type": "float" } ], "outputs": [ { "shape": [ 4 ]} ] },
+				{ "inputs":  [ { "shape": [ 3 ] },                            { "shape": [ 1 ], "source": [ "1"    ],                  "type": "float" } ], "outputs": [ { "shape": [ 3 ]} ] },
+				{ "inputs":  [ { "shape": [ 1, 128, 50, 55 ] },               { "shape": [ 4 ], "source": [ "1", "1", "2", "2" ],      "type": "float" } ], "outputs": [ { "shape": [ 1, 128, 100, 110 ]} ] },
+				{ "inputs":  [ { "shape": [ 2, 1, 3, 1, 2 ] },                { "shape": [ 5 ], "source": [ "1", "2", "2", "1", "2" ], "type": "float" } ], "outputs": [ { "shape": [ 2, 2, 6, 1, 4 ]} ] }
+			]
+		},
+		{
+			"name": "Upsample.ScaleFromWeight",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 1 ] } ],              "weights": [ { "shape": [ 1 ], "source": [ "3"    ],                  "type": "float" } ], "outputs": [ { "shape": [ 3 ]} ] },
+				{ "inputs":  [ { "shape": [ 2 ] } ],              "weights": [ { "shape": [ 1 ], "source": [ "2"    ],                  "type": "float" } ], "outputs": [ { "shape": [ 4 ]} ] },
+				{ "inputs":  [ { "shape": [ 3 ] } ],              "weights": [ { "shape": [ 1 ], "source": [ "1"    ],                  "type": "float" } ], "outputs": [ { "shape": [ 3 ]} ] },
+				{ "inputs":  [ { "shape": [ 1, 128, 50, 55 ] } ], "weights": [ { "shape": [ 4 ], "source": [ "1", "1", "2", "2" ],      "type": "float" } ], "outputs": [ { "shape": [ 1, 128, 100, 110 ]} ] },
+				{ "inputs":  [ { "shape": [ 2, 1, 3, 1, 2 ] } ],  "weights": [ { "shape": [ 5 ], "source": [ "1", "2", "2", "1", "2" ], "type": "float" } ], "outputs": [ { "shape": [ 2, 2, 6, 1, 4 ]} ] }
+			]
+		},
+		{
+			"name": "Resize.Downsample.Linear",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 10, 10 ] } ],	"weights": [ { "shape": [ 4 ], "source": [ "2", "1", "8", "9" ], "type": "float" }, { "shape": [ 2 ], "source": [ "0.6", "0.8"  ], "type": "float" } ],	"outputs": [ { "shape": [ 6, 8 ]} ] },
+				{ "inputs":  [ { "shape": [ 20, 15 ] } ],	"weights": [ { "shape": [ 4 ], "source": [ "5", "3", "19", "14" ], "type": "float" }, { "shape": [ 2 ], "source": [ "0.5", "0.4"  ], "type": "float" } ],	"outputs": [ { "shape": [ 10, 6 ]} ] }
+			]
+		},
+		{
+			"name": "Identity",
+			"datasets": [
+				{ 
+					"inputs": [ { "shape": [ 1, 2, 3, 4 ] } ], "outputs": [ { "shape": [ 1, 2, 3, 4 ] } ]
+				}
+			]
+		},
+		{
+			"name": "Dropout",
+			"datasets": [
+				{ 
+					"inputs": [ { "shape": [ 1, 2, 3, 4 ] } ], "outputs": [ { "shape": [ 1, 2, 3, 4 ] } ]
+				}
+			]
+		},
+		{ 
+			"name": "Flatten.Axis2",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 1, 4 ] } ], "outputs": [ { "shape": [ 6, 4 ] } ] }
+			]
+		},
+		{ 
+			"name": "Flatten.Axis1",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 1, 4 ] } ], "outputs": [ { "shape": [ 2, 12 ] } ] }
+			]
+		},
+		{ 
+			"name": "Flatten.Axis0",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 1, 4 ] } ], "outputs": [ { "shape": [ 1, 24 ] } ] }
+			]
+		},
+		{
+			"name": "BatchNormalization",
+			"datasets": [
+				{ 
+					"inputs": [ { "shape": [ 2, 3, 4 ] }, { "shape": [ 3 ] }, { "shape": [ 3 ] }, { "shape": [ 3 ] },
+								{ "shape": [ 3 ], "source": [ "0.1", "1.0", "2.0" ], "comments":  "variance should be positive"}],
+					"outputs": [ { "shape": [ 2, 3, 4 ] } ]
+				},
+				{ 
+					"inputs": [ { "shape": [ 1, 8, 32, 64 ] }, { "shape": [ 8 ] }, { "shape": [ 8 ] }, { "shape": [ 8 ] },
+								{ "shape": [ 8 ], "source": [ "0.0", "0.1", "1.2", "3.0", "0.4", "2.0", "6.0", "0.5" ], "comments":  "variance should be positive"}],
+					"outputs": [ { "shape": [ 1, 8, 32, 64 ] } ]
+				}
+			]
+		},
+		{
+			"name": "InstanceNormalization",
+			"datasets": [
+				{ 
+					"inputs": [ { "shape": [ 1, 1, 3 ] }, { "shape": [ 1 ] }, { "shape": [ 1 ] } ], "outputs": [ { "shape": [ 1, 1, 3 ] } ], 
+					"runtimes": [ 
+						{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Not supported" }  
+					] 
+				},
+				{ 
+					"inputs": [ { "shape": [ 1, 2, 3 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 1, 2, 3 ] } ], 
+					"runtimes": [ 
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "Not supported" },
+						{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Not supported" }
+					] 
+				},
+				{ 
+					"inputs": [ { "shape": [ 2, 2, 3 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 3 ] } ], 
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "Not supported" },
+						{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Not supported" } 
+					]
+				},
+				{ 
+					"inputs": [ { "shape": [ 1, 2, 1, 3 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 1, 2, 1, 3 ] } ] 
+				},
+				{ 
+					"inputs": [ { "shape": [ 2, 2, 1, 3 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 1, 3 ] } ]
+				},
+				{ 
+					"inputs": [ { "shape": [ 2, 2, 2, 2 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 2, 2 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 2, 2, 4, 1, 3 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 4, 1, 3 ] } ],
+					"runtimes": [
+						{ "name": "NNERuntimeRDGDml", "skip": true, "comment": "Not supported" },
+						{ "name": "NNERuntimeORTDml", "skip": true, "comment": "Not supported" }
+					]
+				},
+				{
+					"inputs": [ { "shape": [ 2, 2, 4, 4 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 4, 4 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 2, 2, 8, 8 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 8, 8 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 2, 128, 8, 8 ] }, { "shape": [ 128 ] }, { "shape": [ 128 ] } ], "outputs": [ { "shape": [ 2, 128, 8, 8 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 128, 2, 8, 8 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 128, 2, 8, 8 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 64, 64, 8, 8 ] }, { "shape": [ 64 ] }, { "shape": [ 64 ] } ], "outputs": [ { "shape": [ 64, 64, 8, 8 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 2, 2, 45, 45 ] }, { "shape": [ 2 ] }, { "shape": [ 2 ] } ], "outputs": [ { "shape": [ 2, 2, 45, 45 ] } ]
+				},
+				{
+					"inputs": [ { "shape": [ 1, 128, 56, 56 ] }, { "shape": [ 128 ] }, { "shape": [ 128 ] } ], "outputs": [ { "shape": [ 1, 128, 56, 56 ] } ],
+					"comment": "from style transfer @ 224x224"
+				}
+			]
+		},
+		{ 
+			"name": "GRU.Defaults",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 3, 2 ] }, { "shape": [ 1, 15, 2 ] }, { "shape": [ 1, 15, 5 ] } ], "outputs": [ { "shape": [ 1, 1, 3, 5 ] }, { "shape": [ 1, 3, 5 ] } ] }
+			]
+		},
+		{ 
+			"name": "GRU.InitialBias",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 3, 3 ] }, { "shape": [ 1, 9, 3 ] }, { "shape": [ 1, 9, 3 ] }, { "shape": [ 1, 18 ] } ], "outputs": [ { "shape": [ 1, 1, 3, 3 ] }, { "shape": [ 1, 3, 3 ] } ] }
+			]
+		},
+		{ 
+			"name": "GRU.SeqLength",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 3 ] }, { "shape": [ 1, 15, 3 ] }, { "shape": [ 1, 15, 5 ] }, { "shape": [ 1, 30 ] } ], "outputs": [ { "shape": [ 2, 1, 3, 5 ] }, { "shape": [ 1, 3, 5 ] } ] }
+			]
+		},
+		{ 
+			"name": "GRU.Activations",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 3 ] }, { "shape": [ 1, 15, 3 ] }, { "shape": [ 1, 15, 5 ] }, { "shape": [ 1, 30 ] } ], "outputs": [ { "shape": [ 2, 1, 3, 5 ] }, { "shape": [ 1, 3, 5 ] } ] }
+			]
+		},
+		{ 
+			"name": "TransposeOp.234to243",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "outputs": [ { "shape": [ 2, 4, 3 ] } ] }
+			]
+		},
+		{ 
+			"name": "TransposeOp.234to423",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "outputs": [ { "shape": [ 4, 2, 3 ] } ] }
+			]
+		},
+		{ 
+			"name": "TransposeOp.Default",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 5, 7, 8 ] } ], "outputs": [ { "shape": [ 8, 7, 5 ] } ] }
+			]
+		},
+		{
+			"name": "ShapeOp",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 3 ] } ], "outputs": [ { "shape": [ 1 ], "type": "int64" } ] },
+				{ "inputs":  [ { "shape": [ 1, 128, 50, 55 ] } ], "outputs": [ { "shape": [ 4 ], "type": "int64"} ] },
+				{ "inputs":  [ { "shape": [ 2, 1, 3, 1, 2 ] } ],  "outputs": [ { "shape": [ 5 ], "type": "int64"} ] }
+			]
+		},
+		{
+			"name": "SizeOp",
+			"datasets": [
+				{ "inputs":  [ { "shape": [ 3 ] } ], "outputs": [ { "shape": [ ], "type": "int64" } ] },
+				{ "inputs":  [ { "shape": [ 1, 128, 50, 55 ] } ], "outputs": [ { "shape": [ ], "type": "int64"} ] },
+				{ "inputs":  [ { "shape": [ 2, 1, 3, 1, 2 ] } ],  "outputs": [ { "shape": [ ], "type": "int64"} ] }
+			]
+		},
+		{ 
+			"name": "Concat.Concat1",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3 ] }, { "shape": [ 2, 4 ] } ], "outputs": [ { "shape": [ 2, 7 ] } ] }
+			]
+		},
+		{
+			"name": "Concat.Concat2",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 4, 2, 4 ] }, { "shape": [ 6, 2, 4 ] }, { "shape": [ 1, 2, 4 ] } ], "outputs": [ { "shape": [ 11, 2, 4 ] } ] }
+			]
+		},
+		{ 
+			"name": "Unsqueeze.Unsqueeze1",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "outputs": [ { "shape": [ 2, 1, 3, 4 ] } ] }
+			]
+		},
+		{ 
+			"name": "Unsqueeze.Unsqueeze2",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 131 ] } ], "outputs": [ { "shape": [ 1, 131, 1 ] } ] }
+			]
+		},
+		{ 
+			"name": "SqueezeOp.Axes",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 1, 4 ] } ], "outputs": [ { "shape": [ 2, 3, 4 ] } ] }
+			]
+		},
+		{ 
+			"name": "SqueezeOp.MultiAxes",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 1, 3, 1, 4 ] } ], "outputs": [ { "shape": [ 2, 3, 4 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reshape.Reshape234to423",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "weights": [ { "shape": [ 3 ], "source": [ "4", "2", "3" ], "type": "int64" } ], "outputs": [ { "shape": [ 4, 2, 3 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reshape.Reshape234to243",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "weights": [ { "shape": [ 3 ], "source": [ "2", "4", "3" ], "type": "int64" } ], "outputs": [ { "shape": [ 2, 4, 3 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reshape.RducedDims",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "weights": [ { "shape": [ 2 ], "source": [ "2", "12" ], "type": "int64" } ], "outputs": [ { "shape": [ 2, 12 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reshape.ExtendedDims",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "weights": [ { "shape": [ 4 ], "source": [ "2", "3", "2", "2" ], "type": "int64" } ], "outputs": [ { "shape": [ 2, 3, 2, 2 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reshape.OneDim",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 4 ] } ], "weights": [ { "shape": [ 1 ], "source": [ "24" ], "type": "int64" } ], "outputs": [ { "shape": [ 24 ] } ] }
+			]
+		},
+		{
+			"name": "Reshape.MinusOne",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 4, 3 ] } ], "weights": [ { "shape": [ 2 ], "source": [ "12", "-1" ], "type": "int64" } ], "outputs": [ { "shape": [ 12, 2 ] } ] }
+			]
+		},
+		{
+			"name": "Reshape.Zero",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 4, 3 ] } ], "weights": [ { "shape": [ 3 ], "source": [ "3", "0", "2" ], "type": "int64" } ], "outputs": [ { "shape": [ 3, 4, 2 ] } ] }
+			]
+		},
+		{
+			"name": "PoolOp.2D.Default",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 3, 32, 32 ] } ], "outputs": [ { "shape": [ 1, 3, 31, 31 ] } ] }
+			]
+		},
+		{
+			"name": "PoolOp.2D.Strides2",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 2, 256, 256 ] } ], "outputs": [ { "shape": [ 1, 2, 128, 128 ] } ] }
+			]
+		},
+		{
+			"name": "GlobalPool.2D",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 2, 128, 256 ] } ], "outputs": [ { "shape": [ 2, 2, 1, 1 ] } ] }
+			]
+		},
+		{
+			"name": "GlobalPool.3D",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 2, 3, 128, 256, 64 ] } ], "outputs": [ { "shape": [ 2, 3, 1, 1, 1 ] } ] }
+			]
+		},
+		{
+			"name": "Split.Axis2",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 1, 6, 2 ] } ], "outputs": [ { "shape": [ 1, 1, 2, 2 ] }, { "shape": [ 1, 1, 1, 2 ] }, { "shape": [ 1, 1, 3, 2 ] } ] }
+			]
+		},
+		{
+			"name": "Split.Axis3",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 1, 1, 6, 2 ] } ], "outputs": [ { "shape": [ 1, 1, 6, 1 ] }, { "shape": [ 1, 1, 6, 1 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reduce.Default",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 3, 2, 2 ] } ], "outputs": [ { "shape": [ 1, 1, 1 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reduce.Axes.Keepdims",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 3, 2, 2 ] } ], "outputs": [ { "shape": [ 3, 1, 2 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reduce.Axes.DontKeepdims",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 3, 2, 2 ] } ], "outputs": [ { "shape": [ 3, 2 ] } ] }
+			]
+		},
+		{ 
+			"name": "Reduce.NegativeAxes.Keepdims",
+			"datasets": [
+				{ "inputs": [ { "shape": [ 3, 2, 2 ] } ], "outputs": [ { "shape": [ 3, 1, 2 ] } ] }
+			]
+		}
+	],
+
+	"attribute_sets": [
+		{
+			"name": "Flatten.Axis0",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "axis", "value": 0, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Flatten.Axis1",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "axis", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Flatten.Axis2",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "axis", "value": 2, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Elementwise.Elu.AttributeTest",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "alpha", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 1.0 } ] },
+				{ "attributes": [ ] }
+			]
+		},
+		{
+			"name": "Elementwise.Selu.AttributeTest",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "alpha", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 1.0 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 0.7 }, { "name": "gamma", "value": 0.1 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 0.7 }, { "name": "gamma", "value": 0.5 } ] },
+				{ "attributes": [ ] }
+			]
+		},
+		{
+			"name": "Elementwise.Softmax.AttributeTest",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "axis", "value": 2, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Elementwise.HardSigmoid.AttributeTest",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "alpha", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 1.0 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 0.7 }, { "name": "beta", "value": 0.1 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 0.7 }, { "name": "beta", "value": 0.5 } ] },
+				{ "attributes": [ ] }
+			]
+		},
+		{
+			"name": "Elementwise.Clip.AttributeTest",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "min", "value": 0.1 } ] },
+				{ "attributes": [ { "name": "max", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "min", "value": -0.1 }, { "name": "max", "value": 0.1 } ] },
+				{ "attributes": [ { "name": "min", "value": -0.1 }, { "name": "max", "value": 0.5 } ] },
+				{ "attributes": [ ] }
+			]
+		},
+		{
+			"name": "Elementwise.LeakyRelu.AttributeTest",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "alpha", "value": 0.1 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 1.0 } ] }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.NoTranspose.Alpha",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "alpha", "value": 0.0 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 1.0 } ] },
+				{ "attributes": [ { "name": "alpha", "value": 5.0 } ] }
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.NoTranspose.Beta",
+			"multiply_with_attribute_sets": [ "Gemm.TwoInputs.NoTranspose.Alpha" ],
+			"attribute_maps": [
+				{ "attributes": [ { "name": "beta", "value": 0.0 } ] },
+				{ "attributes": [ { "name": "beta", "value": 0.5 } ] },
+				{ "attributes": [ { "name": "beta", "value": 1.0 } ] },
+				{ "attributes": [ { "name": "beta", "value": 5.0 } ] }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.NoTranspose",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transA", "value": 0, "type": "Int32" }, { "name": "transB", "value": 0, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.NoTranspose",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transA", "value": 0, "type": "Int32" }, { "name": "transB", "value": 0, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.TransposedA",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transA", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.TransposedB",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transB", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Gemm.TwoInputs.AllTransposed",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transA", "value": 1, "type": "Int32" }, { "name": "transB", "value": 1, "type": "Int32" } ] }
+			]
+		},
+				{
+			"name": "Gemm.ThreeInputs.TransposedA",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transA", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.TransposedB",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transB", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Gemm.ThreeInputs.AllTransposed",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "transA", "value": 1, "type": "Int32" }, { "name": "transB", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "CastOp",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "to", "value": 1, "type": "Int32" } ] }
+			]
+		},
+		{
+			"name": "Convolution.DefaultPadding",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 1, 1, 1, 1 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 1, 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.WithoutOrAutoPadding.WithoutPadding",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 0, 0, 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 1, 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.WithoutOrAutoPadding.AutoPaddingAndStrides",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "SAME_LOWER", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.WithStridesAndPadding",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 1, 1, 1, 1 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.WithoutPaddingAndStrides",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 0, 0, 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.AsymmetricPaddingAndStrides",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 1, 0, 1, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.WithGroups",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 3, "type": "Int32" },
+					{ "name": "pads", "value": [ 1, 1, 1, 1 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 1, 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.Large1",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "SAME_UPPER", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "strides", "value": [ 1, 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "Convolution.Large2",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 2, 2 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 0, 0, 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "ConvTranspose.Default",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 0, 0, 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 1, 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "ConvTranspose.1D",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "ConvTranspose.3D",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "pads", "value": [ 0, 0, 0, 0, 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 1, 1, 1 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "ConvTranspose.Attributes",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "NOTSET", "type": "String" },
+					{ "name": "dilations", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "group", "value": 1, "type": "Int32" },
+					{ "name": "output_padding", "value": [ 1, 1 ], "type": "Int32Array" },
+					{ "name": "pads", "value": [ 0, 0, 0, 0 ], "type": "Int32Array" },
+					{ "name": "strides", "value": [ 3, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "ConvTranspose.Autopad.SameLower",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "SAME_LOWER", "type": "String" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "ConvTranspose.Autopad.SameUpper",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "auto_pad", "value": "SAME_UPPER", "type": "String" },
+					{ "name": "strides", "value": [ 2, 2 ], "type": "Int32Array"}
+				] }
+			]
+		},
+		{
+			"name": "InstanceNormalization.Algorithms",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "__UE__algorithm", "value": "Simple1x265", "type": "String" } ] },
+				{ "attributes": [ { "name": "__UE__algorithm", "value": "SharedMemory256x1", "type": "String" } ] },
+				{ "attributes": [ { "name": "__UE__algorithm", "value": "SharedMemory512x1", "type": "String" } ] },
+				{ "attributes": [ { "name": "__UE__algorithm", "value": "SharedMemory768x1", "type": "String" } ] },
+				{ "attributes": [ { "name": "__UE__algorithm", "value": "SharedMemory1024x1", "type": "String" } ] }
+			]
+		},
+		{
+			"name": "PadOp.ModeAttributeSet",
+			"attribute_maps": [
+				{ "attributes": [ { "name": "mode", "value": "constant", "type": "String" } ] },
+				{ "attributes": [ { "name": "mode", "value": "reflect", "type": "String" } ] },
+				{ "attributes": [ { "name": "mode", "value": "edge", "type": "String" } ] }
+			]
+		},
+		{
+			"name": "PadOp.Pad00Rank1",
+			"multiply_with_attribute_sets": [ "PadOp.ModeAttributeSet" ],
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "value", "value": 1, "type": "float" },
+					{ "name": "pads", "value": [ 0, 0 ], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "PadOp.Pad03Rank1",
+			"multiply_with_attribute_sets": [ "PadOp.ModeAttributeSet" ],
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "value", "value": 2, "type": "float" },
+					{ "name": "pads", "value": [ 0, 3 ], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "PadOp.Pad20Rank1",
+			"multiply_with_attribute_sets": [ "PadOp.ModeAttributeSet" ],
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "value", "value": 3, "type": "float" },
+					{ "name": "pads", "value": [ 2, 0 ], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "PadOp.Pad41Rank1",
+			"multiply_with_attribute_sets": [ "PadOp.ModeAttributeSet" ],
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "pads", "value": [ 4, 1 ], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "PadOp.Pad00_10_12_34_Rank4",
+			"multiply_with_attribute_sets": [ "PadOp.ModeAttributeSet" ],
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "pads", "value": [ 0, 1, 1, 3, 0, 0, 2, 4 ], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "Resize.Downsample.Linear",
+			"attribute_maps": [
+				{
+					"attributes": [ 
+						{ "name": "mode", "value": "linear", "type": "String" }
+					]
+				}
+			]
+		},
+		{
+			"name": "Resize.Downsample.Linear.Transform",
+			"multiply_with_attribute_sets": [ "Resize.Downsample.Linear" ],
+			"attribute_maps": [
+				{ "attributes": [ { "name": "coordinate_transformation_mode", "value": "align_corners", "type": "String" } ] },
+				{ "attributes": [ { "name": "coordinate_transformation_mode", "value": "asymmetric", "type": "String" } ] },
+				{ "attributes": [ { "name": "coordinate_transformation_mode", "value": "tf_half_pixel_for_nn", "type": "String" } ] }
+			]
+		},
+		{
+			"name": "GRU.Defaults",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "hidden_size", "value": 5, "type": "Int32" }
+				] }
+			]
+		},
+		{
+			"name": "GRU.InitialBias",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "hidden_size", "value": 3, "type": "Int32" }
+				] }
+			]
+		},
+		{
+			"name": "GRU.SeqLength",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "hidden_size", "value": 5, "type": "Int32" }
+				] }
+			]
+		},
+		{
+			"name": "GRU.Activations",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "hidden_size", "value": 5, "type": "Int32" },
+					{ "name": "activations", "value": ["Tanh", "Sigmoid"], "type": "StringArray" },
+					{ "name": "activation_alpha", "value": [0.01, 0.2], "type": "FloatArray" }
+				] }
+			]
+		},
+		{
+			"name": "TransposeOp.234to243",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "perm", "value": [0, 2, 1], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "TransposeOp.234to423",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "perm", "value": [2, 0, 1], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "TransposeOp.Default",
+			"attribute_maps": [
+				{ "attributes": [] }
+			]
+		},
+		{
+			"name": "SqueezeOp.Axes",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "axes", "value": [2], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "SqueezeOp.MultiAxes",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "axes", "value": [1, 3], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "Unsqueeze.Unsqueeze1",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "axes", "value": [1], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "Unsqueeze.Unsqueeze2",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "axes", "value": [2], "type": "Int32Array" }
+				] }
+			]
+		},
+		{
+			"name": "Concat.Concat1",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "axis", "value": 1, "type": "Int32" }
+				] }
+			]
+		},
+		{
+			"name": "Concat.Concat2",
+			"attribute_maps": [
+				{ "attributes": [
+					{ "name": "axis", "value": -3, "type": "Int32" }
+				] }
+			]
+		},
+		{
+			"name": "PoolOp.2D.Default",
+			"attribute_maps": [
+				{ "attributes": [ 
+						{ "name": "kernel_shape", "value": [2, 2], "type": "Int32Array" } 
+					]
+				}
+			]
+		},
+		{
+			"name": "PoolOp.2D.Strides2",
+			"attribute_maps": [
+				{ "attributes": [ 
+						{ "name": "kernel_shape", "value": [2, 2], "type": "Int32Array" },
+						{ "name": "pads", "value": [0, 0, 0, 0], "type": "Int32Array" },
+						{ "name": "strides", "value": [2, 2], "type": "Int32Array" } 
+					]
+				}
+			]
+		},
+		{
+			"name": "Split.Axis2",
+			"attribute_maps": [
+				{ "attributes": [ 
+						{ "name": "axis", "value": 2, "type": "Int32" },
+						{ "name": "split", "value": [2, 1, 3], "type": "Int32Array" }
+					]
+				}
+			]
+		},
+		{
+			"name": "Split.Axis3",
+			"attribute_maps": [
+				{ "attributes": [ 
+						{ "name": "axis", "value": 3, "type": "Int32" },
+						{ "name": "split", "value": [1, 1], "type": "Int32Array" }
+					]
+				}
+			]
+		},
+		{
+			"name": "Reduce.Axes.Keepdims",
+			"attribute_maps": [
+				{
+					"attributes": [
+						{ "name": "axes", "value": [ 1 ], "type": "Int32Array" },
+						{ "name": "keepdims", "value": 1, "type": "Int32" }
+					]
+				}
+			]
+		},
+		{
+			"name": "Reduce.Axes.DontKeepdims",
+			"attribute_maps": [
+				{ "attributes": [ 
+						{ "name": "axes", "value": [1], "type": "Int32Array" },
+						{ "name": "keepdims", "value": 0, "type": "Int32" }
+					]
+				}
+			]
+		},
+		{
+			"name": "Reduce.NegativeAxes.Keepdims",
+			"attribute_maps": [
+				{ "attributes": [ 
+						{ "name": "axes", "value": [-2], "type": "Int32Array" },
+						{ "name": "keepdims", "value": 1, "type": "Int32" }
+					]
+				}
+			]
+		}
+	]
+
+}

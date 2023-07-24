@@ -1,0 +1,61 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "RayTracingDebugUtils.ush"
+
+#include "/Engine/Shared/RayTracingDebugTypes.h"
+
+uint OpaqueOnly;
+
+RaytracingAccelerationStructure TLAS;
+
+StructuredBuffer<FRayTracingInstanceDebugData> InstancesDebugData;
+StructuredBuffer<FRayTracingPickingFeedback> PickingBuffer;
+
+RWStructuredBuffer<FRayTracingPickingFeedback> PickingOutput;
+StructuredBuffer<FRayTracingInstanceDescriptor> InstanceBuffer;
+
+RAY_TRACING_ENTRY_RAYGEN(RayTracingDebugPickingRGS)
+{
+	const uint2 PixelPos = (float2(View.CursorPosition) * View.ViewResolutionFraction);
+	float2 RenderTargetUV = (float2(PixelPos) + .5f) * View.BufferSizeAndInvSize.zw;
+
+	FRayDesc Ray = CreatePrimaryRay(RenderTargetUV);
+
+	const uint InstanceInclusionMask = (OpaqueOnly ? RAY_TRACING_MASK_OPAQUE : RAY_TRACING_MASK_ALL);
+
+	FRayTracingDebugPayload Payload = (FRayTracingDebugPayload)0;
+	Payload.SetMiss();
+
+	TraceRay(
+		TLAS,
+		RAY_FLAG_CULL_BACK_FACING_TRIANGLES  /*RayFlags*/,
+		InstanceInclusionMask,
+		0 /*RayContributionToHitGroupIndex*/,
+		RAY_TRACING_NUM_SHADER_SLOTS /*MultiplierForGeometryContributionToShaderIndex*/,
+		0 /*MissShaderIndex*/,
+		Ray.GetNativeDesc(),
+		Payload);
+
+	FRayTracingPickingFeedback PickingFeedback = (FRayTracingPickingFeedback)0xFFFFFFFFu;
+
+	if (Payload.IsHit())
+	{
+		FRayTracingInstanceDebugData InstanceDebugData = InstancesDebugData[Payload.GeometryInstanceIndex];
+		FRayTracingInstanceDescriptor InstanceDescriptor = InstanceBuffer[Payload.InstanceIndex];
+
+		PickingFeedback.GeometryAddress = InstanceDebugData.GeometryAddress;
+
+		PickingFeedback.InstanceIndex = Payload.InstanceIndex;
+		PickingFeedback.GeometryInstanceIndex = Payload.GeometryInstanceIndex;
+		PickingFeedback.TriangleIndex = Payload.TriangleIndex;
+		PickingFeedback.GeometryIndex = Payload.GeometryIndex;
+
+		PickingFeedback.InstanceId = GetRayTracingInstanceDescriptorInstanceId(InstanceDescriptor);
+		PickingFeedback.Flags = GetRayTracingInstanceDescriptorFlags(InstanceDescriptor);
+		PickingFeedback.Mask = GetRayTracingInstanceDescriptorMask(InstanceDescriptor);
+		PickingFeedback.InstanceContributionToHitGroupIndex = GetRayTracingInstanceDescriptorInstanceContributionToHitGroupIndex(InstanceDescriptor);
+	}
+
+	PickingOutput[0] = PickingFeedback;
+}

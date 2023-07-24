@@ -1,0 +1,68 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "VRSShadingRateCommon.ush"
+#include "../Common.ush"
+#include "../ColorSpace.ush"
+
+float4 ViewRect;
+
+RWTexture2D<float4> SceneColorOut;
+Texture2D<uint> VariableRateShadingTextureIn;
+float DynamicResolutionScale;
+
+uint SampleVariableRateShadingTexture(float2 UV)
+{
+	uint2 VRSDimension;
+	VariableRateShadingTextureIn.GetDimensions(VRSDimension.x, VRSDimension.y);
+
+	int2 VRSIndex = UV * VRSDimension;
+
+#if COMPUTE_SHADER
+	return VariableRateShadingTextureIn[VRSIndex].r;
+#else
+	return VariableRateShadingTextureIn.Load(int3(VRSIndex,0)).r;
+#endif
+}
+
+float4 PreviewVariableRateShadingTexture_Impl(float2 UV)
+{
+	uint VRSValue = SampleVariableRateShadingTexture(UV) & (15U);
+	return VisualizeShadingRate(VRSValue);
+}
+
+void PreviewVariableRateShadingTexturePS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float4 OutColor : SV_Target0)
+{
+	// The vertex shader has already scaled this by the DynamicResolutionScale,
+	// so we don't have to do this in the Pixel Shader as we do in the CS.
+	float2 UVLookup = UVAndScreenPos.xy;
+
+	OutColor = PreviewVariableRateShadingTexture_Impl(UVLookup);
+}
+
+#if COMPUTE_SHADER
+
+[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, 1)]
+void PreviewVariableRateShadingTextureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 PhysicalDimension;
+	SceneColorOut.GetDimensions(PhysicalDimension.x, PhysicalDimension.y);
+
+	uint2 OutputCoord = DispatchThreadId.xy + ViewRect.xy;
+	if(OutputCoord.x >= PhysicalDimension.x || OutputCoord.y >= PhysicalDimension.y)
+	{
+		return;
+	}
+
+	float2 UV = (ViewRect.xy + DispatchThreadId.xy) * DynamicResolutionScale / float2(PhysicalDimension);
+	
+	float4 FilterColor = PreviewVariableRateShadingTexture_Impl(UV);
+
+	if (all (FilterColor != float4(0, 0, 0, 0)))
+	{
+		SceneColorOut[OutputCoord] = FilterColor;
+	}
+}
+
+#endif

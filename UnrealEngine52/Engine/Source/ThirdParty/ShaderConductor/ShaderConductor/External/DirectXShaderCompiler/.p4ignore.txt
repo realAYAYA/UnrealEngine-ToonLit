@@ -1,0 +1,5 @@
+tools/clang/test
+utils/lit/tests
+lit.local.cfg
+projects/dxilconv/test
+utils/unittest

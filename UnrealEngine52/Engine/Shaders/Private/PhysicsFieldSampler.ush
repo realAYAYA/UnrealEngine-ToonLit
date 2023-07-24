@@ -1,0 +1,53 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	PhysicsFieldSampler.ush
+=============================================================================*/
+
+#pragma once
+
+#include "PhysicsFieldShared.ush"
+
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM5
+
+#if IS_MATERIAL_SHADER
+    // for materials, these are in the view UB
+	#define PhysicsFieldClipmapBuffer			View.PhysicsFieldClipmapBuffer
+	#define PhysicsFieldClipmapCenter			View.PhysicsFieldClipmapCenter
+	#define PhysicsFieldClipmapDistance			View.PhysicsFieldClipmapDistance
+	#define PhysicsFieldClipmapResolution		View.PhysicsFieldClipmapResolution
+	#define PhysicsFieldClipmapExponent			View.PhysicsFieldClipmapExponent
+	#define PhysicsFieldClipmapCount			View.PhysicsFieldClipmapCount
+	#define PhysicsFieldTargetCount				View.PhysicsFieldTargetCount
+	#define PhysicsFieldTargets					View.PhysicsFieldTargets
+#else
+	Buffer<float> PhysicsFieldClipmapBuffer;
+	float3		PhysicsFieldClipmapCenter;
+	float		PhysicsFieldClipmapDistance;
+	int			PhysicsFieldClipmapResolution;
+	int			PhysicsFieldClipmapExponent;
+	int			PhysicsFieldClipmapCount;
+	int			PhysicsFieldTargetCount;
+	int4		PhysicsFieldTargets[MAX_PHYSICS_FIELD_TARGETS]; // x (Vector), y (Scalar), z (Integer), w (Padding)
+#endif
+
+float3 MatPhysicsField_SamplePhysicsVectorField(float3 WorldPosition, int VectorTarget)
+{
+	return PhysicsField_SamplePhysicsVectorField(WorldPosition, VectorTarget, PhysicsFieldTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
+				PhysicsFieldClipmapExponent, PhysicsFieldClipmapCount, PhysicsFieldClipmapResolution, PhysicsFieldClipmapBuffer);
+}
+
+float MatPhysicsField_SamplePhysicsScalarField(float3 WorldPosition, int ScalarTarget)
+{
+	return PhysicsField_SamplePhysicsScalarField(WorldPosition, ScalarTarget, PhysicsFieldTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
+				PhysicsFieldClipmapExponent, PhysicsFieldClipmapCount, PhysicsFieldClipmapResolution, PhysicsFieldClipmapBuffer);
+}
+
+int MatPhysicsField_SamplePhysicsIntegerField(float3 WorldPosition, int IntegerTarget)
+{
+	return PhysicsField_SamplePhysicsIntegerField(WorldPosition, IntegerTarget, PhysicsFieldTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
+				PhysicsFieldClipmapExponent, PhysicsFieldClipmapCount, PhysicsFieldClipmapResolution, PhysicsFieldClipmapBuffer);
+	
+}
+
+#endif // FEATURE_LEVEL >= FEATURE_LEVEL_SM5

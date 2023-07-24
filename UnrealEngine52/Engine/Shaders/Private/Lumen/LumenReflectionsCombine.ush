@@ -1,0 +1,16 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+float MaxRoughnessToTrace;
+float MaxRoughnessToTraceForFoliage;
+float InvRoughnessFadeLength;
+
+// Weight of reflection rays for a current pixel
+// 0 - specular should fallback to some specular approximation
+// 1 - specular should only composite reflection rays
+float LumenCombineReflectionsAlpha(float InRoughness, bool bHasBackfaceDiffuse)
+{
+	float FadeAlpha = saturate(((bHasBackfaceDiffuse != 0 ? MaxRoughnessToTraceForFoliage : MaxRoughnessToTrace) - InRoughness) * InvRoughnessFadeLength);
+	return FadeAlpha;
+}

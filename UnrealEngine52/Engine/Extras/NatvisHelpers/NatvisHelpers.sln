@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.168
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NatvisHelpers", "NatvisHelpers.vcxproj", "{EB6BEC07-1792-4EBE-ACD6-C1695FE6B7FD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EB6BEC07-1792-4EBE-ACD6-C1695FE6B7FD}.Release|x64.ActiveCfg = Release|x64
+		{EB6BEC07-1792-4EBE-ACD6-C1695FE6B7FD}.Release|x64.Build.0 = Release|x64
+		{EB6BEC07-1792-4EBE-ACD6-C1695FE6B7FD}.Release|x86.ActiveCfg = Release|Win32
+		{EB6BEC07-1792-4EBE-ACD6-C1695FE6B7FD}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {830E47C0-3E91-4B61-B256-1C6806CAFD04}
+	EndGlobalSection
+EndGlobal

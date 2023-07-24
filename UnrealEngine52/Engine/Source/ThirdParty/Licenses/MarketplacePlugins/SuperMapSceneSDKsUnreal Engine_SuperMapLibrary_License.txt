@@ -1,0 +1,1 @@
+This Software contains third party software or libraries from SuperMap Software for streaming massive geospatial data to Unreal Engine. We ensure the all the software or libraries are legal and safe for use. Please refer to   https://www.supermap.com/en-us/about/?78_1.html for further details of SuperMap Software  Co., Ltd. and products.

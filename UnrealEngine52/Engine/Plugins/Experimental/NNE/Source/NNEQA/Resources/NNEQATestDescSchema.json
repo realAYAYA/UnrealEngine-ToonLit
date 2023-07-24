@@ -1,0 +1,314 @@
+{
+	"description": "schema for NNE test",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"$schema": {
+			"type": "string"
+		},
+		"model_test_categories": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/test_config_category" }
+		},
+		"operator_test_categories": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/test_config_category" }
+		},
+		"input_output_sets": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/test_config_input_output_set" }
+		},
+		"attribute_sets": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/test_config_attribute_set" }
+		},
+		"comment": {
+			"type": "string",
+			"description": "Unused by test system, usefull to add clarification in json file"
+		}
+	},
+
+	"$defs": {
+		"test_config_tensor": {
+			"type": "object",
+			"required": [ "shape" ],
+			"properties": {
+				"shape": {
+					"type": "array",
+					"items": { "type": "number" }
+			    },
+				"source": {
+					"type": "array",
+					"items": { "type": "string" }
+			    },
+				"type": {
+					"type": "string",
+					"enum": [ "float", "int32", "int64", "uint32", "boolean" ]
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		},
+
+		"test_config_runtime": {
+			"type": "object",
+			"required": [ "name" ],
+			"additionalProperties": false,
+			"properties": {
+				"name": {
+					"type": "string",
+					"description": "name of the runtime to specialize for"
+				},
+				"skip": {
+					"type": "boolean",
+					"description": "true to skip the test for this runtime, false by default"
+				},
+				"skip_variadic_test": {
+					"type": "boolean",
+					"description": "true to skip variadic input shape tests"
+				},
+				"skip_static_test": {
+					"type": "boolean",
+					"description": "true to skip static intput shape tests"
+				},
+				"absolute_tolerance": {
+					"type": "number",
+					"minimum": 0,
+					"description": "absolute tolerance of numerical tensor comparison routine"
+				},
+				"relative_tolerance": {
+					"type": "number",
+					"minimum": 0,
+					"maximum": 1,
+					"description": "relative tolerance of numerical tensor comparison routine"
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		},
+
+		"test_config_dataset": {
+			"type": "object",
+			"required": [ "inputs" ],
+			"additionalProperties": false,
+			"properties": {
+				"inputs": {
+					"type": "array",
+					"description": "input to test",
+					"items": { "$ref": "#/$defs/test_config_tensor" }
+				},
+				"weights": {
+					"type": "array",
+					"description": "weights to test",
+					"items": { "$ref": "#/$defs/test_config_tensor" }
+				},
+				"outputs": {
+					"type": "array",
+					"description": "output to test",
+					"items": { "$ref": "#/$defs/test_config_tensor" }
+				},
+				"runtimes": {
+					"type": "array",
+					"description": "Array of operator to test",
+					"items": { "$ref": "#/$defs/test_config_runtime" }
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		},
+
+		"test_config_attribute": {
+			"type": "object",
+			"required": [ "name", "value" ],
+			"additionalProperties": false,
+			"properties": {
+				"name": {
+					"type": "string",
+					"description": "Name of the attribute"
+				},
+				"value": {
+					"type": [ "number", "string", "array" ],
+					"description": "Value of the attribute"
+				},
+				"type": {
+					"type": "string",
+					"description": "Type of the attribute"
+				}
+			}
+		},
+
+		"test_config_attribute_map": {
+			"type": "object",
+			"required": [ "attributes" ],
+			"additionalProperties": false,
+			"properties": {
+				"attributes": {
+					"type": "array",
+					"description": "Attributes to test",
+					"items": { "$ref": "#/$defs/test_config_attribute" }
+				}
+			}
+		},
+
+		"test_config_target": {
+			"type": "object",
+			"required": [ "target" ],
+			"additionalProperties": false,
+			"properties": {
+				"target": {
+					"type": "string",
+					"description": "Name of the operator or model to run (for model .onnx should be ommited)"
+				},
+				"tags": {
+					"type": "array",
+					"description": "array of tags associated with the test, test can be filtered by tag when runned from command line",
+					"items": { "type": "string" }
+				},
+				"additional_datasets": {
+					"type": "array",
+					"description": "additional dataset associated with this target, by default all dataset witch name are a super set of this target category name will be runned, you can specify more dataset using this parameter",
+					"items": { "type": "string" }
+				},
+				"removed_datasets": {
+					"type": "array",
+					"description": "dataset that will be explicitely not run with this target, by default all dataset witch name are a super set of this target category name will be runned, you can filter out dataset using this parameter",
+					"items": { "type": "string" }
+				},
+				"skip": {
+					"type": "boolean",
+					"description": "true to skip this operator or model test entirely, false by default"
+				},
+				"absolute_tolerance": {
+					"type": "number",
+					"minimum": 0,
+					"description": "absolute tolerance (equality check)"
+				},
+				"relative_tolerance": {
+					"type": "number",
+					"minimum": 0,
+					"maximum": 1,
+					"description": "relative tolerance (equality check)"
+				},
+				"input_type": {
+					"type": "string",
+					"enum": [ "float", "int32", "int64", "uint32", "boolean" ]
+				},
+				"output_type": {
+					"type": "string",
+					"enum": [ "float", "int32", "int64", "uint32", "boolean" ]
+				},
+				"runtimes": {
+					"type": "array",
+					"description": "Array of runtimes to specialize test behavior for",
+					"items": { "$ref": "#/$defs/test_config_runtime" }
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		},
+
+		"test_config_category": {
+			"type": "object",
+			"required": [ "category", "targets" ],
+			"additionalProperties": false,
+			"properties": {
+				"category": {
+					"type": "string",
+					"description": "Name of the category"
+				},
+				"targets": {
+					"type": "array",
+					"description": "Array of models or operators to test",
+					"items": { "$ref": "#/$defs/test_config_target" }
+				},
+				"skip": {
+					"type": "boolean",
+					"description": "true to skip this category entirely, false by default"
+				},
+				"is_model_test": {
+					"type": "boolean",
+					"description": "true if the category contain model tests, false for operators tests"
+				},
+				"runtimes": {
+					"type": "array",
+					"description": "Array of operator to test",
+					"items": { "$ref": "#/$defs/test_config_runtime" }
+				},
+				"additional_datasets": {
+					"type": "array",
+					"description": "additional dataset associated with this category, by default all dataset witch name are a super set of this category name will be runned, you can specify more dataset using this parameter",
+					"items": { "type": "string" }
+				},
+				"removed_datasets": {
+					"type": "array",
+					"description": "dataset that will be explicitely not run with this category, by default all dataset witch name are a super set of this category name will be runned, you can filter out dataset using this parameter",
+					"items": { "type": "string" }
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		},
+
+		"test_config_input_output_set": {
+			"type": "object",
+			"required": [ "name", "datasets" ],
+			"additionalProperties": false,
+			"properties": {
+				"name": {
+					"type": "string",
+					"description": "Name of this dataset, any test name witch is a super set of this dataset name will use it"
+				},
+				"datasets": {
+					"type": "array",
+					"description": "Array of inputs/output to test",
+					"items": { "$ref": "#/$defs/test_config_dataset" }
+				},
+				"runtimes": {
+					"type": "array",
+					"description": "Array of runtimes to specialize test behavior for",
+					"items": { "$ref": "#/$defs/test_config_runtime" }
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		},
+
+		"test_config_attribute_set": {
+			"type": "object",
+			"required": [ "name", "attribute_maps" ],
+			"additionalProperties": false,
+			"properties": {
+				"name": {
+					"type": "string",
+					"description": "Name of this attribute set"
+				},
+				"attribute_maps": {
+					"type": "array",
+					"description": "Array of attribute maps to test",
+					"items": { "$ref": "#/$defs/test_config_attribute_map" }
+				},
+				"multiply_with_attribute_sets": {
+					"type": "array",
+					"description": "Combine with other attribute sets",
+					"items": { "type": "string" }
+				},
+				"comment": {
+					"type": "string",
+					"description": "Unused by test system, usefull to add clarification in json file"
+				}
+			}
+		}
+	}
+}

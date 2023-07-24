@@ -1,0 +1,52 @@
+{
+	"FileVersion": 1,
+
+	"FriendlyName": "Mutable",
+	"Version": 1,
+	"VersionName": "1.7.0",
+	"CreatedBy": "Anticto Estudi Binari, SL",
+	"CreatedByURL": "https://anticto.com",
+	"Description": "Mutable adds the tools and runtime to create customizable objects for your games.",
+	"Category": "CustomizableObjects",
+	"Modules": [
+		{
+			"Name": "MutableRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		},
+		{
+			"Name": "CustomizableObject",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		},
+		{
+			"Name": "MutableTools",
+			"Type": "Editor",
+			"LoadingPhase": "PreDefault"
+		},
+		{
+			"Name": "CustomizableObjectEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		},
+		{
+			"Name": "CustomizableObjectPopulation",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "CustomizableObjectPopulationEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "SkeletalMerging",
+			"Enabled": true
+		}
+	],
+
+	"CanContainContent": true,
+	"EnabledByDefault": false
+}

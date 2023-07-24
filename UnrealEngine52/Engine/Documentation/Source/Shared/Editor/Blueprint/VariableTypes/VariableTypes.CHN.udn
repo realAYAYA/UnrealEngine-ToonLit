@@ -1,0 +1,96 @@
+INTSourceChangelist:3780178
+Availability:NoPublish
+Title:变量类型
+Crumbs:
+
+[EXCERPT:布尔]
+布尔是“_true_”或“_false_”值。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:布尔]
+
+[EXCERPT:字节]
+一个字节使用8个比特，代表在0到255范围内的整数。
+[/EXCERPT:字节]
+
+[EXCERPT:整数]
+整数不能有小数部分。例如：2、-6、1045。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:整数]
+
+[EXCERPT:浮点]
+浮点数可以包含小数部分。例如：1.0、-3.7、10432.89。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:浮点]
+
+[EXCERPT:名称]
+名称是一段文本，用来标识游戏中的某个事物。比较两个名称要大大快于比较两个字符串。
+[/EXCERPT:名称]
+
+[EXCERPT:字符串]
+一个字符串就是一段文本。 
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:字符串]
+
+[EXCERPT:文本]
+文本变量用于本地化的文本。如果此文本会对用户显示，你就应该使用文本变量，这样就可以将它翻译为不同的语言。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:文本]
+
+[EXCERPT:矢量]
+矢量描述3D空间中的位置或方向，由X、Y和Z分量组成。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:矢量]
+
+[EXCERPT:旋转体]
+旋转体描述3D空间中的朝向，由X（Roll）、Y（Pitch）和Z（Yaw）分量组成。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:旋转体]
+
+[EXCERPT:变换]
+变换是3D仿射变换，包含平移、旋转和3D比例。
+[VAR:ToolTipFullLink]
+Engine/Blueprints/UserGuide/Variables
+[/VAR]
+[/EXCERPT:变换]
+
+[EXCERPT:数组]
+数组是有序的系列。数组可以由任何类型的变量组成。如果你需要不止一种变量，那么数组就很有用。可以通过索引访问数组中的条目。
+[/EXCERPT:数组]
+
+[EXCERPT:Object]
+硬资源引用。被引用的资源：
+- 如果是，则被加载。 
+- 如果是，则被转化。
+[/EXCERPT:Object]
+
+[EXCERPT:类]
+硬类引用。被引用的类：
+- 如果是，则被加载。 
+- 如果是，则被转化。
+[/EXCERPT:类]
+
+[EXCERPT:SoftObject]
+软资源引用。被引用的资源：
+- 如果是，则不自动加载。
+- 如果是，则被转化。
+[/EXCERPT:SoftObject]
+
+[EXCERPT:SoftClass]
+软类引用。被引用的类：
+- 如果是，则不自动加载。
+- 如果是，则被转化。
+[/EXCERPT:SoftClass]

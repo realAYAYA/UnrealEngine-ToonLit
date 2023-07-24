@@ -1,0 +1,24 @@
+{
+	"FileVersion" : 1,
+	"FriendlyName" : "Xcode GPU Debugger Plugin",
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"CreatedBy" : "Apple, Inc.",
+	"CreatedByURL" : "https://apple.com/",
+	"DocsURL" : "",
+	"Description" : "Xcode GPU debugger integration.",
+	"Category" : "Rendering",
+	"EnabledByDefault" : false,
+	"Modules" :
+	[
+		{
+			"Name": "XcodeGPUDebuggerPlugin",
+			"Type": "DeveloperTool",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList":
+            [
+				"Mac"
+			]
+		}
+	]
+}

@@ -1,0 +1,31 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+#include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
+
+uint {DataInterfaceName}_NumControlPoints;
+uint {DataInterfaceName}_NumCurves;
+uint {DataInterfaceName}_OutputStreamStart;
+Buffer<uint4>   {DataInterfaceName}_PositionBufferSRV;
+RWBuffer<uint4> {DataInterfaceName}_PositionBufferUAV;
+
+uint ReadNumControlPoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumControlPoints;
+}
+
+uint ReadNumCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumCurves;
+}
+
+void WritePosition_{DataInterfaceName}(uint ControlPointIndex, float3 Position)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + ControlPointIndex;
+	if (WriteIndex < {DataInterfaceName}_NumControlPoints)
+	{
+		const uint4 PackedCP = {DataInterfaceName}_PositionBufferSRV[WriteIndex];
+		const uint4 NewPackedCP = PackHairControlPointPosition(PackedCP, Position, 0 /*InVF_PositionOffset*/);
+		{DataInterfaceName}_PositionBufferUAV[WriteIndex] = NewPackedCP;
+	}
+}

@@ -1,0 +1,28 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+/**
+ * Spatiotemporal Blue Noise lookup texture with scalar output.  
+ * Returns a uniformly distributed random variable in [0, 1] that is blue (no low frequencies) in both xy (screen space) and in z (frame index), which is designed to work with temporal accumulation.
+ * The texture is 128x128x64 and tiled, based on "Spatiotemporal Blue Noise Masks" [Wolfe et al 2022] and 
+ * https://developer.nvidia.com/blog/rendering-in-real-time-with-spatiotemporal-blue-noise-textures-part-1/
+ */
+float BlueNoiseScalar(uint2 ScreenCoord, uint FrameIndex)
+{
+	uint3 WrappedCoordinate = uint3(ScreenCoord, FrameIndex) & BlueNoise.ModuloMasks;
+	uint3 TextureCoordinate = uint3(WrappedCoordinate.x, WrappedCoordinate.z * BlueNoise.Dimensions.y + WrappedCoordinate.y, 0);
+	return BlueNoise.ScalarTexture.Load(TextureCoordinate, 0).x;
+}
+
+/**
+ * Spatiotemporal Blue Noise lookup texture with float2 output.
+ * Returns a uniformly distributed random vector in [0, 1] that is blue (no low frequencies) in both xy (screen space) and in z (frame index), which is designed to work with temporal accumulation.
+ * The texture is 128x128x64 and tiled.
+ */
+float2 BlueNoiseVec2(uint2 ScreenCoord, uint FrameIndex)
+{
+	uint3 WrappedCoordinate = uint3(ScreenCoord, FrameIndex) & BlueNoise.ModuloMasks;
+	uint3 TextureCoordinate = uint3(WrappedCoordinate.x, WrappedCoordinate.z * BlueNoise.Dimensions.y + WrappedCoordinate.y, 0);
+	return BlueNoise.Vec2Texture.Load(TextureCoordinate, 0).xy;
+}

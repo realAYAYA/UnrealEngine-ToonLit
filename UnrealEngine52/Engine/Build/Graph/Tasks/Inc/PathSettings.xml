@@ -1,0 +1,88 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<!--
+		This script defines the local and network paths used for builds. It is expected that most licensees
+		will need to replace this script due to the network paths.
+		
+		On a build machine a network path is always needed to allow tests on other agents retrieve the 
+		build, however a differentiation is made between "temp" storage and "build" storage. At Epic 
+		the former has a life of <1 day whereas build are evicted over time.
+
+		This script should be included after CommonProperties.xml where build strings are defines.
+
+		InOption: PublishBuilds - Enabled/Disable publishing of builds to build storage
+		
+		InProperty: ProjectName
+		InProperty: ProjectPath
+		InProperty: EscapedBranch
+
+		OutOption: PublishBuilds - Publish output from builds to a network share
+		OutOption: PublishHashedStagingData - Publish staged content with hashes for quick syncing
+		OutOption: PublishReports - Publish reports from the build
+
+		OutProperty: ProjectOutputDirectory - Local path to package builds to
+		OutProperty: ShaderSymbolsDirectory - Local path to write shader symbols to
+		OutProperty: NetworkOutputDirectory - Network path to be used to publish builds or staged content to
+		OutProperty: AutomationReportOutputDirectory - Path to publish reports to. If empty publishing should be skipped
+
+	-->
+
+	<!-- Publish packaged builds to the network ?-->
+	<Option Name="PublishBuilds" DefaultValue="$(IsBuildMachine)" Description="Publish packaged builds to the builds folder on the network"/>
+
+	<!-- Publish a hashed staging data that developers can quickly sync to -->
+	<Option Name="PublishHashedStagingData" DefaultValue="false" Restrict="true|false" Description="Create hashes for syncing via Unsync" />
+
+	<!-- Publish automation reports to the network-->
+	<Option Name="PublishReports" DefaultValue="$(IsBuildMachine)" Description="Publish packaged builds to the builds folder on the netwok"/>
+
+
+	<!-- Where builds are saved to locally -->
+	<Property Name="ProjectOutputDirectory" Value="$(ProjectPath)/Saved/StagedBuilds"/>
+	<Property Name="ShaderSymbolsDirectory" Value="$(ProjectPath)/Saved/ShaderSymbols"/>
+	<Property Name="AutomationReportOutputDirectory" Value=""/>
+
+	<!-- Scratch network path that can be used for tests if we aren't publishing. Assumes there's a cleanup script.. -->
+	<Property Name="NetworkTempRoot" Value="/Volumes/Builds/UE5/TempStorage"/>
+	<Property Name="NetworkTempRoot" Value="/mnt/Builds/UE5/TempStorage" If="'$(HostPlatform)' == 'Linux'"/>
+	<Property Name="NetworkTempRoot" Value="P:/Builds/UE5/TempStorage" If="'$(HostPlatform)' == 'Win64'"/>
+
+	<!-- Network path that can be used for builds that are published -->
+	<Property Name="NetworkPublishRoot" Value="/Volumes/Builds/UE5/PackagedBuilds"/>
+	<Property Name="NetworkPublishRoot" Value="/mnt/Builds/UE5/PackagedBuilds" If="'$(HostPlatform)' == 'Linux'"/>
+	<Property Name="NetworkPublishRoot" Value="P:/Builds/UE5/PackagedBuilds" If="'$(HostPlatform)' == 'Win64'"/>
+
+	<!-- Network path that can be used for storing reports and logs -->
+	<Property Name="NetworkReportRoot" Value="/Volumes/Builds/Automation/Reports"/>
+	<Property Name="NetworkReportRoot" Value="/mnt/Builds/Automation/Reports" If="'$(HostPlatform)' == 'Linux'"/>
+	<Property Name="NetworkReportRoot" Value="P:/Builds/Automation/Reports" If="'$(HostPlatform)' == 'Win64'"/>
+
+	<!-- Allow scripts to override the network locations-->
+	<Do If="'$(NetworkTempRootOverride)' != ''" >
+		<Property Name="NetworkTempRoot" Value="$(NetworkTempRootOverride)"/>
+	</Do>
+
+	<Do If="'$(NetworkPublishRootOverride)' != ''" >
+		<Property Name="NetworkPublishRoot" Value="$(NetworkPublishRootOverride)"/>
+	</Do>
+
+	<Do If="'$(NetworkReportRootOverride)' != ''" >
+		<Property Name="NetworkReportRoot" Value="$(NetworkReportRootOverride)"/>
+	</Do>
+	<!-- End network overrides -->
+
+	<!-- Declare the network outout path. Build machines need to write to the network for tests so use temp by default, but the publish path if that's being used -->
+	<Property Name="NetworkOutputDirectory" Value="" />
+	<Property Name="NetworkOutputDirectory" Value="$(NetworkTempRoot)" If="$(IsBuildMachine)"/>
+	<Property Name="NetworkOutputDirectory" Value="$(NetworkPublishRoot)" If="$(PublishBuilds) or $(PublishHashedStagingData)"/>
+	<Property Name="NetworkOutputDirectory" Value="$(NetworkOutputDirectory)/$(EscapedBranch)/$(BuildName)" If="'$(NetworkOutputDirectory)' != ''"/>
+
+	<!-- Automation can publish reports to a folder that is mapped to a website -->
+	<Do If="$(IsBuildMachine) or $(PublishReports)" >
+		<Property Name="AutomationReportOutputDirectory" Value="$(NetworkReportRoot)"/>
+		<Property Name="AutomationReportOutputDirectory" Value="$(AutomationReportOutputDirectory)/$(EscapedBranch)/$(ProjectName)/$(CL-String)"/>
+		<Property Name="AutomationReportUrl" Value="http://automation.epicgames.net/reports/$(EscapedBranch)/$(ProjectName)/$(CL-String)"/>
+	</Do>
+
+</BuildGraph>

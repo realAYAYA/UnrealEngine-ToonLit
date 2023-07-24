@@ -1,0 +1,3 @@
+# Android AutoSDK
+
+Details forthcoming.

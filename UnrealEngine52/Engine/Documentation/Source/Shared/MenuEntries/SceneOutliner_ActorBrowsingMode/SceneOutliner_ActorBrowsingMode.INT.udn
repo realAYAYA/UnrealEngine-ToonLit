@@ -1,0 +1,35 @@
+Availability:NoPublish
+Title:
+Crumbs:
+Description:
+
+[EXCERPT:PinTooltip]
+Pinning an actor keeps it loaded in the editor no matter what regions you have loaded in the World Partition panel.
+
+This can be practical if you need to temporarily work with specific actors that aren't in any loaded regions, or if there are specific actors you want to keep loaded all the time as you load and unload World Partition regions.
+
+---
+
+To pin or unpin an actor:
+
+- Toggle the icon in the Pin column of the Outliner, or right-click the actor in the Outliner and choose Pin or Unpin from the contextual menu.
+
+---
+
+Note:
+
+- Pinned actors will still be unloaded if they are in at least one Data Layer and none of those Data Layers are loaded.
+
+- Pinning an actor in the editor has no effect at runtime. If you need to exclude an actor from control by World Partition at runtime, disable the actor's Is Spatially Loaded setting in the Details panel.
+
+[VAR:ToolTipFullLink]
+world-partition-in-unreal-engine
+[/VAR]
+[/EXCERPT:PinTooltip]
+
+[EXCERPT:UnpinTooltip]
+[VAR:ExcerptAlias]
+PinTooltip
+[/VAR]
+[/EXCERPT:UnpinTooltip]
+

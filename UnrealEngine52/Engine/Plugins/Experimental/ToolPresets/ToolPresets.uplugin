@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1",
+	"FriendlyName": "Tool Presets",
+	"Description": "Adds support for saving and loading tool settings as presets.",
+	"Category": "Editor",
+	"CreatedBy": "Epic Games Inc",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"IsExperimentalVersion": true,
+	"Modules": [
+		{
+			"Name": "PresetAsset",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

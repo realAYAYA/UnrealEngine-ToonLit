@@ -1,0 +1,86 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+
+#if DATA_TYPE == 0
+#define DATA_BUFFER_TYPE float
+#else
+#define DATA_BUFFER_TYPE float
+#endif
+
+#if INDICES_TYPE == 0
+#define INDICES_WORK_TYPE int
+#define INDICES_BUFFER_TYPE int
+#define INDICES_BUFFER_TO_WORK_TYPE(x) x
+#else
+#define INDICES_WORK_TYPE int
+#define INDICES_BUFFER_TYPE int
+#define INDICES_BUFFER_TO_WORK_TYPE(x) x
+#endif
+
+int Axis;
+int OutputSize;
+int NumDataDimensions;
+int NumIndicesDimensions;
+int4 DataStride_IndicesStride_OutputStride[MAX_NUM_DIMENSIONS];
+float4 OneDivDataStride_OneDivIndicesStride_OneDivOutputStride[MAX_NUM_DIMENSIONS];
+
+Buffer<DATA_BUFFER_TYPE> Data;
+Buffer<INDICES_BUFFER_TYPE> Indices;
+RWBuffer<DATA_BUFFER_TYPE> Output;
+
+[numthreads(NUM_GROUP_THREADS, 1, 1)]
+void Gather(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	if (DispatchThreadID.x >= OutputSize)
+	{
+		return;
+	}
+
+	// Compute the output index per dimenion
+	INDICES_WORK_TYPE OutputIndices[NUM_OUTPUT_DIMENSIONS];
+	INDICES_WORK_TYPE DispatchThreadIndex = (INDICES_WORK_TYPE)DispatchThreadID.x;
+	UNROLL
+	for (int i = 0; i < NUM_OUTPUT_DIMENSIONS; i++)
+	{
+		OutputIndices[i] = (INDICES_WORK_TYPE)(OneDivDataStride_OneDivIndicesStride_OneDivOutputStride[i].z * (float)DispatchThreadIndex);
+		DispatchThreadIndex -= OutputIndices[i] * (INDICES_WORK_TYPE)DataStride_IndicesStride_OutputStride[i].z;
+	}
+
+	// Split the output indices into data and indices indices 
+	INDICES_WORK_TYPE DataIndices[NUM_OUTPUT_DIMENSIONS];
+	INDICES_WORK_TYPE IndicesIndices[NUM_OUTPUT_DIMENSIONS];
+	int AxisPlusNumIndicesDimensions = Axis + NumIndicesDimensions;
+	for (int i = 0; i < Axis; i++)
+	{
+		DataIndices[i] = OutputIndices[i];
+	}
+	for (int i = 0; i < NumIndicesDimensions; i++)
+	{
+		IndicesIndices[i] = OutputIndices[Axis + i];
+	}
+	for (int i = Axis + 1; i < NumDataDimensions; i++)
+	{
+		DataIndices[i] = OutputIndices[AxisPlusNumIndicesDimensions + i];
+	}
+
+	// Compute the flattened indices index
+	INDICES_WORK_TYPE IndicesIndex = 0;
+	for (int i = 0; i < NumIndicesDimensions; i++)
+	{
+		IndicesIndex += IndicesIndices[i] * DataStride_IndicesStride_OutputStride[i].y;
+	}
+
+	// Look up and assign the missing data index
+	DataIndices[Axis] = INDICES_BUFFER_TO_WORK_TYPE(Indices[IndicesIndex]);
+
+	// Compute the flattened data index
+	INDICES_WORK_TYPE DataIndex = 0;
+	for (int i = 0; i < NumDataDimensions; i++)
+	{
+		DataIndex += DataIndices[i] * DataStride_IndicesStride_OutputStride[i].x;
+	}
+
+	// Write the result
+	Output[DispatchThreadID.x] = Data[DataIndex];
+}

@@ -1,0 +1,11 @@
+INTSourceChangelist:3108692
+Availability:NoPublish
+Title:ANavModifierVolume
+Crumbs:
+Description: NavModifierVolume クラスの概要
+
+[EXCERPT:ANavModifierVolume]
+
+ボリュームの形状を利用して選択した NavAreaDefinition を NavMesh へ適用します。
+
+[/EXCERPT:ANavModifierVolume]

@@ -1,0 +1,17 @@
+INTSourceChangelist:19906333
+Availability:NoPublish
+Title:APostProcessVolume
+Crumbs:
+Description:PostProcessVolume类概述
+
+[EXCERPT:APostProcessVolume]
+
+PostProcessVolume可以为摄像机画面添加特效，例如模糊、眩光、曝光、颜色校正等等。
+当摄像机离体积的距离小于你设置的混合半径后，效果逐渐出现。当摄像机完全进入体积内后，
+效果会完全展现。你可以创建多个相互叠加的后处理体积，以此同时施加多种后处理特效。你还可以通过控制
+各个后处理体积的优先级和权重，调整它们的混合效果。你还可以把某个体积设置为“无限范围（无边界）”，让体积的效果应用于整个关卡。
+
+[VAR:ToolTipFullLink]
+Engine/Rendering/PostProcessEffects
+[/VAR]
+[/EXCERPT:APostProcessVolume]

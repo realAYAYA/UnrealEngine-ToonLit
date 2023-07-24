@@ -1,0 +1,235 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#ifndef NUM_VIRTUALTEXTURE_SAMPLES
+	#define NUM_VIRTUALTEXTURE_SAMPLES 1
+#endif
+
+#include "/Engine/Private/VirtualTextureCommon.ush"
+
+// Mirrored from FNiagaraDataInterfaceParametersCS_Landscape
+#define VIRTUAL_TEXTURE_UNPACK_NORMAL_NONE 0
+#define VIRTUAL_TEXTURE_UNPACK_NORMAL_BC3BC3 1
+#define VIRTUAL_TEXTURE_UNPACK_NORMAL_BC5BC1 2
+
+Texture2D			{ParameterName}_BaseColorVirtualTexture;
+Texture2D<uint4>	{ParameterName}_BaseColorVirtualTexturePageTable;
+SamplerState		{ParameterName}_BaseColorVirtualTextureSampler;
+float4x4			{ParameterName}_BaseColorVirtualTextureWorldToUvTransform;
+uint				{ParameterName}_BaseColorVirtualTextureSRGB;
+uint				{ParameterName}_BaseColorVirtualTextureEnabled;
+uint4				{ParameterName}_BaseColorVirtualTexturePackedUniform0;
+uint4				{ParameterName}_BaseColorVirtualTexturePackedUniform1;
+uint4				{ParameterName}_BaseColorVirtualTextureUniforms;
+Texture2D			{ParameterName}_HeightVirtualTexture;
+Texture2D<uint4>	{ParameterName}_HeightVirtualTexturePageTable;
+SamplerState		{ParameterName}_HeightVirtualTextureSampler;
+float4x4			{ParameterName}_HeightVirtualTextureWorldToUvTransform;
+uint				{ParameterName}_HeightVirtualTextureEnabled;
+uint4				{ParameterName}_HeightVirtualTexturePackedUniform0;
+uint4				{ParameterName}_HeightVirtualTexturePackedUniform1;
+uint4				{ParameterName}_HeightVirtualTextureUniforms;
+Texture2D			{ParameterName}_NormalVirtualTexture0;
+Texture2D			{ParameterName}_NormalVirtualTexture1;
+Texture2D<uint4>	{ParameterName}_NormalVirtualTexturePageTable;
+SamplerState		{ParameterName}_NormalVirtualTexture0Sampler;
+SamplerState		{ParameterName}_NormalVirtualTexture1Sampler;
+float4x4			{ParameterName}_NormalVirtualTextureWorldToUvTransform;
+uint4				{ParameterName}_NormalVirtualTexturePackedUniform0;
+uint4				{ParameterName}_NormalVirtualTexturePackedUniform1;
+uint4				{ParameterName}_NormalVirtualTextureUniforms0;
+uint4				{ParameterName}_NormalVirtualTextureUniforms1;
+int					{ParameterName}_NormalVirtualTextureUnpackMode;
+uint				{ParameterName}_NormalVirtualTextureEnabled;
+Texture2D			{ParameterName}_CachedHeightTexture;
+SamplerState		{ParameterName}_CachedHeightTextureSampler;
+uint				{ParameterName}_CachedHeightTextureEnabled;
+float4x4			{ParameterName}_CachedHeightTextureWorldToUvTransform;
+float4x4			{ParameterName}_CachedHeightTextureUvToWorldTransform;
+float4				{ParameterName}_CachedHeightTextureUvScaleBias;
+float2				{ParameterName}_CachedHeightTextureGridSize;
+SamplerState		{ParameterName}_PointClampedSampler;
+Texture2D<int>		{ParameterName}_CachedPhysMatTexture;
+int2				{ParameterName}_CachedPhysMatTextureDimension;
+
+void GetBaseColor_{ParameterName}(float3 InWorldPos, out float3 OutBaseColor, out bool OutIsValid)
+{
+	// todo[mg] convert world pos and transform origin to LWC pos
+	if ({ParameterName}_BaseColorVirtualTextureEnabled != 0)
+	{
+		float3 UnpackBaseColorOrigin = {ParameterName}_BaseColorVirtualTextureWorldToUvTransform[0].xyz;
+		float3 UnpackBaseColorU = {ParameterName}_BaseColorVirtualTextureWorldToUvTransform[1].xyz;
+		float3 UnpackBaseColorV = {ParameterName}_BaseColorVirtualTextureWorldToUvTransform[2].xyz;
+
+		float2 SampleUv = VirtualTextureWorldToUV(LWCPromote(InWorldPos), LWCPromote(UnpackBaseColorOrigin), UnpackBaseColorU, UnpackBaseColorV);
+
+		VTPageTableResult PageTable = TextureLoadVirtualPageTableLevel(
+			{ParameterName}_BaseColorVirtualTexturePageTable,
+			VTPageTableUniform_Unpack({ParameterName}_BaseColorVirtualTexturePackedUniform0, {ParameterName}_BaseColorVirtualTexturePackedUniform1),
+			SampleUv,
+			VTADDRESSMODE_CLAMP,
+			VTADDRESSMODE_CLAMP,
+			0.0f);
+
+		float4 PackedValue = TextureVirtualSample(
+			{ParameterName}_BaseColorVirtualTexture,
+			{ParameterName}_BaseColorVirtualTextureSampler,
+			PageTable,
+			0,
+			VTUniform_Unpack({ParameterName}_BaseColorVirtualTextureUniforms));
+
+		OutBaseColor = {ParameterName}_BaseColorVirtualTextureSRGB != 0 ? VirtualTextureUnpackBaseColorSRGB(PackedValue) : VirtualTextureUnpackBaseColorYCoCg(PackedValue);
+		OutIsValid = true;
+	}
+	else
+	{
+		OutBaseColor = 0.0f;
+		OutIsValid = false;
+	}
+}
+
+void GetHeight_{ParameterName}(float3 InWorldPos, out float OutHeight, out bool OutIsValid)
+{
+	// todo[mg] convert world pos and transform origin to LWC pos
+	if ({ParameterName}_HeightVirtualTextureEnabled != 0)
+	{
+		float3 UnpackHeightOrigin = {ParameterName}_HeightVirtualTextureWorldToUvTransform[0].xyz;
+		float3 UnpackHeightU = {ParameterName}_HeightVirtualTextureWorldToUvTransform[1].xyz;
+		float3 UnpackHeightV = {ParameterName}_HeightVirtualTextureWorldToUvTransform[2].xyz;
+		float2 UnpackHeightScaleBias = {ParameterName}_HeightVirtualTextureWorldToUvTransform[3].xy;
+
+		float2 SampleUv = VirtualTextureWorldToUV(LWCPromote(InWorldPos), LWCPromote(UnpackHeightOrigin), UnpackHeightU, UnpackHeightV);
+
+		VTPageTableResult PageTable = TextureLoadVirtualPageTableLevel(
+			{ParameterName}_HeightVirtualTexturePageTable,
+			VTPageTableUniform_Unpack({ParameterName}_HeightVirtualTexturePackedUniform0, {ParameterName}_HeightVirtualTexturePackedUniform1),
+			SampleUv,
+			VTADDRESSMODE_CLAMP,
+			VTADDRESSMODE_CLAMP,
+			0.0f);
+
+		float4 PackedValue = TextureVirtualSample(
+			{ParameterName}_HeightVirtualTexture,
+			{ParameterName}_HeightVirtualTextureSampler,
+			PageTable,
+			0,
+			VTUniform_Unpack({ParameterName}_HeightVirtualTextureUniforms));
+
+		OutHeight = VirtualTextureUnpackHeight(PackedValue, UnpackHeightScaleBias);
+		OutIsValid = true;
+	}
+	else if ({ParameterName}_CachedHeightTextureEnabled != 0)
+	{
+		float2 Uv = mul(float4(InWorldPos, 1.0f), {ParameterName}_CachedHeightTextureWorldToUvTransform).xy;
+		Uv = Uv * {ParameterName}_CachedHeightTextureUvScaleBias.xy + {ParameterName}_CachedHeightTextureUvScaleBias.zw;
+		OutHeight = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_CachedHeightTextureSampler, Uv, 0).x;
+		OutIsValid = true;
+	}
+	else
+	{
+		OutHeight = InWorldPos.z;
+		OutIsValid = false;
+	}
+}
+
+void GetWorldNormal_{ParameterName}(float3 InWorldPos, out float3 OutNormal, out bool OutIsValid)
+{
+	// todo[mg] convert world pos and transform origin to LWC pos
+	if ({ParameterName}_NormalVirtualTextureEnabled != 0)
+	{
+		float3 UnpackNormalOrigin = {ParameterName}_NormalVirtualTextureWorldToUvTransform[0].xyz;
+		float3 UnpackNormalU = {ParameterName}_NormalVirtualTextureWorldToUvTransform[1].xyz;
+		float3 UnpackNormalV = {ParameterName}_NormalVirtualTextureWorldToUvTransform[2].xyz;
+
+		float2 SampleUv = VirtualTextureWorldToUV(LWCPromote(InWorldPos), LWCPromote(UnpackNormalOrigin), UnpackNormalU, UnpackNormalV);
+
+		VTPageTableResult PageTable = TextureLoadVirtualPageTableLevel(
+			{ParameterName}_NormalVirtualTexturePageTable,
+			VTPageTableUniform_Unpack({ParameterName}_NormalVirtualTexturePackedUniform0, {ParameterName}_NormalVirtualTexturePackedUniform1),
+			SampleUv,
+			VTADDRESSMODE_CLAMP,
+			VTADDRESSMODE_CLAMP,
+			0.0f);
+
+		float4 PackedValue0 = TextureVirtualSample(
+			{ParameterName}_NormalVirtualTexture0,
+			{ParameterName}_NormalVirtualTexture0Sampler,
+			PageTable,
+			0,
+			VTUniform_Unpack({ParameterName}_NormalVirtualTextureUniforms0));
+
+		float4 PackedValue1 = TextureVirtualSample(
+			{ParameterName}_NormalVirtualTexture1,
+			{ParameterName}_NormalVirtualTexture1Sampler,
+			PageTable,
+			0,
+			VTUniform_Unpack({ParameterName}_NormalVirtualTextureUniforms1));
+
+		if ({ParameterName}_NormalVirtualTextureUnpackMode == VIRTUAL_TEXTURE_UNPACK_NORMAL_BC3BC3)
+		{
+			OutNormal = VirtualTextureUnpackNormalBC3BC3(PackedValue0, PackedValue1);
+		}
+		else if ({ParameterName}_NormalVirtualTextureUnpackMode == VIRTUAL_TEXTURE_UNPACK_NORMAL_BC5BC1)
+		{
+			OutNormal = VirtualTextureUnpackNormalBC5BC1(PackedValue0, PackedValue1);
+		}
+		else
+		{
+			OutNormal = float3(0.0f, 0.0f, 1.0f);
+			OutIsValid = false;
+			return;
+		}
+
+		OutIsValid = true;
+	}
+	else if ({ParameterName}_CachedHeightTextureEnabled != 0)
+	{
+		float2 Uv = mul(float4(InWorldPos, 1.0f), {ParameterName}_CachedHeightTextureWorldToUvTransform).xy;
+		Uv = Uv * {ParameterName}_CachedHeightTextureUvScaleBias.xy + {ParameterName}_CachedHeightTextureUvScaleBias.zw;
+
+		float Left = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(-1,0)).x;
+		float Right = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(1,0)).x;
+		float Top = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(0,1)).x;
+		float Bottom = {ParameterName}_CachedHeightTexture.SampleLevel({ParameterName}_PointClampedSampler, Uv, 0, int2(0,-1)).x;
+
+		// cross product of our two gradient vectors
+		OutNormal = float3(
+			{ParameterName}_CachedHeightTextureGridSize.y * (Left - Right),
+			{ParameterName}_CachedHeightTextureGridSize.x * (Bottom - Top),
+			2.0f * {ParameterName}_CachedHeightTextureGridSize.x * {ParameterName}_CachedHeightTextureGridSize.y);
+
+		// next rotate the normal to make it world space
+		OutNormal = mul(float4(OutNormal, 0.0f), {ParameterName}_CachedHeightTextureUvToWorldTransform).xyz;
+		OutNormal = normalize(OutNormal);
+
+		OutIsValid = true;
+	}
+	else
+	{
+		OutNormal = float3(0.0f, 0.0f, 1.0f);
+		OutIsValid = false;
+	}
+}
+
+void GetPhysicalMaterialIndex_{ParameterName}(float3 InWorldPos, out int OutIndex, out bool OutIsValid)
+{
+	// todo[mg] convert world pos to LWC pos
+	float2 Uv = mul(float4(InWorldPos, 1.0f), {ParameterName}_CachedHeightTextureWorldToUvTransform).xy;
+	Uv = Uv * {ParameterName}_CachedHeightTextureUvScaleBias.xy + {ParameterName}_CachedHeightTextureUvScaleBias.zw;
+
+	int3 SampleIndex = int3(Uv * {ParameterName}_CachedPhysMatTextureDimension, 0);
+	OutIndex = {ParameterName}_CachedPhysMatTexture.Load(SampleIndex).x;
+
+	if (OutIndex >= 255)
+	{
+		OutIndex = -1;
+		OutIsValid = false;
+	}
+	else
+	{
+		OutIsValid = true;
+	}
+}
+
+#undef VIRTUAL_TEXTURE_UNPACK_NORMAL_NONE
+#undef VIRTUAL_TEXTURE_UNPACK_NORMAL_BC3BC3
+#undef VIRTUAL_TEXTURE_UNPACK_NORMAL_BC5BC1

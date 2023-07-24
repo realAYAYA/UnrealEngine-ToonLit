@@ -1,0 +1,7 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+
+#include "NaniteAttributeDecode.ush"

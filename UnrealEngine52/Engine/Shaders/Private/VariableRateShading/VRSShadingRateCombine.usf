@@ -1,0 +1,36 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+RWTexture2D<uint> RWOutputTexture;
+Texture2D<uint> SourceTexture0;
+Texture2D<uint> SourceTexture1;
+
+uint2 DecodeShadingRate(uint EncodedRate)
+{
+	uint2 DecodedRate;
+	DecodedRate.x = ((1U << SHADING_RATE_DIMENSION_BITS) - 1U) & (EncodedRate >> SHADING_RATE_DIMENSION_BITS);
+	DecodedRate.y = ((1U << SHADING_RATE_DIMENSION_BITS) - 1U) & EncodedRate;
+	return DecodedRate;
+}
+
+uint2 EncodeShadingRate(uint2 DecodedRate)
+{
+	return (DecodedRate.x << SHADING_RATE_DIMENSION_BITS) + DecodedRate.y;
+}
+
+uint ShadingRateMax(uint InputRate0, uint InputRate1)
+{
+	uint2 DecodedRate0 = DecodeShadingRate(InputRate0);
+	uint2 DecodedRate1 = DecodeShadingRate(InputRate1);
+	uint2 DecodedMaxRate = max(DecodedRate0, DecodedRate1);
+	return EncodeShadingRate(DecodedMaxRate);
+}
+
+[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, 1)]
+void CombineShadingRateTextures(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint2 TexelCoord = DispatchThreadId.xy;
+	RWOutputTexture[TexelCoord] = ShadingRateMax(SourceTexture0[TexelCoord], SourceTexture1[TexelCoord]);
+}
+

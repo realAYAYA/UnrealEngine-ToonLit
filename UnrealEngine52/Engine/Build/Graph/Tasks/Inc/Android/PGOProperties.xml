@@ -1,0 +1,20 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<!-- add us to the platform list-->
+	<!-- NOTE: Android not currently supported - it requires a packaged build & the general-purpose node doesn't support this yet
+	<Property Name="AllPGOPlatforms" Value="$(AllPGOPlatforms);Android" If="ContainsItem('$(TargetPlatforms)', 'Android', '+')"/>
+	-->
+
+	<!-- set platform-specific properties -->
+	<Property Name="PGOBinaryStagingPathAndroid" Value="$(ProjectName)/Binaries/Android/"/>
+	<Property Name="PGOProfileOutputPathAndroid" Value="$(ProjectPath)/Platforms/Android/Build/PGO"/>
+	<Property Name="PGOProfileOutputFilterAndroid" Value="*.profdata"/>
+	<Property Name="PGOProfileCommandLineAndroid" Value=""/>
+	<Property Name="PGOCompileArgsAndroid" Value="-ThinLTO"/>
+	<Property Name="PGOCompileExtraBinariesAndroid" Value=""/>
+
+	<!-- no special preprocessing required for this platform -->
+	<Macro Name="PGOPrepareBuildForProfilingAndroid" Arguments="LocalStagingDir;Configuration"/>
+
+</BuildGraph>

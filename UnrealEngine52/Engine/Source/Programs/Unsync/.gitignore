@@ -1,0 +1,8 @@
+.vscode
+build
+Build
+bin
+Bin
+intermediate
+Intermediate
+*.*~

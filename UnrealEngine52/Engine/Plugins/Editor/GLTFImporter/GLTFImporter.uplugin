@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1.0,
+	"VersionName": "1.0",
+	"FriendlyName": "glTF Importer (Deprecated)",
+	"Description": "This plugin has been deprecated and will be removed in a future engine version.\nPlease update your project to use glTF import through the Interchange plugin instead.\nAn importer for Khronos glTF 3D models.",
+	"Category": "Importers",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"EnabledByDefault": false,
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Modules":
+	[
+		{
+			"Name": "GLTFCore",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "GLTFImporter",
+			"Type": "Editor"
+		}
+	]
+}

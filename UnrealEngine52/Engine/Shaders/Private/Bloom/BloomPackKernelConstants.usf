@@ -1,0 +1,27 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "BloomCommon.ush"
+
+
+//------------------------------------------------------- PARAMETERS
+
+StructuredBuffer<uint> KernelCenterCoordBuffer;
+StructuredBuffer<float4> KernelCenterEnergyBuffer;
+StructuredBuffer<float4> MaxScatterDispersionBuffer;
+Texture2D ScatterDispersionTexture;
+
+RWStructuredBuffer<FBloomKernelInfo> KernelConstantsOutput;
+
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(1, 1, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	KernelConstantsOutput[0].CenterEnergy = KernelCenterEnergyBuffer[0];
+	KernelConstantsOutput[0].ScatterDispersionEnergy = ScatterDispersionTexture[uint2(0, 0)];
+	KernelConstantsOutput[0].MaxScatterDispersionEnergy = MaxScatterDispersionBuffer[0];
+	KernelConstantsOutput[0].CenterPixelCoord = uint2(KernelCenterCoordBuffer[0], KernelCenterCoordBuffer[1]);
+}

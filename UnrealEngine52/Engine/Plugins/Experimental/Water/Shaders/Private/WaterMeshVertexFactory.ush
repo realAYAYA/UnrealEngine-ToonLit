@@ -1,0 +1,456 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/VertexFactoryCommon.ush"
+
+struct FVertexFactoryInterpolantsVSToPS
+{
+#if NUM_TEX_COORD_INTERPOLATORS
+	float4	TexCoords[(NUM_TEX_COORD_INTERPOLATORS+1)/2] : TEXCOORD0;
+#endif
+
+	nointerpolation uint WaveParamIndex : WAVE_PARAM_INDEX;
+
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	nointerpolation uint PrimitiveId : PRIMITIVE_ID;
+#endif
+
+#if INSTANCED_STEREO
+	nointerpolation uint EyeIndex : PACKED_EYE_INDEX;
+#endif
+};
+
+/**
+ * Per-vertex inputs from bound vertex buffers
+ */
+struct FVertexFactoryInput
+{
+	float4	Position	: ATTRIBUTE0;
+
+	float4 InstanceData0 : ATTRIBUTE8;
+	float4 InstanceData1 : ATTRIBUTE9; 
+#if HIT_PROXY_SHADER || WITH_WATER_SELECTION_SUPPORT_VF
+	float4 InstanceData2 : ATTRIBUTE10; // Store an HitProxyID per instance
+#endif
+
+	VF_GPUSCENE_DECLARE_INPUT_BLOCK(13)
+	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+};
+
+/** 
+ * Per-vertex inputs from bound vertex buffers.  Used by passes with a trimmed down position-only shader.
+ */
+struct FPositionOnlyVertexFactoryInput
+{
+	float4	Position	: ATTRIBUTE0;
+
+	float4 InstanceData0 : ATTRIBUTE8;
+	float4 InstanceData1 : ATTRIBUTE9; 
+
+	VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
+	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+};
+
+/** 
+ * Per-vertex inputs from bound vertex buffers.  Used by passes with a trimmed down position-and-normal-only shader.
+ */
+struct FPositionAndNormalOnlyVertexFactoryInput
+{
+	float4	Position	: ATTRIBUTE0;
+	float4	Normal		: ATTRIBUTE2;
+
+	float4 InstanceData0 : ATTRIBUTE8;
+	float4 InstanceData1 : ATTRIBUTE9; 
+
+	VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
+	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+};
+
+/** 
+ * Caches intermediates that would otherwise have to be computed multiple times.  Avoids relying on the compiler to optimize out redundant operations.
+ */
+struct FVertexFactoryIntermediates
+{
+	FLWCVector3 MorphedWorldPos;
+	float3 MorphedTranslatedWorldPos;
+	
+	uint WaveParamIndex;
+	/** Cached primitive and instance data */
+	FSceneDataIntermediates SceneData;
+};
+
+FPrimitiveSceneData GetPrimitiveData(FVertexFactoryIntermediates Intermediates)
+{
+	return Intermediates.SceneData.Primitive;
+}
+
+uint GetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	return Interpolants.PrimitiveId;
+#else
+	return 0;
+#endif
+}
+
+void SetPrimitiveId(inout FVertexFactoryInterpolantsVSToPS Interpolants, uint PrimitiveId)
+{
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	Interpolants.PrimitiveId = PrimitiveId;
+#endif
+}
+
+#if NUM_TEX_COORD_INTERPOLATORS
+float2 GetUV(FVertexFactoryInterpolantsVSToPS Interpolants, int UVIndex)
+{
+	float4 UVVector = Interpolants.TexCoords[UVIndex / 2];
+	return UVIndex % 2 ? UVVector.zw : UVVector.xy;
+}
+
+void SetUV(inout FVertexFactoryInterpolantsVSToPS Interpolants, int UVIndex, float2 InValue)
+{
+	FLATTEN
+	if (UVIndex % 2)
+	{
+		Interpolants.TexCoords[UVIndex / 2].zw = InValue;
+	}
+	else
+	{
+		Interpolants.TexCoords[UVIndex / 2].xy = InValue;
+	}
+}
+#endif
+
+/** Converts from vertex factory specific interpolants to a FMaterialPixelParameters, which is used by material inputs. */
+FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVSToPS Interpolants, float4 SvPosition)
+{
+	// GetMaterialPixelParameters is responsible for fully initializing the result
+	FMaterialPixelParameters Result = MakeInitializedMaterialPixelParameters();
+
+#if NUM_TEX_COORD_INTERPOLATORS
+	UNROLL
+	for (int CoordinateIndex = 0; CoordinateIndex < NUM_TEX_COORD_INTERPOLATORS; CoordinateIndex++)
+	{
+		Result.TexCoords[CoordinateIndex] = GetUV(Interpolants, CoordinateIndex);
+	}
+#endif	//NUM_MATERIAL_TEXCOORDS
+
+	Result.TwoSidedSign = 1;
+	Result.PrimitiveId = GetPrimitiveId(Interpolants);
+
+#if WATER_MESH_FACTORY
+	Result.WaterWaveParamIndex = Interpolants.WaveParamIndex;
+#endif
+
+	return Result;
+}
+
+/** Converts from vertex factory specific input to a FMaterialVertexParameters, which is used by vertex shader material inputs. */
+FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 WorldPosition, half3x3 TangentToLocal)
+{
+	FMaterialVertexParameters Result = (FMaterialVertexParameters)0;
+    
+	Result.SceneData = Intermediates.SceneData; 
+	Result.WorldPosition = WorldPosition;
+	Result.TangentToWorld = float3x3(1,0,0,0,1,0,0,0,1);
+	Result.PreSkinnedPosition = Input.Position.xyz;
+	Result.PreSkinnedNormal = float3(0,0,1);
+
+#if NUM_MATERIAL_TEXCOORDS_VERTEX
+	// Water doesn't get texcoords from its input verts, so all the vert texcoords will default to the same world position
+	UNROLL
+	for(int CoordinateIndex = 0; CoordinateIndex < NUM_MATERIAL_TEXCOORDS_VERTEX; CoordinateIndex++)
+	{
+		// LWC_TODO: Using the LWC Offset here will result in seams at the tile edges.
+		Result.TexCoords[CoordinateIndex] = Intermediates.MorphedWorldPos.Offset.xy;
+	}
+#endif  //NUM_MATERIAL_TEXCOORDS_VERTEX
+
+#if WATER_MESH_FACTORY
+	Result.WaterWaveParamIndex = Intermediates.WaveParamIndex;
+#endif
+
+	return Result;
+}
+
+float3 MorphTranslatedWorldPosition(float3 OriginalTranslatedWorldPos, float2 InMorphOriginTWS, float LODLevel, float InLODScale, float2 QuadSize, float HeightLODFactor, out float LODFactor)
+{
+	float3 TranslatedWorldPos = OriginalTranslatedWorldPos;
+	
+	float DistanceToVert2D = distance(TranslatedWorldPos.xy, ResolvedView.TranslatedWorldCameraOrigin.xy);
+
+	LODFactor = saturate(DistanceToVert2D / (InLODScale * pow(2.0f, LODLevel)) - 1.0f);
+	LODFactor = saturate(HeightLODFactor + LODFactor);
+
+	float2 Grid4 = 4.0f * QuadSize;
+
+	// InMorphOriginTWS is the corner of the node being rendered
+	const float2 MorphLocalPos = TranslatedWorldPos.xy - InMorphOriginTWS;
+
+	// Offset is like a UV offset (-0.5 to 0.5) within a quadtree node. This is the scalar used to move the vertex
+	float2 Offset = frac(MorphLocalPos / Grid4) - float2(0.5, 0.5);
+
+	// Move every other vert either positive or negative towards a neighboring vert
+	// This is the smooth continuous sliding which moved to the next LOD level
+	const float MinRadius = 0.26f; 
+	if (abs(Offset.x) < MinRadius) 
+	{
+		TranslatedWorldPos.x += Offset.x * LODFactor * Grid4.x;
+	}
+	if (abs(Offset.y) < MinRadius) 
+	{
+		TranslatedWorldPos.y += Offset.y * LODFactor * Grid4.y;
+	}
+
+	return TranslatedWorldPos;
+}
+
+FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput Input)
+{
+	FVertexFactoryIntermediates Intermediates;
+
+	// Get the packed instance data
+	float4 Data0 = Input.InstanceData0;
+	float4 Data1 = Input.InstanceData1;
+
+	const float3 Translation = Data0.xyz;
+	Intermediates.WaveParamIndex = asuint(Data0.w);
+	const float3 Scale = float3(Data1.zw, 1.0f);
+	const uint PackedDataChannel = asuint(Data1.x);
+
+	// Lod level is in first 8 bits and ShouldMorph bit is in the 9th bit
+	const float LODLevel = (float)(PackedDataChannel & 0xFF);
+	const uint ShouldMorph = ((PackedDataChannel >> 8) & 0x1); 
+
+	// Calculate the world pos
+	float3 TranslatedWorldPosition = float3(Input.Position.xy, 0.0f) * Scale + Translation;
+
+	Intermediates.SceneData = VF_GPUSCENE_GET_INTERMEDIATES(Input);
+	
+	if (ShouldMorph == 1)
+	{
+		// Factor that applies across the entire lowest LOD, based on height above water
+		// Then this reaches 1.0, the lowest LOD will pop out and be replaced by the next LOD, starting over at 0.0. Rinse and repeat.
+		//const float HeightLODFactor = 0.0f;
+		const float HeightLODFactor = Data1.y; 
+	
+		const float2 QuadSize = Scale.xy / WaterVF.NumQuadsPerTileSide;
+	
+		float OutLODFactor = 0.0f;
+		float3 TempTranslatedWorldPosition = MorphTranslatedWorldPosition(TranslatedWorldPosition, Translation.xy - Scale.xy*0.5f, LODLevel, WaterVF.LODScale, QuadSize, HeightLODFactor, OutLODFactor);
+	
+		// If the vert is fully morphed, we morph it again as if it was a vert from the next LOD. This effectively means one tile can morph between 3 different LOD levels. 
+		// This is needed because the current LOD level tile will stick in to the next LOD level since we move the observer around. Make sure to not add any heightLODFactor to this, since that only applies to lowest LOD
+		const uint CanMorphTwice = ((PackedDataChannel >> 9) & 0x1); 
+		if (OutLODFactor >= 1.0f && CanMorphTwice == 1)
+		{
+			TempTranslatedWorldPosition = MorphTranslatedWorldPosition(TempTranslatedWorldPosition, Translation.xy - Scale.xy*0.5f, LODLevel + 1, WaterVF.LODScale, QuadSize * 2.0f, 0.0f, OutLODFactor);
+		}
+	
+		Intermediates.MorphedTranslatedWorldPos = TempTranslatedWorldPosition;
+	}
+	else
+	{
+		Intermediates.MorphedTranslatedWorldPos = TranslatedWorldPosition;
+	}
+
+#if WITH_WATER_SELECTION_SUPPORT_VF
+	float SelectedValue = Input.InstanceData2.w;
+	float IsVisible = WaterVF.bRenderSelected * SelectedValue + WaterVF.bRenderUnselected * (1-SelectedValue);
+	Intermediates.MorphedTranslatedWorldPos *= IsVisible;
+#endif // WITH_WATER_SELECTION_SUPPORT_VF
+
+	Intermediates.MorphedWorldPos = LWCSubtract(Intermediates.MorphedTranslatedWorldPos, ResolvedView.PreViewTranslation);
+
+	return Intermediates;
+}
+
+#if HIT_PROXY_SHADER
+float4 VertexFactoryGetInstanceHitProxyId(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+#if WITH_WATER_SELECTION_SUPPORT_VF
+	return float4(Input.InstanceData2.rgb, 0);
+#else // WITH_WATER_SELECTION_SUPPORT_VF
+	return 0;
+#endif // !WITH_WATER_SELECTION_SUPPORT_VF
+}
+#endif
+
+/**
+* Get the 3x3 tangent basis vectors for this vertex factory
+* this vertex factory will calculate the binormal on-the-fly
+*
+* @param Input - vertex input stream structure
+* @return 3x3 matrix
+*/
+half3x3 VertexFactoryGetTangentToLocal( FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates )
+{
+	return half3x3(1,0,0,0,1,0,0,0,1);
+}
+
+// @return translated world position
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return float4(Intermediates.MorphedTranslatedWorldPos, 1);
+}
+
+float4 VertexFactoryGetRasterizedWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float4 InWorldPosition)
+{
+	return InWorldPosition;
+}
+
+float3 VertexFactoryGetPositionForVertexLighting(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 TranslatedWorldPosition)
+{
+	return TranslatedWorldPosition;
+}
+
+FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FMaterialVertexParameters VertexParameters)
+{
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+
+	// Initialize the whole struct to 0
+	// Really only the last two components of the packed UVs have the opportunity to be uninitialized
+	Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+
+#if  NUM_TEX_COORD_INTERPOLATORS
+	float2 CustomizedUVs[NUM_TEX_COORD_INTERPOLATORS];
+	GetMaterialCustomizedUVs(VertexParameters, CustomizedUVs);
+	GetCustomInterpolators(VertexParameters, CustomizedUVs);
+	
+	UNROLL
+	for (int CoordinateIndex = 0; CoordinateIndex < NUM_TEX_COORD_INTERPOLATORS; CoordinateIndex++)
+	{
+		SetUV(Interpolants, CoordinateIndex, CustomizedUVs[CoordinateIndex]);
+	}
+#endif
+
+	Interpolants.WaveParamIndex = Intermediates.WaveParamIndex;
+
+	SetPrimitiveId(Interpolants, Intermediates.SceneData.PrimitiveId);
+
+	return Interpolants;
+}
+
+/** for depth-only pass */
+float4 VertexFactoryGetWorldPosition(FPositionOnlyVertexFactoryInput Input)
+{
+	return Input.Position;
+}
+
+// @return previous translated world position
+float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return float4(LWCToFloat(LWCAdd(Intermediates.MorphedWorldPos, ResolvedView.PrevPreViewTranslation)), 1);
+}
+
+float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(GetPrimitiveId(Interpolants));
+	return float4(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)), PrimitiveData.ObjectRadius);
+}
+
+uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	return GetPrimitiveId(Interpolants);
+}
+
+float3 VertexFactoryGetWorldNormal(FPositionAndNormalOnlyVertexFactoryInput Input)
+{
+	return Input.Normal.xyz;
+}
+
+float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	// TODO: Central differencing to figure out the normal
+	return float3(0.0f, 0.0f, 1.0f);
+}
+
+#if RAYHITGROUPSHADER
+FVertexFactoryInput LoadVertexFactoryInputForHGS(uint TriangleIndex, int VertexIndex)
+{
+	FTriangleBaseAttributes TriangleAttributes = LoadTriangleBaseAttributes(TriangleIndex);
+
+	FVertexFactoryInput Input = (FVertexFactoryInput)0;
+
+	Input.Position = float4(TriangleAttributes.LocalPositions[VertexIndex], 1.0f);
+
+	Input.InstanceData0 = WaterRaytracingVF.InstanceData0;
+	Input.InstanceData1 = WaterRaytracingVF.InstanceData1;
+#if WITH_WATER_SELECTION_SUPPORT_VF
+	Input.InstanceData2 = 0.0f;
+#endif
+
+	VF_GPUSCENE_SET_INPUT_FOR_RT(Input, GetInstanceUserData(), 0U);
+
+	return Input;
+}
+#endif
+
+#if COMPUTESHADER
+FVertexFactoryInput LoadVertexFactoryInputForDynamicUpdate(uint TriangleIndex, int VertexIndex, uint PrimitiveId)
+{
+	FVertexFactoryInput Input = (FVertexFactoryInput)0;
+
+	const uint VertexId = TriangleIndex * 3 + VertexIndex;
+	const uint VertexOffset = VertexId * 4;
+	Input.Position.x = WaterRaytracingVF.VertexBuffer[VertexOffset + 0];
+	Input.Position.y = WaterRaytracingVF.VertexBuffer[VertexOffset + 1];
+	Input.Position.z = WaterRaytracingVF.VertexBuffer[VertexOffset + 2];
+	Input.Position.w = WaterRaytracingVF.VertexBuffer[VertexOffset + 3];
+
+	Input.InstanceData0 = WaterRaytracingVF.InstanceData0;
+	Input.InstanceData1 = WaterRaytracingVF.InstanceData1;
+#if WITH_WATER_SELECTION_SUPPORT_VF
+	Input.InstanceData2 = 0.0f;
+#endif
+	
+	VF_GPUSCENE_SET_INPUT_FOR_RT(Input, PrimitiveId, 0U);
+
+	return Input;
+}
+
+uint GetNumRayTracingDynamicMeshVerticesIndirect()
+{
+	return 0;
+}
+#endif // RAYHITGROUP || COMPUTESHADER
+
+#if NEEDS_VERTEX_FACTORY_INTERPOLATION
+	struct FVertexFactoryRayTracingInterpolants
+	{
+		FVertexFactoryInterpolantsVSToPS InterpolantsVSToPS;
+	};
+
+	float2 VertexFactoryGetRayTracingTextureCoordinate( FVertexFactoryRayTracingInterpolants Interpolants )
+	{
+#if NUM_MATERIAL_TEXCOORDS
+		return Interpolants.InterpolantsVSToPS.TexCoords[0].xy;
+#else // #if NUM_MATERIAL_TEXCOORDS
+		return float2(0,0);
+#endif // #if NUM_MATERIAL_TEXCOORDS
+	}
+
+	FVertexFactoryInterpolantsVSToPS VertexFactoryAssignInterpolants(FVertexFactoryRayTracingInterpolants Input)
+	{
+		return Input.InterpolantsVSToPS;
+	}
+
+	FVertexFactoryRayTracingInterpolants VertexFactoryGetRayTracingInterpolants(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FMaterialVertexParameters VertexParameters)
+	{
+		FVertexFactoryRayTracingInterpolants Interpolants;
+		Interpolants.InterpolantsVSToPS = VertexFactoryGetInterpolantsVSToPS(Input, Intermediates, VertexParameters);
+		return Interpolants;
+	}
+
+	FVertexFactoryRayTracingInterpolants VertexFactoryInterpolate(FVertexFactoryRayTracingInterpolants a, float aInterp, FVertexFactoryRayTracingInterpolants b, float bInterp)
+	{
+		FVertexFactoryRayTracingInterpolants O = a;
+	
+#if INTERPOLATE_MEMBER
+		INTERPOLATE_MEMBER(InterpolantsVSToPS.TexCoords);
+#endif
+
+		return O;
+	}
+#endif // #if NEEDS_VERTEX_FACTORY_INTERPOLATION
+
+#include "/Engine/Private/VertexFactoryDefaultInterface.ush"

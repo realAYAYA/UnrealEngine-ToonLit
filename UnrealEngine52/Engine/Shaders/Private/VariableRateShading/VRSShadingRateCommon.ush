@@ -1,0 +1,52 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Taken from d3d12.h
+#define D3D12_SHADING_RATE_1X1 0x0
+#define D3D12_SHADING_RATE_1X2 0x1
+#define D3D12_SHADING_RATE_2X1 0x4
+#define D3D12_SHADING_RATE_2X2 0x5
+#define D3D12_SHADING_RATE_2X4 0x6
+#define D3D12_SHADING_RATE_4X2 0x9
+#define D3D12_SHADING_RATE_4X4 0xa
+
+
+#define MAX_D3D12_SHADING_RATE_BITS 4
+#define CONSERVATIVE_SHADING_RATE_SHIFT MAX_D3D12_SHADING_RATE_BITS
+
+float4 VisualizeShadingRate(uint ShadingRate)
+{
+	float4 RateColor = float4(1.0, 0.0, 0.0, 0); // Red (1x1 shading rate)
+
+	if (ShadingRate > 0)
+	{
+		if (ShadingRate == D3D12_SHADING_RATE_1X2)
+		{
+			RateColor = float4(1.0, 0.5, 0.0, 0); // Orange
+		}
+		else if (ShadingRate == D3D12_SHADING_RATE_2X1)
+		{
+			RateColor = float4(1.0, 1.0, 0.0, 0); // Yellow
+		}
+		else if (ShadingRate == D3D12_SHADING_RATE_2X2)
+		{
+			RateColor = float4(0.0, 1.0, 0.0, 0); // Green
+		}
+		else if (ShadingRate == D3D12_SHADING_RATE_2X4)
+		{
+			RateColor = float4(0.0, 0.0, 1.0, 0); // Blue
+		}
+		else if (ShadingRate == D3D12_SHADING_RATE_4X2)
+		{
+			RateColor = float4(1.0, 0.0, 1.0, 0); // Purple
+		}
+		else if (ShadingRate == D3D12_SHADING_RATE_4X4)
+		{
+			RateColor = float4(1.0, 0.5, 0.8, 0); // Pink
+		}
+	}
+	
+	RateColor.a = 0.5f;
+	return RateColor;
+}

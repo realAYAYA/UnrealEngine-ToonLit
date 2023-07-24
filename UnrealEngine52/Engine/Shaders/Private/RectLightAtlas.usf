@@ -1,0 +1,356 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "ShaderPrint.ush"
+#include "ColorMap.ush"
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Add texture
+#if SHADER_RECT_VS
+
+uint SlotBufferOffset;
+Buffer<uint4> SlotBuffer;
+int2 AtlasResolution;
+
+void MainVS(
+	uint InVertexId : SV_VertexID,
+	uint InInstanceId : SV_InstanceID,
+	out float4 OutPosition : SV_Position,
+	out float2 OutCoord : RECT_COORD,
+	out float2 OutUV : RECT_UV,
+	out uint OutId : RECT_ID)
+{
+	const uint4 Rect = SlotBuffer.Load(SlotBufferOffset + InInstanceId);
+	const int2 RectOffset = Rect.xy;
+	const int2 RectResolution = Rect.zw;
+
+	OutId = InInstanceId;
+
+	// UV & Coords relative to the rect
+	float2 SrcUV = 0;
+	SrcUV.x = InVertexId == 1 || InVertexId == 2 || InVertexId == 4 ? 1.f : 0.f;
+	SrcUV.y = InVertexId == 2 || InVertexId == 4 || InVertexId == 5 ? 1.f : 0.f;
+	OutUV = SrcUV;
+	OutCoord = SrcUV * RectResolution;
+
+	// UV relative to the atlas
+	const float2 UVOffset = RectOffset / float2(AtlasResolution);
+	const float2 UVScale  = RectResolution / float2(AtlasResolution);
+	const float2 DstUV = SrcUV * UVScale + UVOffset;
+	OutPosition = float4(DstUV * float2(2.0f, -2.0f) + float2(-1.0, 1.0f), 0.5f, 1.0f);
+}
+#endif // SHADER_RECT_VS
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Add texture
+#if SHADER_ADD_TEXTURE
+
+int InTextureMIPBias;
+Texture2D<float4> InTexture0;
+Texture2D<float4> InTexture1;
+Texture2D<float4> InTexture2;
+Texture2D<float4> InTexture3;
+Texture2D<float4> InTexture4;
+Texture2D<float4> InTexture5;
+Texture2D<float4> InTexture6;
+Texture2D<float4> InTexture7;
+
+SamplerState InSampler0;
+SamplerState InSampler1;
+SamplerState InSampler2;
+SamplerState InSampler3;
+SamplerState InSampler4;
+SamplerState InSampler5;
+SamplerState InSampler6;
+SamplerState InSampler7;
+
+void MainPS(
+	in float4 InPosition : SV_Position,
+	in float2 InCoord : RECT_COORD,
+	in float2 InUV : RECT_UV,
+	in uint InId : RECT_ID,
+	out float4 OutTexture : SV_Target0)
+{
+	float4 Color = 0;
+	switch (InId)
+	{
+	case 0: Color = InTexture0.SampleLevel(InSampler0, InUV, InTextureMIPBias); break;
+	case 1: Color = InTexture1.SampleLevel(InSampler1, InUV, InTextureMIPBias); break;
+	case 2: Color = InTexture2.SampleLevel(InSampler2, InUV, InTextureMIPBias); break;
+	case 3: Color = InTexture3.SampleLevel(InSampler3, InUV, InTextureMIPBias); break;
+	case 4: Color = InTexture4.SampleLevel(InSampler4, InUV, InTextureMIPBias); break;
+	case 5: Color = InTexture5.SampleLevel(InSampler5, InUV, InTextureMIPBias); break;
+	case 6: Color = InTexture6.SampleLevel(InSampler6, InUV, InTextureMIPBias); break;
+	case 7: Color = InTexture7.SampleLevel(InSampler7, InUV, InTextureMIPBias); break;
+	}
+
+	// Ensure there is no NaN value
+	Color = -min(-Color, 0);
+
+	OutTexture = Color;
+}
+
+#endif // SHADER_ADD_TEXTURE
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Copy texture
+#if SHADER_COPY_TEXTURE
+
+uint MipLevel;
+Buffer<uint4> SrcSlotBuffer;
+
+Texture2D<float4> SourceAtlasTexture;
+SamplerState InSampler;
+
+void MainPS(
+	in float4 InPosition : SV_Position,
+	in float2 InCoord : RECT_COORD,
+	in float2 InUV : RECT_UV,
+	in uint InId : RECT_ID,
+	out float4 OutTexture : SV_Target0)
+{
+	const uint2 SrcRectOffset = SrcSlotBuffer[InId].xy;
+	const uint2 SourceCoord = InCoord + SrcRectOffset;
+	const float4 Color = SourceAtlasTexture.Load(uint3(SourceCoord, MipLevel));
+	OutTexture = Color;
+}
+
+#endif // SHADER_COPY_TEXTURE
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Filter texture
+#if SHADER_FILTER_TEXTURE
+
+float KernelSize;
+uint FilterQuality;
+int2 SrcAtlasResolution;
+Buffer<uint4> SrcSlotBuffer;
+Texture2D<float4> SourceAtlasTexture;
+SamplerState SourceAtlasSampler;
+
+void MainPS(
+	in float4 InPosition : SV_Position,
+	in float2 InCoord : RECT_COORD,
+	in float2 InUV : RECT_UV,
+	in uint InId : RECT_ID,
+	out float4 OutTexture : SV_Target0)
+{
+
+	if (FilterQuality)
+	{
+		// 2x2 box filtering
+		const float2 SrcCoord = uint2(InCoord) * 2.f;
+		const uint4 SrcRect = SrcSlotBuffer[InId];
+		const uint2 SrcRectOffset = SrcRect.xy;
+		const uint2 SrcRectResolution = SrcRect.zw;
+
+		const float4 Color0 = SourceAtlasTexture.Load(uint3(SrcRectOffset + SrcCoord + float2(0,0), 0));
+		const float4 Color1 = SourceAtlasTexture.Load(uint3(SrcRectOffset + SrcCoord + float2(1,0), 0));
+		const float4 Color2 = SourceAtlasTexture.Load(uint3(SrcRectOffset + SrcCoord + float2(0,1), 0));
+		const float4 Color3 = SourceAtlasTexture.Load(uint3(SrcRectOffset + SrcCoord + float2(1,1), 0));
+		OutTexture = (Color0 + Color1 + Color2 + Color3) * 0.25f;
+	}
+	else
+	{
+		// 5x5 Gaussian filtering (naive, non-separable, with bilinear filtering)
+		// 
+		// Possible improvement, but probably not worth it since the filtering is done only once, when the texture is uploaded: 
+		// * Separable filter (but requires compute with border, or RT ping-pong)
+		// * Recursive sparse filter with MIP prefiltering (Deriche & co)
+		const float2 SrcCoord = InCoord * 2.f; // -> InCoord is xxx.5f, so SrcCoord is at the center of the 2x2 block
+		const uint4 SrcRect = SrcSlotBuffer[InId];
+		const uint2 SrcRectOffset = SrcRect.xy;
+		const uint2 SrcRectResolution = SrcRect.zw;
+
+		const float2 MinCoord = SrcRectOffset;
+		const float2 MaxCoord = SrcRectOffset + SrcRectResolution;
+		const float2 InvAtlasResolution = 1.0f / float2(SrcAtlasResolution);
+
+		float3 AccColor = 0;
+		float AccW = 0;
+		const float Variance = 3.0f; // std ~1.4. weight, at radius=3 ~0.01;
+		const int KernelExtent = 2;
+		for (int y = -KernelExtent; y <= KernelExtent; ++y)
+		for (int x = -KernelExtent; x <= KernelExtent; ++x)
+		{
+			const float2 Offset = float2(x, y);
+			const float2 Coord = SrcRectOffset + SrcCoord + Offset;// +float2(0.5f, 0.5f);
+			if (all(Coord >= MinCoord) && all(Coord < MaxCoord))
+			{
+				const float2 UV = Coord * InvAtlasResolution;
+				const float  D2 = dot(Offset, Offset);
+				const float  W = exp(-D2 / Variance);
+				const float3 Color = SourceAtlasTexture.SampleLevel(SourceAtlasSampler, UV, 0).xyz; // MIP=0 as it is an SRV narrowed around SrcMIP
+
+				AccColor += W * Color;
+				AccW += W;
+			}
+		}
+		OutTexture = float4(AccColor / AccW, 1.0f);
+	}
+}
+
+#endif // SHADER_FILTER_TEXTURE
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Debug
+#if SHADER_DEBUG
+
+int2  AtlasResolution;
+float AtlasMaxMipLevel;
+float Occupancy;
+uint  SlotCount;
+uint  HorizonCount;
+uint  FreeCount;
+int2  OutputResolution;
+uint  AtlasMIPIndex;
+uint  AtlasSourceTextureMIPBias;
+
+SamplerState AtlasSampler;
+Texture2D<float4> AtlasTexture;
+RWTexture2D<float4> OutputTexture;
+Buffer<uint4> SlotBuffer;
+Buffer<uint4> HorizonBuffer;
+Buffer<uint4> FreeBuffer;
+
+FFontColor GetOccupancyColor(float In)
+{
+	float3 Color = lerp(float3(0, 1, 0), float3(1, 0, 0), saturate(In));
+	return InitFontColor(Color);
+}
+
+bool IsInSlot(float2 Coord, float2 MinRect, float2 MaxRect)
+{
+	return all(Coord >= MinRect) && all(Coord <= MaxRect);
+}
+
+bool IsOnBorder(float2 Coord, float2 MinRect, float2 MaxRect, float BorderSize)
+{
+	const bool bIsWithin = IsInSlot(Coord, MinRect, MaxRect);
+	const bool bIsOnBorder = any(Coord - MinRect <= BorderSize) || any(MaxRect - Coord  <= BorderSize);
+	return bIsWithin && bIsOnBorder;
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Draw stats
+	if (all(DispatchThreadId == 0))
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 100));
+
+		Print(Context, TEXT("Atlas resolution : "), FontSilver);
+		Print(Context, AtlasResolution, FontOrange);
+		Newline(Context);
+
+		Print(Context, TEXT("Atlas max. MIP   : "), FontSilver);
+		Print(Context, AtlasMaxMipLevel, FontOrange);
+		Newline(Context);
+
+		Print(Context, TEXT("Atlas MIP Index  : "), FontSilver);
+		Print(Context, AtlasMIPIndex, FontOrange);
+		Newline(Context);
+
+		const FFontColor OccupancyColor = GetOccupancyColor(Occupancy);
+		Print(Context, TEXT("Atlas occupancy  : "), FontSilver);
+		Print(Context, Occupancy * 100.f, OccupancyColor);
+		Newline(Context);
+
+		Print(Context, TEXT("Textures count   : "), FontSilver);
+		Print(Context, SlotCount, FontOrange);
+		Newline(Context);
+
+		Print(Context, TEXT("Src. MIP bias    : "), FontSilver);
+		Print(Context, AtlasSourceTextureMIPBias, FontOrange);
+		Newline(Context);
+
+		Print(Context, TEXT("Atlas format     : "), FontSilver);
+		Print(Context, TEXT("PF_FloatR11G11B10"), FontOrange);
+		Newline(Context);
+	}
+
+	// Draw atlas
+	const uint2 Coord = DispatchThreadId.xy;
+	const float2 OutputUV = float2(DispatchThreadId.xy) / float2(OutputResolution);
+	const float AtlasRatio  = AtlasResolution.y / float(AtlasResolution.x);
+	const float OutputRatio = OutputResolution.y / float(OutputResolution.x);
+
+	const float ScaleFactor = 0.25f;
+	const uint2 DisplayAtlasOffset     = uint2(50, 220);
+	const uint2 DisplayAtlasResolution = uint2(OutputResolution.x * ScaleFactor, OutputResolution.x * ScaleFactor * AtlasResolution.y / AtlasResolution.x);
+	if (all(Coord > DisplayAtlasOffset) && all(Coord < DisplayAtlasOffset + DisplayAtlasResolution))
+	{
+		const float2 AtlasUV	= (Coord - DisplayAtlasOffset) / float2(DisplayAtlasResolution);
+		const float2 AtlasCoord = AtlasUV * AtlasResolution;
+		if (all(AtlasUV < 1.0f))
+		{
+			// Display the atlas, but gray scale it for easing slot visualization
+			const float TintScale = 0.25f;
+			float4 Color = AtlasTexture.SampleLevel(AtlasSampler, AtlasUV, AtlasMIPIndex) * TintScale;
+
+			// Color valid slot with a green border
+			const float BorderSize =  float(AtlasResolution.x) / float(DisplayAtlasResolution.x) * 2.f;
+			bool bScaleDownColor = true;
+
+			// Valid Slot
+			for (uint SlotIt = 0; SlotIt < SlotCount; ++SlotIt)
+			{
+				const uint4 Slot = SlotBuffer[SlotIt];
+				if (IsInSlot(AtlasCoord, Slot.xy, Slot.xy + Slot.zw))
+				{
+					bScaleDownColor = false;
+					if (IsOnBorder(AtlasCoord, Slot.xy, Slot.xy + Slot.zw, BorderSize))
+					{
+						Color = float4(0, 1, 0, 1);
+						break;
+					}
+				}
+			}
+
+			// Horizon 
+			for (uint HorizonIt = 0; HorizonIt < HorizonCount; ++HorizonIt)
+			{
+				const uint4 Slot = HorizonBuffer[HorizonIt];
+				if (IsInSlot(AtlasCoord, Slot.xy, Slot.xy + Slot.zw))
+				{
+					if (IsOnBorder(AtlasCoord, Slot.xy, Slot.xy + Slot.zw, BorderSize))
+					{
+						bScaleDownColor = false;
+						Color = float4(ColorMapViridis(HorizonIt / float(HorizonCount - 1)), 1);
+						Color = float4(1, 0, 0, 1);
+						break;
+					}
+				}
+			}
+
+			// Free rects. 
+			for (uint FreeIt = 0; FreeIt < FreeCount; ++FreeIt)
+			{
+				const uint4 Slot = FreeBuffer[FreeIt];
+				if (IsInSlot(AtlasCoord, Slot.xy, Slot.xy + Slot.zw))
+				{
+					if (IsOnBorder(AtlasCoord, Slot.xy, Slot.xy + Slot.zw, BorderSize))
+					{
+						bScaleDownColor = false;
+						Color = float4(1, 1, 0, 1);
+						break;
+					}
+				}
+			}
+
+			// Extra graying if not within a valid slot
+			if (bScaleDownColor)
+			{
+				Color *= TintScale;
+			}
+
+			OutputTexture[DispatchThreadId.xy] = float4(Color.xyz, 1.0f);
+		}
+	}
+	else
+	{
+		OutputTexture[DispatchThreadId.xy] = 0.f;
+	}
+}
+
+#endif // SHADER_DEBUG

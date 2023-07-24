@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+  <Property Name="TestNames" Value="HeadlessChaos" />
+  <Property Name="SelfDisabled" Value="False" />
+  <Property Name="HeadlessChaosDisabled" Value="False" />
+  <Property Name="SelfShort" Value="Self" />
+  <Property Name="HeadlessChaosShort" Value="Headless Chaos" />
+  <Property Name="SelfTarget" Value="LowLevelTests" />
+  <Property Name="HeadlessChaosTarget" Value="HeadlessChaos" />
+  <Property Name="SelfBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="HeadlessChaosBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="SelfReportType" Value="console" />
+  <Property Name="HeadlessChaosReportType" Value="console" />
+  <Option Name="RunSelfTests" DefaultValue="False" Description="Run Self Tests" />
+  <Option Name="RunHeadlessChaosTests" DefaultValue="False" Description="Run Headless Chaos Tests" />
+  <Property Name="SelfSupportedPlatforms" Value="Win64;Mac;Linux;Android" />
+  <Property Name="HeadlessChaosSupportedPlatforms" Value="Win64" />
+</BuildGraph>

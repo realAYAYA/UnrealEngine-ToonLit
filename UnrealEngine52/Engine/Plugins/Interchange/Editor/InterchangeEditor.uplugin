@@ -1,0 +1,71 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Interchange Editor",
+	"Description": "Interchange Editor plugin pull on Interchange plugin to allow us to force interchange plugin in editor.",
+	"Category": "Importers",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"SupportedTargetPlatforms": [
+		"Win64",
+		"Linux",
+		"Mac"
+	],
+	"Modules": [
+		{
+			"Name": "InterchangeEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"TargetAllowList": [
+				"Editor",
+				"Program"
+			]
+		},
+		{
+			"Name": "InterchangeEditorPipelines",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"TargetAllowList": [
+				"Editor",
+				"Program"
+			]
+		},
+		{
+			"Name": "InterchangeResultsBrowser",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"TargetAllowList": [
+				"Editor",
+				"Program"
+			]
+		},
+		{
+			"Name": "InterchangeEditorUtilities",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"TargetAllowList": [
+				"Editor",
+				"Program"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "Interchange",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor",
+				"Program"
+			]
+		}
+	],
+	"IsExperimentalVersion": false
+}

@@ -1,0 +1,37 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+#include "/Engine/Private/SceneTexturesCommon.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/SceneTextureParameters.ush"
+#include "/Engine/Private/SceneData.ush"
+#include "/ColorCorrectRegionsShaders/Private/ColorCorrectRegionsCommon.usf"
+
+
+StructuredBuffer<uint> StencilIds;
+uint StencilIdCount;
+
+uint MainPS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0
+) : SV_Target0
+{
+	float4 SvPosition = UVAndScreenPos;
+	const float Float_Eps = 0.00000000001;
+
+	half CustomDepth = CalcSceneCustomDepth(UVAndScreenPos.xy);
+	half SceneDepth = CalcSceneDepth(UVAndScreenPos.xy);
+
+	int CustomStencil = SceneTextureLookup(UVAndScreenPos.xy, PPI_CustomStencil, false).r;
+	for (uint Index = 0; Index < StencilIdCount; Index++)
+	{
+		if (abs(SceneDepth - CustomDepth) <= Float_Eps)
+		{
+			if (CustomStencil == StencilIds[Index])
+			{
+				return CustomStencil;
+			}
+		}
+	}
+	return 0;
+}

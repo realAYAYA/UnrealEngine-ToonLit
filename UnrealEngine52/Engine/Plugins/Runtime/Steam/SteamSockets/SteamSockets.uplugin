@@ -1,0 +1,42 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1.0,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Steam Sockets",
+	"Description" : "New Steamworks Networking code that supports the SteamSockets interface. NOTE: This plugin is only compatible with the SteamSockets Netdriver. It will not work if the proper netdriver definitions have not been set.",
+	"Category" : "Networking",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "https://epicgames.com",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "SteamSockets",
+			"Type" : "Runtime",
+			"LoadingPhase" : "Default",
+			"PlatformAllowList" :
+			[
+				"Win64",
+				"Mac",
+				"Linux"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "OnlineSubsystem",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineSubsystemSteam",
+			"Enabled": true
+		},
+		{
+			"Name": "SteamShared",
+			"Enabled": true
+		}
+	]
+}

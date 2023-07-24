@@ -1,0 +1,13 @@
+/* *****************************************************************************
+// Resource description for the DatasmithARCHICAD23Exporter ARCHICAD Add-On
+// API Development Kit; Windows resources
+//
+// Namespaces:		Contact person:
+//		-None-
+//
+// [SG compatible] - Yes
+// ****************************************************************************/
+
+#include "DatasmithARCHICADExporterFix.grc.rc2"
+
+1	ICON    LOADONCALL MOVEABLE IMPURE  ACAP.ico

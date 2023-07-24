@@ -1,0 +1,633 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../DistanceFieldLightingShared.ush"
+#include "../HybridIndirectLighting.ush"
+#include "LumenCardCommon.ush"
+#include "../MeshDistanceFieldCommon.ush"
+
+uint ObjectBoundingGeometryIndexCount;
+float CardTraceEndDistanceFromCamera; 
+float MaxMeshSDFInfluenceRadius;
+float MeshSDFRadiusThreshold;
+uint NumCullGridCells;
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 1
+#endif
+
+#define CULL_MESH_TYPE_SDF 0
+#define CULL_MESH_TYPE_HEIGHTFIELD 1
+
+#ifndef CULL_MESH_TYPE
+#define CULL_MESH_TYPE CULL_MESH_TYPE_SDF
+#endif
+
+struct FObjectData
+{
+	uint Index;
+	uint Type;
+};
+
+FObjectData CreateObjectData(uint ObjectIndex, uint ObjectType)
+{
+	FObjectData ObjectData;
+	ObjectData.Index = ObjectIndex;
+	ObjectData.Type = ObjectType;
+	return ObjectData;
+}
+
+uint PackObjectData(FObjectData ObjectData)
+{
+	uint PackedData;
+	PackedData = ObjectData.Index & 0x7FFFFFFF;
+	PackedData |= ObjectData.Type << 31;
+	return PackedData;
+}
+
+FObjectData UnpackObjectData(uint PackedData)
+{
+	FObjectData ObjectData;
+	ObjectData.Index = PackedData & 0x7FFFFFFF;
+	ObjectData.Type = (PackedData >> 31) & 0x1;
+	return ObjectData;
+}
+
+#if COMPUTESHADER
+groupshared uint NumGroupObjects;
+groupshared uint GroupBaseIndex;
+groupshared uint GroupObjectIndices[THREADGROUP_SIZE];
+#endif
+
+RWBuffer<uint> RWObjectIndexBuffer;
+
+float LengthSq(float3 X)
+{
+	return dot(X, X);
+}
+
+#if COMPUTESHADER
+
+Buffer<uint> MeshSDFIndexBuffer;
+Buffer<uint> HeightfieldIndexBuffer;
+Buffer<uint> NumCulledMeshSDFObjects;
+Buffer<uint> NumCulledHeightfieldObjects;
+
+RWBuffer<uint> RWCombinedObjectIndexBuffer;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void CombineObjectIndexBuffersCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID
+)
+{
+	uint ObjectIndex = DispatchThreadId.x;
+
+	uint NumObjects = NumCulledMeshSDFObjects[0] + NumCulledHeightfieldObjects[0];
+	if (ObjectIndex < NumObjects)
+	{
+		FObjectData ObjectData;
+		if (ObjectIndex < NumCulledHeightfieldObjects[0])
+		{
+			ObjectData = UnpackObjectData(HeightfieldIndexBuffer[ObjectIndex]);
+		}
+		else
+		{
+			uint MeshSDFIndex = ObjectIndex - NumCulledHeightfieldObjects[0];
+			ObjectData = UnpackObjectData(MeshSDFIndexBuffer[MeshSDFIndex]);
+		}
+
+		RWCombinedObjectIndexBuffer[ObjectIndex] = PackObjectData(ObjectData);
+	}
+}
+
+groupshared uint GSNumCulledObjects;
+groupshared uint GSCulledObjectIndex[THREADGROUP_SIZE];
+groupshared uint GSGlobalWriteBaseIndex;
+
+uint MaxNumObjects;
+RWBuffer<uint> RWNumCulledObjects;
+RWBuffer<uint> RWCulledObjectIndexBuffer;
+
+uint bShouldCull;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void CullHeightfieldObjectsForViewCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID
+)
+{
+	if (DispatchThreadId.x == 0)
+	{
+		RWNumCulledObjects[1] = MaxNumObjects;
+		RWObjectIndirectArguments[0] = ObjectBoundingGeometryIndexCount;
+	}
+
+	if (GroupThreadId.x == 0)
+	{
+		GSNumCulledObjects = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	bool bShouldKeep = false;
+
+	uint ObjectIndex = DispatchThreadId.x;
+	if (ObjectIndex < MaxNumObjects)
+	{
+		FLumenHeightfieldData LumenHeightfield = GetLumenHeightfieldData(ObjectIndex);
+		if (LumenHeightfield.bValid)
+		{
+			bShouldKeep = true;
+
+			if (bShouldCull)
+			{
+				FLumenMeshCardsData MeshCardsData = GetLumenMeshCardsData(LumenHeightfield.MeshCardsIndex);
+
+				// Fetch card
+				int LocalCardIndex = LUMEN_HEIGHTFIELD_LOCAL_CARD_INDEX;
+				FLumenCardData LumenCardData = GetLumenCardData(MeshCardsData.CardOffset + LocalCardIndex);
+
+				float DistanceFromCameraSq = LengthSq(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - LumenCardData.Origin) - LengthSq(LumenCardData.LocalExtent);
+				bShouldKeep = DistanceFromCameraSq < CardTraceEndDistanceFromCamera * CardTraceEndDistanceFromCamera;
+			}
+		}
+	}
+
+	if (bShouldKeep)
+	{
+		uint LocalWriteIndex;
+		InterlockedAdd(GSNumCulledObjects, 1u, LocalWriteIndex);
+		GSCulledObjectIndex[LocalWriteIndex] = ObjectIndex;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId.x == 0)
+	{
+		uint GlobalWriteBaseIndex;
+		InterlockedAdd(RWNumCulledObjects[0], GSNumCulledObjects, GSGlobalWriteBaseIndex);
+		InterlockedAdd(RWObjectIndirectArguments[1], GSNumCulledObjects);
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId.x < GSNumCulledObjects)
+	{
+		uint GlobalWriteIndex = GSGlobalWriteBaseIndex + GroupThreadId.x;
+		FObjectData ObjectData = CreateObjectData(GSCulledObjectIndex[GroupThreadId.x], CULL_MESH_TYPE_HEIGHTFIELD);
+		RWCulledObjectIndexBuffer[GlobalWriteIndex] = PackObjectData(ObjectData);
+	}
+}
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void CullMeshSDFObjectsForViewCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+    uint3 GroupThreadId : SV_GroupThreadID) 
+{
+	uint ObjectIndex = DispatchThreadId.x;
+
+#define USE_FRUSTUM_CULLING 1
+#if USE_FRUSTUM_CULLING
+	if (DispatchThreadId.x == 0)
+	{
+		// RWObjectIndirectArguments is zeroed by a clear before this shader, only need to set things that are non-zero (and are not read by this shader as that would be a race condition)
+		// IndexCount, NumInstances, StartIndex, BaseVertexIndex, FirstInstance
+		RWObjectIndirectArguments[0] = ObjectBoundingGeometryIndexCount;
+	}
+
+	if (GroupThreadId.x == 0)
+	{
+		NumGroupObjects = 0;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (ObjectIndex < NumSceneObjects)
+	{
+		FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
+		const float3 TranslatedCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PrimaryView.PreViewTranslation));
+
+		float DistanceToViewSq = LengthSq(PrimaryView.TranslatedWorldCameraOrigin - TranslatedCenter);
+
+		if ((DFObjectBounds.bVisible || DFObjectBounds.bAffectIndirectLightingWhileHidden)
+			&& DistanceToViewSq < Square(CardTraceEndDistanceFromCamera + DFObjectBounds.SphereRadius)
+			&& (DFObjectBounds.SphereRadius > MeshSDFRadiusThreshold || DFObjectBounds.bEmissiveLightSource)
+			&& ViewFrustumIntersectSphere(LWCHackToFloat(DFObjectBounds.Center), DFObjectBounds.SphereRadius + MaxMeshSDFInfluenceRadius)) 
+		{
+			FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
+
+            if ((DFObjectData.MinMaxDrawDistance2.x < 0.0001 || DistanceToViewSq > DFObjectData.MinMaxDrawDistance2.x)
+                && (DFObjectData.MinMaxDrawDistance2.y < 0.0001 || DistanceToViewSq < DFObjectData.MinMaxDrawDistance2.y))
+            {
+                uint DestIndex;
+                InterlockedAdd(NumGroupObjects, 1U, DestIndex);
+                GroupObjectIndices[DestIndex] = ObjectIndex;
+            }
+        }
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId.x == 0)
+	{
+		InterlockedAdd(RWNumCulledObjects[0], NumGroupObjects, GroupBaseIndex);
+		InterlockedAdd(RWObjectIndirectArguments[1], NumGroupObjects);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId.x < NumGroupObjects)
+	{
+		uint SourceIndex = GroupObjectIndices[GroupThreadId.x];
+		uint DestIndex = GroupBaseIndex + GroupThreadId.x;
+
+		FObjectData ObjectData = CreateObjectData(SourceIndex, CULL_MESH_TYPE_SDF);
+		RWObjectIndexBuffer[DestIndex] = PackObjectData(ObjectData);
+	}
+
+#else
+
+	if (DispatchThreadId.x == 0)
+	{
+		// IndexCount, NumInstances, StartIndex, BaseVertexIndex, FirstInstance
+		RWObjectIndirectArguments[0] = ObjectBoundingGeometryIndexCount;
+		InterlockedAdd(RWObjectIndirectArguments[1], NumSceneObjects);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (ObjectIndex < NumSceneObjects)
+	{
+		uint SourceIndex = ObjectIndex;
+		uint DestIndex = ObjectIndex;
+
+		FObjectData ObjectData = CreateObjectData(SourceIndex, CULL_MESH_TYPE_SDF);
+		RWObjectIndexBuffer[DestIndex] = PackObjectData(ObjectData);
+	}
+
+#endif
+}
+#endif // COMPUTESHADER
+
+struct FObjectCullVertexOutput
+{
+	nointerpolation float4 PositionAndRadius : TEXCOORD0;
+	nointerpolation uint ObjectIndex : TEXCOORD1;
+};
+ 
+float ConservativeRadiusScale;
+Buffer<uint> ObjectIndexBuffer;
+
+void MeshSDFObjectCullVS(
+	float4 InPosition : ATTRIBUTE0,
+	uint IndexInIndexBuffer : SV_InstanceID,
+	out FObjectCullVertexOutput Output,
+	out float4 OutPosition : SV_POSITION
+)
+{
+	FObjectData ObjectData = UnpackObjectData(ObjectIndexBuffer[IndexInIndexBuffer]);
+	uint ObjectIndex = ObjectData.Index;
+	uint ObjectType = ObjectData.Type;
+	float3 ObjectWorldOrigin = 0.0;
+	float ObjectWorldRadius = 0.0;
+
+	#if CULL_MESH_SDF
+	if (ObjectType == CULL_MESH_TYPE_SDF)
+	{
+		FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
+		ObjectWorldOrigin = LWCHackToFloat(DFObjectBounds.Center);
+		ObjectWorldRadius = DFObjectBounds.SphereRadius;
+	}
+	#endif // CULL_MESH_SDF
+	
+	#if CULL_MESH_HEIGHTFIELD
+	if (ObjectType == CULL_MESH_TYPE_HEIGHTFIELD)
+	{
+		FLumenHeightfieldData LumenHeightfield = GetLumenHeightfieldData(ObjectIndex);
+		if (LumenHeightfield.bValid)
+		{
+#if 0
+			FLumenMeshCardsData MeshCardsData = GetLumenMeshCardsData(LumenHeightfield.MeshCardsIndex);
+			FLumenCardData LumenCardData = GetLumenCardData(MeshCardsData.CardOffset + LUMEN_HEIGHTFIELD_LOCAL_CARD_INDEX);
+			ObjectWorldOrigin = LumenCardData.Origin;
+			ObjectWorldRadius = length(LumenCardData.LocalExtent);
+#else
+			ObjectWorldOrigin = LWCHackToFloat(LumenHeightfield.BoundsCenter); // LWC_TODO:
+			ObjectWorldRadius = length(LumenHeightfield.BoundsExtent);
+#endif
+		}
+	}
+	#endif // CULL_MESH_HEIGHTFIELD
+
+	float EffectiveRadius = (ObjectWorldRadius + MaxMeshSDFInfluenceRadius) * ConservativeRadiusScale / 0.7f;
+	float3 WorldPosition = InPosition.xyz * EffectiveRadius + ObjectWorldOrigin;
+
+	OutPosition = mul(float4(WorldPosition, 1), LWCHackToFloat(PrimaryView.WorldToClip));
+	Output.PositionAndRadius.xyz = ObjectWorldOrigin;
+	Output.PositionAndRadius.w = ObjectWorldRadius;
+	Output.ObjectIndex = PackObjectData(ObjectData);
+} 
+
+RWBuffer<uint> RWNumGridCulledMeshSDFObjects;
+RWBuffer<uint> RWGridCulledMeshSDFObjectIndicesArray;
+RWBuffer<uint> RWNumGridCulledHeightfieldObjects;
+RWBuffer<uint> RWGridCulledHeightfieldObjectIndicesArray;
+RWBuffer<uint> RWNumCulledObjectsToCompact;
+RWBuffer<uint> RWCulledObjectsToCompactArray;
+
+//@todo - put in header for tracing
+Buffer<uint> GridCulledMeshSDFObjectStartOffsetArray;
+Buffer<uint> GridCulledHeightfieldObjectStartOffsetArray;
+#define CULLED_MESH_SDF_DATA_STRIDE 1
+#define CULLED_OBJECT_TO_COMPACT_STRIDE 2
+float3 CardGridZParams;
+uint3 CullGridSize;
+uint CardGridPixelSizeShift;
+
+uint ComputeFroxelGridZ(float SceneDepth)
+{
+	uint ZSlice = (uint)(max(0, log2(SceneDepth * CardGridZParams.x + CardGridZParams.y) * CardGridZParams.z));
+	ZSlice = min(ZSlice, (uint)(CullGridSize.z - 1));
+	return ZSlice;
+}
+
+float ComputeDepthFromZSlice(float ZSlice)
+{
+#if CULL_TO_FROXEL_GRID
+	float SliceDepth = (exp2(ZSlice / CardGridZParams.z) - CardGridZParams.y) / CardGridZParams.x;
+	return SliceDepth;
+#else
+	float MinTileZ = 0.0f;
+	float MaxTileZ = CardTraceEndDistanceFromCamera;
+	return lerp(MinTileZ, MaxTileZ, ZSlice);
+#endif
+}
+
+float3 ComputeCellWorldPosition(uint3 GridCoordinate, float3 CellOffset)
+{
+	float2 VolumeUV = (GridCoordinate.xy + CellOffset.xy) / CullGridSize.xy;
+	float2 VolumeNDC = (VolumeUV * 2 - 1) * float2(1, -1);
+
+	float SceneDepth = ComputeDepthFromZSlice(GridCoordinate.z + CellOffset.z);
+	float TileDeviceZ = ConvertToDeviceZ(SceneDepth);
+
+	float4 CenterPosition = mul(float4(VolumeNDC, TileDeviceZ, 1), View.ClipToTranslatedWorld);
+	return CenterPosition.xyz / CenterPosition.w - LWCHackToFloat(PrimaryView.PreViewTranslation);
+}
+
+uint MaxNumberOfCulledObjects;
+
+Texture2D ClosestHZBTexture;
+Texture2D FurthestHZBTexture;
+float HZBMipLevel;
+uint HaveClosestHZB;
+float2 ViewportUVToHZBBufferUV;
+
+void MeshSDFObjectCullPS(
+	FObjectCullVertexOutput Input,
+	in float4 SVPos : SV_POSITION)
+{
+	uint2 PixelPos = SVPos.xy;
+
+	FObjectData ObjectData = UnpackObjectData(Input.ObjectIndex);
+	uint ObjectIndex = ObjectData.Index;
+	uint ObjectType = ObjectData.Type;
+
+	float3 WorldObjectPosition = Input.PositionAndRadius.xyz;
+	float3 WorldObjectExtent = 0.0;
+
+	#if CULL_MESH_SDF
+	if (ObjectType == CULL_MESH_TYPE_SDF)
+	{
+		FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
+		WorldObjectExtent = mul(DFObjectData.VolumePositionExtent, abs(((float3x3)DFObjectData.VolumeToWorld.M)));
+	}
+	#endif // CULL_MESH_SDF
+
+	#if CULL_MESH_HEIGHTFIELD
+	if (ObjectType == CULL_MESH_TYPE_HEIGHTFIELD)
+	{
+		FLumenHeightfieldData LumenHeightfield = GetLumenHeightfieldData(ObjectIndex);
+		if (!LumenHeightfield.bValid)
+		{
+			return;
+		}
+
+#if 0
+		FLumenMeshCardsData MeshCardsData = GetLumenMeshCardsData(LumenHeightfield.MeshCardsIndex);
+		FLumenCardData LumenCardData = GetLumenCardData(MeshCardsData.CardOffset + LUMEN_HEIGHTFIELD_LOCAL_CARD_INDEX);
+		WorldObjectPosition = LumenCardData.Origin;
+		WorldObjectExtent = mul(abs(LumenCardData.WorldToLocalRotation), LumenCardData.LocalExtent);
+#else
+		WorldObjectPosition = LWCHackToFloat(LumenHeightfield.BoundsCenter); // LWC_TODO:
+		WorldObjectExtent = LumenHeightfield.BoundsExtent;
+#endif
+	}
+	#endif // CULL_MESH_HEIGHTFIELD
+
+
+	float3 ViewSpaceObjectPosition = mul(float4(WorldObjectPosition + LWCHackToFloat(PrimaryView.PreViewTranslation), 1), View.TranslatedWorldToView).xyz;
+	float3 ViewSpaceObjectInfluenceExtent = mul(WorldObjectExtent, abs((float3x3)View.TranslatedWorldToView)) + MaxMeshSDFInfluenceRadius;
+
+	float4 FrustumPlanes[6];
+	{
+		// Setup tile frustum planes
+		float2 TileScale = View.ViewSizeAndInvSize.xy * rcp(2 * (1u << CardGridPixelSizeShift));
+		float2 TileBias = TileScale - PixelPos - 0.5;
+
+		float4 C1 = float4(View.ViewToClip._11 * TileScale.x, 0.0f, View.ViewToClip._31 * TileScale.x + TileBias.x, 0.0f);
+		float4 C2 = float4(0.0f, -View.ViewToClip._22 * TileScale.y, View.ViewToClip._32 * TileScale.y + TileBias.y, 0.0f);
+		float4 C4 = float4(0.0f, 0.0f, 1.0f, 0.0f);
+
+		FrustumPlanes[0] = C4 - C1;
+		FrustumPlanes[1] = C4 + C1;
+		FrustumPlanes[2] = C4 - C2;
+		FrustumPlanes[3] = C4 + C2;
+
+		// Normalize tile frustum planes
+		for (uint i = 0; i < 4; ++i)
+		{
+			FrustumPlanes[i] *= rcp(length(FrustumPlanes[i].xyz));
+		}
+	}
+	
+	uint MinFroxelZ = 0;
+	uint MaxFroxelZ = 0;
+
+#if CULL_TO_FROXEL_GRID
+	float MinDepth = ViewSpaceObjectPosition.z - ViewSpaceObjectInfluenceExtent.z;
+	float MaxDepth = ViewSpaceObjectPosition.z + ViewSpaceObjectInfluenceExtent.z;
+
+	#define CULL_TO_HZB 1
+	#if CULL_TO_HZB
+		float2 HZBScreenUV = (PixelPos * (1u << CardGridPixelSizeShift) + .5f) * View.ViewSizeAndInvSize.zw * ViewportUVToHZBBufferUV;
+
+		if (HaveClosestHZB)
+		{
+			MinDepth = max(MinDepth, ConvertFromDeviceZ(ClosestHZBTexture.SampleLevel(GlobalPointClampedSampler, HZBScreenUV, HZBMipLevel).x));
+		}
+	
+		MaxDepth = min(MaxDepth, ConvertFromDeviceZ(FurthestHZBTexture.SampleLevel(GlobalPointClampedSampler, HZBScreenUV, HZBMipLevel).x));
+	#endif
+
+	//@todo - make this conservative
+	MinFroxelZ = ComputeFroxelGridZ(MinDepth);
+	MaxFroxelZ = ComputeFroxelGridZ(MaxDepth);
+#endif
+
+	for (uint FroxelZ = MinFroxelZ; FroxelZ <= MaxFroxelZ; FroxelZ++)
+	{
+		uint3 FroxelGridCoordinate = uint3(PixelPos, FroxelZ);
+		float MinTileZ = ComputeDepthFromZSlice(FroxelZ);
+		float MaxTileZ = ComputeDepthFromZSlice(FroxelZ + 1);
+
+		FrustumPlanes[4] = float4(0.0f, 0.0f, 1.0f, -MinTileZ);
+		FrustumPlanes[5] = float4(0.0f, 0.0f, -1.0f, MaxTileZ);
+
+		bool bTileIntersectsObject = true;
+
+#define INTERSECT_FRUSTUM_WITH_VIEW_AABB 1
+#if INTERSECT_FRUSTUM_WITH_VIEW_AABB
+		// Tile frustum plane vs view space MeshSDF AABB
+		for (uint i = 0; i < 6; ++i)
+		{
+			float DistanceFromNodeCenterToPlane = dot(FrustumPlanes[i], float4(ViewSpaceObjectPosition, 1.0f));
+			float Radius = dot(ViewSpaceObjectInfluenceExtent, abs(FrustumPlanes[i].xyz));
+			bTileIntersectsObject = bTileIntersectsObject && (DistanceFromNodeCenterToPlane >= -Radius);
+		}
+#endif
+
+#define INTERSECT_FROXEL_WITH_SDF CULL_MESH_SDF
+#if INTERSECT_FROXEL_WITH_SDF
+		if (ObjectType == CULL_MESH_TYPE_SDF && bTileIntersectsObject)
+		{
+			float3 WorldTileCenterPosition = ComputeCellWorldPosition(FroxelGridCoordinate, .5f); // LWC_TODO
+
+			float3 WorldTileCornerVector = (ComputeCellWorldPosition(FroxelGridCoordinate, float3(1, 1, 1)) - WorldTileCenterPosition);
+			float CornerLength = length(WorldTileCornerVector);
+
+			WorldTileCornerVector = (ComputeCellWorldPosition(FroxelGridCoordinate, float3(0, 0, 1)) - WorldTileCenterPosition);
+			CornerLength = max(length(WorldTileCornerVector), CornerLength);
+
+			float TileBoundingSphereRadius = CornerLength + MaxMeshSDFInfluenceRadius;
+			float DistanceToSurface = DistanceToNearestSurfaceForObject(ObjectIndex, LWCPromote(WorldTileCenterPosition), TileBoundingSphereRadius);
+			bTileIntersectsObject = DistanceToSurface < TileBoundingSphereRadius;
+		}
+#endif
+		
+		if (bTileIntersectsObject)
+		{
+			uint GridIndex = (FroxelGridCoordinate.z * CullGridSize.y + FroxelGridCoordinate.y) * CullGridSize.x + FroxelGridCoordinate.x;
+
+			if (ObjectType == CULL_MESH_TYPE_SDF)
+			{
+				InterlockedAdd(RWNumGridCulledMeshSDFObjects[GridIndex], 1);
+			}
+			else // if (ObjectType == CULL_MESH_TYPE_HEIGHTFIELD)
+			{
+				InterlockedAdd(RWNumGridCulledHeightfieldObjects[GridIndex], 1);
+			}
+
+			// Write out object index with a corresponding grid index
+			uint CulledObjectToCompactIndex;
+			InterlockedAdd(RWNumCulledObjectsToCompact[0], 1, CulledObjectToCompactIndex);
+
+			if (CulledObjectToCompactIndex < MaxNumberOfCulledObjects)
+			{
+				RWCulledObjectsToCompactArray[CulledObjectToCompactIndex * CULLED_OBJECT_TO_COMPACT_STRIDE + 0] = PackObjectData(ObjectData);
+				RWCulledObjectsToCompactArray[CulledObjectToCompactIndex * CULLED_OBJECT_TO_COMPACT_STRIDE + 1] = GridIndex;
+			}
+		}
+	}
+}
+
+Buffer<uint> NumCulledObjectsToCompact;
+Buffer<uint> CulledObjectsToCompactArray;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void CompactCulledObjectsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ObjectToCompactIndex = DispatchThreadId.x;
+
+	uint NumObjectsToCompact = min(MaxNumberOfCulledObjects, NumCulledObjectsToCompact[0]);
+
+	if (ObjectToCompactIndex < NumObjectsToCompact)
+	{
+		FObjectData ObjectData = UnpackObjectData(CulledObjectsToCompactArray[ObjectToCompactIndex * CULLED_OBJECT_TO_COMPACT_STRIDE + 0]);
+		uint ObjectIndex = ObjectData.Index;
+		uint GridIndex = CulledObjectsToCompactArray[ObjectToCompactIndex * CULLED_OBJECT_TO_COMPACT_STRIDE + 1];
+
+#if CULL_MESH_SDF
+		if (ObjectData.Type == CULL_MESH_TYPE_SDF)
+		{
+			uint CulledObjectIndex;
+			InterlockedAdd(RWNumGridCulledMeshSDFObjects[GridIndex], 1, CulledObjectIndex);
+
+			uint CulledObjectDataStart = GridCulledMeshSDFObjectStartOffsetArray[GridIndex];
+
+			RWGridCulledMeshSDFObjectIndicesArray[(CulledObjectDataStart + CulledObjectIndex) * CULLED_MESH_SDF_DATA_STRIDE + 0] = ObjectIndex;
+		}
+#endif // CULL_MESH_SDF
+
+#if CULL_MESH_HEIGHTFIELD
+		if (ObjectData.Type == CULL_MESH_TYPE_HEIGHTFIELD)
+		{
+			uint CulledObjectIndex;
+			InterlockedAdd(RWNumGridCulledHeightfieldObjects[GridIndex], 1, CulledObjectIndex);
+
+			uint CulledObjectDataStart = GridCulledHeightfieldObjectStartOffsetArray[GridIndex];
+
+			RWGridCulledHeightfieldObjectIndicesArray[(CulledObjectDataStart + CulledObjectIndex) * CULLED_MESH_SDF_DATA_STRIDE + 0] = ObjectIndex;
+		}
+#endif // CULL_MESH_HEIGHTFIELD
+	}
+}
+
+
+Buffer<uint> NumGridCulledMeshSDFObjects;
+Buffer<uint> NumGridCulledHeightfieldObjects;
+
+RWBuffer<uint> RWGridCulledMeshSDFObjectStartOffsetArray;
+RWBuffer<uint> RWCulledMeshSDFObjectAllocator;
+RWBuffer<uint> RWGridCulledHeightfieldObjectStartOffsetArray;
+RWBuffer<uint> RWCulledHeightfieldObjectAllocator;
+RWBuffer<uint> RWCompactCulledObjectsIndirectArguments;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void ComputeCulledObjectsStartOffsetCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint CellIndex = DispatchThreadId.x;
+
+	if (DispatchThreadId.x == 0)
+	{
+		RWCompactCulledObjectsIndirectArguments[0] = (NumCulledObjectsToCompact[0] + 63) / 64;
+		RWCompactCulledObjectsIndirectArguments[1] = 1;
+		RWCompactCulledObjectsIndirectArguments[2] = 1;
+	}
+
+	if (CellIndex < NumCullGridCells)
+	{
+		// Mesh SDF
+		{
+			uint NumIntersectingObjects = NumGridCulledMeshSDFObjects[CellIndex];
+
+			uint StartOffset;
+			InterlockedAdd(RWCulledMeshSDFObjectAllocator[0], NumIntersectingObjects, StartOffset);
+			RWGridCulledMeshSDFObjectStartOffsetArray[CellIndex] = StartOffset;
+		}
+
+		// Heightfield
+		{
+			uint NumIntersectingObjects = NumGridCulledHeightfieldObjects[CellIndex];
+
+			uint StartOffset;
+			InterlockedAdd(RWCulledHeightfieldObjectAllocator[0], NumIntersectingObjects, StartOffset);
+			RWGridCulledHeightfieldObjectStartOffsetArray[CellIndex] = StartOffset;
+		}
+	}
+}

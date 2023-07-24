@@ -1,0 +1,62 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+#if RASTER_CLEAR_DEPTH
+	RWTexture2D<uint> OutDepthBuffer;
+#else
+	RWTexture2D<UlongType> OutVisBuffer64;
+#endif
+#if RASTER_CLEAR_DEBUG
+	RWTexture2D<UlongType> OutDbgBuffer64;
+	RWTexture2D<uint> OutDbgBuffer32;
+#endif
+
+uint4 ClearRect;
+
+void ClearPixelPos(uint2 PixelPos)
+{
+#if RASTER_CLEAR_DEPTH
+	OutDepthBuffer[PixelPos.xy] = 0u;
+#else
+	OutVisBuffer64[PixelPos.xy] = PackUlongType(uint2(0u, 0u));
+#endif
+#if RASTER_CLEAR_DEBUG
+	OutDbgBuffer64[PixelPos.xy] = PackUlongType(uint2(0u, 0u));
+	OutDbgBuffer32[PixelPos.xy] = 0u;
+#endif
+}
+
+#if RASTER_CLEAR_TILED
+
+[numthreads(8, 8, 1)]
+void RasterClear(uint3 TilePos : SV_DispatchThreadID)
+{
+	const uint2 TilePixelStart = uint2(TilePos.x * 4u, TilePos.y * 4u);
+	const uint2 TilePixelEnd = uint2(min(TilePixelStart.x + 4u, ClearRect.z), min(TilePixelStart.y + 4u, ClearRect.w));
+
+	//UNROLL_N(4)
+	for (uint PixelX = TilePixelStart.x; PixelX < TilePixelEnd.x; ++PixelX)
+	{
+		//UNROLL_N(4)
+		for (uint PixelY = TilePixelStart.y; PixelY < TilePixelEnd.y; ++PixelY)
+		{
+			ClearPixelPos(uint2(PixelX, PixelY));
+		}
+	}
+}
+
+#else
+
+[numthreads(8, 8, 1)]
+void RasterClear(uint3 PixelPos : SV_DispatchThreadID)
+{
+	if (any(PixelPos.xy >= ClearRect.zw))
+	{
+		return;
+	}
+
+	ClearPixelPos(PixelPos.xy);
+}
+
+#endif

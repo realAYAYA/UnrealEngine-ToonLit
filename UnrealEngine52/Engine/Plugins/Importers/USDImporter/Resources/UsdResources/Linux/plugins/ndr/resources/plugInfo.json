@@ -1,0 +1,21 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "NdrDiscoveryPlugin": {},
+                    "_NdrFilesystemDiscoveryPlugin" : {
+                        "bases": ["NdrDiscoveryPlugin"],
+                        "displayName": "Filesystem Discovery"
+                    },
+                    "NdrParserPlugin": {}
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Linux/bin/x86_64-unknown-linux-gnu/libusd_ndr.so", 
+            "Name": "ndr", 
+            "ResourcePath": "resources", 
+            "Root": "..", 
+            "Type": "library"
+        }
+    ]
+}

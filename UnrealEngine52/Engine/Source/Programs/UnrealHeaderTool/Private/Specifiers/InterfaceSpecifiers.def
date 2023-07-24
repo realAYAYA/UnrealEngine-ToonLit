@@ -1,0 +1,9 @@
+// INTERFACE_SPECIFIER(<specifier name>)
+//
+// Must be listed such that the strings are in lexicographical order!
+
+// [[ IncludeTool: Inline ]] // Markup to tell IncludeTool that this file is state changing and cannot be optimized out.
+
+INTERFACE_SPECIFIER(ConversionRoot)
+INTERFACE_SPECIFIER(DependsOn)
+INTERFACE_SPECIFIER(MinimalAPI)

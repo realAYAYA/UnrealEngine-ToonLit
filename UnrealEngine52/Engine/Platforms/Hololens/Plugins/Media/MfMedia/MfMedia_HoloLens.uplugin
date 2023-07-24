@@ -1,0 +1,20 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"Modules": [
+		{
+			"Name": "MfMedia",
+			"Type": "RuntimeNoCommandlet",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		},
+		{
+			"Name": "MfMediaFactory",
+			"Type": "RuntimeNoCommandlet",
+			"PlatformAllowList": [
+				"HoloLens"
+			]
+		}
+	]
+}

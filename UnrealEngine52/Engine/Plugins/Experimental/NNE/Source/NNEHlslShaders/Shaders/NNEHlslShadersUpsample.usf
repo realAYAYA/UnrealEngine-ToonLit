@@ -1,0 +1,48 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "NNEHlslShadersBroadcastHelper.ush"
+
+Buffer<float> Input;
+RWBuffer<float> Output;
+uint4 TensorInfo[NUM_DIMENSIONS];
+uint Num;
+uint ThreadCountX;
+
+#define INPUT_STRIDE 0
+#define OUTPUT_STRIDE 1
+#define INPUT_SIZE 2
+#define OUTPUT_SIZE 3
+
+uint GetNearestIndexFromUV(float UV, uint ArraySize)
+{
+	uint Index = round(UV * ArraySize - 0.5f);
+	return min(Index, ArraySize - 1);
+}
+
+[numthreads(THREADGROUP_SIZE_X, 1, 1)]
+void Upsample(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint Index = DispatchThreadID.y * ThreadCountX + DispatchThreadID.x;
+	
+	if (Index < Num)
+	{
+		uint InputIndex = 0;
+
+		uint Offset = Index;
+		for (uint dim = 0; dim < NUM_DIMENSIONS; ++dim)
+		{
+			uint OutDimIdx, R;
+			DivMod(Offset, TensorInfo[dim][OUTPUT_STRIDE], OutDimIdx, R);
+			
+			float UV = (0.5f + OutDimIdx) / TensorInfo[dim][OUTPUT_SIZE];
+			uint InputDimIdx = GetNearestIndexFromUV(UV, TensorInfo[dim][INPUT_SIZE]);
+			
+			InputIndex += TensorInfo[dim][INPUT_STRIDE] * InputDimIdx;
+			Offset = R;
+		}
+
+		float X = Input[InputIndex];
+		Output[Index] = X;
+	}
+}

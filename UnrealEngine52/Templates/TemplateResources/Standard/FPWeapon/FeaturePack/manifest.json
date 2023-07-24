@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "First Person Weapon"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for First Person Weapon"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "FPWeapon.png",
+	"Screenshots":
+	[
+		"FPWeapon_Preview.png"
+	],
+	"Ident": "FPWeaponStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "FirstPerson/FPWeapon",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/FPWeapon/Content/*.*"
+		]
+	}
+}
+

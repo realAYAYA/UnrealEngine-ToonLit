@@ -1,0 +1,5 @@
+if(NOT _VCPKG_UE_MAC_TOOLCHAIN)
+  set(_VCPKG_UE_MAC_TOOLCHAIN 1)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility-ms-compat -fvisibility-inlines-hidden")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility-ms-compat -fvisibility-inlines-hidden")
+endif()

@@ -1,0 +1,95 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+	<Option Name="TargetPlatforms" Restrict="[^ ]*" DefaultValue="Win64" Description="List of the target platforms to build for, separated by semicolons, eg. Win64;Win32;Android"/>
+	<Option Name="OutputDir" DefaultValue="$(RootDir)\LocalBuilds\LyraBinaries" Description ="Output directory for compiled binaries"/>
+	<Option Name="Versioned" Restrict="true|false" DefaultValue="$(IsBuildMachine)" Description="Whether to embed changelist number into binaries"/>
+	<Option Name="PCBSubmitPath" Restrict="(?://.*)?" DefaultValue="" Description="Where in Perforce to submit the PCBs to."/>
+	<Option Name="PreflightChange" Restrict="\d*" DefaultValue="" Description="The shelved changelist number in a preflight build; empty otherwise"/>
+	<Property Name="IsPreflight" Value="true" If="'$(PreflightChange)' != ''"/>
+	<Property Name="IsPreflight" Value="false" If="'$(PreflightChange)' == ''"/>
+
+	<EnvVar Name="COMPUTERNAME"/>
+	<EnvVar Name="P4CLIENT"/>
+
+	<Agent Name="Submit Lyra PCBs" Type="CompileWin64;Win64">
+	
+		<!-- Update the engine version files -->
+		<Node Name="Update Version Files">
+			<SetVersion Change="$(Change)" Branch="$(EscapedBranch)" If="$(Versioned)"/>
+		</Node>
+		
+		<!-- Compile the tool executables -->
+		<Node Name="Compile Tools Win64" Requires="Update Version Files" Produces="#ToolBinaries">
+			<Compile Target="ShaderCompileWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealLightmass" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealPak" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Win64" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealInsights" Platform="Win64" Configuration="Shipping" Tag="#ToolBinaries"/>
+			
+			<!-- 
+				This exe is a copy of ShaderCompileWorker.exe, created as a post-build step. See \Engine\Source\Programs\ShaderCompileWorker\ShaderCompileWorker.Target.cs.
+				It's needed for shader compilation to work with Incredibuild.
+			-->
+			<Tag Files="$(RootDir)\Engine\Binaries\Win64\XGEControlWorker.exe" With="#ToolBinaries"/>
+		</Node>
+		
+		<!-- Compile the editor executable -->
+		<Node Name="Compile LyraEditor Win64" Requires="Compile Tools Win64" Produces="#EditorBinaries">
+			<Compile Target="LyraEditor" Platform="Win64" Configuration="Development" Tag="#EditorBinaries"/>
+		</Node>
+		
+		<!-- Compile the game targets -->
+		<Property Name="GameBinaries" Value=""/>
+		<ForEach Name="TargetPlatform" Values="$(TargetPlatforms)">
+			<Node Name="Compile LyraGame $(TargetPlatform)" Requires="Compile Tools Win64" Produces="#GameBinaries_LyraGame_$(TargetPlatform)">
+				<Compile Target="LyraGame" Platform="$(TargetPlatform)" Configuration="Development" Tag="#GameBinaries_LyraGame_$(TargetPlatform)"/>
+				<Compile Target="LyraGame" Platform="$(TargetPlatform)" Configuration="Shipping" Tag="#GameBinaries_LyraGame_$(TargetPlatform)"/>
+			</Node>
+			<Property Name="GameBinaries" Value="$(GameBinaries)#GameBinaries_LyraGame_$(TargetPlatform);"/>
+		</ForEach>
+		
+		<!-- Copy all the files to the output directory -->
+		<Node Name="Tag Output Files" Requires="#ToolBinaries;#EditorBinaries;$(GameBinaries)" Produces="#OutputFiles">
+			<Tag Files="#ToolBinaries;#EditorBinaries;$(GameBinaries)" Except=".../Intermediate/..." With="#OutputFiles"/>
+		</Node>
+
+		<!-- Copy all the files to the output directory -->
+		<Node Name="Copy To Staging Directory" Requires="#OutputFiles">
+			<Delete Files="$(OutputDir)/..."/>
+			<Copy Files="#OutputFiles" From="$(RootDir)" To="$(OutputDir)"/>
+		</Node>
+
+		<!-- Create a zip archive and submit that to Perforce for use by UGS -->
+		<Node Name="Submit To Perforce For UGS" Requires="#OutputFiles">
+			<!-- Clear out the archive directory -->
+			<Property Name="ArchiveDir" Value="$(RootDir)\LocalBuilds\ArchiveForUGS"/>
+			<Delete Files="$(ArchiveDir)\..."/>
+
+			<!-- Tag required files from UAT and UBT that will already have been built -->
+			<Tag Files="Engine/Source/Programs/AutomationTool/..." Filter="*.csproj" With="#UAT Projects"/>
+			<CsCompile Project="#UAT Projects" Configuration="Development" Platform="AnyCPU" Tag="#ArchiveFiles" EnumerateOnly="true"/>
+
+			<!-- Partition all the binaries and symbols -->
+			<Tag Files="#OutputFiles" Except=".../Intermediate/..." With="#ArchiveFiles"/>
+			<Tag Files="#ArchiveFiles" Except="*.pdb" With="#ArchiveBinaries"/>
+			<Tag Files="#ArchiveFiles" Filter="*.pdb" With="#ArchiveSymbols"/>
+
+			<!-- Stage all the files to be archived -->
+			<Property Name="ArchiveStagingDir" Value="$(ArchiveDir)\Staging"/>
+			<Copy Files="#ArchiveBinaries" From="$(RootDir)" To="$(ArchiveStagingDir)"/>
+			<Strip Files="#ArchiveSymbols" BaseDir="$(RootDir)" OutputDir="$(ArchiveStagingDir)" Platform="Win64"/>
+
+			<!-- Create the zip file and submit it to Perforce -->
+			<Property Name="ArchivePerforceDir" Value="$(ArchiveDir)\Perforce"/>
+			<Property Name="ArchiveFile" Value="$(ArchivePerforceDir)\$(EscapedBranch)-LyraEditor.zip"/>
+			<Zip FromDir="$(ArchiveStagingDir)" ZipFile="$(ArchiveFile)"/>
+			<Property Name="SubmitClient" Value="$(COMPUTERNAME)_ArchiveForUGS"/>
+			<Property Name="SubmitClient" Value="$(P4CLIENT)_ArchiveForUGS" If="$(IsBuildMachine)"/>
+			<Submit Description="[CL $(CodeChange)] Updated binaries" Files="$(ArchiveFile)" FileType="binary+FS32" Workspace="$(SubmitClient)" Stream="$(PCBSubmitPath)" RootDir="$(ArchivePerforceDir)"/>
+		</Node>
+		
+	</Agent>
+
+</BuildGraph>
+

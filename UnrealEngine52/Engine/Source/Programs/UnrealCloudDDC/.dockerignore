@@ -1,0 +1,9 @@
+.vs
+.minio
+.git
+.vscode
+
+**/bin
+**/obj
+**/out
+**/node_modules

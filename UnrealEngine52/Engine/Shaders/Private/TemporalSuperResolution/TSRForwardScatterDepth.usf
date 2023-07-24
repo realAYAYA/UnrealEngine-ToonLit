@@ -1,0 +1,104 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "TSRCommon.ush"
+
+
+//------------------------------------------------------- CONFIG
+
+#define TILE_SIZE 8
+
+#define DEBUG_INTERLOCK_ALL 0
+
+#define CONFIG_EARLY_RETURN 1
+
+
+//------------------------------------------------------- PARAMETERS
+
+uint2 PrevSubpixelDepthViewportMin;
+uint2 PrevSubpixelDepthViewportMax;
+FScreenTransform InputPixelPosToPrevScreenPosition;
+FScreenTransform ScreenPosToOutputPixelPos;
+uint MaxDepthAge;
+
+Texture2D<uint> PrevSubpixelDepthTexture;
+
+RWTexture2D<uint> SubpixelDepthOutput;
+
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(TILE_SIZE * TILE_SIZE, 1, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	float4 Debug = 0.0;
+
+	uint2 DispatchThreadId = (
+		ZOrder2D(GroupThreadIndex, uint(log2(float(TILE_SIZE)))) +
+		GroupId * uint2(TILE_SIZE, TILE_SIZE));
+
+	uint2 InputPixelPos = PrevSubpixelDepthViewportMin + DispatchThreadId;
+	
+	uint CompressedPrevSubpixelDepth = PrevSubpixelDepthTexture[InputPixelPos];
+	FTSRSubpixelDepth PrevScatteredSubpixelDepth = UncompressSubpixelDepth(CompressedPrevSubpixelDepth);
+		
+	const bool bEarlyReturn = PrevScatteredSubpixelDepth.DeviceZ == 0.0 || PrevScatteredSubpixelDepth.Age >= MaxDepthAge || any(InputPixelPos > PrevSubpixelDepthViewportMax);
+#if CONFIG_EARLY_RETURN && !DEBUG_INTERLOCK_ALL
+	BRANCH
+	if (bEarlyReturn)
+	{
+		return;
+	}
+#endif
+	
+	float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+ 
+	// Compute position of the history in world space.
+	float PrevSceneDepth = ConvertFromDeviceZ(PrevScatteredSubpixelDepth.DeviceZ);
+	float2 PrevScreenPosition = ApplyScreenTransform(float2(InputPixelPos), InputPixelPosToPrevScreenPosition);
+	float3 TranslatedWorldPosition = mul(float4(PrevScreenPosition * PrevSceneDepth, PrevSceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
+	
+	// Reproject the world position into new viewport.
+	float4 ClipPos = mul(float4(TranslatedWorldPosition, 1.0), View.TranslatedWorldToClip);
+	float2 ScreenPos = ClipPos.xy / ClipPos.w;
+	float2 DesiredPixelPos = ApplyScreenTransform(ScreenPos, ScreenPosToOutputPixelPos);
+
+	float2 ActualPixelPos = floor(DesiredPixelPos);
+	float2 NewOffset = DesiredPixelPos - (ActualPixelPos + 0.5);
+
+	int2 OutputPixelPos = int2(ActualPixelPos);
+	bool bIsValidOutputPixelPos = all(and(OutputPixelPos >= InputInfo_ViewportMin, OutputPixelPos < InputInfo_ViewportMax)) && ClipPos.w > 0.0;
+
+#if !CONFIG_EARLY_RETURN
+	const bool bScatter = !bEarlyReturn && bIsValidOutputPixelPos;
+#else
+	const bool bScatter = bIsValidOutputPixelPos;
+#endif
+
+#if !DEBUG_INTERLOCK_ALL
+	BRANCH
+	if (bScatter)
+#endif
+	{
+		FTSRSubpixelDepth FinalSubpixelDepth;
+		FinalSubpixelDepth.DeviceZ = ConvertToDeviceZ(ClipPos.w);
+		FinalSubpixelDepth.Offset = NewOffset;
+		FinalSubpixelDepth.Age = PrevScatteredSubpixelDepth.Age + 1;
+
+		uint CompressedSubpixelDepth = CompressSubpixelDepth(FinalSubpixelDepth);
+	
+		#if DEBUG_INTERLOCK_ALL
+			OutputPixelPos.x = select(bScatter, OutputPixelPos.x, -1);
+		#endif
+
+		InterlockedMax(SubpixelDepthOutput[OutputPixelPos], CompressedSubpixelDepth);
+		//SubpixelDepthOutput[OutputPixelPos] = CompressedSubpixelDepth;
+	}
+
+	#if DEBUG_OUTPUT
+	{
+		DebugOutput[tsr_short3(InputPixelPos, 0)] = Debug;
+	}
+	#endif
+}

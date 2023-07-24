@@ -1,0 +1,80 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenCardSceneLightingDebug.usf
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "LumenCardCommon.ush"
+#include "LumenCardTile.ush"
+#include "LumenSceneLighting.ush"
+
+uint LightingStatMode;
+StructuredBuffer<uint> PriorityHistogram;
+StructuredBuffer<uint> MaxUpdateBucket;
+StructuredBuffer<uint> CardPageTileAllocator;
+StructuredBuffer<uint> DirectLightingCardPageIndexAllocator;
+StructuredBuffer<uint> IndirectLightingCardPageIndexAllocator;
+
+void LumenSceneLightingStats(uint CardUpdateContext, StructuredBuffer<uint> CardPageIndexAllocator)
+{
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.1, 0.1));
+	Newline(Context);
+
+	LOOP
+	for (uint BucketIndex = 0; BucketIndex < PRIORITY_HISTOGRAM_SIZE; ++BucketIndex)
+	{
+		Print(Context, PriorityHistogram[CardUpdateContext * PRIORITY_HISTOGRAM_SIZE + BucketIndex]);
+
+		if ((BucketIndex + 1) % 8 == 0)
+		{
+			Newline(Context);
+		}
+		else
+		{
+			PrintSymbol(Context, _SPC_);
+		}
+	}
+
+	const uint MaxUpdateBucketIndex = MaxUpdateBucket[MAX_UPDATE_BUCKET_STRIDE * CardUpdateContext + 0];
+	const uint MaxTilesFromMaxUpdateBucket = MaxUpdateBucket[MAX_UPDATE_BUCKET_STRIDE * CardUpdateContext + 1];
+
+	Newline(Context);
+	Print(Context, TEXT("MaxBucket "));
+	Print(Context, MaxUpdateBucketIndex);
+
+	Newline(Context);
+	Print(Context, TEXT("MaxTilesFromMaxBucket "));
+	Print(Context, MaxTilesFromMaxUpdateBucket);
+
+	Newline(Context);
+	Print(Context, TEXT("Out "));
+
+	Newline(Context);
+	Print(Context, TEXT(" Pages "));
+	Print(Context, CardPageIndexAllocator[0]);
+
+	Newline(Context);
+	Print(Context, TEXT(" Tiles "));
+	Print(Context, CardPageTileAllocator[CARD_PAGE_TILE_ALLOCATOR_STRIDE * CardUpdateContext + 0]);
+}
+
+/** 
+ * Print out various stats for debugging surface cache updates
+ */
+[numthreads(1, 1, 1)]
+void LumenSceneLightingStatsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if (LightingStatMode == 1)
+	{
+		LumenSceneLightingStats(CARD_UPDATE_CONTEXT_DIRECT_LIGHTING, DirectLightingCardPageIndexAllocator);
+	}
+	else
+	{
+		LumenSceneLightingStats(CARD_UPDATE_CONTEXT_INDIRECT_LIGHTING, IndirectLightingCardPageIndexAllocator);
+	}
+}

@@ -1,0 +1,33 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMapSMRTCommon.ush:
+=============================================================================*/
+
+#pragma once
+
+struct FSMRTSample
+{
+	bool bValid;	
+	float SampleDepth;
+	float ReferenceDepth;
+	float ExtrapolateSlope;
+	bool bResetExtrapolation;
+};
+
+FSMRTSample InitSMRTSample()
+{
+	FSMRTSample Result;
+	Result.bValid = false;
+	Result.SampleDepth = 0;
+	Result.ReferenceDepth = 0;
+	Result.ExtrapolateSlope = 0;
+	Result.bResetExtrapolation = false;
+	return Result;
+}
+
+struct FSMRTResult
+{
+	bool bValidHit;
+	float HitDepth;	// Valid if bValidHit is true
+};

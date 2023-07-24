@@ -1,0 +1,31 @@
+{
+	"FileVersion": 1,
+	"Version": 1,
+	"VersionName": "0.10",
+	"FriendlyName": "UserToolBoxCore",
+	"Description": "Core functionnality to create custom editor tab",
+	"Category": "Editor",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "UserToolBoxCore",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins":
+	[
+		{
+			"Name": "SlateScripting",
+			"Enabled": true
+		}
+	]
+}

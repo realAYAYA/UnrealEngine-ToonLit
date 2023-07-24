@@ -1,0 +1,3 @@
+Use of Epic Online Services is governed by the terms of the Epic Online Services Developer Agreement, which can be found at https://dev.epicgames.com/services/terms/agreements.
+
+In order to activate Epic Online Services functionality, you must accept the Epic Online Services Developer Agreement and configure your application via the Epic Games Dev Portal, which can be found at http://dev.epicgames.com/portal.

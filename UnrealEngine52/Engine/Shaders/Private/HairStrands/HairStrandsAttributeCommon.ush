@@ -1,0 +1,191 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once 
+
+#include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
+
+////////////////////////////////////////////////////////////////////////////////
+// Data stride in bytes
+#define HAIR_ATTRIBUTE_STRIDE_ROOTUV		4
+#define HAIR_ATTRIBUTE_STRIDE_SEED			1
+#define HAIR_ATTRIBUTE_STRIDE_LENGTH		2
+#define HAIR_ATTRIBUTE_STRIDE_CLUMPID		2
+#define HAIR_ATTRIBUTE_STRIDE_BASECOLOR		4
+#define HAIR_ATTRIBUTE_STRIDE_ROUGHNESS		1
+#define HAIR_ATTRIBUTE_STRIDE_AO			1
+
+// Data offset in bytes. The order needs to match HairStrandsDefinitions.h
+#define HAIR_ATTRIBUTE_OFFSET_ROOTUV(InOffsets)		(InOffsets[0].x)
+#define HAIR_ATTRIBUTE_OFFSET_SEED(InOffsets)		(InOffsets[0].y)
+#define HAIR_ATTRIBUTE_OFFSET_LENGTH(InOffsets)		(InOffsets[0].z)
+#define HAIR_ATTRIBUTE_OFFSET_CLUMPID(InOffsets)	(InOffsets[0].w)
+#define HAIR_ATTRIBUTE_OFFSET_BASECOLOR(InOffsets)	(InOffsets[1].x)
+#define HAIR_ATTRIBUTE_OFFSET_ROUGHNESS(InOffsets)	(InOffsets[1].y)
+#define HAIR_ATTRIBUTE_OFFSET_AO(InOffsets)			(InOffsets[1].z)
+
+////////////////////////////////////////////////////////////////////////////////
+// Attribute access functions
+uint InternalGetHairStrandsAttributes(uint Index, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer)
+{
+	// Ensure the reading address is 4-byte aligned
+	const uint Address = AttributeOffsetInBytes + Index * AttributeStrideInBytes;
+	const uint Address_4BytesAligned = Address & (~0x3);
+	const uint Packed = InAttributeBuffer.Load(Address_4BytesAligned);
+
+	// If the data has a stride < 4bytes, compute the relative offset for reading the data
+	const uint ElementIndex = Address - Address_4BytesAligned;
+	return Packed >> (8u * ElementIndex);
+}
+
+uint InternalGetHairStrandsAttributesPerCurve(uint HairPrimitiveId, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer, Buffer<uint> InVertexToCurveBuffer)
+{
+	const uint CurveIndex = InVertexToCurveBuffer[HairPrimitiveId];
+	return InternalGetHairStrandsAttributes(CurveIndex, AttributeOffsetInBytes, AttributeStrideInBytes, InAttributeBuffer);
+}
+
+uint InternalGetHairStrandsAttributesPerVertex(uint HairPrimitiveId, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer)
+{
+	return InternalGetHairStrandsAttributes(HairPrimitiveId, AttributeOffsetInBytes, AttributeStrideInBytes, InAttributeBuffer);
+}
+
+float InternalGetHairStrandsCoordU(Buffer<uint4> InPositionBuffer, uint VertexId, float InRadius, float InRootScale, float InTipScale)
+{
+	return UnpackHairControlPoint(InPositionBuffer[VertexId], float3(0, 0, 0), InRadius, InRootScale, InTipScale).UCoord;
+}
+
+float InternalGetHairStrandsWorldRadius(Buffer<uint4> InPositionBuffer, uint VertexId, float InRadius, float InRootScale, float InTipScale)
+{
+	return UnpackHairControlPoint(InPositionBuffer[VertexId], float3(0, 0, 0), InRadius, InRootScale, InTipScale).WorldRadius;
+}
+
+bool IsAttributeValid(uint InOffset)
+{
+	return InOffset != 0xFFFFFFFF;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Attribute access with explicit resources
+#if HAIR_STRAND_MESH_FACTORY
+
+float InternalGetHairStrandsWorldRadius(uint HairPrimitiveId, float2 VertexUV)
+{
+	const float Radius0 = InternalGetHairStrandsWorldRadius(HairStrandsVF.PositionBuffer, HairPrimitiveId,   HairStrandsVF.Radius, HairStrandsVF.RootScale, HairStrandsVF.TipScale);
+	const float Radius1 = InternalGetHairStrandsWorldRadius(HairStrandsVF.PositionBuffer, HairPrimitiveId+1, HairStrandsVF.Radius, HairStrandsVF.RootScale, HairStrandsVF.TipScale);
+	return lerp(Radius0, Radius1, VertexUV.x);
+}
+
+float InternalGetHairStrandsCoordU(uint HairPrimitiveId, float2 VertexUV)
+{
+	const float UCoord0 = InternalGetHairStrandsCoordU(HairStrandsVF.PositionBuffer, HairPrimitiveId,   HairStrandsVF.Radius, HairStrandsVF.RootScale, HairStrandsVF.TipScale);
+	const float UCoord1 = InternalGetHairStrandsCoordU(HairStrandsVF.PositionBuffer, HairPrimitiveId+1, HairStrandsVF.Radius, HairStrandsVF.RootScale, HairStrandsVF.TipScale);
+	return lerp(UCoord0, UCoord1, VertexUV.x);
+}
+
+float GetHairStrandsDepth(float2 InUV)
+{
+	return 0; // TODO: what should we do for the strands cards as we don't want to override the depth output, but we still want to share the same shader than the non cards one
+}
+
+float GetHairStrandsCoverage(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	return 1;
+}
+
+float2 GetHairStrandsUV(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	float2 Out;
+	Out.x = InternalGetHairStrandsCoordU(HairPrimitiveId, HairPrimitiveUV);
+	Out.y = HairPrimitiveUV.y;
+	return Out;
+}
+
+float2 GetHairStrandsDimensions(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	const float CurveLength = UnpackHairLength(InternalGetHairStrandsAttributesPerCurve(HairPrimitiveId, HAIR_ATTRIBUTE_OFFSET_LENGTH(HairStrandsVF.AttributeOffsets), HAIR_ATTRIBUTE_STRIDE_LENGTH, HairStrandsVF.AttributeBuffer, HairStrandsVF.VertexToCurveBuffer));
+	const float CoordU = InternalGetHairStrandsCoordU(HairPrimitiveId, HairPrimitiveUV);
+	const float Radius = InternalGetHairStrandsWorldRadius(HairPrimitiveId, HairPrimitiveUV);
+	return float2(CurveLength * CoordU, Radius);
+}
+
+float2 GetHairStrandsRootUV(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	// Encoding need to match GroomBuilder.cpp - 
+	return UnpackHairRootUV(InternalGetHairStrandsAttributesPerCurve(HairPrimitiveId, HAIR_ATTRIBUTE_OFFSET_ROOTUV(HairStrandsVF.AttributeOffsets), HAIR_ATTRIBUTE_STRIDE_ROOTUV, HairStrandsVF.AttributeBuffer, HairStrandsVF.VertexToCurveBuffer));
+}
+
+float GetHairStrandsSeed(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	return UnpackHairSeed(InternalGetHairStrandsAttributesPerCurve(HairPrimitiveId, HAIR_ATTRIBUTE_OFFSET_SEED(HairStrandsVF.AttributeOffsets), HAIR_ATTRIBUTE_STRIDE_SEED, HairStrandsVF.AttributeBuffer, HairStrandsVF.VertexToCurveBuffer));
+}
+
+uint GetHairStrandsClumpID(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	const uint ClumpIdOffset = HAIR_ATTRIBUTE_OFFSET_CLUMPID(HairStrandsVF.AttributeOffsets);
+	if (IsAttributeValid(ClumpIdOffset))
+	{
+		return UnpackHairClumpID(InternalGetHairStrandsAttributesPerCurve(HairPrimitiveId, ClumpIdOffset, HAIR_ATTRIBUTE_STRIDE_CLUMPID, HairStrandsVF.AttributeBuffer, HairStrandsVF.VertexToCurveBuffer));
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+float3 GetHairStrandsBaseColor(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	const uint BaseColorOffset = HAIR_ATTRIBUTE_OFFSET_BASECOLOR(HairStrandsVF.AttributeOffsets);
+	if (IsAttributeValid(BaseColorOffset))
+	{
+		const float3 Color0 = UnpackHairColor(InternalGetHairStrandsAttributesPerVertex(HairPrimitiveId,   BaseColorOffset, HAIR_ATTRIBUTE_STRIDE_BASECOLOR, HairStrandsVF.AttributeBuffer));
+		const float3 Color1 = UnpackHairColor(InternalGetHairStrandsAttributesPerVertex(HairPrimitiveId+1, BaseColorOffset, HAIR_ATTRIBUTE_STRIDE_BASECOLOR, HairStrandsVF.AttributeBuffer));
+		return lerp(Color0, Color1, HairPrimitiveUV.x);
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+float GetHairStrandsRoughness(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	const uint RoughnessOffset = HAIR_ATTRIBUTE_OFFSET_ROUGHNESS(HairStrandsVF.AttributeOffsets);
+	if (IsAttributeValid(RoughnessOffset))
+	{
+		const float Roughness0 = UnpackHairRoughness(InternalGetHairStrandsAttributesPerVertex(HairPrimitiveId,   RoughnessOffset, HAIR_ATTRIBUTE_STRIDE_ROUGHNESS, HairStrandsVF.AttributeBuffer));
+		const float Roughness1 = UnpackHairRoughness(InternalGetHairStrandsAttributesPerVertex(HairPrimitiveId+1, RoughnessOffset, HAIR_ATTRIBUTE_STRIDE_ROUGHNESS, HairStrandsVF.AttributeBuffer));
+		return lerp(Roughness0, Roughness1, HairPrimitiveUV.x);
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+float GetHairStrandsAO(uint HairPrimitiveId, float2 HairPrimitiveUV)
+{
+	const uint AoOffset = HAIR_ATTRIBUTE_OFFSET_AO(HairStrandsVF.AttributeOffsets);
+	if (IsAttributeValid(AoOffset))
+	{
+		const float AO0 = UnpackHairRoughness(InternalGetHairStrandsAttributesPerVertex(HairPrimitiveId, AoOffset, HAIR_ATTRIBUTE_STRIDE_AO, HairStrandsVF.AttributeBuffer));
+		const float AO1 = UnpackHairRoughness(InternalGetHairStrandsAttributesPerVertex(HairPrimitiveId+1, AoOffset, HAIR_ATTRIBUTE_STRIDE_AO, HairStrandsVF.AttributeBuffer));
+		return lerp(AO0, AO1, HairPrimitiveUV.x);
+	}
+	else
+	{
+		return 1.f;
+	}
+}
+
+float GetHairStrandsDepth(uint HairPrimitiveId, float2 InUV, float InDeviceZ)
+{
+	return 0.f;
+}
+
+float GetHairStrandsGroupIndex(float2 InAtlasUV)
+{
+	return HairStrandsVF.GroupIndex;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+#endif // HAIR_STRAND_MESH_FACTORY

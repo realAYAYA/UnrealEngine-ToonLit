@@ -1,0 +1,301 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12HelloTexture.cpp">
+      <Filter>AppCore</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\DXSample.cpp">
+      <Filter>AppCore</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\Main.cpp">
+      <Filter>AppCore</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\stdafx.cpp">
+      <Filter>AppCore</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\ThirdParty\AppCoreD3D12\Source\Win32Application.cpp">
+      <Filter>AppCore</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\D3D12TextureShareSample.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_D3D11.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_D3D12.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_DataHelpers.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_Resources.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_Sync.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Helpers\Private\TextureShareObject_Vulkan.cpp">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12HelloTexture.h">
+      <Filter>AppCore</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\DXSample.h">
+      <Filter>AppCore</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\DXSampleHelper.h">
+      <Filter>AppCore</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\stdafx.h">
+      <Filter>AppCore</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\Win32Application.h">
+      <Filter>AppCore</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12AppSetup.h">
+      <Filter>Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ThirdParty\AppCoreD3D12\Source\D3D12TextureShareSample.h">
+      <Filter>Source</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\D3D12TextureShareSampleSetup.h">
+      <Filter>Source</Filter>
+    </ClInclude>	
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\ITextureShareSDK.h">
+      <Filter>TextureShareSDK</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\ITextureShareSDKObject.h">
+      <Filter>TextureShareSDK</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\ITextureShareSDKSerializeStream.h">
+      <Filter>TextureShareSDK\Serialize</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\ITextureShareSerialize.h">
+      <Filter>TextureShareSDK\Serialize</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\TextureShareCoreSerialize.h">
+      <Filter>TextureShareSDK\Serialize</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Serialize\TextureShareSDKDataWrappers.h">
+      <Filter>TextureShareSDK\Serialize</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Misc\TextureShareCoreStrings.h">
+      <Filter>TextureShareSDK\Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Misc\TextureShareDisplayClusterStrings.h">
+      <Filter>TextureShareSDK\Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Misc\TextureShareStrings.h">
+      <Filter>TextureShareSDK\Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_CustomData.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_Data.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_DeviceD3D11.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_DeviceD3D12.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_DeviceVulkan.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_FrameMarker.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ManualProjection.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ObjectDesc.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ProxyData.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ResourceDesc.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ResourceHandle.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ResourceRequest.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_SceneData.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_SyncSettings.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreContainers_ViewDesc.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareCoreEnums.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\TextureShareSDKContainers.h">
+      <Filter>TextureShareSDK\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineArray.h">
+      <Filter>TextureShareSDK\Containers\UnrealEngine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineContainers.h">
+      <Filter>TextureShareSDK\Containers\UnrealEngine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineEnums_PixelFormat.h">
+      <Filter>TextureShareSDK\Containers\UnrealEngine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineMath.h">
+      <Filter>TextureShareSDK\Containers\UnrealEngine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineString.h">
+      <Filter>TextureShareSDK\Containers\UnrealEngine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\TextureShareSDK\Source\Containers\UnrealEngine\TextureShareSDKUnrealEngineTypes.h">
+      <Filter>TextureShareSDK\Containers\UnrealEngine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Private\TextureShareObject.h">
+      <Filter>TextureShareHelpers\Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareDeviceContext.h">
+      <Filter>TextureShareHelpers\Public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareImage.h">
+      <Filter>TextureShareHelpers\Public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareObject.h">
+      <Filter>TextureShareHelpers\Public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\ITextureShareResource.h">
+      <Filter>TextureShareHelpers\Public</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Misc\TextureShareLog.h">
+      <Filter>TextureShareHelpers\Public\Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\TextureShareContainers.h">
+      <Filter>TextureShareHelpers\Public\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\TextureShareEnums.h">
+      <Filter>TextureShareHelpers\Public\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\TextureShareObjectDesc.h">
+      <Filter>TextureShareHelpers\Public\Containers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Vulkan\TextureShareDeviceContextVulkan.h">
+      <Filter>TextureShareHelpers\Public\Containers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Vulkan\TextureShareImageVulkan.h">
+      <Filter>TextureShareHelpers\Public\Containers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Vulkan\TextureShareResourceVulkan.h">
+      <Filter>TextureShareHelpers\Public\Containers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareCustomResource.h">
+      <Filter>TextureShareHelpers\Public\Containers\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareResourceDesc.h">
+      <Filter>TextureShareHelpers\Public\Containers\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareResourceRequest.h">
+      <Filter>TextureShareHelpers\Public\Containers\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareResourceSyncStep.h">
+      <Filter>TextureShareHelpers\Public\Containers\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\Resource\TextureShareViewportResourceDesc.h">
+      <Filter>TextureShareHelpers\Public\Containers\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D12\TextureShareDeviceContextD3D12.h">
+      <Filter>TextureShareHelpers\Public\Containers\D3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D12\TextureShareImageD3D12.h">
+      <Filter>TextureShareHelpers\Public\Containers\D3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D12\TextureShareResourceD3D12.h">
+      <Filter>TextureShareHelpers\Public\Containers\D3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D11\TextureShareDeviceContextD3D11.h">
+      <Filter>TextureShareHelpers\Public\Containers\D3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D11\TextureShareImageD3D11.h">
+      <Filter>TextureShareHelpers\Public\Containers\D3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Helpers\Public\Containers\D3D11\TextureShareResourceD3D11.h">
+      <Filter>TextureShareHelpers\Public\Containers\D3D11</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\..\ThirdParty\AppCoreD3D12\Resources\AppCoreD3D12.rc">
+      <Filter>AppCore\Resources</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="Resources\shaders.hlsl">
+      <Filter>AppCore\Resources</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source">
+      <UniqueIdentifier>{63f06b1a-65cd-4bd8-934e-e5bfd8b33c10}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="AppCore">
+      <UniqueIdentifier>{b959ac28-9c71-43f3-a47b-822a7b52bb07}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="AppCore\Resources">
+      <UniqueIdentifier>{77844540-c311-4a90-8716-423eeabb77cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers">
+      <UniqueIdentifier>{d50934fd-3398-439e-81b3-db102e42b728}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public">
+      <UniqueIdentifier>{7d9c7f61-f6f0-4841-a601-47ef8d41f2a6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Private">
+      <UniqueIdentifier>{6d8ea641-48a5-4368-82c7-5afcaa9ed814}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public\Containers">
+      <UniqueIdentifier>{e74d0c7a-7cc6-451d-867e-22971ce0e36d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public\Misc">
+      <UniqueIdentifier>{1c7dfa7e-3699-4744-b84a-1c53321083fc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareSDK">
+      <UniqueIdentifier>{d74555dc-aa54-46ea-8c22-d7c4bd274705}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareSDK\Containers">
+      <UniqueIdentifier>{b88afa14-485d-4ef1-b7c8-6901825979ea}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareSDK\Containers\UnrealEngine">
+      <UniqueIdentifier>{bf8456fd-a4bb-428d-a2b4-e1bebba7f9f8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareSDK\Misc">
+      <UniqueIdentifier>{b6e960f1-919f-4464-940e-4fdba5b1f18e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareSDK\Serialize">
+      <UniqueIdentifier>{7577d417-d893-433c-8c06-a0beef77b5da}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public\Containers\D3D11">
+      <UniqueIdentifier>{5484b3e4-b9d2-47b1-9089-9581c1da3536}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public\Containers\D3D12">
+      <UniqueIdentifier>{59a9965c-3cd9-4289-8d0d-6aeb3251dc08}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public\Containers\Vulkan">
+      <UniqueIdentifier>{249a5cd6-1fd2-4868-b808-4061fbd4996a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TextureShareHelpers\Public\Containers\Resource">
+      <UniqueIdentifier>{f0c84daa-2a59-4e89-a87e-44efd8d1c503}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

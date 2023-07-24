@@ -1,0 +1,103 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="Source\dllmain.cpp" />
+    <ClCompile Include="Source\stdafx.cpp" />
+    <ClCompile Include="Source\Private\Helpers.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\InputChannel.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\OutputChannel.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\ChannelBase.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\SyncChannel.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\Device.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\AJA.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\AJALog.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\VideoFormats.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\DeviceScanner.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\AutoDetectChannel.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\SSE2MemCpy.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\TimecodeChannel.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Private\TextureDMA.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\stdafx.h" />
+    <ClInclude Include="Source\targetver.h" />
+    <ClInclude Include="Source\Private\Helpers.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\InputChannel.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\OutputChannel.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\ChannelBase.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\SyncChannel.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\Device.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\AJALog.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\ThreadSafeQueue.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\VideoFormats.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\DeviceScanner.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\AutoDetectChannel.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\SSE2MemCpy.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Private\TimecodeChannel.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\..\..\..\..\Plugins\Media\AjaMedia\Source\ThirdParty\Build\include\AJALib.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Private">
+      <UniqueIdentifier>{810eee9d-65c3-4a6d-b5b8-80c70544e3b0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public">
+      <UniqueIdentifier>{8f0d00ed-85a1-4376-9525-8cbbd1e6bccd}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

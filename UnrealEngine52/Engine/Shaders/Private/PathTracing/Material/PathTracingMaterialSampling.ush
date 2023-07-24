@@ -1,0 +1,446 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+PathTracingMaterialSampling.usf: Material sampling functions
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingFresnel.ush"
+#include "PathTracingLambert.ush"
+#include "PathTracingGlossy.ush"
+#include "PathTracingSolidGlass.ush"
+#include "PathTracingThinGlass.ush"
+#include "PathTracingDefaultLit.ush"
+#include "PathTracingClearCoat.ush"
+#include "PathTracingTwoSidedFoliage.ush"
+#include "PathTracingCloth.ush"
+#include "PathTracingSubsurfaceProfile.ush"
+#include "PathTracingEye.ush"
+#include "PathTracingHair.ush"
+#include "PathTracingMedium.ush"
+
+// Simplified material shaders for GPU Lightmass, supporting Lambert, Two Sided Foliage and Thin Translucent
+// Make sure material evaluation code below matches with hit shader which fills the payload
+#ifndef SIMPLIFIED_MATERIAL_SHADER
+	#define SIMPLIFIED_MATERIAL_SHADER 0
+#endif
+
+float3 GetMaterialTransparency(FPathTracingPayload Payload, float3 RayDirection)
+{
+	// ThinTranslucent is special, all other shading models should go through blend mode logic
+	if (Payload.ShadingModelID == SHADINGMODELID_THIN_TRANSLUCENT)
+	{
+#if SIMPLIFIED_MATERIAL_SHADER
+		const float VoN = dot(RayDirection, Payload.WorldNormal);
+		return (1 - Payload.Opacity) * pow(Payload.GetTransmittanceColor(), 1.0 / abs(VoN));
+#else
+		if (!Payload.HasRefraction() && Payload.Opacity < 1.0)
+		{
+			// ThinTranslucent has an optimized mode where it ignores refractivity and just handles the transmission via transparency
+			const float VoN = abs(dot(RayDirection, Payload.WorldNormal));
+			const float F0 = F0RGBToF0(Payload.SpecularColor);
+			return (1 - Payload.Opacity) * ComputeThinSlabWeights(Payload.GetTransmittanceColor(), VoN, 0.0, F0).Transmitted;
+		}
+		else
+		{
+			// opaque, or handled via the transmission bsdf lobe
+			return 0;
+		}
+#endif
+	}
+	switch (Payload.BlendingMode)
+	{
+		case RAY_TRACING_BLEND_MODE_TRANSLUCENT:
+#if !SIMPLIFIED_MATERIAL_SHADER
+			if (Payload.HasRefraction())
+			{
+				// not using transparency - material will be opaque
+				return 0;
+			}
+			else
+#endif
+			{
+				// material is not configured with refraction, can use transparency
+				return 1 - Payload.Opacity;
+			}
+		case RAY_TRACING_BLEND_MODE_ADDITIVE:
+			return 1;
+		case RAY_TRACING_BLEND_MODE_MODULATE:
+			return Payload.Radiance;
+		case RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE:
+		case RAY_TRACING_BLEND_MODE_ALPHA_HOLDOUT:
+			return 1 - Payload.Opacity;
+		default: 
+			return 0;
+	}
+}
+
+float3 EstimateMaterialAlbedo(FPathTracingPayload Payload)
+{
+	// TODO: make this more accurate by estimating the directional albedo
+	float3 Albedo = 0;
+	switch (Payload.ShadingModelID)
+	{
+		case SHADINGMODELID_UNLIT:
+			// this object does not scatter light
+			return 0;
+#if SIMPLIFIED_MATERIAL_SHADER
+		case SHADINGMODELID_TWOSIDED_FOLIAGE:
+			Albedo = Payload.BaseColor + Payload.SubsurfaceColor;
+			break;
+#else
+		case SHADINGMODELID_TWOSIDED_FOLIAGE:
+		case SHADINGMODELID_SUBSURFACE:
+		case SHADINGMODELID_PREINTEGRATED_SKIN:
+		case SHADINGMODELID_SUBSURFACE_PROFILE:
+		case SHADINGMODELID_EYE:
+			Albedo = Payload.DiffuseColor + Payload.SpecularColor + Payload.SubsurfaceColor;
+			break;
+		case SHADINGMODELID_SINGLELAYERWATER:
+		case SHADINGMODELID_DEFAULT_LIT:
+		case SHADINGMODELID_CLEAR_COAT:
+			// TODO: include clearcoat albedo as well
+			Albedo = Payload.DiffuseColor + Payload.SpecularColor;
+			break;
+		case SHADINGMODELID_THIN_TRANSLUCENT:
+		{
+			// glass portion is a mixture of pure specular and tinted transmission (when refracting)
+			// or glass portion is just the specular highlight with transmission accounted for by transparency
+			const float F0 = F0RGBToF0(Payload.SpecularColor);
+			const float3 GlassAlbedo = Payload.HasRefraction() ? lerp(Payload.GetTransmittanceColor(), 1.0, F0) : F0;
+			// surface is same as default-lit
+			const float3 SurfAlbedo = Payload.DiffuseColor + Payload.SpecularColor;
+			return lerp(GlassAlbedo, SurfAlbedo, Payload.Opacity);
+		}
+		case SHADINGMODELID_CLOTH:
+			Albedo = (Payload.DiffuseColor + lerp(Payload.SpecularColor, Payload.GetClothColor(), Payload.GetClothAmount()));
+			break;
+		case SHADINGMODELID_HAIR:
+#endif
+		default:
+			Albedo = Payload.BaseColor;
+			break;
+	}
+	Albedo *= Payload.GetBSDFOpacity();
+#if !SIMPLIFIED_MATERIAL_SHADER
+	if (Payload.HasRefraction())
+	{
+		Albedo += 1 - Payload.Opacity; // glass albedo is 1.0
+	}
+#endif
+	return Albedo;
+}
+
+void AccumulateAlbedoNormal(inout FPathTracingPayload Payload, float3 PathThroughput, float PathRoughness, inout float3 Albedo, inout float3 Normal)
+{
+	const float MaxRoughness = 0.15; // don't bother past this level
+	const float MinRoughness = 0.10; // capture anything below this level
+	if (PathRoughness >= MaxRoughness)
+	{
+		// no point tracking past a certain roughness
+		return;
+	}
+	// figure out how much the current path should contribute to the denoiser aovs
+	PathThroughput *= 1 - saturate((PathRoughness - MinRoughness) / (MaxRoughness - MinRoughness));
+	// figure out how much the specular lobes should contribute to the total (relative to the current PathRoughness)
+	// if we are above the MinRoughness, use the PathRoughness as are lower bound instead so that multiple bounces don't accumulate too much albedo
+	const float RoughnessWeight = saturate((Payload.Roughness - max(MinRoughness, PathRoughness)) / (MaxRoughness - max(MinRoughness, PathRoughness)));
+	const float BrdfWeight = Payload.GetBSDFOpacity();
+	switch (Payload.ShadingModelID)
+	{
+	case SHADINGMODELID_UNLIT:
+		// this object does not scatter light
+		return;
+#if SIMPLIFIED_MATERIAL_SHADER
+	case SHADINGMODELID_TWOSIDED_FOLIAGE:
+		Albedo += BrdfWeight * PathThroughput * (Payload.BaseColor + Payload.SubsurfaceColor);
+		Normal += Luminance(BrdfWeight * PathThroughput) * Payload.WorldNormal;
+		break;
+#else
+	case SHADINGMODELID_TWOSIDED_FOLIAGE:
+	case SHADINGMODELID_SUBSURFACE:
+	case SHADINGMODELID_PREINTEGRATED_SKIN:
+	case SHADINGMODELID_SUBSURFACE_PROFILE:
+	case SHADINGMODELID_EYE:
+		Albedo += BrdfWeight * PathThroughput * (Payload.DiffuseColor + RoughnessWeight * Payload.SpecularColor + Payload.SubsurfaceColor);
+		Normal += BrdfWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		break;
+	case SHADINGMODELID_SINGLELAYERWATER:
+	case SHADINGMODELID_DEFAULT_LIT:
+	{
+		if (Payload.HasRefraction())
+		{
+			const float GlassAlbedo = 1.0; // solid glass has unit albedo
+			Albedo += (1 - BrdfWeight) * RoughnessWeight * PathThroughput * GlassAlbedo;
+			Normal += (1 - BrdfWeight) * RoughnessWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		}
+		// fallthrough
+	}
+	case SHADINGMODELID_CLEAR_COAT:
+		Albedo += BrdfWeight * PathThroughput * (Payload.DiffuseColor + RoughnessWeight * Payload.SpecularColor);
+		Normal += BrdfWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		break;
+	case SHADINGMODELID_CLOTH:
+		Albedo += BrdfWeight * PathThroughput * (Payload.DiffuseColor + lerp(RoughnessWeight * Payload.SpecularColor, Payload.GetClothColor(), Payload.GetClothAmount()));
+		Normal += BrdfWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		break;
+	case SHADINGMODELID_THIN_TRANSLUCENT:
+	{
+		const float F0 = F0RGBToF0(Payload.SpecularColor);
+		const float3 GlassAlbedo = Payload.HasRefraction() ? lerp(Payload.GetTransmittanceColor(), 1.0, F0) : F0;
+		Albedo += (1 - BrdfWeight) * RoughnessWeight * PathThroughput * GlassAlbedo;
+		Normal += (1 - BrdfWeight) * RoughnessWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		Albedo += BrdfWeight * PathThroughput * (Payload.DiffuseColor + RoughnessWeight * Payload.SpecularColor);
+		Normal += BrdfWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		break;
+	}
+#endif
+	default:
+		Albedo += BrdfWeight * PathThroughput * Payload.BaseColor;
+		Normal += BrdfWeight * Luminance(PathThroughput) * Payload.WorldNormal;
+		break;
+	}
+}
+
+void AccumulateAlbedo(float3 SigmaS, float3 PathThroughput, float PathRoughness, inout float3 Albedo)
+{
+	const float MaxRoughness = 0.15; // don't bother past this level
+	const float MinRoughness = 0.10; // capture anything below this level
+	if (PathRoughness >= MaxRoughness)
+	{
+		// no point tracking past a certain roughness
+		return;
+	}
+	// figure out how much the current path should contribute to the denoiser aovs
+	PathThroughput *= 1 - saturate((PathRoughness - MinRoughness) / (MaxRoughness - MinRoughness));
+	// figure out how much the specular lobes should contribute to the total (relative to the current PathRoughness)
+	// if we are above the MinRoughness, use the PathRoughness as are lower bound instead so that multiple bounces don't accumulate too much albedo
+	const float VolumeRoughness = 1.0; // assume volume scattering is diffuse
+	const float RoughnessWeight = saturate((VolumeRoughness - max(MinRoughness, PathRoughness)) / (MaxRoughness - max(MinRoughness, PathRoughness)));
+
+	Albedo += RoughnessWeight * SigmaS * PathThroughput;
+}
+
+// returns an average roughness for the whole material (for the path roughness of shadow rays from this material)
+float GetAverageRoughness(FPathTracingPayload Payload)
+{
+#if SIMPLIFIED_MATERIAL_SHADER
+	return 1.0;
+#else
+	const float GlassPercent = Payload.HasRefraction() ? 1 - Payload.Opacity : 0.0;
+	float Roughness = Payload.Roughness;
+	switch (Payload.ShadingModelID)
+	{
+		case SHADINGMODELID_CLEAR_COAT:
+			Roughness = max(Roughness, Payload.GetClearCoatRoughness());
+			break;
+		case SHADINGMODELID_SUBSURFACE_PROFILE:
+		{
+			float3 DualRoughnessData = Payload.GetDualRoughnessSpecular();
+			Roughness = max(DualRoughnessData.x, DualRoughnessData.y);
+			break;
+		}
+	}
+	float AvgRoughness = lerp(1.0 /* diffuse lobe */, Roughness, Payload.Metallic);
+	AvgRoughness = lerp(AvgRoughness, Payload.Roughness, GlassPercent);
+	return AvgRoughness;
+#endif
+}
+
+FPathTracingPayload UnpackPathTracingPayloadMaterial(FPackedPathTracingPayload PackedInput, FRayDesc Ray, bool bApplyOverrides)
+{
+	// This function can also do a bit of per-material post-processing to simplify the rest of the code
+	FPathTracingPayload HitPayload = UnpackPathTracingPayload(PackedInput, Ray);
+
+	if (bApplyOverrides)
+	{
+		HitPayload.DiffuseColor  = HitPayload.DiffuseColor  * View.DiffuseOverrideParameter.w  + View.DiffuseOverrideParameter.xyz;
+		HitPayload.SpecularColor = HitPayload.SpecularColor * View.SpecularOverrideParameter.w + View.SpecularOverrideParameter.xyz;
+	}
+
+	switch (HitPayload.ShadingModelID)
+	{
+#if !SIMPLIFIED_MATERIAL_SHADER
+		case SHADINGMODELID_SUBSURFACE:
+		case SHADINGMODELID_PREINTEGRATED_SKIN:
+		{
+			HitPayload.SubsurfaceRadius = HitPayload.GetSubsurfaceRadius();
+			// fallthrough to case below to avoid over-bright SSS
+		}
+#endif
+		case SHADINGMODELID_TWOSIDED_FOLIAGE:
+		{
+			HitPayload.SubsurfaceColor = HitPayload.GetSubsurfaceColor();
+			float3 Front = HitPayload.DiffuseColor;
+			float3 Back = HitPayload.SubsurfaceColor;
+			float3 Sum = Front + Back;
+			float S = max(Sum.x, max(Sum.y, Sum.z));
+			if (S > 1)
+			{
+				// nudge the material back to something physically plausible
+				// NOTE: we ignore spec here since it should be accounted for by the brdf model itself
+				HitPayload.DiffuseColor = Front / S;
+				HitPayload.SubsurfaceColor = Back / S;
+			}
+			if (bApplyOverrides)
+			{
+				HitPayload.SubsurfaceColor = HitPayload.SubsurfaceColor * View.DiffuseOverrideParameter.w + View.DiffuseOverrideParameter.xyz;
+			}
+			break;
+		}
+#if SIMPLIFIED_MATERIAL_SHADER
+		default:
+		{
+			HitPayload.SubsurfaceColor = 0.0;
+			break;
+		}
+#else
+		case SHADINGMODELID_SUBSURFACE_PROFILE:
+		{
+			HitPayload.SubsurfaceRadius = HitPayload.GetSubsurfaceRadius();
+			// NOTE: if radius is 0 the sss color will get flipped back into diffuse
+			HitPayload.SubsurfaceColor = HitPayload.DiffuseColor;
+			HitPayload.DiffuseColor = 0;
+			break;
+		}
+		case SHADINGMODELID_EYE:
+		{
+			HitPayload.SubsurfaceRadius = HitPayload.GetSubsurfaceRadius();
+			// eye still needs a diffuse component for the iris center
+			float IrisMask = HitPayload.GetEyeIrisMask();
+			HitPayload.SubsurfaceColor = HitPayload.DiffuseColor - IrisMask * HitPayload.DiffuseColor;
+			HitPayload.DiffuseColor *= IrisMask;
+			break;
+		}
+		case SHADINGMODELID_HAIR:
+		{
+			if (bApplyOverrides)
+			{
+				HitPayload.BaseColor = HitPayload.BaseColor  * View.SpecularOverrideParameter.w  + View.SpecularOverrideParameter.xyz;
+				HitPayload.Specular = HitPayload.Specular * View.SpecularOverrideParameter.w + View.SpecularOverrideParameter.x;
+			}
+			break;
+		}
+		case SHADINGMODELID_CLEAR_COAT:
+		{
+			if (bApplyOverrides)
+			{
+				HitPayload.SetClearCoat(HitPayload.GetClearCoat() * View.SpecularOverrideParameter.w + View.SpecularOverrideParameter.x);
+			}
+			break;
+		}
+		case SHADINGMODELID_CLOTH:
+		{
+			if (bApplyOverrides)
+			{
+				HitPayload.SetClothColor(HitPayload.GetClothColor() * View.SpecularOverrideParameter.w + View.SpecularOverrideParameter.xyz);
+			}
+			break;
+		}
+#endif
+	}
+
+	return HitPayload;
+}
+
+FMaterialSample SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample
+)
+{
+#if SIMPLIFIED_MATERIAL_SHADER
+	return Simplified_SampleMaterial(Payload, RandSample);
+	//return Lambert_SampleMaterial(Payload, RandSample);
+#else
+	switch (Payload.ShadingModelID)
+	{
+		case SHADINGMODELID_UNLIT:
+			// Nothing to do, material does not scatter light
+			return NullMaterialSample();
+		case SHADINGMODELID_DEFAULT_LIT:
+		case SHADINGMODELID_SINGLELAYERWATER:
+		{
+			if (Payload.HasRefraction() && Payload.Opacity < 1)
+			{
+				return RoughGlass_SampleMaterial(V_World, Payload, RandSample);
+			}
+			// fallthrough
+		}
+		case SHADINGMODELID_SUBSURFACE:
+		case SHADINGMODELID_PREINTEGRATED_SKIN:
+			return DefaultLit_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_THIN_TRANSLUCENT:
+			return RoughThinGlass_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_SUBSURFACE_PROFILE:
+			return SubsurfaceProfile_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_CLOTH:
+			return Cloth_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_CLEAR_COAT:
+			return ClearCoat_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_TWOSIDED_FOLIAGE:
+			return TwoSidedFoliage_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_EYE:
+			return Eye_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_HAIR:
+			return Hair_SampleMaterial(V_World, Payload, RandSample);
+		case SHADINGMODELID_MEDIUM:
+			return Medium_SampleMaterial(V_World, Payload, RandSample);
+		default:
+			return Lambert_SampleMaterial(Payload, RandSample);
+	}
+	return NullMaterialSample();
+#endif // SIMPLIFIED_MATERIAL_SHADER
+}
+
+FMaterialEval EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+#if SIMPLIFIED_MATERIAL_SHADER
+	return Simplified_EvalMaterial(L_World, Payload);
+	//return Lambert_EvalMaterial(L_World, Payload);
+#else
+	switch (Payload.ShadingModelID)
+	{
+		case SHADINGMODELID_UNLIT:
+			break;
+		case SHADINGMODELID_DEFAULT_LIT:
+		case SHADINGMODELID_SINGLELAYERWATER:
+		{
+			if (Payload.HasRefraction() && Payload.Opacity < 1)
+			{
+				return RoughGlass_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+			}
+			// fallthrough
+		}
+		case SHADINGMODELID_SUBSURFACE:
+		case SHADINGMODELID_PREINTEGRATED_SKIN:
+			return DefaultLit_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_THIN_TRANSLUCENT:
+			return RoughThinGlass_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_SUBSURFACE_PROFILE:
+			return SubsurfaceProfile_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_CLOTH:
+			return Cloth_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_CLEAR_COAT:
+			return ClearCoat_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_TWOSIDED_FOLIAGE:
+			return TwoSidedFoliage_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_EYE:
+			return Eye_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_HAIR:
+			return Hair_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		case SHADINGMODELID_MEDIUM:
+			return Medium_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		default:
+			return Lambert_EvalMaterial(L_World, Payload, DiffuseSpecularScale);
+	}
+	return NullMaterialEval();
+#endif // SIMPLIFIED_MATERIAL_SHADER
+}

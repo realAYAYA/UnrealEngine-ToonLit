@@ -1,0 +1,266 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "TSRCommon.ush"
+
+
+//------------------------------------------------------- CONFIG
+
+#define TILE_SIZE 8
+
+#define CONFIG_KERNEL 0
+
+#define CONFIG_OUTPUT_HALF_RES (DIM_OUTPUT_HALF_RES)
+
+#define CONFIG_OUTPUT_INTERFERENCE_SEEDS 0
+
+#define CONFIG_SAMPLES 5
+
+
+//------------------------------------------------------- PARAMETERS
+
+float2 TranslucencyInfo_Extent;
+float2 TranslucencyInfo_ExtentInverse;
+float2 TranslucencyInfo_ScreenPosToViewportScale;
+float2 TranslucencyInfo_ScreenPosToViewportBias;
+uint2  TranslucencyInfo_ViewportMin;
+uint2  TranslucencyInfo_ViewportMax;
+float2 TranslucencyInfo_ViewportSize;
+float2 TranslucencyInfo_ViewportSizeInverse;
+float2 TranslucencyInfo_UVViewportMin;
+float2 TranslucencyInfo_UVViewportMax;
+float2 TranslucencyInfo_UVViewportSize;
+float2 TranslucencyInfo_UVViewportSizeInverse;
+float2 TranslucencyInfo_UVViewportBilinearMin;
+float2 TranslucencyInfo_UVViewportBilinearMax;
+
+float2 PrevTranslucencyInfo_Extent;
+float2 PrevTranslucencyInfo_ExtentInverse;
+float2 PrevTranslucencyInfo_ScreenPosToViewportScale;
+float2 PrevTranslucencyInfo_ScreenPosToViewportBias;
+uint2  PrevTranslucencyInfo_ViewportMin;
+uint2  PrevTranslucencyInfo_ViewportMax;
+float2 PrevTranslucencyInfo_ViewportSize;
+float2 PrevTranslucencyInfo_ViewportSizeInverse;
+float2 PrevTranslucencyInfo_UVViewportMin;
+float2 PrevTranslucencyInfo_UVViewportMax;
+float2 PrevTranslucencyInfo_UVViewportSize;
+float2 PrevTranslucencyInfo_UVViewportSizeInverse;
+float2 PrevTranslucencyInfo_UVViewportBilinearMin;
+float2 PrevTranslucencyInfo_UVViewportBilinearMax;
+float PrevTranslucencyPreExposureCorrection;
+
+float TranslucencyHighlightLuminance;
+
+FScreenTransform ScreenPosToPrevTranslucencyTextureUV;
+
+Texture2D<tsr_half4> TranslucencyTexture;
+Texture2D<float2> DilatedVelocityTexture;
+Texture2D<tsr_half4> PrevTranslucencyTexture;
+
+RWTexture2D<tsr_half> TranslucencyRejectionOutput;
+
+
+//------------------------------------------------------- ENTRY POINT
+
+tsr_half4 TransformToComparisonColorSpace(tsr_half4 Color)
+{
+	return tsr_half4(RGBToYCoCg(Color.rgb), Color.a);
+}
+
+tsr_half MeasureTranslucencyRejectionFactor(
+	tsr_half4 PrevTranslucency,
+	tsr_half4 Translucency,
+	tsr_half4 TranslucencyMin,
+	tsr_half4 TranslucencyMax)
+{
+	tsr_half IsHighlight = saturate(PrevTranslucency.x - tsr_half(TranslucencyHighlightLuminance));
+
+	tsr_half4 ClampedPrevTranslucency = clamp(PrevTranslucency, TranslucencyMin, TranslucencyMax);
+	
+	tsr_half BackbufferQuantizationError = 0.0; //MeasureBackbufferLDRQuantizationErrorFromHDRLuma(max(PrevTranslucency[0], Translucency[0]));
+	
+	#if CONFIG_SCENE_COLOR_ALPHA
+		tsr_half Rejection = MeasureRejectionFactor(
+			PrevTranslucency, ClampedPrevTranslucency,
+			Translucency, TranslucencyMin, TranslucencyMax,
+			BackbufferQuantizationError);
+	#else
+		tsr_half Rejection = MeasureRejectionFactor(
+			PrevTranslucency.xyz, ClampedPrevTranslucency.xyz,
+			Translucency.xyz, TranslucencyMin.xyz, TranslucencyMax.xyz,
+			BackbufferQuantizationError);
+	#endif
+
+	Rejection = lerp(1.0, Rejection, IsHighlight);
+
+	return Rejection;
+}
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(TILE_SIZE, TILE_SIZE, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	float4 Debug = 0;
+	
+	tsr_short2 DispatchThreadId = tsr_short2(
+		ZOrder2D(GroupThreadIndex, uint(log2(float(TILE_SIZE)))) +
+		GroupId * uint2(TILE_SIZE, TILE_SIZE));
+		
+	tsr_short2 InputPixelPos = tsr_short2(InputInfo_ViewportMin) + DispatchThreadId;
+
+	float2 ScreenPos = ApplyScreenTransform(float2(InputPixelPos), InputPixelPosToScreenPos);
+	float2 EncodedVelocity = DilatedVelocityTexture[InputPixelPos];
+	
+	// Sample current frame translucency's
+	tsr_half4 Translucency;
+	tsr_half4 TranslucencyMin;
+	tsr_half4 TranslucencyMax;
+	{
+		UNROLL_N(CONFIG_SAMPLES)
+		for (uint SampleId = 0; SampleId < CONFIG_SAMPLES; SampleId++)
+		{
+			tsr_short2 SampleInputPixelPos;
+			
+			// TODO: handle SeparateTranslucencyScreenPercentage
+			#if CONFIG_SAMPLES == 9
+			{
+				tsr_short2 iPixelOffset = tsr_short2(kOffsets3x3[kSquareIndexes3x3[SampleId]]);
+				
+				SampleInputPixelPos = AddAndClampPixelOffset(
+					InputPixelPos,
+					iPixelOffset, iPixelOffset,
+					InputPixelPosMin, InputPixelPosMax);
+			}
+			#elif CONFIG_SAMPLES == 5
+			{
+				tsr_short2 iPixelOffset = tsr_short2(kOffsets3x3[kPlusIndexes3x3[SampleId]]);
+					
+				SampleInputPixelPos = AddAndClampPixelOffset(
+					InputPixelPos,
+					iPixelOffset, iPixelOffset,
+					InputPixelPosMin, InputPixelPosMax);
+			}
+			#else
+				#error Unknown sample count
+			#endif
+
+			tsr_half4 TranslucencyColor = TransformToComparisonColorSpace(TranslucencyTexture[SampleInputPixelPos]);
+
+			if (SampleId == 0)
+			{
+				Translucency = TranslucencyColor;
+				TranslucencyMin = TranslucencyColor;
+				TranslucencyMax = TranslucencyColor;
+			}
+			else
+			{
+				#if CONFIG_KERNEL
+					Translucency += TranslucencyColor;
+				#endif
+
+				TranslucencyMin = min(TranslucencyMin, TranslucencyColor);
+				TranslucencyMax = max(TranslucencyMax, TranslucencyColor);
+			}
+		}
+
+		#if CONFIG_KERNEL
+			Translucency *= rcp(tsr_half(CONFIG_SAMPLES));
+		#endif
+	}
+
+	// Sample previous frame's translucency
+	tsr_half4 PrevTranslucency;
+	tsr_half4 PrevTranslucencyMin;
+	tsr_half4 PrevTranslucencyMax;
+	{
+		float2 PrevScreenPos = ScreenPos - DecodeVelocityFromTexture(float4(EncodedVelocity, 0.0, 0.0)).xy;
+		float2 PrevTranslucencyTextureUV = ApplyScreenTransform(PrevScreenPos, ScreenPosToPrevTranslucencyTextureUV);
+	
+		UNROLL_N(CONFIG_SAMPLES)
+		for (uint SampleId = 0; SampleId < CONFIG_SAMPLES; SampleId++)
+		{
+			tsr_half2 PixelOffset;
+			
+			// TODO: handle r.SeparateTranslucencyScreenPercentage
+			#if CONFIG_SAMPLES == 9
+			{
+				tsr_short2 iPixelOffset = tsr_short2(kOffsets3x3[kSquareIndexes3x3[SampleId]]);
+				PixelOffset = tsr_half2(iPixelOffset);
+			}
+			#elif CONFIG_SAMPLES == 5
+			{
+				tsr_short2 iPixelOffset = tsr_short2(kOffsets3x3[kPlusIndexes3x3[SampleId]]);
+				PixelOffset = tsr_half2(iPixelOffset);
+			}
+			#else
+				#error Unknown sample count
+			#endif
+
+			float2 SampleTextureUV = clamp(
+				PrevTranslucencyTextureUV + PixelOffset * PrevTranslucencyInfo_ExtentInverse,
+				PrevTranslucencyInfo_UVViewportBilinearMin,
+				PrevTranslucencyInfo_UVViewportBilinearMax);
+		
+			tsr_half4 PrevTranslucencyColor = TransformToComparisonColorSpace(
+				PrevTranslucencyTexture.SampleLevel(GlobalPointClampedSampler, SampleTextureUV, 0));
+
+			if (SampleId == 0)
+			{
+				PrevTranslucency = PrevTranslucencyColor;
+				PrevTranslucencyMin = PrevTranslucencyColor;
+				PrevTranslucencyMax = PrevTranslucencyColor;
+			}
+			else
+			{
+				#if CONFIG_KERNEL
+					PrevTranslucency += PrevTranslucencyColor;
+				#endif
+
+				PrevTranslucencyMin = min(PrevTranslucencyMin, PrevTranslucencyColor);
+				PrevTranslucencyMax = max(PrevTranslucencyMax, PrevTranslucencyColor);
+			}
+		}
+
+		#if CONFIG_KERNEL
+			PrevTranslucency *= rcp(tsr_half(CONFIG_SAMPLES));
+		#endif
+
+		PrevTranslucency    *= tsr_half(PrevTranslucencyPreExposureCorrection);
+		PrevTranslucencyMin *= tsr_half(PrevTranslucencyPreExposureCorrection);
+		PrevTranslucencyMax *= tsr_half(PrevTranslucencyPreExposureCorrection);
+	}
+
+	tsr_half Rejection = 1.0;
+	#if 1
+	{
+		// TODO: reject with alpha too? Might not need since translucency is premultiplied RGBA 
+		tsr_half ForwardRejection = MeasureTranslucencyRejectionFactor(
+			PrevTranslucency,
+			Translucency,
+			TranslucencyMin,
+			TranslucencyMax);
+		
+		tsr_half BackwardRejection = MeasureTranslucencyRejectionFactor(
+			Translucency,
+			PrevTranslucency,
+			PrevTranslucencyMin,
+			PrevTranslucencyMax);
+
+		Rejection = min(ForwardRejection, BackwardRejection);
+	}
+	#endif
+
+	if (all(InputPixelPos < tsr_short2(InputInfo_ViewportMax)))
+	{
+		TranslucencyRejectionOutput[InputPixelPos] = Rejection;
+
+		#if DEBUG_OUTPUT
+		{
+			DebugOutput[tsr_short3(InputPixelPos, 0)] = Debug;
+		}
+		#endif
+	}
+}

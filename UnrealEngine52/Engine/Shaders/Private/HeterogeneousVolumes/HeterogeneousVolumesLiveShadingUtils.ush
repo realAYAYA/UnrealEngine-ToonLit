@@ -1,0 +1,61 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+FPrimitiveSceneData GetPrimitiveData(
+	FMaterialPixelParameters Parameters,
+	float4x4 LocalToWorld,
+	float4x4 WorldToLocal,
+	float3 LocalBoundsOrigin,
+	float3 LocalBoundsExtent
+)
+{
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(Parameters.PrimitiveId);
+
+	// Replace local-space transforms..
+	PrimitiveData.LocalToWorld = MakeLWCMatrix(PrimitiveData.TilePosition, LocalToWorld);
+	PrimitiveData.WorldToLocal = MakeLWCInverseMatrix(PrimitiveData.TilePosition, WorldToLocal);
+	PrimitiveData.LocalObjectBoundsMin = LocalBoundsOrigin - LocalBoundsExtent;
+	PrimitiveData.LocalObjectBoundsMax = LocalBoundsOrigin + LocalBoundsExtent;
+
+	return PrimitiveData;
+}
+
+// Stolen from VolumetricFog
+float3 SampleExtinctionCoefficients(in FPixelMaterialInputs PixelMaterialInputs)
+{
+	float3 Extinction = 0.0f;
+#if STRATA_ENABLED
+	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+	Extinction = VOLUMETRICFOGCLOUD_EXTINCTION(BSDF).r;
+#else
+#if !MATERIAL_SHADINGMODEL_UNLIT
+	Extinction = GetMaterialSubsurfaceDataRaw(PixelMaterialInputs).rgb;
+#endif
+#endif
+	return clamp(Extinction, 0.0f, 65000.0f);
+}
+
+float3 SampleEmissive(in FPixelMaterialInputs PixelMaterialInputs)
+{
+	float3 EmissiveColor = 0.0f;
+#if STRATA_ENABLED
+	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+	EmissiveColor = BSDF_GETEMISSIVE(BSDF);
+#else
+	EmissiveColor = GetMaterialEmissiveRaw(PixelMaterialInputs);
+#endif
+	return clamp(EmissiveColor, 0.0f, 65000.0f);
+}
+
+float3 SampleAlbedo(in FPixelMaterialInputs PixelMaterialInputs)
+{
+	float3 Albedo = 0.0f;
+#if STRATA_ENABLED
+	FStrataBSDF BSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+	Albedo = VOLUMETRICFOGCLOUD_ALBEDO(BSDF);
+#else
+#if !MATERIAL_SHADINGMODEL_UNLIT
+	Albedo = GetMaterialBaseColor(PixelMaterialInputs);
+#endif
+#endif
+	return saturate(Albedo) * View.DiffuseOverrideParameter.w + View.DiffuseOverrideParameter.xyz;
+}

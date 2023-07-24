@@ -1,0 +1,43 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*==============================================================================
+	TraceRayInlineMetal.ush: Metal-specific inline ray tracing functionality,
+	such as utility functions for accessing triangle indices and vertices.
+==============================================================================*/
+
+#pragma once
+
+#include "/Engine/Shared/RayTracingDefinitions.h"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+
+#if COMPILER_DXC && COMPILER_METAL && PLATFORM_SUPPORTS_INLINE_RAY_TRACING
+
+#define PLATFORM_SUPPORTS_INLINE_RAY_TRACING_TRIANGLE_ATTRIBUTES 0
+
+// Counterpart of FHitGroupSystemRootConstants.
+// TODO: Need to retrieve geometry (VBs/IBs for BLAS).
+struct FMetalRayTracingGeometryParameters
+{
+	uint Config;
+	uint IndexBufferOffsetInBytes;
+	uint FirstPrimitive;
+	uint UserData;
+	uint BaseInstanceIndex;
+	uint Pad0;
+};
+
+// Create a generic alias for the Metal-specific metadata type
+#define FRayTracingSceneMetadataRecord FMetalRayTracingGeometryParameters
+
+// TODO: Need to retrieve VBs/IBs to fetch the position.
+FTriangleBaseAttributes LoadInlineRayTracingTriangleAttributes(
+	StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata,
+	uint InstanceContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint GeometryIndex,
+	uint PrimitiveIndex)
+{
+	FTriangleBaseAttributes Result = (FTriangleBaseAttributes)0;
+	return Result;
+}
+#endif // COMPILER_DXC && COMPILER_METAL && PLATFORM_SUPPORTS_INLINE_RAY_TRACING

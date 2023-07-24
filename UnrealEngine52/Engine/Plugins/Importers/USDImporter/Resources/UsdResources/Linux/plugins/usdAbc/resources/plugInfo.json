@@ -1,0 +1,27 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "UsdAbcAlembicFileFormat": {
+                        "bases": [
+                            "SdfFileFormat"
+                        ],
+                        "displayName": "USD Alembic File Format",
+                        "extensions": [
+                            "abc"
+                        ],
+                        "formatId": "abc",
+                        "primary": true,
+                        "target": "usd"
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Linux/bin/x86_64-unknown-linux-gnu/usdAbc.so",
+            "Name": "usdAbc",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

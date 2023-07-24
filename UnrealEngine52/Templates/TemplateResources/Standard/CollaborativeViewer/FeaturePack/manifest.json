@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "CollaborativeViewer Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for CollaborativeViewer"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "CollaborativeViewer.png",
+	"Screenshots":
+	[
+		"CollaborativeViewer_Preview.png"
+	],
+	"Ident": "CollaborativeViewerStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "CollaborativeViewer",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/CollaborativeViewer/Content/*.*"
+		]
+	}
+}
+

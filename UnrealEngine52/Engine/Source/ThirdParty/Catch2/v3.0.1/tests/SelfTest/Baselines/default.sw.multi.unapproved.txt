@@ -1,0 +1,38 @@
+Before Global - Default Group
+Before Global - Apples
+Before Global - Oranges
+Before All - Default Group
+This would not be caught previously
+Nor would this
+A string sent directly to stdout
+A string sent directly to stderr
+A string sent to stderr via clog
+Message from section one
+Message from section two
+loose text artifact
+After All - Default Group
+Before All - Apples
+Before Each - Apples
+1 Apples group
+After Each - Apples
+Before Each - Apples
+2 Apples group
+After Each - Apples
+Before Each - Apples
+3 Apples group
+After Each - Apples
+After All - Apples
+Before All - Oranges
+Before Each - Oranges
+1 Oranges group
+After Each - Oranges
+Before Each - Oranges
+2 Oranges group
+After Each - Oranges
+Before Each - Oranges
+3 Oranges group
+After Each - Oranges
+After All - Oranges
+After Global - Default Group
+After Global - Apples
+After Global - Oranges

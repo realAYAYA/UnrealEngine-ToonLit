@@ -1,0 +1,32 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	ShadowDepthCommon.usf: Shared functionality for shadow depth rendering.
+=============================================================================*/
+
+#ifndef PERSPECTIVE_CORRECT_DEPTH
+#define PERSPECTIVE_CORRECT_DEPTH 0
+#endif
+
+#define INTERPOLATE_VF_ATTRIBUTES (!MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED || (REQUIRES_VF_ATTRIBUTES_FOR_CLIPPING && !POSITION_ONLY))
+#define INTERPOLATE_POSITION (MATERIALBLENDING_MASKED)
+
+/** Data passed from the vertex shader to the pixel shader for the shadow depth pass. */
+struct FShadowDepthVSToPS
+{
+#if INTERPOLATE_VF_ATTRIBUTES
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+#endif
+
+#if PERSPECTIVE_CORRECT_DEPTH
+	float ShadowDepth : TEXCOORD6;
+	float DepthBias : TEXCOORD8;
+#elif !COMPILER_SUPPORTS_EMPTY_STRUCTS && !ONEPASS_POINTLIGHT_SHADOW
+	float Dummy : TEXCOORD6;
+#endif
+
+#if INTERPOLATE_POSITION
+	// world space position needed in some cases, could be changed to be reconsructed from SvPosition (more tricky as this is not from camera perspective)
+	float3 PixelPosition	: TEXCOORD7;
+#endif
+};

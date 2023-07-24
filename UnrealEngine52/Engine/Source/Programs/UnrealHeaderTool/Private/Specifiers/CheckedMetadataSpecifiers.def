@@ -1,0 +1,17 @@
+// CHECKED_METADATA_SPECIFIER(<specifier name>)
+//
+// Must be listed such that the strings are in lexicographical order!
+
+// [[ IncludeTool: Inline ]] // Markup to tell IncludeTool that this file is state changing and cannot be optimized out.
+
+CHECKED_METADATA_SPECIFIER(BlueprintProtected)
+CHECKED_METADATA_SPECIFIER(ClampMax)
+CHECKED_METADATA_SPECIFIER(ClampMin)
+CHECKED_METADATA_SPECIFIER(CommutativeAssociativeBinaryOperator)
+CHECKED_METADATA_SPECIFIER(DevelopmentStatus)
+CHECKED_METADATA_SPECIFIER(DocumentationPolicy)
+CHECKED_METADATA_SPECIFIER(ExpandBoolAsExecs)
+CHECKED_METADATA_SPECIFIER(ExpandEnumAsExecs)
+CHECKED_METADATA_SPECIFIER(UIMax)
+CHECKED_METADATA_SPECIFIER(UIMin)
+CHECKED_METADATA_SPECIFIER(Units)

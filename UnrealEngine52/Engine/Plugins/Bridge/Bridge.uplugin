@@ -1,0 +1,48 @@
+{
+	"FileVersion": 3,
+	"Version": 19,
+	"VersionName": "2023.0.3",
+	"FriendlyName": "Bridge",
+	"Description": "Megascans Link for Quixel Bridge.",
+	"Category": "Editor",
+	"CreatedBy": "Quixel",
+	"CreatedByURL": "https://www.quixel.se",
+	"DocsURL": "https://help.quixel.com/hc/en-us/sections/360005846137-Quixel-Bridge-for-Unreal-Engine-5",
+	"MarketplaceURL": "",
+	"SupportURL": "support@quixel.com",
+	"CanContainContent": true,
+	"EnabledByDefault": true,
+	"SupportedTargetPlatforms": [
+		"Win64",
+		"Mac",
+		"Linux"
+	],
+	"Modules": [
+		{
+			"Name": "Bridge",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
+		},
+		{
+			"Name": "MegascansPlugin",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac",
+				"Linux"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
+		}
+	]
+}

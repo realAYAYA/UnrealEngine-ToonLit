@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <AssemblyName>P4Api.Net</AssemblyName>
+    <RootNamespace>Perforce.P4</RootNamespace>
+    <PackageId>p4api.net.core</PackageId>
+    <RunPostBuildEvent>OnBuildSuccess</RunPostBuildEvent>
+    <Copyright>Copyright (C) 2020 Perforce Software, Inc.</Copyright>
+    <Version>2020.2.207.5590</Version>
+    <FileVersion>2020.2.207.5590</FileVersion>
+    <AssemblyVersion>2020.2.207.5590</AssemblyVersion>
+    <InformationalVersion>2020.2.207.5590</InformationalVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <OutputPath>..\bin\Release</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Properties\" />
+  </ItemGroup>
+
+</Project>

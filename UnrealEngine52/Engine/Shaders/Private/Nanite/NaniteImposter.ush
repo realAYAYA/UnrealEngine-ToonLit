@@ -1,0 +1,103 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../OctahedralCommon.ush"
+
+struct FRay
+{
+	float3	Origin;
+	float3	Direction;
+};
+
+#define TILE_SIZE	12
+#define ATLAS_SIZE	12
+#define ATLAS_BYTES	( TILE_SIZE * TILE_SIZE * ATLAS_SIZE * ATLAS_SIZE * 2 )
+
+ByteAddressBuffer ImposterAtlas;
+
+uint2 SampleAtlas( uint ImposterIndex, float2 TilePos, float2 TileUVs )
+{
+	// TODO Store as texture.
+	// TODO Separate depth from index.
+	float2 TileTexels = floor( TileUVs * (TILE_SIZE - 1e-4) );
+	uint AtlasIndex = (uint)(TileTexels.x + ( TileTexels.y + ( TilePos.x + TilePos.y * ATLAS_SIZE ) * TILE_SIZE ) * TILE_SIZE);
+
+	// Read uint16 from buffer
+	uint PackedValue = ImposterAtlas.Load( ImposterIndex * ATLAS_BYTES + (AtlasIndex & ~1) * 2 );
+
+	uint WordOffset = (AtlasIndex & 1) * 16;
+	uint TriIndex	= BitFieldExtractU32( PackedValue, 8, WordOffset );
+	uint Depth		= BitFieldExtractU32( PackedValue, 8, WordOffset + 8 );
+	return uint2( TriIndex, Depth );
+}
+
+uint2 RayIntersectImposter( FRay RayLocal, uint ImposterIndex, float3 BoundsCenter, float3 BoundsExtent, float2 Noise )
+{
+	// Direction to atlas
+	float2 Oct = UnitVectorToOctahedron( -RayLocal.Direction );
+
+	//float2 TilePos = floor( ( Oct * 0.5 + 0.5 ) * ATLAS_SIZE );
+	float2 TilePos = floor( saturate( Oct * 0.5 + 0.5 + Noise * (0.25 / ATLAS_SIZE) - (0.125 / ATLAS_SIZE) ) * ATLAS_SIZE );
+
+	Oct = TilePos * (2.0 / ATLAS_SIZE) + ( (1.0 / ATLAS_SIZE) - 1 );
+	float3 ImposterZ = OctahedronToUnitVector( Oct );
+
+#if 0
+	// [Frisvad 2012, "Building an Orthonormal Basis from a 3D Unit Vector Without Normalization"]
+	// Invalid for TangentZ.z == -1
+	float A = rcp( 1 + ImposterZ.z );
+	float B = -ImposterZ.x * ImposterZ.y * A;
+	float3 ImposterX = float3( 1 - Pow2( ImposterZ.x ) * A, B, -ImposterZ.x );
+	float3 ImposterY = float3( B, 1 - Pow2( ImposterZ.y ) * A, -ImposterZ.y );
+#else
+	float3 ImposterX = { 0.0f, 0.0f, 1.0f };
+	ImposterX -= ImposterZ.z * ImposterZ;
+	ImposterX = normalize( ImposterX );
+	float3 ImposterY = cross( ImposterZ, ImposterX );
+#endif
+
+	float3 ImposterExtent = float3( 
+		dot( BoundsExtent, abs( ImposterX ) ),
+		dot( BoundsExtent, abs( ImposterY ) ),
+		dot( BoundsExtent, abs( ImposterZ ) ) );
+
+	float3x3 ImposterToLocal = float3x3(
+		ImposterX,
+		ImposterY,
+		ImposterZ );
+
+	float3x3 LocalToImposter = transpose( ImposterToLocal );
+
+	FRay RayImposter;
+	RayImposter.Origin = mul( RayLocal.Origin - BoundsCenter, LocalToImposter ) / ImposterExtent;
+	RayImposter.Direction = mul( RayLocal.Direction, LocalToImposter ) / ImposterExtent;
+
+	float3 InvDir = rcp( RayImposter.Direction );
+	float3 Center = -RayImposter.Origin * InvDir;
+	float3 MinIntersection = Center - abs( InvDir );
+	float3 MaxIntersection = Center + abs( InvDir );
+
+	float Time0 = max3( MinIntersection.x, MinIntersection.y, MinIntersection.z );
+	float Time1 = min3( MaxIntersection.x, MaxIntersection.y, MaxIntersection.z );
+
+	uint NumSamples = 4;
+	UNROLL for( uint i = 0; i < NumSamples; i++ )
+	{
+		float Time = lerp( Time0, Time1, ( i + 0.5 ) / NumSamples );
+		float3 RayPoint = RayImposter.Origin + RayImposter.Direction * Time;
+
+		uint2 ImposterPixel = SampleAtlas( ImposterIndex, TilePos, RayPoint.xy * 0.5 + 0.5 );
+		float SampleDepth = ImposterPixel.y * (2.0 / 254.0) - (2.0 / 254.0 + 1.0);
+
+		bool bIsValid = ImposterPixel.y != 0;
+		if( bIsValid && abs( SampleDepth - RayPoint.z ) < 2.0 / NumSamples  )
+		{
+			ImposterPixel.y = asuint( ( SampleDepth - RayImposter.Origin.z ) * InvDir.z );
+			return ImposterPixel;
+		}
+	}
+
+	return 0;
+}

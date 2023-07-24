@@ -1,0 +1,153 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#ifndef USE_PATH_TRACING_LIGHT_GRID
+#define USE_PATH_TRACING_LIGHT_GRID 0
+#endif
+
+#include "/Engine/Shared/PathTracingDefinitions.h"
+
+
+#if USE_PATH_TRACING_LIGHT_GRID
+// extra shader parameters that must be defined when using the light grid
+uint SceneInfiniteLightCount;
+float3 SceneLightsTranslatedBoundMin;
+float3 SceneLightsTranslatedBoundMax;
+Texture2D<uint> LightGrid;
+Buffer<uint> LightGridData;
+uint LightGridResolution;
+uint LightGridMaxCount;
+int LightGridAxis;
+#endif
+
+
+// TODO: unify with similar function in other visualizations
+float3 HashToColor(uint H)
+{
+	return 0.5 + 0.3 * cos(2 * PI * ((H & 0xFFFFFF) * 5.96046447754e-08 + float3(0.0, 0.333, 0.6666)));
+}
+
+
+
+struct FLightLoopCount {
+	uint NumLights;
+	uint NumMISLights;
+#if USE_PATH_TRACING_LIGHT_GRID
+	uint LightGridOffset;
+#endif
+};
+
+#if USE_PATH_TRACING_LIGHT_GRID
+
+FLightLoopCount LightGridLookup(float3 TranslatedWorldPos)
+{
+	FLightLoopCount Result;
+	Result.NumLights = SceneInfiniteLightCount;
+	Result.NumMISLights = SceneInfiniteLightCount;
+	Result.LightGridOffset = ~0u;
+
+	if (all(SceneLightsTranslatedBoundMin <= TranslatedWorldPos) && all(TranslatedWorldPos <= SceneLightsTranslatedBoundMax))
+	{
+		float3 P = TranslatedWorldPos - SceneLightsTranslatedBoundMin;
+		float3 D = SceneLightsTranslatedBoundMax - SceneLightsTranslatedBoundMin;
+		int2 UV = 0;
+		switch (LightGridAxis)
+		{
+			case 0: UV = int2(floor(LightGridResolution * P.yz / D.yz)); break;
+			case 1: UV = int2(floor(LightGridResolution * P.xz / D.xz)); break;
+			case 2: UV = int2(floor(LightGridResolution * P.xy / D.xy)); break;
+		}
+		uint LightGridN = LightGrid.Load(int3(UV, 0));
+		Result.LightGridOffset = LightGridMaxCount * (UV.x + UV.y * LightGridResolution);
+		Result.NumLights += LightGridN & PATHTRACER_LIGHT_GRID_LIGHT_COUNT_MASK;
+		if ((LightGridN & PATHTRACER_LIGHT_GRID_SINGULAR_MASK) == 0)
+		{
+			// at least some area lights, enable MIS for this cell
+			Result.NumMISLights = Result.NumLights;
+		}
+	}
+	return Result;
+}
+
+float3 LightGridVisualize(FLightLoopCount LoopCount, int VisualizeMode)
+{
+	const float3 OutsideColor = 0.18;
+	const float3 EmptyColor = 0.36;
+
+	if (LoopCount.LightGridOffset != ~0u)
+	{
+		switch (VisualizeMode)
+		{
+			case 2:
+			{
+				// color by unique light list
+				uint H = 0;
+				for (int Index = 0, Num = LoopCount.NumLights - SceneInfiniteLightCount; Index < Num; Index++)
+				{
+					H = StrongIntegerHash(H + LightGridData[LoopCount.LightGridOffset + Index]);
+				}
+				return HashToColor(H);
+			}
+			case 3:
+			{
+				// color by presence of singular lights
+				if (LoopCount.NumLights == SceneInfiniteLightCount)
+				{
+					return EmptyColor;
+				}
+				else if (LoopCount.NumLights == LoopCount.NumMISLights)
+				{
+					return float3(0.2, 0.2, 1); // blue - some area lights
+				}
+				else
+				{
+					return float3(0.2, 1, 0.2); // green - only point lights
+				}
+			}
+			default: 
+			{
+				// default mode - color by light count
+				uint N = LoopCount.NumLights - SceneInfiniteLightCount;
+				if (N < 1)
+				{
+					return EmptyColor;
+				}
+				float Max = LightGridMaxCount;
+				float t = saturate(float(N) / Max);
+				return t * saturate(2.0 - abs(float3(4, 2, 0) - 4.0 * t));
+			}
+		}
+	}
+	// outside light grid bounds
+	return OutsideColor;
+}
+
+uint GetLightId(uint Index, FLightLoopCount LoopCount)
+{
+	if (Index >= SceneInfiniteLightCount)
+	{
+		return LightGridData[LoopCount.LightGridOffset + Index - SceneInfiniteLightCount];
+	}
+	return Index;
+}
+
+#else
+
+FLightLoopCount LightGridLookup(float3 TranslatedWorldPos)
+{
+	uint NumLights = min(SceneLightCount, RAY_TRACING_LIGHT_COUNT_MAXIMUM);
+	FLightLoopCount Result;
+	Result.NumLights = Result.NumMISLights = NumLights;
+	return Result;
+}
+
+float3 LightGridVisualize(FLightLoopCount LoopCount, int VisualizeMode)
+{
+	return 0.5;
+}
+
+uint GetLightId(uint Index, FLightLoopCount LoopCount)
+{
+	return Index;
+}
+
+#endif

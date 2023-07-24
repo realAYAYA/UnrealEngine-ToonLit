@@ -1,0 +1,137 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "NiagaraRibbonCommon.ush"
+
+Buffer<uint> SortedIndices;
+
+// Tangent of the particle, and the distance along the ribbon if we're computing it
+Buffer<float> InputTangentsAndDistances;
+RWBuffer<float> OutputTangentsAndDistances;
+
+// Index of the ribbon for this particle
+// created through prefix sum across all the starting points of the ribbons
+
+#if HAS_RIBBON_ID
+Buffer<uint> InputMultiRibbonIndices;
+RWBuffer<uint> OutputMultiRibbonIndices;
+#endif
+
+// Index of the final segment this particle starts
+Buffer<uint> InputSegments;
+RWBuffer<uint> OutputSegments;
+
+#if RIBBONS_WANTS_AUTOMATIC_TESSELLATION
+// Tessellation reduction stats if we're computing them
+Buffer<float> InputTessellationStats;
+RWBuffer<float> OutputTessellationStats;
+#endif
+
+int PrefixScanStride;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void VertexGenPrefixSumPropagation(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint TotalNumParticles = GetTotalNumParticles();
+	const int RawParticleID = DispatchThreadId.x;
+	if (RawParticleID < TotalNumParticles)
+	{
+		// We direct copy the tangent part of tangentanddistances
+		OutputTangentsAndDistances[RawParticleID * 4 + 0] = InputTangentsAndDistances[RawParticleID * 4 + 0];
+		OutputTangentsAndDistances[RawParticleID * 4 + 1] = InputTangentsAndDistances[RawParticleID * 4 + 1];
+		OutputTangentsAndDistances[RawParticleID * 4 + 2] = InputTangentsAndDistances[RawParticleID * 4 + 2];
+		
+		// Are we copying or adding
+		BRANCH
+		if (RawParticleID >= PrefixScanStride)
+		{
+			const int RawSourceParticleID = RawParticleID - PrefixScanStride;
+			
+			// Copy segments
+			OutputSegments[RawParticleID] = InputSegments[RawParticleID] + InputSegments[RawSourceParticleID];
+			
+#if HAS_RIBBON_ID
+			// Copy multi Ribbon
+			OutputMultiRibbonIndices[RawParticleID] = InputMultiRibbonIndices[RawParticleID] + InputMultiRibbonIndices[RawSourceParticleID];
+
+			const int SourceParticleID = SortedIndices[RawSourceParticleID];
+			const int ParticleID = SortedIndices[RawParticleID];
+			
+			const FRibbonID SourceRibbonID = GetRibbonID(SourceParticleID);
+			const FRibbonID RibbonID = GetRibbonID(ParticleID);
+					
+			
+			if (AreRibbonIDsEqual(SourceRibbonID, RibbonID))
+#endif
+			{
+				// Copy tangents
+				OutputTangentsAndDistances[RawParticleID * 4 + 3] = InputTangentsAndDistances[RawParticleID * 4 + 3] + InputTangentsAndDistances[RawSourceParticleID * 4 + 3];
+			}
+#if HAS_RIBBON_ID
+			else
+			{			
+				// Copy tangents	
+				OutputTangentsAndDistances[RawParticleID * 4 + 3] = InputTangentsAndDistances[RawParticleID * 4 + 3];
+			}
+#endif
+
+#if RIBBONS_WANTS_AUTOMATIC_TESSELLATION
+#if RIBBON_HAS_TWIST
+			const uint TessellationBaseOffset = RawParticleID * 5;
+			const uint TessellationSourceBaseOffset = RawSourceParticleID * 5;
+#else
+			const uint TessellationBaseOffset = RawParticleID * 3;
+			const uint TessellationSourceBaseOffset = RawSourceParticleID * 3;
+#endif
+			// TotalLength
+			OutputTessellationStats[TessellationBaseOffset + 0] = InputTessellationStats[TessellationBaseOffset + 0] + InputTessellationStats[TessellationSourceBaseOffset + 0];
+			// AverageSegmentLength
+			OutputTessellationStats[TessellationBaseOffset + 1] = InputTessellationStats[TessellationBaseOffset + 1] + InputTessellationStats[TessellationSourceBaseOffset + 1];
+			// AverageSegmentAngle
+			OutputTessellationStats[TessellationBaseOffset + 2] = InputTessellationStats[TessellationBaseOffset + 2] + InputTessellationStats[TessellationSourceBaseOffset + 2];
+#if RIBBON_HAS_TWIST
+			// AverageTwistAngle
+			OutputTessellationStats[TessellationBaseOffset + 3] = InputTessellationStats[TessellationBaseOffset + 3] + InputTessellationStats[TessellationSourceBaseOffset + 3];
+			// AverageWidth
+			OutputTessellationStats[TessellationBaseOffset + 4] = InputTessellationStats[TessellationBaseOffset + 4] + InputTessellationStats[TessellationSourceBaseOffset + 4];
+#endif
+#endif
+			
+		}
+		else
+		{			
+			// Copy segments
+			OutputSegments[RawParticleID] = InputSegments[RawParticleID];
+			
+#if HAS_RIBBON_ID
+			// Copy multi Ribbon
+			OutputMultiRibbonIndices[RawParticleID] = InputMultiRibbonIndices[RawParticleID];
+#endif
+			
+			// Copy tangents
+			OutputTangentsAndDistances[RawParticleID * 4 + 3] = InputTangentsAndDistances[RawParticleID * 4 + 3];
+
+
+#if RIBBONS_WANTS_AUTOMATIC_TESSELLATION
+#if RIBBON_HAS_TWIST
+			const uint TessellationBaseOffset = RawParticleID * 5;
+#else
+			const uint TessellationBaseOffset = RawParticleID * 3;
+#endif
+			// TotalLength
+			OutputTessellationStats[TessellationBaseOffset + 0] = InputTessellationStats[TessellationBaseOffset + 0];
+			// AverageSegmentLength
+			OutputTessellationStats[TessellationBaseOffset + 1] = InputTessellationStats[TessellationBaseOffset + 1];
+			// AverageSegmentAngle
+			OutputTessellationStats[TessellationBaseOffset + 2] = InputTessellationStats[TessellationBaseOffset + 2];
+			
+#if RIBBON_HAS_TWIST
+			// AverageTwistAngle
+			OutputTessellationStats[TessellationBaseOffset + 3] = InputTessellationStats[TessellationBaseOffset + 3];
+			// AverageWidth
+			OutputTessellationStats[TessellationBaseOffset + 4] = InputTessellationStats[TessellationBaseOffset + 4];
+#endif
+#endif
+		}
+	}
+}

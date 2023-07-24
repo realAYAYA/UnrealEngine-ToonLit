@@ -1,0 +1,88 @@
+{
+	"FileVersion": 3,
+	"Version": 0.1,
+	"VersionName": "0.1",
+	"FriendlyName": "NNE",
+	"Description": "Cross-platform framework for running deep learning and neural network inference in Unreal Engine, supporting both CPU and GPU acceleration.",
+	"Category": "Experimental",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"SupportedTargetPlatforms": [
+		"Win64", "Linux", "Mac"
+	],
+	"Modules": [
+		{
+			"Name": "NNECore",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEHlslShaders",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEUtils",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEProfiling",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEQA",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNERuntimeORTCpu",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNERuntimeRDG",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNERuntimeORT",
+			"Type": "EditorAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64" ]
+		},
+		{
+			"Name": "NNEOnnxruntime",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "ORTHelper",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEEditorTools",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

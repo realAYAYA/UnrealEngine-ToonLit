@@ -1,0 +1,72 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0" 
+	ProductType="Application" 
+	AutodeskProduct="3ds Max" 
+
+
+	Name="Unreal Datasmith Exporter for Autodesk 3ds Max" 
+	Description="Unreal Datasmith Exporter for Autodesk 3ds Max" 
+	AppVersion="Unreal Engine 5.0" 
+	Author="EpicGames, Inc."     
+	ProductCode="{1FB940D3-A706-4F24-954A-E6DC3146BEE8}" 
+	UpgradeCode="{BCBC53E8-6938-4C51-B60E-F857B1D4EEAF}" 
+	OnlineDocumentation="https://www.unrealengine.com/en-US/datasmith/plugins" 
+	HelpFile="./Help.htm" 
+	>
+	<!--  todo: Icon="./DatasmithIcon32.png" -->
+    <CompanyDetails Name="EpicGames, Inc." Url="www.epicgames.com"/>
+
+    <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2017" SeriesMax="2023" />
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2023" SeriesMax="2023" />
+        <ComponentEntry ModuleName="./2023/DatasmithMax2023.gup" />
+    </Components>
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2022" SeriesMax="2022" />
+        <ComponentEntry ModuleName="./2022/DatasmithMax2022.gup" />
+    </Components>
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2021" SeriesMax="2021" />
+        <ComponentEntry ModuleName="./2021/DatasmithMax2021.gup" />
+    </Components>
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2020" SeriesMax="2020" />
+        <ComponentEntry ModuleName="./2020/DatasmithMax2020.gup" />
+    </Components>
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2019" SeriesMax="2019" />
+        <ComponentEntry ModuleName="./2019/DatasmithMax2019.gup" />
+    </Components>
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2018" SeriesMax="2018" />
+        <ComponentEntry ModuleName="./2018/DatasmithMax2018.gup" />
+    </Components>
+
+    <Components Description="plugins parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2017" SeriesMax="2017" />
+        <ComponentEntry ModuleName="./2017/DatasmithMax2017.gup" />
+    </Components>
+
+    <Components Description="pre-start-up scripts parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2017" SeriesMax="2023" />
+        <ComponentEntry ModuleName="./UI/DatasmithPreStartUp.ms" />
+        <ComponentEntry ModuleName="./UI/UnrealStudio_Datasmith_Attributes_Holder_Modifier.ms" />
+    </Components>
+
+    <Components Description="macroscripts parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2017" SeriesMax="2023" />
+        <ComponentEntry ModuleName="./UI/DatasmithMacros.mcr" />
+    </Components>
+
+    <Components Description="post-start-up scripts parts">
+        <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2017" SeriesMax="2023" />
+        <ComponentEntry ModuleName="./UI/DatasmithPostStartUp.ms" />
+    </Components>
+
+</ApplicationPackage>

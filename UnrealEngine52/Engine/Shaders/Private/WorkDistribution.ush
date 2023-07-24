@@ -1,0 +1,597 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+#include "WaveOpUtil.ush"
+
+/*
+Provides functions to distribute uneven amounts of work uniformly across a wave.
+Work won't be distributed wider than the same wave.
+
+The following must be defined:
+void DoWork( FWorkContext Context, FWorkSourceType WorkSource, uint LocalItemIndex );
+*/
+
+#ifdef GENERATE_WORK
+
+/*
+This version can continuously generate work using the function:
+uint GenerateWork( FWorkContext Context, uint GroupIndex, inout FWorkSourceType WorkSource, inout bool bDone )
+{
+	Set WorkSource if there is a valid source of work.
+	if( No more work left from this thread )
+	{
+		bDone = true;
+	}
+	return NumWorkItems;
+}
+
+Once it has a full wave worth of work it consumes it.
+*/
+
+groupshared FWorkSourceType	WorkQueueSource[ THREADGROUP_SIZE * 2 ];
+groupshared uint			WorkQueueAccum[ THREADGROUP_SIZE * 2 ];
+groupshared uint			WorkBoundary[ THREADGROUP_SIZE ];
+
+void DistributeWork( FWorkContext Context, uint GroupIndex )
+{
+	const uint LaneCount	= WaveGetLaneCount();
+	const uint LaneIndex	= GroupIndex &  ( LaneCount - 1 );
+	const uint QueueOffset	= GroupIndex & ~( LaneCount - 1 );
+	const uint QueueSize	= LaneCount * 2;
+	const uint QueueMask	= QueueSize - 1;
+
+#define QUEUE_INDEX(i) ( QueueOffset*2 + ( (i) & QueueMask ) )
+
+	bool bDone = false;
+
+	int WorkRead = 0;
+	int WorkWrite = 0;
+	int SourceRead = 0;
+	int SourceWrite = 0;
+	WorkQueueAccum[ QueueOffset*2 + QueueMask ] = 0;
+
+	while( true )
+	{
+		// Need to queue more work to fill wave?
+		while( WorkWrite - WorkRead < LaneCount && WaveActiveAnyTrue( !bDone ) )
+		{
+			FWorkSourceType WorkSource;
+			
+			// Generate work and record the source.
+			// When sources run out set bDone = true.
+			uint NumWorkItems = GenerateWork( Context, GroupIndex, WorkSource, bDone );
+
+			// Queue work
+			uint FirstWorkItem = WorkWrite + WavePrefixSum( NumWorkItems );
+			uint WorkAccum = FirstWorkItem + NumWorkItems;				// Could use Inclusive sum instead.
+			WorkWrite = WaveReadLaneAt( WorkAccum, LaneCount - 1 );
+
+			bool bHasWork = NumWorkItems != 0;
+			uint QueueIndex = SourceWrite + WavePrefixCountBits( bHasWork );
+			if( bHasWork )
+			{
+				WorkQueueSource[ QUEUE_INDEX( QueueIndex ) ] = WorkSource;
+				WorkQueueAccum[  QUEUE_INDEX( QueueIndex ) ] = WorkAccum;
+			}
+			SourceWrite += WaveActiveCountBits( bHasWork );
+		}
+
+		// Any work left?
+		if( WorkWrite == WorkRead )
+			break;
+
+		// TODO read and write bytes instead (ds_write_b8, ds_read_u8_d16)
+		WorkBoundary[ GroupIndex ] = 0;
+		GroupMemoryBarrier();
+		
+		if( SourceRead + LaneIndex < SourceWrite )
+		{
+			// Mark the last work item of each source
+			uint LastItemIndex = WorkQueueAccum[ QUEUE_INDEX( SourceRead + LaneIndex ) ] - WorkRead - 1;
+			if( LastItemIndex < LaneCount )
+				WorkBoundary[ QueueOffset + LastItemIndex ] = 1;
+		}
+
+		GroupMemoryBarrier();
+
+		bool bIsBoundary = WorkBoundary[ GroupIndex ];
+
+		uint QueueIndex = SourceRead + WavePrefixCountBits( bIsBoundary );
+
+		// Distribute work
+		if( WorkRead + LaneIndex < WorkWrite )
+		{
+			uint FirstWorkItem = WorkQueueAccum[ QUEUE_INDEX( QueueIndex - 1 ) ];
+			uint LocalItemIndex = WorkRead + LaneIndex - FirstWorkItem;
+
+			FWorkSourceType WorkSource = WorkQueueSource[ QUEUE_INDEX( QueueIndex ) ];
+
+			DoWork( Context, WorkSource, LocalItemIndex );
+		}
+
+		// Did 1 wave of work
+		WorkRead = min( WorkRead + LaneCount, WorkWrite );
+		SourceRead += WaveActiveCountBits( bIsBoundary );
+	}
+
+#undef QUEUE_INDEX
+}
+
+#elif 0
+
+bool WaveFlagLaneAt( uint DstIndex, uint SrcIndex )
+{
+	const uint LaneCount = WaveGetLaneCount();
+	
+	uint DstMask = 1 << ( DstIndex & 31 );
+	uint SrcMask = 1 << ( SrcIndex & 31 );
+
+	DstMask = DstIndex < LaneCount ? DstMask : 0;
+
+	if( LaneCount > 32 )
+	{
+		bool bDstLow = DstIndex < 32;
+		bool bSrcLow = SrcIndex < 32;
+
+		uint2 WaveBits = 0;
+		WaveBits.x = WaveActiveBitOr( bDstLow ? DstMask : 0 );
+		WaveBits.y = WaveActiveBitOr( bDstLow ? 0 : DstMask );
+
+		return SrcMask & ( bSrcLow ? WaveBits.x : WaveBits.y );
+	}
+	else
+	{
+		return WaveActiveBitOr( DstMask ) & SrcMask;
+	}
+}
+
+// Simpler version where threads can only generate work once.
+// This is done before calling DistributeWork so a GenerateWork function doesn't need to be defined.
+
+groupshared FWorkSourceType	WorkQueueSource[ THREADGROUP_SIZE ];
+groupshared uint			WorkQueueAccum[ THREADGROUP_SIZE ];
+groupshared uint			WorkBoundary[ THREADGROUP_SIZE ];
+
+void DistributeWork( FWorkContext Context, uint GroupIndex, FWorkSourceType WorkSource, uint NumWorkItems )
+{
+	const uint LaneCount	= WaveGetLaneCount();
+	const uint LaneIndex	= GroupIndex &  ( LaneCount - 1 );
+	const uint QueueOffset	= GroupIndex & ~( LaneCount - 1 );
+
+	int WorkRead = 0;
+	int WorkWrite = 0;
+	int SourceRead = 0;
+
+	uint WorkAccum = 0;
+	if( WaveActiveAnyTrue( NumWorkItems != 0 ) )
+	{
+		// Queue work
+		uint FirstWorkItem = WavePrefixSum( NumWorkItems );
+		WorkAccum = FirstWorkItem + NumWorkItems;				// Could use Inclusive sum instead.
+		WorkWrite = WaveReadLaneAt( WorkAccum, LaneCount - 1 );
+
+		bool bHasWork = NumWorkItems != 0;
+		uint QueueIndex = WavePrefixCountBits( bHasWork );
+		if( bHasWork )
+		{
+			WorkQueueSource[ QueueOffset + QueueIndex ] = WorkSource;
+			WorkQueueAccum[  QueueOffset + QueueIndex ] = WorkAccum;
+		}
+	}
+	
+	// Pull work from queue
+	while( WorkRead < WorkWrite )
+	{
+		// TODO read and write bytes instead (ds_write_b8, ds_read_u8_d16)
+		WorkBoundary[ GroupIndex ] = 0;
+		GroupMemoryBarrier();
+		
+		// Mark the last work item of each source
+		uint LastItemIndex = WorkAccum - WorkRead - 1;
+		if( LastItemIndex < LaneCount )
+			WorkBoundary[ QueueOffset + LastItemIndex ] = 1;
+
+		GroupMemoryBarrier();
+
+		bool bIsBoundary = WorkBoundary[ GroupIndex ];
+
+		uint QueueIndex = SourceRead + WavePrefixCountBits( bIsBoundary );
+
+		if( WorkRead + LaneIndex < WorkWrite )
+		{
+			uint FirstWorkItem = QueueIndex > 0 ? WorkQueueAccum[ QueueOffset + QueueIndex - 1 ] : 0;
+			uint LocalItemIndex = WorkRead + LaneIndex - FirstWorkItem;
+
+			FWorkSourceType WorkSource = WorkQueueSource[ QueueOffset + QueueIndex ];
+
+			DoWork( Context, WorkSource, LocalItemIndex );
+		}
+
+		// Did 1 wave of work
+		WorkRead += LaneCount;
+		SourceRead += WaveActiveCountBits( bIsBoundary );
+	}
+}
+
+#else
+
+groupshared uint WorkBoundary[ THREADGROUP_SIZE ];
+
+template< typename FTask >
+void DistributeWork( FTask Task, uint GroupIndex, uint NumWorkItems )
+{
+	const uint LaneCount	= WaveGetLaneCount();
+	const uint LaneIndex	= GroupIndex &  ( LaneCount - 1 );
+	const uint QueueOffset	= GroupIndex & ~( LaneCount - 1 );
+
+	int WorkHead = 0;
+	int WorkTail = 0;
+	int SourceHead = 0;
+
+	uint WorkSource = LaneIndex;
+	uint WorkAccum = 0;
+	if( WaveActiveAnyTrue( NumWorkItems != 0 ) )
+	{
+		// Queue work
+		uint FirstWorkItem = WavePrefixSum( NumWorkItems );
+		WorkAccum = FirstWorkItem + NumWorkItems;				// Could use Inclusive sum instead.
+		WorkTail = WaveReadLaneAt( WorkAccum, LaneCount - 1 );
+
+		bool bHasWork = NumWorkItems != 0;
+		uint QueueIndex = WavePrefixCountBits( bHasWork );
+
+		// Compact
+		if( WaveActiveAnyTrue( NumWorkItems == 0 ) )	// Might know this is impossible
+		{
+			// Compact LaneIndex
+		#if COMPILER_SUPPORTS_WAVE_PERMUTE
+			QueueIndex = bHasWork ? QueueIndex : LaneCount - 1;
+			WorkSource = WaveWriteLaneAt( QueueIndex, LaneIndex );
+		#else
+			if( bHasWork )
+				WorkBoundary[ QueueOffset + QueueIndex ] = LaneIndex;
+
+			GroupMemoryBarrier();
+
+			WorkSource = WorkBoundary[ GroupIndex ];
+		#endif
+
+			WorkAccum  = WaveReadLaneAt( WorkAccum, WorkSource );
+
+			// Push invalid lanes off the end to prevent writes to WorkBoundary and bank conflicts.
+			if( LaneIndex >= WaveActiveCountBits( bHasWork ) )
+				WorkAccum = WorkTail + LaneCount;
+		}
+	}
+	
+	// Pull work from queue
+	while( WorkHead < WorkTail )
+	{
+		// TODO read and write bytes instead (ds_write_b8, ds_read_u8_d16)
+		WorkBoundary[ GroupIndex ] = 0;
+		GroupMemoryBarrier();
+		
+		// Mark the last work item of each source
+		uint LastItemIndex = WorkAccum - WorkHead - 1;
+		if( LastItemIndex < LaneCount )
+			WorkBoundary[ QueueOffset + LastItemIndex ] = 1;
+
+		GroupMemoryBarrier();
+
+		bool bIsBoundary = WorkBoundary[ GroupIndex ];
+
+		uint QueueIndex = SourceHead + WavePrefixCountBits( bIsBoundary );
+		uint SourceIndex = WaveReadLaneAt( WorkSource, QueueIndex );
+		
+		uint FirstWorkItem = select( QueueIndex > 0, WaveReadLaneAt( WorkAccum, QueueIndex - 1 ), 0 );
+		uint LocalItemIndex = WorkHead + LaneIndex - FirstWorkItem;
+
+		FTask LocalTask = Task.CreateLocalTask( SourceIndex );
+
+		if( WorkHead + LaneIndex < WorkTail )
+		{
+			LocalTask.Run( LocalItemIndex );
+		}
+
+		// Did 1 wave of work
+		WorkHead += LaneCount;
+		SourceHead += WaveActiveCountBits( bIsBoundary );
+	}
+}
+
+#endif
+
+#if 1
+struct FWorkQueueState
+{
+	uint	ReadOffset;
+	uint	WriteOffset;
+	int		TaskCount;		// Can temporarily be conservatively higher
+};
+
+struct FGlobalWorkQueue
+{
+	RWCoherentByteAddressBuffer						DataBuffer;
+	RWCoherentStructuredBuffer( FWorkQueueState )	StateBuffer;	// Ideally this was GDS but we don't have that API control.
+
+	uint	StateIndex;
+	uint	Size;
+
+	uint Add()
+	{
+		uint WriteCount = WaveActiveCountBits( true );
+		uint WriteOffset = 0;
+		if( WaveIsFirstLane() )
+		{
+			InterlockedAdd( StateBuffer[ StateIndex ].WriteOffset, WriteCount, WriteOffset );
+			InterlockedAdd( StateBuffer[ StateIndex ].TaskCount, (int)WriteCount );
+		}
+
+		return WaveReadLaneFirst( WriteOffset ) + WavePrefixCountBits( true );
+	}
+
+	uint Remove( uint Num = 1 )
+	{
+		uint WriteOffset = 0;
+		InterlockedAdd( StateBuffer[ StateIndex ].ReadOffset, Num, WriteOffset );
+		return WriteOffset;
+	}
+
+	// Only call after current task has completely finished adding work!
+	void ReleaseTask()
+	{
+		WaveInterlockedAddScalar( StateBuffer[ StateIndex ].TaskCount, -1 );
+	}
+
+	bool IsEmpty()
+	{
+		return StateBuffer[ StateIndex ].TaskCount == 0;
+	}
+};
+
+
+template< typename FTask >
+void GlobalTaskLoop( FGlobalWorkQueue GlobalWorkQueue )
+{
+	const uint LaneCount = WaveGetLaneCount();
+	const uint LaneIndex = WaveGetLaneIndex();
+
+	bool bTaskComplete = true;
+
+	uint TaskReadOffset = 0;
+	
+	while( true )
+	{
+		if( WaveActiveAllTrue( bTaskComplete ) )
+		{
+			if( LaneIndex == 0 )
+			{
+				TaskReadOffset = GlobalWorkQueue.Remove( LaneCount );
+			}
+			TaskReadOffset = WaveReadLaneFirst( TaskReadOffset );
+			if( TaskReadOffset >= GlobalWorkQueue.Size )
+				break;
+
+			TaskReadOffset += LaneIndex;
+			bTaskComplete = false;
+		}
+
+		FTask Task;
+		bool bTaskReady = false;
+		if( !bTaskComplete )
+		{
+			bTaskReady = Task.Load( GlobalWorkQueue, TaskReadOffset );
+		}
+		
+		if( WaveActiveAnyTrue( bTaskReady ) )
+		{
+			if( bTaskReady )
+			{
+				Task.Run( GlobalWorkQueue );
+
+				// Clear processed element so we leave the buffer cleared for next pass.
+				Task.Clear( GlobalWorkQueue, TaskReadOffset );
+				bTaskComplete = true;
+			}
+		}
+		else
+		{
+			if( GlobalWorkQueue.IsEmpty() )
+				break;
+			else
+				ShaderYield();
+		}
+	}
+}
+
+template< typename FTask >
+void GlobalTaskLoopVariable( FGlobalWorkQueue GlobalWorkQueue )
+{
+	const uint LaneCount = WaveGetLaneCount();
+	const uint LaneIndex = WaveGetLaneIndex();
+
+	bool bTaskComplete = true;
+
+	uint TaskReadOffset = 0;
+	
+	while( true )
+	{
+		if( WaveActiveAllTrue( bTaskComplete ) )
+		{
+			if( LaneIndex == 0 )
+			{
+				TaskReadOffset = GlobalWorkQueue.Remove( LaneCount );
+			}
+			TaskReadOffset = WaveReadLaneFirst( TaskReadOffset );
+			if( TaskReadOffset >= GlobalWorkQueue.Size )
+				break;
+
+			TaskReadOffset += LaneIndex;
+			bTaskComplete = false;
+		}
+
+		FTask Task;
+		bool bTaskReady = false;
+		if( !bTaskComplete )
+		{
+			bTaskReady = Task.Load( GlobalWorkQueue, TaskReadOffset );
+		}
+		
+		if( WaveActiveAnyTrue( bTaskReady ) )
+		{
+			uint NumWorkItems = 0;
+			if( bTaskReady )
+			{
+				NumWorkItems = Task.GetNumItems();
+			}
+
+			DistributeWork( Task, LaneIndex, NumWorkItems );
+
+			if( bTaskReady )
+			{
+				// TODO this could be at if( bIsBoundary ) at end of DistributeWork loop if latency is important.
+				GlobalWorkQueue.ReleaseTask();
+
+				// Clear processed element so we leave the buffer cleared for next pass.
+				Task.Clear( GlobalWorkQueue, TaskReadOffset );
+				bTaskComplete = true;
+			}
+		}
+		else
+		{
+			if( GlobalWorkQueue.IsEmpty() )
+				break;
+			else
+				ShaderYield();
+		}
+	}
+}
+
+
+
+
+/*struct FNodeCullTask
+{
+	uint	VisibleClusterIndex;
+	uint	PatchIndex;
+	float3	Barycentrics[3];
+
+	bool Load( FGlobalWorkQueue WorkQueue, uint Offset )
+	{
+		checkSlow( Offset < WorkQueue.Size );
+		uint4 RawData = WorkQueue.DataBuffer.Load4( Offset * 16 );
+		if( RawData.x != ~0u &&
+			RawData.y != ~0u &&
+			RawData.z != ~0u &&
+			RawData.w != ~0u )
+		{
+			VisibleClusterIndex = RawData.x >> 7;
+			PatchIndex = RawData.x & 0x7F;
+
+			const float BarycentricMax = 65534.0;
+
+			for( int i = 0; i < 3; i++ )
+			{
+				Barycentrics[i].x = RawData[ i + 1 ] & 0xffff;
+				Barycentrics[i].y = RawData[ i + 1 ] >> 16;
+				Barycentrics[i].z = BarycentricMax - Barycentrics[i].x - Barycentrics[i].y;
+				Barycentrics[i]  /= BarycentricMax;
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	bool Store( FGlobalWorkQueue WorkQueue, uint Offset )
+	{
+		uint4 RawData;
+		RawData.x = ( VisibleClusterIndex << 7 ) | PatchIndex;
+		
+		Barycentrics[i] = round( Barycentrics[i] * BarycentricMax );
+		
+		UNROLL
+		for( int i = 0; i < 3; i++ )
+		{
+			const uint e0 = i;
+			const uint e1 = (1 << e0) & 3;
+			const uint e2 = (1 << e1) & 3;
+
+			// Am I on this edge?
+			if( Barycentrics[i][ e2 ] == 0 )
+			{
+				// Snap toward min barycentric means snapping mirrors. Adjacent patches will thus match.
+				if( Barycentrics[i][ e0 ] > Barycentrics[i][ e1 ] )
+					Barycentrics[i][ e0 ] = BarycentricMax - Barycentrics[i][ e1 ];
+				else
+					Barycentrics[i][ e1 ] = BarycentricMax - Barycentrics[i][ e0 ];
+			}
+
+			RawData[ i + 1 ]  = Barycentrics[i].x;
+			RawData[ i + 1 ] |= Barycentrics[i].y << 16;
+		}
+
+		checkSlow(
+			RawData.x != ~0u &&
+			RawData.y != ~0u &&
+			RawData.z != ~0u &&
+			RawData.w != ~0u );
+
+		WorkQueue.DataBuffer.Store4( Offset * 16, RawData );
+	}
+
+	void Clear( FGlobalWorkQueue WorkQueue, uint Offset )
+	{
+		WorkQueue.DataBuffer.Store4( Offset * 16, ~0u );
+	}
+
+	void Run( FGlobalWorkQueue WorkQueue )
+	{
+		bool bVisible = true;
+		bool bWasOccluded = false;
+		// TODO Cull
+
+		bool bIsCandidate = bVisible && !HierarchyNodeSlice.bLeaf;
+
+		if( bIsCandidate )
+		{
+			uint WriteOffset = WorkQueue.Add();
+
+			DeviceMemoryBarrier();
+
+			// GPU might not be filled, so latency is important here. Kick new jobs as soon as possible.
+
+			if( WriteOffset < WorkQueue.Size )
+			{
+				FNodeCullTask Task = this;
+				Task.Flags		|= NANITE_CULLING_FLAG_TEST_LOD;
+				Task.NodeIndex	= HierarchyNodeSlice.ChildStartReference;
+
+				Task.Store( WorkQueue, WriteOffset );
+
+				DeviceMemoryBarrier();
+			}
+		}
+
+		//WorkQueue.ReleaseTask();
+
+	#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		if( bWasOccluded )
+		{
+			uint WriteOffset = OccludedWorkQueue.Add();
+
+			if( WriteOffset < WorkQueue.Size )
+			{
+				FNodeCullTask Task = this;
+				Task.Flags &= ~NANITE_CULLING_FLAG_TEST_LOD;
+
+				Task.Store( OccludedWorkQueue, WriteOffset );
+			}
+		}
+	#endif
+	}
+};*/
+#endif

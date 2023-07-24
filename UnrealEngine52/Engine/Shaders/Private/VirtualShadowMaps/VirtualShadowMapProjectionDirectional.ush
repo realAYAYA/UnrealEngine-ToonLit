@@ -1,0 +1,378 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMapProjectionDirectional.ush:
+=============================================================================*/
+#pragma once
+
+#include "../DeferredShadingCommon.ush"
+#include "../SceneTexturesCommon.ush"
+#include "../LightShaderParameters.ush"
+#include "../PathTracing/Utilities/PathTracingRandomSequence.ush"
+#include "../Visualization.ush"
+#include "../BlueNoise.ush"
+#include "VirtualShadowMapPageAccessCommon.ush"
+#include "VirtualShadowMapProjectionCommon.ush"
+#include "VirtualShadowMapSMRTCommon.ush"
+
+#define USE_BLUE_NOISE 1
+
+float2 ComputeDepthSlopeDirectionalUV(
+	FVirtualShadowMapProjectionShaderData ProjectionData,
+	float3 EstimatedGeoWorldNormal,
+	bool bClamp = true)
+{
+	float4 NormalPlaneUV = mul(float4(EstimatedGeoWorldNormal, 0.0f), ProjectionData.TranslatedWorldToShadowUVNormalMatrix);
+	float2 DepthSlopeUV = -NormalPlaneUV.xy / NormalPlaneUV.z;
+
+	// Clamp to avoid excessive degenerate slope biases causing flickering lit pixels
+	float2 Clamp = 0.05f;
+	DepthSlopeUV = bClamp ? clamp(DepthSlopeUV, -Clamp, Clamp) : DepthSlopeUV;
+
+	return DepthSlopeUV;
+}
+
+float ComputeOptimalSlopeBiasDirectional(
+	float2 DepthSlopeUV,
+	float2 OffsetUV)
+{
+	return 2.0f * max(0.0f, dot(DepthSlopeUV, OffsetUV));
+}
+
+int GetMappedClipmapId(int VirtualShadowMapId, FLWCVector3 RayOriginWorld)
+{
+	// This is the (unbiased) most detailed clipmap level that we are guaranteed to have a page table entry for
+	const FVirtualShadowMapProjectionShaderData BaseProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);		
+	float ClipmapLevelFloat = CalcAbsoluteClipmapLevel(BaseProjectionData, RayOriginWorld);
+	int ClipmapIndex = max(0, int(floor(ClipmapLevelFloat)) - BaseProjectionData.ClipmapLevel);
+
+	// Clipmap origin should be near shaded samples, so shadow translated world should be regular range
+	int ClipmapId = VirtualShadowMapId + ClipmapIndex;
+	const FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(ClipmapId);
+	float3 RayOriginShadowTranslatedWorld = LWCToFloat(LWCAdd(RayOriginWorld, ProjectionData.PreViewTranslation));
+	float3 RayStartUVZ = mul(float4(RayOriginShadowTranslatedWorld, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix).xyz;
+
+	// NOTE: We don't need the actual sample here, we're just looking for the best mapped page at the ray origin
+	// Trusting a lot in DCE here... may be better to refactor at some point
+	FVirtualShadowMapSample ShadowSample = SampleVirtualShadowMapClipmap(ClipmapId, RayStartUVZ.xy);
+	if (ShadowSample.bValid && ShadowSample.VirtualShadowMapId > ClipmapId)
+	{
+		// NOTE: We could bias this (as long as we clamp it to 0 still) to allow sampling higher resolution
+		// data in the case where we just happened to hit a pixel with lower resolution, but note that performance
+		// suffers when we have to use fallback levels in the SMRT loop, so this is fine for now.
+		// We may have to revisit this if we start getting finer grained with caching and mapped page resolutions,
+		// but likely if this matters here we would already be seeing visible resolution seams between pages regardless.
+		ClipmapIndex += (ShadowSample.VirtualShadowMapId - ClipmapId);
+	}
+
+	return VirtualShadowMapId + ClipmapIndex;
+}
+
+struct FSMRTClipmapRayState
+{
+	int ClipmapId;			// Pre-offset virtual shadow map ID of specific clipmap level
+	float3 RayStartUVZ;	
+	float3 RayStepUVZ;
+	float ExtrapolateSlope;
+	uint2 PhysicalTexelAddress;
+	uint2 VirtualTexelAddress;
+	int SampledClipmapId;
+};
+
+FSMRTClipmapRayState SMRTClipmapRayInitialize(
+	const FVirtualShadowMapProjectionShaderData ProjectionData,
+	float3 RayOriginShadowTranslatedWorld,
+	float3 RayDir,
+	float RayLength,
+	float RayStartOffset,
+	float2 DepthSlopeUV,
+	float2 TexelOffset,
+	float ExtrapolateSlope)
+{
+	float3 RayStart = RayOriginShadowTranslatedWorld + RayDir * RayStartOffset;
+	float3 RayVector = RayDir * RayLength;
+
+	float3 RayStartUVZ = mul(float4(RayStart, 1.0f), ProjectionData.TranslatedWorldToShadowUVMatrix).xyz;
+	float3 RayStepUVZ  = mul(float4(RayVector, 0.0f), ProjectionData.TranslatedWorldToShadowUVMatrix).xyz;
+	
+	// Texel dither to hide aliasing
+	// Note that this is directly scaled in texel space of the clipmap level, so it can create visual
+	// discontinuities at clipmap boundaries. We could scale this by distance instead of texel size but
+	// in the case where texels are large enough to be obvious there are already visual discontinuities.
+	{
+		float OptimalBias = ComputeOptimalSlopeBiasDirectional(DepthSlopeUV, TexelOffset);
+		// Subtract off any portion of the bias that was already covered by the ray start offset (usually screen ray)
+		OptimalBias = max(0.0f, OptimalBias - abs(RayStartOffset * ProjectionData.ShadowViewToClipMatrix._33));
+
+		RayStartUVZ.xy += TexelOffset;
+		RayStartUVZ.z += OptimalBias;
+	}
+
+	FSMRTClipmapRayState Result;
+	Result.ClipmapId = ProjectionData.VirtualShadowMapId;
+	Result.RayStartUVZ = RayStartUVZ;
+	Result.RayStepUVZ = RayStepUVZ;
+	// Max depth slope for slope-based extrapolation when using SMRT. Scale so that it doesn't change based on ZRangeScale.
+	Result.ExtrapolateSlope = abs(ExtrapolateSlope * ProjectionData.ShadowViewToClipMatrix._33);
+	Result.VirtualTexelAddress = uint2(0xFFFFFFFF, 0xFFFFFFFF);
+	Result.PhysicalTexelAddress = uint2(0xFFFFFFFF, 0xFFFFFFFF);
+	return Result;
+}
+
+FSMRTSample SMRTFindSample(inout FSMRTClipmapRayState RayState, float SampleTime)
+{	
+	const float3 SampleUVZ = RayState.RayStartUVZ + RayState.RayStepUVZ * SampleTime;
+	FVirtualShadowMapSample ShadowSample = SampleVirtualShadowMapClipmap(RayState.ClipmapId, SampleUVZ.xy);
+
+	FSMRTSample Sample = InitSMRTSample();
+	Sample.bValid = ShadowSample.bValid;
+	Sample.ReferenceDepth = SampleUVZ.z;
+	Sample.ExtrapolateSlope = RayState.ExtrapolateSlope;
+
+	if (ShadowSample.bValid)
+	{
+		Sample.SampleDepth = ShadowSample.Depth;
+
+		// Debug
+		RayState.VirtualTexelAddress = ShadowSample.VirtualTexelAddress;
+		RayState.PhysicalTexelAddress = ShadowSample.PhysicalTexelAddress;
+		RayState.SampledClipmapId = ShadowSample.VirtualShadowMapId;
+	}
+
+	return Sample;
+}
+
+// Instantiate SMRTRayCast for FSMRTClipmapRayState
+#define SMRT_TEMPLATE_RAY_STRUCT FSMRTClipmapRayState
+#include "VirtualShadowMapSMRTTemplate.ush"
+#undef SMRT_TEMPLATE_RAY_STRUCT
+
+
+float3 GetRandomDirectionalLightRayDir(FLightShaderParameters Light, float2 E)
+{
+	float3 RayDir = Light.Direction;
+	{
+		float2 DiskUV = UniformSampleDiskConcentric(E) * Light.SourceRadius;
+		float3 N = RayDir;
+		float3 dPdu = cross(N, (abs(N.x) > 1e-6f) ? float3(1, 0, 0) : float3(0, 1, 0));
+		float3 dPdv = cross(dPdu, N);
+		RayDir += dPdu * DiskUV.x + dPdv * DiskUV.y;
+	}
+	return normalize(RayDir);
+}
+
+// Normal and LightDirection should be normalized
+bool IsBackfaceToDirectionalLight(float3 Normal, float3 LightDirection, float LightSourceRadius)
+{
+	// Allow a minimum of ~5 degrees of wiggle room to account for normal issues
+	float MinSinAlpha = 0.1;
+	float SinAlpha = max(abs(LightSourceRadius), MinSinAlpha);
+	return dot(Normal, LightDirection) < -SinAlpha;
+}
+
+// See http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+float2 R2Sequence(int n)
+{
+	return frac(float(n) * float2(0.754877669f, 0.569840296f));
+}
+
+float4 GetRandomSample(
+	uint2 PixelPos,
+	uint TimeIndex,
+	uint SampleIndex,
+	uint MaxSampleCount)
+{
+#if USE_BLUE_NOISE
+	{
+		// Blue noise is cheaper to compute
+		int2 Offset1 = int2(R2Sequence(SampleIndex) * BlueNoise.Dimensions.xy);
+		int2 Offset2 = int2(R2Sequence(SampleIndex + MaxSampleCount) * BlueNoise.Dimensions.xy);
+		float4 RandomSample;
+		RandomSample.xy = BlueNoiseVec2(PixelPos + Offset1, TimeIndex);
+		RandomSample.zw = BlueNoiseVec2(PixelPos + Offset2, TimeIndex);
+		return RandomSample;
+	}
+#else
+	{
+		RandomSequence RandSequence;
+		RandomSequence_Initialize(RandSequence, PixelPos, SampleIndex, TimeIndex, MaxSampleCount);
+		return RandomSequence_GenerateSample4D(RandSequence);
+	}
+#endif
+}
+
+FVirtualShadowMapSampleResult TraceDirectional(
+	int VirtualShadowMapId,
+	FLightShaderParameters Light,
+	uint2 PixelPos,
+	const float SceneDepth,
+	float3 TranslatedWorldPosition,
+	float RayStartOffset,
+	uint MaxRayCount,
+	uint SamplesPerRay,
+	float RayLengthScale,
+	const float Noise,
+	bool bCullBackface,
+	half3 WorldNormal,
+	float TexelDitherScale,
+	float ExtrapolateSlope,
+	uint SMRTAdaptiveRayCount)
+{
+	FLWCVector3 WorldPosition = LWCSubtract(LWCPromote(TranslatedWorldPosition), PrimaryView.PreViewTranslation);
+	float3 ViewPosition = mul(float4(TranslatedWorldPosition, 1.0f), View.TranslatedWorldToView).xyz;
+	float DistanceFromViewOrigin = length(ViewPosition);
+
+	FVirtualShadowMapSampleResult Result = InitVirtualShadowMapSampleResult();
+	Result.bValid = true;	// TODO: false if all samples of all rays miss pages?
+	Result.ShadowFactor = 0.0f;
+
+	if (!bCullBackface || !IsBackfaceToDirectionalLight(WorldNormal, Light.Direction, Light.SourceRadius))
+	{
+		// Find the best resolution mapped clipmap at the ray origin location
+		const int ClipmapId = GetMappedClipmapId(VirtualShadowMapId, WorldPosition);
+		const FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(ClipmapId);
+
+		// This function is designed to vary in depth in roughly the same way as shadow texel density does,
+		// thus the dependence on Clipmap ResolutionLodBias. The goal here is to define a texel dither that
+		// is "smooth" and doesn't have obvious artifacts at page edges of different clipmap levels.
+		// 
+		// This could become a problem later if we break too far from that global resolution bias. That said,
+		// these cases would have unavoidable discontinuities at page edges, so that would have to be handled
+		// in some different way.
+		//
+		// 0.5 is arbitrary but makes it consistent with the previous dither scale cvar
+		float DitherScale = 0.0f;
+		if (TexelDitherScale > 0.0f)
+		{
+			DitherScale =
+				((0.5f / float(CalcLevelDimsTexels(0))) * TexelDitherScale * DistanceFromViewOrigin) /
+				(exp2(ProjectionData.ClipmapLevel - ProjectionData.ResolutionLodBias));
+		}
+
+		float2 DepthSlopeUV = ComputeDepthSlopeDirectionalUV(ProjectionData, WorldNormal);
+
+		// Compute max ray length based on view depth
+		// This affects both how far we are willing to trace across the shadow map (for clipmaps this is related to view depth)
+		// and the maximum size a penumbra can be.
+		// Too high values will cause shadows to detach from their contact points (unless more samples are used).
+		// Too low values will greatly restrict how large penumbras can be in screen space.
+		float RayLength = RayLengthScale * DistanceFromViewOrigin;
+
+		// Clipmap origin should be near shaded samples, so shadow translated world should be regular range
+		float3 RayOriginShadowTranslatedWorld = LWCToFloat(LWCAdd(WorldPosition, ProjectionData.PreViewTranslation));
+
+		uint RayMissCount = 0;
+		uint i = 0;
+		float OccluderDistanceSum = 0.0f;
+		float MaxOccluderDistance = -1.0f;
+		for ( ; i < MaxRayCount; i++)
+		{
+			// One sample for ray, one for texel dither
+			float4 RandSample = GetRandomSample(PixelPos, View.StateFrameIndex, i, MaxRayCount);
+			float3 RayDir = GetRandomDirectionalLightRayDir(Light, RandSample.xy);
+			float2 TexelOffset = (RandSample.zw - 0.5f) * DitherScale;
+
+			FSMRTClipmapRayState RayState = SMRTClipmapRayInitialize(
+				ProjectionData,
+				RayOriginShadowTranslatedWorld,
+				RayDir,
+				RayLength,
+				RayStartOffset,
+				DepthSlopeUV,
+				TexelOffset,
+				ExtrapolateSlope);
+			FSMRTResult SMRTResult = SMRTRayCast(RayState, SamplesPerRay, Noise);
+
+			// Debug output (DCE'd if not used)
+			Result.ClipmapIndexOrMipLevel = RayState.SampledClipmapId - VirtualShadowMapId;
+			Result.VirtualTexelAddress = RayState.VirtualTexelAddress;
+			Result.PhysicalTexelAddress =  RayState.PhysicalTexelAddress;
+			//Result.GeneralDebug = GreenToRedTurbo((RayState.SampledClipmapId - RayState.ClipmapId) / 2.0f);
+			
+			if (SMRTResult.bValidHit)
+			{
+				float OccluderDistance = ComputeOccluderDistanceOrtho(
+					GetVirtualShadowMapProjectionData(RayState.ClipmapId).ShadowViewToClipMatrix,
+					SMRTResult.HitDepth,
+					RayState.RayStartUVZ.z);
+
+				OccluderDistanceSum += OccluderDistance;
+				MaxOccluderDistance = max(MaxOccluderDistance, OccluderDistance);
+			}
+			else
+			{
+				++RayMissCount;
+			}
+
+			#if COMPUTESHADER
+			if (SMRTAdaptiveRayCount > 0)
+			{
+				// TODO: Adapt this heuristic based on SMRTAdaptiveRayCount as well?
+				if( i == 0 )
+				{
+					bool bHit = SMRTResult.bValidHit;
+
+					// All lanes missed
+					bool bAllLanesMiss = WaveActiveAllTrue( !bHit );
+					if( bAllLanesMiss )
+					{
+						break;
+					}
+				}
+				else if( i >= SMRTAdaptiveRayCount )
+				{
+					// After 2 iterations and all have hit, assume umbra
+					bool bAllLanesHit = WaveActiveAllTrue( RayMissCount == 0 );
+					if( bAllLanesHit )
+					{
+						break;
+					}
+				}
+			}
+			#endif
+		}
+		uint RayCount = min(i + 1U, MaxRayCount);		// break vs regular for loop exit
+
+		/* TODO: Experiment with max vs avg distance in various cases
+		float OccluderDistance = (View.GeneralPurposeTweak == 0)
+			? MaxOccluderDistance
+			: (OccluderDistanceSum / float(max(1, RayCount - RayMissCount)));
+		*/
+		float OccluderDistance = (OccluderDistanceSum / float(max(1U, RayCount - RayMissCount)));
+
+		Result.ShadowFactor = float(RayMissCount) / float(RayCount);
+		Result.OccluderDistance = OccluderDistance;
+		Result.RayCount = RayCount;
+	}
+
+	return Result;
+}
+
+// Generate a ray based on directional light source geometry (e.g, source radius)
+bool GenerateRayDirectional(
+	FLightShaderParameters Light,
+	uint2 PixelPos,
+	float3 TranslatedWorldPosition,
+	float RayLengthScale,
+	uint RayIndex,
+	uint RayCount,
+	inout float3 OutRayStart,
+	inout float3 OutRayEnd)
+{
+	float3 ViewPosition = mul(float4(TranslatedWorldPosition, 1.0f), View.TranslatedWorldToView).xyz;
+	float DistanceFromViewOrigin = length(ViewPosition);
+
+	// Compute max ray length based on view depth
+	// This affects both how far we are willing to trace across the shadow map (for clipmaps this is related to view depth)
+	// and the maximum size a penumbra can be.
+	// Too high values will cause shadows to detach from their contact points (unless more samples are used).
+	// Too low values will greatly restrict how large penumbras can be in screen space.
+	float RayLength = RayLengthScale * DistanceFromViewOrigin;
+
+	float2 E = GetRandomSample(PixelPos, View.StateFrameIndex, RayIndex, RayCount).xy;
+
+	float3 RayDir = GetRandomDirectionalLightRayDir(Light, E);
+	OutRayStart = TranslatedWorldPosition;
+	OutRayEnd = OutRayStart + RayDir * RayLength;
+	return true;
+}

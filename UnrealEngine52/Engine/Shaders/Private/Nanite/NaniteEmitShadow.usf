@@ -1,0 +1,112 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+Texture2D<uint> DepthBuffer;
+
+int2 SourceOffset;
+float ViewToClip22;
+float DepthBias;
+uint CubemapFaceIndex;
+
+// VSM
+uint ShadowMapID;
+
+void EmitShadowMapPS(
+	in float4 SvPosition	: SV_Position,
+	out float OutDepth		: SV_Depth
+	)
+{
+	OutDepth = 0;
+
+	int2 PixelPos = (int2)SvPosition.xy;
+	uint DepthInt = DepthBuffer[ PixelPos + SourceOffset ];
+
+	if( DepthInt != 0 )
+	{
+		float DeviceZ = asfloat( DepthInt );
+
+#if DEPTH_OUTPUT_TYPE == 0
+		// Standard depth
+		OutDepth = DeviceZ;
+#elif DEPTH_OUTPUT_TYPE == 1
+		// Ortho shadow maps
+		// NOTE: Ortho shadow maps render with near clip disabled, so device Z can be > 1.
+		// Clamp that back to the near plane for consistency with non-Nanite shadow path.
+		OutDepth = 1 - saturate(DeviceZ) + DepthBias;
+#else
+		// Perspective shadow maps
+		OutDepth = ViewToClip22 * ( DeviceZ - 1 ) / ( DeviceZ - ViewToClip22 ) + DepthBias;
+		//MinZ = View.ViewToClip[3][2] / ( 1 - View.ViewToClip[2][2] );
+		//ViewZ = View.ViewToClip[3][2] / ( DeviceZ - View.ViewToClip[2][2] );
+#endif
+	}
+	else
+	{
+		discard;
+	}
+}
+
+struct FEmitCubemapShadowVSOut
+{
+	float4 Position : SV_Position;
+#if USE_GEOMETRY_SHADER == 0
+	uint RTIndex : SV_RenderTargetArrayIndex;
+#endif
+};
+
+void EmitCubemapShadowVS(
+	in uint VertexID : SV_VertexID,
+	out FEmitCubemapShadowVSOut Output)
+{
+	// Triangle from [-1 .. 3] covers full viewport
+	float2 Corner = float2(VertexID & 1, (VertexID >> 1) & 1);
+    Output.Position = float4(Corner * 4.0f - 1.0f, 0.5f, 1.0f);
+
+#if USE_GEOMETRY_SHADER == 0
+	Output.RTIndex = CubemapFaceIndex;
+#endif
+}
+
+struct FEmitCubemapShadowGSOut
+{
+	float4 Position : SV_Position;
+	uint RTIndex : SV_RenderTargetArrayIndex;
+};
+
+[maxvertexcount(3)]
+void EmitCubemapShadowGS(
+	triangle FEmitCubemapShadowVSOut Input[3],
+	inout TriangleStream<FEmitCubemapShadowGSOut> OutStream)
+{
+	FEmitCubemapShadowGSOut Output;
+	Output.RTIndex = CubemapFaceIndex;
+
+	UNROLL
+	for (int VertexIndex = 0; VertexIndex < 3; VertexIndex++)
+	{
+		Output.Position = Input[VertexIndex].Position;
+		OutStream.Append(Output);
+	}
+	OutStream.RestartStrip();
+}
+
+void EmitCubemapShadowPS(
+	in float4 SvPosition : SV_Position,
+	out float OutDepth : SV_Depth
+	)
+{
+	OutDepth = 0.0f;
+
+	uint2 PixelPos = uint2(SvPosition.xy);
+	uint DepthInt = DepthBuffer[PixelPos];
+
+	if (DepthInt != 0)
+	{
+		OutDepth = asfloat(DepthInt);
+	}
+	else
+	{
+		discard;
+	}
+}

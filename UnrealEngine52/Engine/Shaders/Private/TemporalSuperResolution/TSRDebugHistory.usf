@@ -1,0 +1,112 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "TSRCommon.ush"
+#include "../Random.ush"
+
+
+//------------------------------------------------------- CONSTANTS
+
+#define TILE_SIZE 8
+
+
+//------------------------------------------------------- PARAMETERS
+
+Texture2D<tsr_halfC> History_LowFrequency;
+Texture2D<tsr_halfC> History_HighFrequency;
+Texture2D<tsr_half2> History_Metadata;
+Texture2D<tsr_half3> History_Translucency;
+Texture2D<tsr_half>  History_TranslucencyAlpha;
+Texture2D<tsr_subpixel_details> History_SubpixelDetails;
+
+Texture2D<tsr_halfC> PrevHistory_LowFrequency;
+Texture2D<tsr_halfC> PrevHistory_HighFrequency;
+Texture2D<tsr_half2> PrevHistory_Metadata;
+Texture2D<tsr_half3> PrevHistory_Translucency;
+Texture2D<tsr_half>  PrevHistory_TranslucencyAlpha;
+Texture2D<tsr_subpixel_details> PrevHistory_SubpixelDetails;
+
+
+//------------------------------------------------------- FUNCTION
+
+
+void LMHOperator(float A, float B, float C, out float L, out float M, out float H)
+{
+	float X = min(B, C);
+	float Y = max(B, C);
+	
+	L = min(A, X);
+	float Z = max(A, X);
+
+	M = min(Z, Y);
+	H = max(Z, Y);
+}
+
+float Median(float A, float B, float C)
+{
+	float L, M, H;
+	LMHOperator(A, B, C, L, M, H);
+	return M;
+}
+
+
+tsr_subpixel_payload ReadSubpixelDetails(uint2 SubpixelPos)
+{
+	uint2 HistoryPixelPos = SubpixelPos / SUB_PIXEL_GRID_SIZE;
+
+	uint2 SubpixelRelPos = SubpixelPos % SUB_PIXEL_GRID_SIZE;
+	uint SubpixelId = dot(SubpixelRelPos, uint2(1, SUB_PIXEL_GRID_SIZE));
+	uint SubpixelShift = SubpixelId * SUB_PIXEL_BIT_COUNT;
+	
+	tsr_subpixel_details RawHistory3 = History_SubpixelDetails[HistoryPixelPos];
+
+	return tsr_subpixel_payload(RawHistory3 >> SubpixelShift) & SUB_PIXEL_BIT_MASK;
+}
+
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(TILE_SIZE, TILE_SIZE, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	float4 Debug = 0.0;
+
+	uint2 DispatchThreadId = (
+		ZOrder2D(GroupThreadIndex, uint(log2(float(TILE_SIZE)))) +
+		GroupId * uint2(TILE_SIZE, TILE_SIZE));
+
+	uint2 HistoryPixelPos = DispatchThreadId / SUB_PIXEL_GRID_SIZE;
+	float2 ViewportUV = (float2(HistoryPixelPos) + 0.5f) * HistoryInfo_ViewportSizeInverse;
+	float2 ScreenPos = ViewportUVToScreenPos(ViewportUV);
+
+	uint2 SubpixelPos = DispatchThreadId % SUB_PIXEL_GRID_SIZE;
+	uint SubpixelId = dot(SubpixelPos, uint2(1, SUB_PIXEL_GRID_SIZE));
+	uint SubpixelShift = SubpixelId * SUB_PIXEL_BIT_COUNT;
+	
+	{
+		#if 1
+			//tsr_half3 RawHistory0 = History_Textures_0[HistoryPixelPos];
+			//tsr_half3 RawHistory1 = History_Textures_1[HistoryPixelPos];
+			// RawHistory2 = History_Textures_2[HistoryPixelPos];
+			tsr_subpixel_details RawHistory3 = History_SubpixelDetails[HistoryPixelPos];
+		#else
+			//tsr_half3 RawHistory0 = PrevHistory_Textures_0[HistoryPixelPos];
+			//tsr_half3 RawHistory1 = PrevHistory_Textures_1[HistoryPixelPos];
+			//tsr_half2 RawHistory2 = PrevHistory_Textures_2[HistoryPixelPos];
+			tsr_subpixel_details RawHistory3 = PrevHistory_SubpixelDetails[HistoryPixelPos];
+		#endif
+
+		tsr_subpixel_payload SubpixelDetails = tsr_subpixel_payload(RawHistory3 >> SubpixelShift) & SUB_PIXEL_BIT_MASK;
+
+		Debug.r = UncompressParallaxFactor(SubpixelDetails);
+		//Debug.b = float(SubpixelId);
+	}
+
+	#if DEBUG_OUTPUT && 1
+	if (all(DispatchThreadId < HistoryInfo_ViewportMax * SUB_PIXEL_GRID_SIZE))
+	{
+		DebugOutput[tsr_short3(DispatchThreadId, 0)] = Debug;
+	}
+	#endif
+}
