@@ -1,0 +1,123 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "HairStrandsClusterCommon.ush"
+#include "HairStrandsMeshProjectionCommon.ush"
+
+float3 SimRestOffset;
+uint VertexCount;
+uint DispatchCountX; 
+
+Buffer<float4> SimDeformedOffsetBuffer;
+Buffer<uint4> SimRestPosePositionBuffer;
+RWBuffer<uint4> OutSimDeformedPositionBuffer;
+
+#if PERMUTATION_GROUP_SIZE == 64
+	#define GROUP_SIZE 64
+#elif PERMUTATION_GROUP_SIZE == 32
+	#define GROUP_SIZE 32
+#else
+	#error Unknown group size	
+#endif
+
+#define DEFORMATION_BYPASS 0
+#define DEFORMATION_OFFSET_GUIDE 1
+#define DEFORMATION_OFFSET_GUIDE_DYNAMIC 2
+#define DEFORMATION_OFFSET_GUIDE_GLOBAL 3
+#define DEFORMATION_OFFSET_GUIDE_BONES 4
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_DYNAMIC
+
+Buffer<float4>  SimRestPosition0Buffer;
+Buffer<float4>  SimRestPosition1Buffer;
+Buffer<float4>  SimRestPosition2Buffer;
+
+Buffer<float4>  SimDeformedPosition0Buffer;
+Buffer<float4>  SimDeformedPosition1Buffer;
+Buffer<float4>  SimDeformedPosition2Buffer;
+
+Buffer<uint>	SimRootBarycentricBuffer;
+Buffer<uint>    SimVertexToRootIndexBuffer;
+Buffer<uint>	SimRootToUniqueTriangleIndexBuffer;
+
+// Return world position of a guide vertex deformed by a skinned triangle
+float3 DeformGuideByTriangle(
+	uint GuideIndex,
+	FHairMeshTriangle RestTriangle,
+	FHairMeshTriangle DeformedTriangle,
+	float3 RootBarycentric)
+{
+	const float3 WorldRestGuidePoint = f16tof32(SimRestPosePositionBuffer[GuideIndex].xyz) + SimRestOffset;
+	const float3 LocalRestGuidePoint = ToTriangle(WorldRestGuidePoint, RootBarycentric, RestTriangle);
+	const float3 WorldDeformedGuidePoint = ToWorld(LocalRestGuidePoint, RootBarycentric, DeformedTriangle);
+
+	return WorldDeformedGuidePoint;
+}
+
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_BONES
+
+Buffer<float4>  BoneDeformedPositionBuffer;
+
+#endif
+
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_GLOBAL
+uint SampleCount;
+Buffer<float4>  RestSamplePositionsBuffer;
+Buffer<float4>  MeshSampleWeightsBuffer;
+#endif
+
+float3 DisplacePosition(uint VertexIndex, float3 Pos)
+{
+	const float3 OutSimHairPositionOffset = SimDeformedOffsetBuffer[0].xyz;
+
+// By pass
+#if PERMUTATION_DEFORMATION == DEFORMATION_BYPASS
+	return Pos;
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE
+	return Pos + (SimRestOffset - OutSimHairPositionOffset);
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_DYNAMIC
+	const uint RootIndex = SimVertexToRootIndexBuffer[VertexIndex];
+	const float3 RootBarycentric = DecodeBarycentrics(SimRootBarycentricBuffer[RootIndex]);
+
+	const uint TriangleIndex = SimRootToUniqueTriangleIndexBuffer[RootIndex];
+	const FHairMeshTriangle RestTriangle = GetTriangleTransformation(TriangleIndex, SimRestPosition0Buffer, SimRestPosition1Buffer, SimRestPosition2Buffer);
+	const FHairMeshTriangle DeformedTriangle = GetTriangleTransformation(TriangleIndex, SimDeformedPosition0Buffer, SimDeformedPosition1Buffer, SimDeformedPosition2Buffer);
+
+	return DeformGuideByTriangle(VertexIndex, RestTriangle, DeformedTriangle, RootBarycentric) - OutSimHairPositionOffset;
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_GLOBAL
+	const float3 RestControlPoint = Pos + SimRestOffset;
+	const float3 ControlPoint = ApplyRBF(RestControlPoint, SampleCount, RestSamplePositionsBuffer, MeshSampleWeightsBuffer);
+	return ControlPoint - OutSimHairPositionOffset;
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_BONES
+	const float4 RestControlPoint = float4(Pos + SimRestOffset,1);
+	const int BufferOffset = 3 * (VertexIndex+1);
+
+	const float3x4 BoneMatrix = float3x4(BoneDeformedPositionBuffer[BufferOffset], BoneDeformedPositionBuffer[BufferOffset+1], BoneDeformedPositionBuffer[BufferOffset+2]);
+	return mul(BoneMatrix,RestControlPoint) - OutSimHairPositionOffset;
+#endif
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint VertexIndex = GetHairStrandsVertexFetchIndex(DispatchThreadId, GROUP_SIZE, DispatchCountX);
+	
+	if (VertexIndex < VertexCount)
+	{
+		const uint4  Data 				= SimRestPosePositionBuffer[VertexIndex];
+		const float3 ControlPoint		= f16tof32(Data.xyz);
+		const float3 DisplacedPosition	= DisplacePosition(VertexIndex, ControlPoint);
+		OutSimDeformedPositionBuffer[VertexIndex] = uint4(f32tof16(DisplacedPosition), Data.w);
+	}
+}

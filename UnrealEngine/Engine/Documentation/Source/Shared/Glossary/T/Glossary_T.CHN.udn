@@ -1,0 +1,75 @@
+﻿INTSourceChangelist:3810557
+Title:T
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_T]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+切线句柄
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_tangent_handles]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+纹理
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Texture]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+时间光标
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_time_cursor]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+时间轴
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_timeline]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+时间轴节点
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Timeline_node]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_T]
+
+[COMMENT:none]
+[EXCERPT:Glossary_tangent_handles]
+ **切线句柄（tangent handle）** 是在关键帧编辑中用于调整连接两个关键帧的线条形状和曲线的工具。您可以在曲线编辑器（Curve Editors）中找到与键连接的切线句柄。
+[/EXCERPT:Glossary_tangent_handles]
+[EXCERPT:Glossary_Texture]
+ **纹理（Textures）** 是材质中使用的图像。它们被映射至应用了该材质的表面。纹理被直接应用（例如对于基本颜色纹理），或者纹理像素（或_texels_）的值在材质中被用作遮罩或用于其他算法。在某些情况下，纹理也可以在材质之外直接使用，例如用于绘制到HUD。在大多数情况下，纹理在图像编辑应用程序（例如Photoshop）中通过外部方式创建，然后再通过  **内容浏览器（Content Browser）** 导入虚幻编辑器。然而，某些纹理（例如渲染纹理）则是在Unreal中生成。它们通常从场景中获取一些信息，并将其呈现为纹理，以便在其他地方使用。
+[/EXCERPT:Glossary_Texture]
+[EXCERPT:Glossary_time_cursor]
+ **时间光标（time cursor）** 是时间轴底部的黑色竖条，用于指示动画播放的时间位置。您可以前后拖动时间光标以在三维视口中预览动画。
+[/EXCERPT:Glossary_time_cursor]
+[EXCERPT:Glossary_timeline]
+ **时间轴（timeline）** 是Matinee中对时间的一种可视化表示，您可以使用它来设置和修改关键帧动画的键并预览您的电影。它与蓝图中的时间轴节点不同。
+[/EXCERPT:Glossary_timeline]
+[EXCERPT:Glossary_Timeline_node]
+ **时间轴节点（Timeline Nodes）** 是蓝图中的特殊节点，它们允许根据游戏中的事件快速设计和播放基于时间的简单动画。时间轴与简单Matinee序列有几分类似， 
+因为它们允许对简单值进行动画处理，并允许随着时间的推移触发事件。您可以通过在图表（Graph）选项卡中 
+或我的蓝图（My Blueprint）选项卡中双击时间轴（Timeline），在蓝图编辑器中直接编辑这些时间轴。它们经过专门设计，用于处理简单的非电影任务，例如开门、改变光源 
+或在场景中对Actor执行其他以时间为中心的操作。
+[/EXCERPT:Glossary_Timeline_node]
+[/COMMENT]

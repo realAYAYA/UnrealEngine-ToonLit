@@ -1,0 +1,103 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.4",
+	"FriendlyName": "MassGameplay",
+	"Description": "Implementation of large-scale agent simulation based on MassEntity",
+	"Category": "Gameplay",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "MassCommon",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassActors",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassSignals",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassSpawner",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassSmartObjects",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassSimulation",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassLOD",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassMovement",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassReplication",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassRepresentation",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassGameplayDebug",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "MassGameplayEditor",
+			"Type": "Editor"
+		},
+		{
+			"Name": "MassMovementEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		},
+		{
+			"Name": "MassGameplayExternalTraits",
+			"Type": "Runtime"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "MassEntity",
+			"Enabled": true
+		},
+		{
+			"Name": "ZoneGraph",
+			"Enabled": true
+		},
+		{
+			"Name": "ZoneGraphAnnotations",
+			"Enabled": true
+		},
+		{
+			"Name": "SmartObjects",
+			"Enabled": true
+		},
+		{
+			"Name": "StateTree",
+			"Enabled": true
+		}
+	]
+}

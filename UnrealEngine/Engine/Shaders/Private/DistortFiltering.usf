@@ -1,0 +1,88 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DistortFiltering.usf: Pixel shader for filtering the scene color in preparation for rough refraction
+=============================================================================*/
+
+#include "Common.ush"
+
+
+
+#ifdef COPYSCENECOLORTEXTUREPS
+
+Texture2D SceneColorTexture;
+SamplerState SceneColorSampler;
+
+void CopySceneColorTexturePS(FScreenVertexOutput Input, out float4 OutColor : SV_Target0)
+{
+	float2 TextureUV = (Input.UV * View.ViewSizeAndInvSize.xy + View.ViewRectMin.xy) * View.BufferSizeAndInvSize.zw;
+	float4 LinearColor = Texture2DSample(SceneColorTexture, SceneColorSampler, TextureUV);
+	OutColor = float4(LinearColor.rgb, 0);
+}
+
+#endif // COPYSCENECOLORPS
+
+
+
+#ifdef DOWNSAMPLECOLORCS
+
+uint SrcMipIndex;
+int2 SrcMipResolution;
+int2 DstMipResolution;
+SamplerState SourceSampler;
+Texture2D<float4> SourceTexture;
+RWTexture2D<float4> OutTextureMipColor;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void DownsampleColorCS(uint3 ThreadId : SV_DispatchThreadID)
+{
+	if (any(ThreadId.xy >= uint2(DstMipResolution)))
+	{
+		return;
+	}
+	float2 ScaledUVs = (float2(ThreadId.xy) + 0.5f) / float2(DstMipResolution);
+
+	float4 OutColor = SourceTexture.SampleLevel(SourceSampler, ScaledUVs, SrcMipIndex);
+
+	OutTextureMipColor[uint2(ThreadId.xy)] = OutColor;
+}
+
+#endif // DOWNSAMPLECOLORCS
+
+
+
+#ifdef FILTERCOLORCS
+
+uint SampleCount;
+uint SrcMipIndex;
+int2 MipResolution;
+float4 BlurDirection;
+SamplerState SourceSampler;
+Texture2D<float4> SourceTexture;
+RWTexture2D<float4> OutTextureMipColor;
+float4 SampleOffsetsWeights[128];
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void FilterColorCS(uint3 ThreadId : SV_DispatchThreadID)
+{
+	if (any(ThreadId.xy >= uint2(MipResolution)))
+	{
+		return;
+	}
+	float2 ScaledUVs = (float2(ThreadId.xy) + 0.5f) / float2(MipResolution);
+
+	float4 OutColor = 0;
+	
+	for (uint i = 0; i < SampleCount; ++i)
+	{
+		float2 SampleOffsetWeight = SampleOffsetsWeights[i].xy;
+
+		OutColor += SourceTexture.SampleLevel(SourceSampler, ScaledUVs + SampleOffsetWeight.xx * BlurDirection.xy, SrcMipIndex) * SampleOffsetWeight.y;
+	}
+
+	OutTextureMipColor[uint2(ThreadId.xy)] = OutColor;
+}
+
+#endif // FILTERCOLORCS
+
+

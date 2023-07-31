@@ -1,0 +1,43 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1",
+	"FriendlyName": "Apple ARKit Face Support",
+	"Description": "Support for Apple's face tracking features",
+	"Category": "Augmented Reality",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"EnabledByDefault": false,
+	"SupportedTargetPlatforms" : [
+		"IOS", "Win64", "Mac"
+	],
+	"Modules":
+	[
+		{
+			"Name": "AppleARKitFaceSupport",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList" : [ "Mac", "IOS", "Win64" ]
+		}
+	],
+    "Plugins":
+    [
+		{
+			"Name": "AppleARKit",
+			"Enabled": true
+		},
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		},
+        {
+            "Name": "AppleImageUtils",
+            "Enabled": true
+        }
+    ]
+}

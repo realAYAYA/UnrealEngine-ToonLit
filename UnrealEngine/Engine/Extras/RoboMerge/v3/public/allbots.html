@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<html>
+<head>
+	<title>ROBOMERGE all bots</title>
+	<link rel="icon" href="/img/robo-r.png" type="image/png">
+
+	<script src="/js/jquery-3.4.1.min.js"></script>
+	<script src="/js/bootstrap.bundle.min.js"></script>
+	<script src="/js/hpcc-wasm-index.min.js"></script>
+	<script src="/js/flow.js"></script>
+
+	<link rel="stylesheet" href="/css/bootstrap.min.css">
+	<link rel="stylesheet" href="/css/main.css">
+
+	<script>
+		$.ajax({
+			url: '/api/branches',
+			type: 'get',
+			dataType: 'json',
+			success: data => {
+				const bots = location.search.match(/bots=([^&]*)/);
+				$(() => $('#graph').append(showFlowGraph(data.branches, {
+					botNames: bots ? bots[1].split(',') : [],
+					...parseOptions(location.search)
+				})));
+			},
+		// error: function(xhr, error, status) {
+		// 	robomergeUser = undefined;
+		// 	setError(xhr, error);
+		// 	callback(null);
+		// }
+		})
+	</script>
+</head>
+<body>
+	<header><img src="/img/logo.png"></header>
+	<div class="container">
+		<div id="graph">
+		</div>
+
+		<div style="transform: scale(0.7);">
+			<h4>Options</h4>
+			<table class="table">
+				<thead><tr><th>Setting</th><th>Effect</th></tr></thead>
+				<tbody>
+					<tr><td><tt>bots=</tt></td><td>Comma separated list of bots to show</td></tr>
+					<tr><td><tt>hideDisconnected</tt></td><td>Hide nodes with no edges</td></tr>
+					<tr><td><tt>noGroups</tt></td><td>Relevant if showing multiple bots: suppress boxes grouping each bot</td></tr>
+					<tr><td><tt>showOnlyForced</tt></td><td>Omit any "on demand" (dotted gray) edges</td></tr>
+				</tbody>
+			</table>
+
+			<p>e.g. <tt>http://robomerge/allbots/12345?bots=test1,test2&noGroups&showOnlyForced</tt></p>
+		</div>
+	</div>
+</body>

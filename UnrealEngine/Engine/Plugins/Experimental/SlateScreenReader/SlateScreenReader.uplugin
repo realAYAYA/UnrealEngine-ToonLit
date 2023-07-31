@@ -1,0 +1,43 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "0.1",
+	"FriendlyName" : "SlateScreenReader",
+	"Description" : "A screen reader that provides vision accessibility services for Slate.",
+	"Category" : "Accessibility",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsExperimental" : true,
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "SlateScreenReader",
+			"Type" : "Runtime",
+			"LoadingPhase" : "PostEngineInit",
+			"PlatformAllowList" :
+			[
+				"Win64",
+				"Mac",
+				"Linux",
+				"LinuxArm64"
+			],
+			"TargetDenyList" :
+			[
+				"Server"
+			]
+		}
+	],
+	"Plugins" :
+	[
+		{
+			"Name" : "ScreenReader",
+			"Enabled": true
+		}
+	]
+}

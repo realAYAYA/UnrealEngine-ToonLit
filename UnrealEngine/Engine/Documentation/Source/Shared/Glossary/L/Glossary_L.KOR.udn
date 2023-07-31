@@ -1,0 +1,24 @@
+﻿INTSourceChangelist:3810557
+Title:L
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_L]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+Level 레벨
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_level]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_L]
+
+[COMMENT:none]
+[EXCERPT:Glossary_level]
+**Level**, 레벨은 게임플레이에 사용자 정의된 영역입니다. 주로 레벨 안에 액터를 배치하고 트랜스폼을 적용한 뒤 프로퍼티를 편집하는 것으로, 레벨을 생성하고 확인하며 변경합니다. 언리얼 에디터에서, 각 레벨은 별도의 .umap 파일로 저장되기에, 가끔은 맵이라 일컬어지기도 합니다.
+[/EXCERPT:Glossary_level]
+[/COMMENT]

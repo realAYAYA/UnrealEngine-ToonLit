@@ -1,5 +1,0 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-#include <windows.h>
-#include "Runtime/Launch/Resources/Version.h"
-#include "Runtime/Launch/Resources/Windows/PCLaunch.rc"

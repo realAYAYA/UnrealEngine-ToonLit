@@ -1,0 +1,71 @@
+{
+	"name": "//UE5/Main",
+	"tabs":
+	[
+		{
+			"title": "General",
+			"type": "Jobs",
+			"showNames": true,
+			"templates":
+			[
+				"custom"
+			],
+			"columns":
+			[
+				{
+					"heading": "Editors",
+					"category": "Editors",
+					"relativeWidth": 1
+				},
+				{
+					"heading": "Target Platforms",
+					"category": "Platforms",
+					"relativeWidth": 2
+				},
+				{
+					"heading": "Other",
+					"category": "Other",
+					"relativeWidth": 1
+				}
+			]
+		}
+	],
+	"agentTypes":
+	{
+		"Win-UE5":
+		{
+			"pool": "win-ue5",
+			"environment":
+			{
+			}
+		}
+	},
+	"workspaceTypes":
+	{
+	},
+	"templates":
+	[
+		{
+			"id": "custom",
+			"name": "Custom...",
+			"arguments":
+			[
+			],
+			"parameters":
+			[
+				{
+					"type": "Text",
+					"label": "Script",
+					"argument": "-Script=",
+					"default": "Foo.xml"
+				},
+				{
+					"type": "Text",
+					"label": "Target",
+					"argument": "-Target=",
+					"default": ""
+				}
+			]
+		}
+	]
+}

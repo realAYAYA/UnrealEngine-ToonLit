@@ -1,0 +1,60 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+
+static const float3x3 FaceTransforms[6] =
+{
+	// PosX (1, -v, -u)
+	{
+		 0.0,  0.0, -1.0,
+		 0.0, -1.0,  0.0,
+		 1.0,  0.0,  0.0,
+	},
+	// NegX (-1, -v, u)
+	{
+		 0.0,  0.0,  1.0,
+		 0.0, -1.0,  0.0,
+		-1.0,  0.0,  0.0,
+	},
+	// PosY (u, 1, v)
+	{
+		1.0,  0.0,  0.0,
+		0.0,  0.0,  1.0,
+		0.0,  1.0,  0.0,
+   },
+	// NegY (u, -1, -v)
+	{
+		 1.0,  0.0,  0.0,
+		 0.0,  0.0, -1.0,
+		 0.0, -1.0,  0.0,
+	},
+	// PosZ (u, -v, 1)
+	{
+		 1.0,  0.0,  0.0,
+		 0.0, -1.0,  0.0,
+		 0.0,  0.0,  1.0,
+	},
+	// NegZ (-u, -v, -1)
+	{
+		-1.0,  0.0,  0.0,
+		 0.0, -1.0,  0.0,
+		 0.0,  0.0, -1.0,
+	},
+};
+
+TextureCube InTextureCube;
+SamplerState InTextureCubeSampler;
+int InCubeFaceIndex;
+
+void Main(
+	in float2 TextureCoordinate : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+	)
+{
+	const float3 InputVec = float3(TextureCoordinate.xy * 2. - 1., 1.);
+	const float3 SampleVec = mul(InputVec, FaceTransforms[InCubeFaceIndex]);
+
+	OutColor = TextureCubeSample(InTextureCube, InTextureCubeSampler, SampleVec);
+}

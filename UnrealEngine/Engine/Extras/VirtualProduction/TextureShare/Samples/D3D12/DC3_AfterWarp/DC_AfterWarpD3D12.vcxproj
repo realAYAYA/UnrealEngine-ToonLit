@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D12/AppCoreD3D12.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{2AB0803A-F85E-4CA1-8F04-11D56A1A15CB}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>DC3_AfterWarpD3D12</ProjectName>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,73 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#ifdef OVERRIDE_LUMENHARDWARERAYTRACINGPLATFORMCOMMON_USH
+#include "/Platform/Private/LumenHardwareRayTracingPlatformCommon.ush"
+#else
+
+#include "LumenHardwareRayTracingPipelineCommon.ush"
+
+#define TraceLumenRay(TLAS, RayFlags, InstanceInclusionMask, ShaderSlot, NumShaderSlots, MissIndex, Ray, InOutPayload, OutBookmark){\
+	TraceRay(TLAS, RayFlags, InstanceInclusionMask, ShaderSlot, NumShaderSlots, MissIndex, Ray, InOutPayload);\
+}
+
+void TraceLumenShadingRay(
+	RaytracingAccelerationStructure AccelerationStructure,
+	uint RayFlags,
+	uint InstanceInclusionMask,
+	uint RayContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint MissShaderIndex,
+	RayDesc Ray,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+	TraceRay(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload);
+}
+
+void TraceLumenShadingRay(
+	RaytracingAccelerationStructure AccelerationStructure,
+	uint RayFlags,
+	uint InstanceInclusionMask,
+	uint RayContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint MissShaderIndex,
+	RayDesc Ray,
+	inout FLumenRayHitBookmark Bookmark,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+	TraceRay(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload);
+}
+
+#ifndef LUMEN_HARDWARE_RAYTRACING
+float3 ComputeWorldNormal(uint PrimitiveIndex)
+{
+	FTriangleBaseAttributes Tri = LoadTriangleBaseAttributes(PrimitiveIndex);
+#if 0
+	float3x3 ObjectToWorld3x3 = ObjectToWorld4x3();
+	float3 WorldPositions[3] = {
+		mul(float4(Tri.LocalPositions[0], 1), ObjectToWorld3x3),
+		mul(float4(Tri.LocalPositions[1], 1), ObjectToWorld3x3),
+		mul(float4(Tri.LocalPositions[2], 1), ObjectToWorld3x3)
+	};
+
+	float3 WorldEdges[2] = {
+		WorldPositions[1] - WorldPositions[0],
+		WorldPositions[2] - WorldPositions[0]
+	};
+	float3 WorldNormal = normalize(cross(WorldEdges[1], WorldEdges[0]));
+#else
+	float3 LocalEdges[2] = {
+		Tri.LocalPositions[1] - Tri.LocalPositions[0],
+		Tri.LocalPositions[2] - Tri.LocalPositions[0]
+	};
+	float3 LocalNormal = cross(LocalEdges[1], LocalEdges[0]);
+
+	float3x3 InverseTranspose3x3 = transpose((float3x3)WorldToObject4x3());
+	float3 WorldNormal = normalize(mul(LocalNormal, InverseTranspose3x3));
+#endif
+	return WorldNormal;
+}
+#endif // LUMEN_HARDWARE_RAYTRACING
+
+#endif

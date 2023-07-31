@@ -1,0 +1,26 @@
+INTSourceChangelist:3810557
+Title:O
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_O]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+Object
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Object]
+	[/PARAM]
+[/OBJECT]
+
+
+[/EXCERPT:Glossary_O]
+
+[COMMENT:none]
+[EXCERPT:Glossary_Object]
+在虚幻引擎中，最基础的构建单元叫做 **Object**，它包含了很多游戏资源必需的 **幕后** 功能。虚幻引擎中几乎所有的东西都是继承自Object（或从中获取部分功能）。在C++中，`UObject` 是所有Object的基类，实现了诸如垃圾回收、开放变量给编辑器的元数据（UProperty），以及存盘和读盘时的序列化功能。
+[/EXCERPT:Glossary_Object]
+[/COMMENT]
+

@@ -1,0 +1,200 @@
+# This file contains filter rules for files to transfer to the remote Mac for compilation. Since UHT is also executed remotely, it needs everything to require that on Mac.
+# 
+# Syntax is described here: https://download.samba.org/pub/rsync/rsync.html
+# 
+# Note that:
+#  * For any directory or file that is checked against this list, patterns are compared in order and the first matching rule applies (ie. subsequent inversions of that rule will be ignored)
+#  * Directories will not be recursed through unless their parent directories match a rule.
+#  * If directories match a protect rule, it applies to the entire directory and short-circuits traversal of the contents.
+
+# Exclude anything for platforms we don't care about
+- /**/Win32/
+- /**/Win64/
+- /Plugins/**/Android/
+- /Source/ThirdParty/**/Android/
+# Linux is a hardcoded platform so UBT needs to know about it
++ /Source/Programs/UnrealBuildTool/Platform/Linux/
++ /Source/Programs/UnrealBuildTool/Platform/Linux/**
+- /**/Linux/**
+- /**/PS4/
+- /**/Switch/
+- /**/XboxOne/
+
+- /**/x64/
+- /**/win32/
+- /**/win64/
+- /**/Linux32/
+- /**/Linux64/
+- /**/linux32/
+- /**/linux64/
+# Keep Source/Developer/Android/AndroidTargetPlatform and its dependencies for Mac Editor configurations; it is referenced by TargetPlatform.Build.cs
+
+# Also ignore tps files; we don't need them to build
+- *.tps
+
+# Binaries
++ /Binaries/
+
+# Binaries/DotNET and UnrealBuildTool
++ /Binaries/DotNET/
++ /Binaries/DotNET/AgentInterface.dll
++ /Binaries/DotNET/BuildUtilities.dll
++ /Binaries/DotNET/BuildUtilities.pdb
++ /Binaries/DotNET/DotNETUtilities.dll
++ /Binaries/DotNET/DotNETUtilities.pdb
++ /Binaries/DotNET/Ionic.Zip.Reduced.dll
++ /Binaries/DotNET/IOS/
++ /Binaries/DotNET/IOS/**
++ /Binaries/DotNET/UnrealBuildTool/
++ /Binaries/DotNET/UnrealBuildTool/**
+
+# Binaries/Mac: Include DsymExporter, ignore everything else
++ /Binaries/Mac/
++ /Binaries/Mac/DsymExporter
+protect /Binaries/Mac/**
+
+# Binaries/IOS
+protect /Binaries/IOS/
+
+# Binaries/TVOS
+protect /Binaries/TVOS/
+
+# Binaries/ThirdParty, just DotNet and VisualStudio required to run UnrealBuildTool, and libtbb used by UHT
++ /Binaries/ThirdParty/
++ /Binaries/ThirdParty/DotNet/
++ /Binaries/ThirdParty/DotNet/6.0.302/
++ /Binaries/ThirdParty/DotNet/6.0.302/mac**/
++ /Binaries/ThirdParty/DotNet/6.0.302/mac**/**
+- /Binaries/ThirdParty/DotNet/**
++ /Binaries/ThirdParty/VisualStudio/
++ /Binaries/ThirdParty/VisualStudio/**
++ /Binaries/ThirdParty/Intel/
++ /Binaries/ThirdParty/Intel/TBB/
++ /Binaries/ThirdParty/Intel/TBB/Mac/
++ /Binaries/ThirdParty/Intel/TBB/Mac/libtbb.dylib
++ /Binaries/ThirdParty/Intel/TBB/Mac/libtbbmalloc.dylib
+
+# Build
++ /Build/
++ /Build/*
++ /Build/BatchFiles/
++ /Build/BatchFiles/**
++ /Build/Mac/
++ /Build/Mac/**
++ /Build/IOS/
++ /Build/IOS/**
++ /Build/TVOS/
++ /Build/TVOS/**
+protect /Build/IOS/*.PackageVersionCounter
+protect /Build/BatchFiles/Mac/*.crlf
+
+# Config: Include everything
++ /Config/
++ /Config/**
+
+# Content: Exclude everything except things we need to enumerate as runtime dependencies
++ /Content/
++ /Content/Internationalization/
++ /Content/Internationalization/**
++ /Content/Slate/
++ /Content/Slate/**
++ /Content/SlateDebug/
++ /Content/SlateDebug/**
+- /Content/**
+
+# Intermediate
++ /Intermediate/
++ /Intermediate/Build/
++ /Intermediate/Build/XmlConfigCache.bin
++ /Intermediate/Build/BuildRules/
++ /Intermediate/Build/BuildRules/*.dll
+protect /Intermediate/**
+
+# Plugins
++ /Plugins/
++ /Plugins/**/Binaries/Mac/
++ /Plugins/**/Binaries/IOS/
++ /Plugins/**/Binaries/TVOS/
+- /Plugins/**/Binaries/*/
+- /Plugins/**/Content/
+- /Plugins/**/Resources/
+protect /Plugins/**/Intermediate/
++ /Plugins/**
+
+# Programs
++ /Programs/
+protect /Programs/UnrealBuildTool/
++ /Programs/UnrealHeaderTool/
++ /Programs/UnrealHeaderTool/Config/
++ /Programs/UnrealHeaderTool/Config/**
+protect /Programs/UnrealHeaderTool/Intermediate/
+protect /Programs/UnrealHeaderTool/Saved/
+
+# Extras: Allow specific folders
++ /Extras/
++ /Extras/GPUDumpViewer/
++ /Extras/GPUDumpViewer/**
+
+# Saved
+protect /Saved/
+
+# Shaders
++ /Shaders/
++ /Shaders/**
+
+# Source
++ /Source/
+
+# Source/Runtime: Deny specific folders
+- /Source/Runtime/Navmesh/RecastDemo/
+
+# Source/Programs: Allow specific programs
++ /Source/Programs/
++ /Source/Programs/AutomationTool/
++ /Source/Programs/DotNETCommon/
++ /Source/Programs/UnrealBuildTool/
++ /Source/Programs/Shared/
++ /Source/Programs/Shared/EpicGames.Core/
++ /Source/Programs/Shared/EpicGames.Build/
++ /Source/Programs/Shared/EpicGames.UHT/
+- /Source/Programs/Shared/*/
++ /Source/Programs/UnrealPak/
++ /Source/Programs/UnrealHeaderTool/
++ /Source/Programs/UnrealHeaderTool/**.def
++ /Source/Programs/UnrealLightmass/
+- /Source/Programs/**/bin/
+- /Source/Programs/**/obj/
+- /Source/Programs/*/
+# these are built on the remote Mac
+protect /Source/Programs/DotNETCommon/obj/**
+protect /Source/Programs/DotNETCommon/BuildUtilities/bin/**
+protect /Source/Programs/UnrealBuildTool/obj/**
+protect /Source/Programs/Shared/EpicGames.Core/obj/**
+protect /Source/Programs/Shared/EpicGames.Core/bin/**
+protect /Source/Programs/Shared/EpicGames.Build/obj/**
+protect /Source/Programs/Shared/EpicGames.Build/bin/**
+
+# Source/ThirdParty: Allow specific file types
++ /Source/ThirdParty/**/
++ /Source/ThirdParty/**.cs
++ /Source/ThirdParty/**.h
++ /Source/ThirdParty/**.hh
++ /Source/ThirdParty/**.hpp
++ /Source/ThirdParty/**.m
++ /Source/ThirdParty/**.mm
++ /Source/ThirdParty/**.cs
++ /Source/ThirdParty/**.inl
++ /Source/ThirdParty/**.a
++ /Source/ThirdParty/**.dylib
++ /Source/ThirdParty/**.embeddedframework.zip
++ /Source/ThirdParty/libJPG/*.cpp
++ /Source/ThirdParty/libSampleRate/**.cpp
++ /Source/ThirdParty/Eigen/**
++ /Source/ThirdParty/mimalloc/src/**
++ /Source/ThirdParty/**/IOS/**.framework/**
++ /Source/ThirdParty/**/TVOS/**.framework/**
+- /Source/ThirdParty/**
+
+# Source: Include everything else
++ /Source/**/
++ /Source/**

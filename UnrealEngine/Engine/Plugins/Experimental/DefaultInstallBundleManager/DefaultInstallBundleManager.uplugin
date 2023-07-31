@@ -1,0 +1,39 @@
+{
+    "FileVersion" : 3,
+    "Version" : 1,
+    "VersionName" : "1.0",
+    "FriendlyName" : "Default Install Bundle Manager",
+    "Description" : "Default engine handler for downloading, patching, and mounting content bundles while the game is running.",
+    "CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+    "Installed" : false,
+    "Modules": [
+		{
+			"Name": "DefaultInstallBundleManager",
+			"Type": "Runtime",
+			"LoadingPhase": "PreEarlyLoadingScreen"
+		}
+    ],
+	"Plugins": [
+		{
+			"Name": "OnlineSubsystem",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineFramework",
+			"Enabled": true
+		},
+	],
+	"LocalizationTargets": [
+		{
+			"Name": "DefaultInstallBundleManager",
+			"LoadingPolicy": "Always"
+		}
+	]
+}

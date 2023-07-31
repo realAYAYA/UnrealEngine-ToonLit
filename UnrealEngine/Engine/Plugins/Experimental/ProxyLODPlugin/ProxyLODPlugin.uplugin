@@ -1,0 +1,26 @@
+{
+  "FileVersion" : 3,
+  "Version" : 1,
+  "VersionName" : "0.1",
+  "FriendlyName" : "Proxy LOD Plugin (Experimental)",
+  "Description" : "A plugin to generate Proxy LOD systems.",
+  "Category" : "Editor",
+  "CreatedBy" : "Epic Games, Inc.",
+  "CreatedByURL" : "http://epicgames.com",
+  "DocsURL" : "",
+  "MarketplaceURL" : "",
+  "SupportURL" : "",
+  "EnabledByDefault" : false,
+  "CanContainContent" : false,
+  "IsBetaVersion" : true,
+  "Installed" : false,
+  "Modules" :
+	[
+		{
+			"Name" : "ProxyLODMeshReduction",
+			"Type" : "Editor",
+			"LoadingPhase" : "Default",
+			 "PlatformAllowList": [ "Win64" ]
+		}
+	]
+}

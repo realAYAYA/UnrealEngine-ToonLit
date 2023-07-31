@@ -1,0 +1,258 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/DeferredShadingCommon.ush"
+
+#define NDIGBUFFER_HAS_GBUFFER				(FEATURE_LEVEL >= FEATURE_LEVEL_SM5)
+#define NDIGBUFFER_USE_GBUFFER_VELOCITY		(false && NDIGBUFFER_HAS_GBUFFER)
+#define NDIGBUFFER_IS_MOBILE				(FEATURE_LEVEL <= FEATURE_LEVEL_ES3_1)
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+Texture2D {ParameterName}_VelocityTexture;
+SamplerState {ParameterName}_VelocityTextureSampler;
+
+float2 ApplyViewportOffset_{ParameterName}(float2 UV, bool bApplyViewportOffset)
+{
+	if (bApplyViewportOffset)
+	{
+		UV = (UV * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f)) * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
+	}
+	return UV;
+}
+
+void DecodeDiffuseColor_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float3 OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.DiffuseColor;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeWorldNormal_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float3 OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.WorldNormal;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeScreenVelocity_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float3 OutValue)
+{
+	IsValid = false;
+	OutValue = 0;
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	float4 EncodedVelocity = 0;
+	#if NDIGBUFFER_USE_GBUFFER_VELOCITY
+		EncodedVelocity = GetGBufferData(ScreenUV).Velocity;
+	#else
+		EncodedVelocity = {ParameterName}_VelocityTexture.SampleLevel({ParameterName}_VelocityTextureSampler, ScreenUV, 0);
+	#endif
+	IsValid = true;
+	if ( EncodedVelocity.x > 0 )
+	{
+	#if VELOCITY_ENCODE_DEPTH
+		OutValue = DecodeVelocityFromTexture(EncodedVelocity);
+	#else
+		OutValue.xy = DecodeVelocityFromTexture(EncodedVelocity).xy;
+	#endif
+	}
+#endif
+}
+
+void DecodeWorldVelocity_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float3 OutValue)
+{
+	IsValid = false;
+	OutValue = 0;
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	float4 EncodedVelocity = 0;
+	#if NDIGBUFFER_USE_GBUFFER_VELOCITY
+		EncodedVelocity = GetGBufferData(ScreenUV).Velocity;
+	#else
+		EncodedVelocity = {ParameterName}_VelocityTexture.SampleLevel({ParameterName}_VelocityTextureSampler, ScreenUV, 0);
+	#endif
+	IsValid = true;
+	if ( EncodedVelocity.x > 0 )
+	{
+		float3 Velocity = DecodeVelocityFromTexture(EncodedVelocity);
+
+		float SceneDeviceZ = LookupDeviceZ(ScreenUV);
+		float SceneDepth = ConvertFromDeviceZ(SceneDeviceZ);
+ 		float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		float3 TranslatedWorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+ 
+		float PrevSceneDepth = 0;
+	#if VELOCITY_ENCODE_DEPTH
+		PrevSceneDepth = ConvertFromDeviceZ(SceneDeviceZ - Velocity.z);
+	#else
+ 		// Ideally we would use CalcPrevSceneDepth(PrevScreenUV) here to get an accurate location, however we do not store PrevSceneDepth so this is a very rough approximation
+		PrevSceneDepth = SceneDepth; // CalcPrevSceneDepth(PrevScreenUV);
+	#endif
+		float2 PrevScreenPosition = ScreenPosition - Velocity.xy;
+		float3 PrevTranslatedWorldPosition = mul(float4(PrevScreenPosition * PrevSceneDepth, PrevSceneDepth, 1), PrimaryView.PrevScreenToTranslatedWorld).xyz;
+
+		float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+ 
+		OutValue = TranslatedWorldPosition - PrevTranslatedWorldPosition - PreViewTranslationOffset;
+	}
+#endif
+}
+
+void DecodeBaseColor_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float3 OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.BaseColor;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeMetallic_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.Metallic;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeSpecular_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.Specular;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeRoughness_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.Roughness;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeDepth_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.Depth;
+#elif NDIGBUFFER_IS_MOBILE
+	IsValid = true;
+	OutValue = CalcSceneDepth(ScreenUV);
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+#if 0
+// This has not been tested yet
+void DecodeStencil_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out int OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	IsValid = true;
+
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	uint2 IntUV = (uint2)(ScreenUV.xy * (float2)View.BufferSizeAndInvSize.xy);
+	uint Stencil = SceneStencilTexture.Load(uint3(IntUV, 0)) STENCIL_COMPONENT_SWIZZLE;
+	OutValue = int(Stencil);
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+#endif
+
+void DecodeCustomDepth_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.CustomDepth;
+#elif NDIGBUFFER_IS_MOBILE
+	IsValid = true;
+	OutValue = ConvertFromDeviceZ(Texture2DSampleLevel(MobileSceneTextures.CustomDepthTexture, MobileSceneTextures.CustomDepthTextureSampler, ScreenUV, 0).r);
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeCustomStencil_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out int OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.CustomStencil;
+#elif NDIGBUFFER_IS_MOBILE
+	IsValid = true;
+	OutValue = MobileSceneTextures.CustomStencilTexture.Load(int3(ScreenUV, 0)) STENCIL_COMPONENT_SWIZZLE;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeSceneColor_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out float4 OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	IsValid = true;
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	OutValue = Texture2DSampleLevel(SceneTexturesStruct_SceneColorTexture, SceneTexturesStruct_SceneColorTextureSampler, ScreenUV, 0);
+	OutValue.rgb *= View.OneOverPreExposure.xxx;
+#elif NDIGBUFFER_IS_MOBILE
+	IsValid = true;
+	OutValue = Texture2DSampleLevel(MobileSceneTextures.SceneColorTexture, MobileSceneTextures.SceneColorTextureSampler, ScreenUV, 0);
+	OutValue.rgb *= View.OneOverPreExposure.xxx;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}
+
+void DecodeShadingModelID_{ParameterName}(in float2 ScreenUV, in bool bApplyViewportOffset, out bool IsValid, out int OutValue)
+{
+#if NDIGBUFFER_HAS_GBUFFER
+	ScreenUV = ApplyViewportOffset_{ParameterName}(ScreenUV, bApplyViewportOffset);
+	FGBufferData GBufferData = GetGBufferData(ScreenUV);
+	IsValid = true;
+	OutValue = GBufferData.ShadingModelID;
+#else
+	IsValid = false;
+	OutValue = 0;
+#endif
+}

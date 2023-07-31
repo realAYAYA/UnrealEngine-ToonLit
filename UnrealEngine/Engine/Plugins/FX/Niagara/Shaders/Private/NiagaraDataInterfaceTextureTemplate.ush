@@ -1,0 +1,20 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+float2			{ParameterName}_TextureSize;
+Texture2D		{ParameterName}_Texture;
+SamplerState	{ParameterName}_TextureSampler;
+
+void SampleTexture2D_{ParameterName}(in float2 UV, out float4 OutValue)
+{
+	OutValue = {ParameterName}_Texture.SampleLevel({ParameterName}_TextureSampler, UV, 0);
+}
+
+void TextureDimensions2D_{ParameterName}(out float2 OutValue)
+{
+	OutValue = {ParameterName}_TextureSize;
+}
+
+void SamplePseudoVolumeTexture_{ParameterName}(in float3 UVW, in float2 XYNumFrames, in float TotalNumFrames, in int MipMode, in float MipLevel, in float2 DDX, in float2 DDY, out float4 OutValue)
+{
+	OutValue = PseudoVolumeTexture({ParameterName}_Texture, {ParameterName}_TextureSampler, UVW, XYNumFrames, TotalNumFrames, (uint)MipMode, MipLevel, DDX, DDY);
+}

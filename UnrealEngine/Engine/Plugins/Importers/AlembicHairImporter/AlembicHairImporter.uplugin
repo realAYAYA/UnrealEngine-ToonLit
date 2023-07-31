@@ -1,0 +1,30 @@
+{
+	"FileVersion": 1,
+	"Version": 2,
+	"VersionName": "1.0",
+	"FriendlyName": "Alembic Groom Importer",
+	"Description": "Import Hair Strands from Alembic file",
+	"Category": "Geometry",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "AlembicHairTranslatorModule",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "HairStrands",
+			"Enabled": true
+		}
+	]
+}

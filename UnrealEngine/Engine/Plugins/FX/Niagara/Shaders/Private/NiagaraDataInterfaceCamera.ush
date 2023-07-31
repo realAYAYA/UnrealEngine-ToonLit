@@ -1,0 +1,66 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+float3 {ParameterName}_SystemLWCTile;
+
+void GetFieldOfView_{ParameterName}(out float Out_FieldOfViewAngle)
+{
+	Out_FieldOfViewAngle = degrees(View.FieldOfViewWideAngles.x);
+}
+
+void GetTAAJitter_{ParameterName}(out float2 Out_CurrentJitter, out float2 Out_PreviousJitter)
+{
+	Out_CurrentJitter = View.TemporalAAJitter.xy;
+	Out_PreviousJitter = View.TemporalAAJitter.zw;
+}
+
+void GetCameraPropertiesCPUASC47GPU_{ParameterName}(out float3 Out_CameraPositionWorld, out float3 Out_ViewForwardVector, out float3 Out_ViewUpVector, out float3 Out_ViewRightVector)
+{
+	FLWCVector3 CameraPos = PrimaryView.WorldCameraOrigin;
+	LWCSetTile(CameraPos, LWCGetTile(CameraPos) - {ParameterName}_SystemLWCTile); // convert to simulation space
+	Out_CameraPositionWorld = LWCToFloat(CameraPos);
+	Out_ViewForwardVector = View.ViewForward;
+	Out_ViewUpVector = View.ViewUp;
+	Out_ViewRightVector = View.ViewRight;
+}
+
+void GetViewPropertiesGPU_{ParameterName}(out float3 Out_ViewPositionWorld, out float3 Out_ViewForwardVector, out float3 Out_ViewUpVector, out float3 Out_ViewRightVector, out float4 Out_ViewSizeAndInverseSize,
+	out float4 Out_ScreenToViewSpace, out float2 Out_Current_TAAJitter, out float2 Out_Previous_TAAJitter, out float3 Out_PreViewTranslation, out float4 Out_BufferSizeAndInverseSize, out float2 Out_ViewportOffset)
+{
+	FLWCVector3 ViewPos = PrimaryView.WorldViewOrigin;
+	LWCSetTile(ViewPos, LWCGetTile(ViewPos) - {ParameterName}_SystemLWCTile); // convert to simulation space
+	Out_ViewPositionWorld.xyz = LWCToFloat(ViewPos);
+	Out_ViewForwardVector = View.ViewForward;
+	Out_ViewUpVector = View.ViewUp;
+	Out_ViewRightVector = View.ViewRight;
+	Out_ViewSizeAndInverseSize = View.ViewSizeAndInvSize;
+	Out_ScreenToViewSpace = View.ScreenToViewSpace;
+	Out_Current_TAAJitter = View.TemporalAAJitter.xy;
+	Out_Previous_TAAJitter = View.TemporalAAJitter.zw;
+	Out_PreViewTranslation = LWCHackToFloat(PrimaryView.PreViewTranslation);
+	Out_BufferSizeAndInverseSize = View.BufferSizeAndInvSize;
+	Out_ViewportOffset = View.ViewRectMin.xy;
+}
+
+void GetClipSpaceTransformsGPU_{ParameterName}(out float4x4 Out_WorldToClipTransform, out float4x4 Out_TranslatedWorldToClipTransform, out float4x4 Out_ClipToWorldTransform, out float4x4 Out_ClipToViewTransform,
+	out float4x4 Out_ClipToTranslatedWorldTransform, out float4x4 Out_ScreenToWorldTransform, out float4x4 Out_ScreenToTranslatedWorldTransform, out float4x4 Out_ClipToPreviousClipTransform)
+{
+	Out_WorldToClipTransform = LWCHackToFloat(PrimaryView.WorldToClip);
+	Out_TranslatedWorldToClipTransform = View.TranslatedWorldToClip;
+	Out_ClipToWorldTransform = LWCHackToFloat(PrimaryView.ClipToWorld);
+	Out_ClipToViewTransform = View.ClipToView;
+	Out_ClipToTranslatedWorldTransform = View.ClipToTranslatedWorld;
+	Out_ScreenToWorldTransform = LWCHackToFloat(PrimaryView.ScreenToWorld);
+	Out_ScreenToTranslatedWorldTransform = View.ScreenToTranslatedWorld;
+	Out_ClipToPreviousClipTransform = View.ClipToPrevClip;
+}
+
+void GetViewSpaceTransformsGPU_{ParameterName}(out float4x4 Out_TranslatedWorldToViewTransform, out float4x4 Out_ViewToTranslatedWorldTransform, out float4x4 Out_TranslatedWorldToCameraViewTransform,
+	out float4x4 Out_CameraViewToTranslatedWorldTransform, out float4x4 Out_ViewToClipTransform, out float4x4 Out_ViewToClipNoAATransform)
+{
+	Out_TranslatedWorldToViewTransform = View.TranslatedWorldToView;
+	Out_ViewToTranslatedWorldTransform = View.ViewToTranslatedWorld;
+	Out_TranslatedWorldToCameraViewTransform = View.TranslatedWorldToCameraView;
+	Out_CameraViewToTranslatedWorldTransform = View.CameraViewToTranslatedWorld;
+	Out_ViewToClipTransform = View.ViewToClip;
+	Out_ViewToClipNoAATransform = View.ViewToClipNoAA;
+}

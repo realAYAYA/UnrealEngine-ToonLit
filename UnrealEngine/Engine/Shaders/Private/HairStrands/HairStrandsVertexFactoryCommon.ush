@@ -1,0 +1,112 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define HAIR_CONTROLPOINT_INSIDE 0
+#define HAIR_CONTROLPOINT_START	1
+#define HAIR_CONTROLPOINT_END	2
+
+#define USE_HAIR_TRIANGLE_STRIP 0
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair control points
+
+struct FHairControlPoint
+{
+	float3 Position;
+	float  WorldRadius;
+	float  UCoord;
+	uint   Type;
+};
+
+uint4 PackHairControlPoint(
+	FHairControlPoint CP,
+	float3 InVF_PositionOffset,
+	float InVF_Radius)
+{
+	uint PackedAttribute =  (uint(clamp(CP.UCoord * 0xFFu, 0u, 0xFFu)) << 8) |
+							(uint(clamp((CP.WorldRadius / InVF_Radius) * 63u, 0u, 63u)) << 2u) |
+							(CP.Type & 0x3);
+	return uint4(f32tof16(CP.Position - InVF_PositionOffset), PackedAttribute);
+}
+
+FHairControlPoint UnpackHairControlPoint(
+	uint4 InPackedData,
+	float3 InVF_PositionOffset,
+	float InVF_Radius,
+	float InVF_RootScale,
+	float InVF_TipScale)
+{
+	const uint PackedAlpha	= asuint(InPackedData.a);
+
+	FHairControlPoint Out = (FHairControlPoint)0;
+	Out.Position	= f16tof32(InPackedData.xyz) + InVF_PositionOffset;
+	Out.UCoord		= ((PackedAlpha & 0xFF00) >> 8) / 255.f;
+	Out.WorldRadius	= ((PackedAlpha & 0x00FC) >> 2) / 63.f;
+	Out.Type		= PackedAlpha & 0x3;
+
+	Out.WorldRadius *= InVF_Radius * lerp(InVF_RootScale, InVF_TipScale, Out.UCoord);
+
+	return Out;	
+}
+
+bool IsValidHairStrandsSegment(const FHairControlPoint CP0, const FHairControlPoint CP1)
+{
+	return !(CP0.Type == HAIR_CONTROLPOINT_END && CP1.Type == HAIR_CONTROLPOINT_START);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair attributes
+
+struct FHairAttributes
+{
+	float2 RootUV;
+	float Seed;
+	float WorldLength;
+};
+
+FHairAttributes DecodeHairAttribute(float2 Attributes0, uint Attributes1, float InVF_Length)
+{
+	float2 RootUV, RootIndex;
+	RootUV.x		= ((Attributes1    ) & 0x7FF) / 2047.f;	// Coord are encoded on 11 bits
+	RootUV.y		= ((Attributes1>>11) & 0x7FF) / 2047.f;	// Coord are encoded on 11 bits 
+	RootIndex.x		= ((Attributes1>>22) & 0x1F);			// UDIM tile are encoded on 5bits
+	RootIndex.y		= ((Attributes1>>27) & 0x1F);			// UDIM tile are encoded on 5bits
+
+	// Invert V to compensate image origin flip. Similar to GetHairStrandsRootUV in HairCardsAttributeCommon.ush
+	RootUV.y = 1.0f - RootUV.y;
+
+	FHairAttributes Out;
+	Out.RootUV		= RootUV + RootIndex;
+	Out.WorldLength = Attributes0.x * InVF_Length;
+	Out.Seed		= Attributes0.y;
+	return Out;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair strands instance parameters
+
+#if defined(HAIR_STRANDS_PARAMETERS) && HAIR_STRANDS_PARAMETERS == 1
+uint			HairStrandsVF_bIsCullingEnable;
+uint			HairStrandsVF_bHasRaytracedGeometry;
+float			HairStrandsVF_Radius;
+float			HairStrandsVF_RootScale;
+float			HairStrandsVF_TipScale;
+float			HairStrandsVF_Length;
+float			HairStrandsVF_Density;
+uint			HairStrandsVF_bUseStableRasterization;
+float3			HairStrandsVF_PositionOffset;
+uint			HairStrandsVF_VertexCount;
+float4x4		HairStrandsVF_LocalToWorldPrimitiveTransform;
+float4x4		HairStrandsVF_LocalToTranslatedWorldPrimitiveTransform;
+Buffer<uint4>	HairStrandsVF_PositionBuffer;
+Buffer<float4>	HairStrandsVF_PositionOffsetBuffer;
+
+#if defined(PERMUTATION_CULLING) && PERMUTATION_CULLING == 1
+Buffer<uint>	HairStrandsVF_CullingIndirectBuffer;
+Buffer<uint>	HairStrandsVF_CullingIndexBuffer;
+Buffer<float>	HairStrandsVF_CullingRadiusScaleBuffer;
+Buffer<uint>	HairStrandsVF_CullingIndirectBufferArgs;
+#endif
+
+#endif // HAIR_STRANDS_PARAMETERS

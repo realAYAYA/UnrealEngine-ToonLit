@@ -1,0 +1,105 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+ComputeShaderOutputCommon.ush: To allow CS input/output passed into functions 
+through a single struct, allowing for a more readable code
+(less #ifdefs, reducing the boolean hell)
+=============================================================================*/
+
+#include "ShaderOutputCommon.ush"
+
+#if PIXELSHADEROUTPUT_MRT0
+	#if DUAL_SOURCE_COLOR_BLENDING_ENABLED && MATERIAL_WORKS_WITH_DUAL_SOURCE_COLOR_BLENDING
+		RWTexture2D<float4> OutTarget0UAV; // DUAL_SOURCE_BLENDING_SLOT(0)
+	#else
+		RWTexture2D<float4> OutTarget0UAV;
+	#endif
+#endif
+
+#if PIXELSHADEROUTPUT_MRT1
+	#if DUAL_SOURCE_COLOR_BLENDING_ENABLED && MATERIAL_WORKS_WITH_DUAL_SOURCE_COLOR_BLENDING
+		RWTexture2D<float4> OutTarget1UAV; // DUAL_SOURCE_BLENDING_SLOT(1)
+	#else
+		RWTexture2D<float4> OutTarget1UAV;
+	#endif
+#endif
+
+#if PIXELSHADEROUTPUT_MRT2
+	RWTexture2D<float4> OutTarget2UAV;
+#endif
+
+#if STRATA_OPAQUE_DEFERRED
+
+	#if STRATA_BASE_PASS_MRT_OUTPUT_COUNT != 2
+		#error Strata STRATA_BASE_PASS_MRT_OUTPUT_COUNT has been updated but not the uint MRTs
+	#endif
+	#if PIXELSHADEROUTPUT_MRT3
+		#error Strata cannot map to such a case
+	#endif
+	#if PIXELSHADEROUTPUT_MRT2
+		RWTexture2D<uint> StrataOutput3UAV;
+		RWTexture2D<uint> StrataOutput4UAV;
+		RWTexture2D<uint> StrataOutput5UAV;
+	#elif PIXELSHADEROUTPUT_MRT1
+		RWTexture2D<uint> StrataOutput2UAV;
+		RWTexture2D<uint> StrataOutput3UAV;
+		RWTexture2D<uint> StrataOutput4UAV;
+	#else
+		RWTexture2D<uint> StrataOutput1UAV;
+		RWTexture2D<uint> StrataOutput2UAV;
+		RWTexture2D<uint> StrataOutput3UAV;
+	#endif
+
+#else // STRATA_OPAQUE_DEFERRED
+
+	#if PIXELSHADEROUTPUT_MRT3
+		RWTexture2D<float4> OutTarget3UAV;
+	#endif
+
+	#if PIXELSHADEROUTPUT_MRT4
+		RWTexture2D<float4> OutTarget4UAV;
+	#endif
+
+	#if PIXELSHADEROUTPUT_MRT5
+		RWTexture2D<float4> OutTarget5UAV;
+	#endif
+
+	#if PIXELSHADEROUTPUT_MRT6
+		RWTexture2D<float4> OutTarget6UAV;
+	#endif
+
+	#if PIXELSHADEROUTPUT_MRT7
+		RWTexture2D<float4> OutTarget7UAV;
+	#endif
+
+#endif // STRATA_OPAQUE_DEFERRED
+
+// .xy = min, .zw = max
+uint4 ViewRect;
+
+[numthreads(16, 16, 1)]
+void MainCS(uint3 ThreadIndex : SV_GroupThreadID, uint3 GroupID : SV_GroupID)
+{
+#if PIXELSHADEROUTPUT_INTERPOLANTS || PIXELSHADEROUTPUT_BASEPASS
+#if IS_NANITE_PASS
+	FNaniteFullscreenVSToPS NaniteInterpolants = (FNaniteFullscreenVSToPS)0;
+#else
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+#endif
+#endif
+
+#if IS_NANITE_PASS && (PIXELSHADEROUTPUT_INTERPOLANTS || PIXELSHADEROUTPUT_BASEPASS)
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	Interpolants.ViewIndex = NaniteInterpolants.ViewIndex;
+#endif
+
+	FPixelShaderIn PixelShaderIn = (FPixelShaderIn)0;
+	FPixelShaderOut PixelShaderOut = (FPixelShaderOut)0;
+
+#if PIXELSHADEROUTPUT_BASEPASS
+	FBasePassInterpolantsVSToPS BasePassInterpolants = (FBasePassInterpolantsVSToPS)0;
+	FPixelShaderInOut_MainPS(Interpolants, BasePassInterpolants, PixelShaderIn, PixelShaderOut);
+#endif
+
+	// TODO: Work in progress / experimental
+}

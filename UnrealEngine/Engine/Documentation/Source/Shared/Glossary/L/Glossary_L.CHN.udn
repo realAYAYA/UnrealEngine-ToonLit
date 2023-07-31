@@ -1,0 +1,24 @@
+﻿INTSourceChangelist:3810557
+Title:L
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_L]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+关卡（Level）
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_level]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_L]
+
+[COMMENT:none]
+[EXCERPT:Glossary_level]
+**level** （关卡）是用户定义的游戏区域。 我们主要通过放置、变换及编辑Actor的属性来创建、查看及修改关卡。 在虚幻编辑器中，每个关卡都被保存为单独的.umap文件，所以它们有时也被称为“地图”。
+[/EXCERPT:Glossary_level]
+[/COMMENT]

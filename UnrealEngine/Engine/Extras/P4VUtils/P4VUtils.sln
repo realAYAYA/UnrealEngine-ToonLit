@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30517.126
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "P4VUtils", "P4VUtils.csproj", "{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Shared", "Shared", "{57ED0CB0-65F9-418D-8BF1-A04C6F354E64}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EpicGames.Core", "..\..\Source\Programs\Shared\EpicGames.Core\EpicGames.Core.csproj", "{9F33BAF6-F5C8-4731-874E-7CF9690B6947}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EpicGames.Perforce", "..\..\Source\Programs\Shared\EpicGames.Perforce\EpicGames.Perforce.csproj", "{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Development|Any CPU = Development|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}.Development|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}.Development|Any CPU.Build.0 = Debug|Any CPU
+		{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7E3B5CB6-9679-4D8C-A764-ECA3AD4EF668}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947}.Development|Any CPU.ActiveCfg = Development|Any CPU
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947}.Development|Any CPU.Build.0 = Development|Any CPU
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}.Development|Any CPU.ActiveCfg = Development|Any CPU
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}.Development|Any CPU.Build.0 = Development|Any CPU
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9F33BAF6-F5C8-4731-874E-7CF9690B6947} = {57ED0CB0-65F9-418D-8BF1-A04C6F354E64}
+		{CDD15B8D-CF26-4B04-92A8-0FD43F638B81} = {57ED0CB0-65F9-418D-8BF1-A04C6F354E64}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F006F879-7D88-479F-BCB0-8927BB9F969B}
+	EndGlobalSection
+EndGlobal

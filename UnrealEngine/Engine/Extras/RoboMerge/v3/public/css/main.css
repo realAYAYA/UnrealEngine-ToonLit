@@ -1,0 +1,340 @@
+.initiallyHidden,
+.hidden {
+	display: none;
+}
+
+header #logoimg.holiday {
+	margin-top: -6px;
+	margin-left: -6px;
+}
+
+header #logoimg.starwars {
+	margin-top: -6px;
+}
+
+header img {
+	margin-left: 1em;
+	margin-top: 1em;
+}
+
+#status_message .alert {
+	font-size: 12pt;
+	margin-left: 1em;
+	margin-right: 1em;
+}
+body {
+	/* This bottom margin ensures we keep enough space on the bottom of each page for the log bar. */
+	margin-bottom: 6rem;
+}
+
+a {
+	color: #337ab7;
+}
+
+a:focus, a:hover {
+	color: #23527c;
+}
+
+#fixed-footer {
+	width: 100%;
+	/* This height MUST be less than the body's margin-bottom. */
+	height: 4rem;
+	position: fixed;
+	bottom: 0px;
+	background-color: rgba(240,240,240,0.7);
+	border-top: 1px;
+	border-top-style: solid;
+	border-top-color: rgba(0, 0, 0, 0.1);
+	z-index: 1;
+	display: flex;
+	align-items: center;
+}
+
+#fixed-footer .button-bar {
+	padding: 1em;
+	z-index: 2;
+	display: inline-flex;
+	justify-content: space-between;
+	width: 100%;
+}
+
+#fixed-footer .button-bar button {
+	margin: .1em;
+}
+
+#fixed-footer div#fteButtons {
+	align-self: flex-start;
+}
+
+#fixed-footer div#currentlyRunning {
+    align-self: center;
+    /* line-height: .5; */
+    font-size: .60rem;
+    opacity: .5;
+  }
+
+#fixed-footer .button-bar-right {
+	align-self: flex-end;
+}
+
+#fixed-footer.button {
+	margin: 1em;
+}
+
+#preview button {
+	margin: .5em;
+}
+
+body .text {
+	margin-left: 2em;
+	margin-right: 2em;
+}
+
+body.valentines {
+	background-color: hsla(320, 30%, 95%, 1);
+	background-image: url("/img/background/cuddle_team_leader_50opacity.png");
+	background-repeat: no-repeat;
+	background-position: right bottom;
+	background-attachment: fixed;
+	background-size: 10%
+}
+
+body.stpatricks {
+	background-color: hsla(90, 85%, 95%, .4); /* Be careful with green, as it can hide some elements */
+	background-image: url("/img/background/sgt_green_clover_50opacity.png");
+	background-repeat: no-repeat;
+	background-position: 99% 100%; /* give the pic a bit of a right margin */
+	background-attachment: fixed;
+	background-size: 10%
+}
+
+#branchList {
+	margin: 1.6em;
+	overflow: auto;
+}
+
+#error {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	margin-bottom: 0;
+	transition: bottom .5s ease-in;
+}
+
+#error._hidden {
+	bottom: -50px;
+	transition: bottom 1s ease-in;
+}
+
+#top-right {
+	float: right;
+	font-size: 8pt;
+	color: lightgray;
+	text-align: right;
+}
+
+/* Bootstrap 4 somehow lacks extra-small buttons! */
+.btn.btn-xs {
+	padding: .5rem .4rem;
+	font-size: .8rem;
+	line-height: .5;
+	border-radius: .2rem;
+}
+
+.btn.btn-primary-alt {
+	color: #fff;
+	background-color: steelblue;
+	border-color: #2e6da4;
+}
+
+.btn.btn-primary-alt:hover {
+	background-color: #396a93;
+	box-shadow: 0 0 0 0.2rem rgb(30,144,255,0.5); /* dodgerblue */
+}
+
+.btn.btn-primary-alt:focus {
+	background-color: #325d81;
+	box-shadow: inset 0 0 0 0.2rem rgba(43,80,110,0.5);
+}
+
+.btn.btn-secondary-alt,
+.button-bar .btn.btn-outline-dark {
+	color: black;
+	background-color: white;
+	border-color: dimgray;
+}
+
+.btn.btn-secondary-alt:hover,
+.button-bar .btn.btn-outline-dark:hover {
+	background-color: whitesmoke;
+	box-shadow: 0 0 0 0.2rem rgb(220,220,220,0.5); /* Gainsboro */
+}
+
+.btn.btn-secondary-alt:focus,
+.button-bar .btn.btn-outline-dark:focus {
+	background-color: gainsboro;
+	border-color: black;
+	box-shadow: inset  0 0 0 0.2rem rgb(192,192,192,0.5); /* silver */
+}
+
+/* Override obnoxious default color for selecting item */ 
+.dropdown-item.active, .dropdown-item:active {
+	background-color: cadetblue;
+}
+
+#signed-in-user {
+	display: inline-flex;
+	align-items: center;
+	padding: 3px;
+	margin-bottom: 7px;
+	background-color: #eee;
+}
+
+#signed-in-user span {
+	vertical-align: middle;
+}
+
+#signed-in-user .user-name {
+	font-weight: bold;
+	font-size: 10pt;
+	color: black;
+	padding-left: 3px;
+}
+
+#signed-in-user .tags {
+	padding-left: 5px;
+	padding-right: 10px;
+	color: DARKGRAY;
+}
+
+#signed-in-user i {
+	color: lightgray;
+	margin: .25em;
+}
+
+#signed-in-user button {
+	border: solid 1px #eea236;
+	color: white;
+	background-color: #f0ad4e;
+}
+
+input[type="radio"] {
+	margin-right: 1em;
+}
+
+.flow-graph {
+	padding: 5px;
+	font-family: sans-serif;
+	font-size: 10pt;
+	text-align: center;
+	float: left;
+}
+
+.branch-graph {
+	padding: 10px;
+	border: solid 1px lightgray;
+}
+
+.key-text {
+	padding-left: 1em;
+	font-size: 9pt;
+	font-weight: normal;
+}
+
+.graph-key {
+	font-size: 9pt;
+	font-weight: bold;
+	padding: 5px;
+	margin: 10px;
+	background-color: gainsboro;
+	border-radius: 4px;
+
+	box-shadow: 5px 5px 3px lightgray;
+	position: relative;
+}
+
+.key-container {
+	position: absolute;
+	width: 180px;
+	height: 80px;
+}
+
+.arrow {
+	width: 100px;
+	height: 20px;
+	position: absolute;
+	background-image: url("/img/arrows.png");
+
+	margin: 3px;
+}
+
+.arrow-label {
+	font-size: 8pt;
+	padding-left: 110px;
+	padding-top: 5px;
+	padding-bottom: 8px;
+}
+
+.auto-merge-arrow {
+	background-position: -3px -1px;
+}
+
+.on-request-arrow {
+	background-position: -3px -19px;
+}
+
+.default-flow-arrow {
+	background-position: -3px -36px;
+}
+
+.block-assets-arrow {
+	background-position: -3px -53px;
+}
+
+.roboshelf-arrow {
+	background-position: -3px -71px;
+}
+
+.dead-bot {
+	color: red;
+}
+
+.robomerge-crash-buttons {
+	width: 15em;
+	margin: .5em;
+}
+
+.centered-text {
+	margin: auto;
+	max-width: 70%;
+}
+
+.loading-box {
+	margin-right: auto;
+	margin-left: auto;
+	width: fit-content;
+	padding-left: 2em;
+	padding-right: 2em;
+}
+
+.card-single {
+	margin-top: 1em;
+	margin-bottom: 1em;
+}
+
+label.workspaceExactMatch {
+	font-weight: 700;
+}
+
+label.workspaceInexactMatch {
+	font-weight: 400;
+}
+
+.big-help {
+	margin: 5px;
+}
+
+.warning {
+	color: orange;
+}

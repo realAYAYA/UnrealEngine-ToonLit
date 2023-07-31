@@ -1,0 +1,22 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "World Partition HLOD Utilities",
+	"Description" : "Editor utility classes & HLOD layer asset types",
+	"Category" : "Editor",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : true,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "WorldPartitionHLODUtilities",
+			"Type" : "Editor",
+			"LoadingPhase" : "Default"
+		}
+	]
+}

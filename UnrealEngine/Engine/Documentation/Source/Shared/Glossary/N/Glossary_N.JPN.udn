@@ -1,0 +1,25 @@
+﻿INTSourceChangelist:3810557
+Title:N
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_N]
+
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+ノード
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_node]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_N]
+
+[COMMENT:none]
+[EXCERPT:Glossary_node]
+**ノード** は、ビジュアル スクリプティング コードの単一のブロックで、一般的には各種データ / 実行ワイヤが接続される形状になっています。
+[/EXCERPT:Glossary_node]
+[/COMMENT]

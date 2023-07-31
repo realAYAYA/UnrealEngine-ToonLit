@@ -1,0 +1,169 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	PathTracingClearCoat.usf: Path tracing BRDF model for clear coat material
+===============================================================================================*/
+
+#pragma once
+
+#define EVAL_TOP_LAYER 1
+#define EVAL_BOTTOM_LAYER 1
+
+#define GREY_INNER_LAYER 0
+
+#define CLEAR_COAT_F0	0.04 // From hard-coded value in ShadingModels.ush
+
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingFresnel.ush"
+#include "PathTracingEnergyConservation.ush"
+
+float CalcClearCoatSelectionPdf(float CoatEnergy)
+{
+#if EVAL_TOP_LAYER == 0
+	// never select coating if top is disabled
+	return 0.0; 
+#elif EVAL_BOTTOM_LAYER == 0
+	// always select coating if bottom is disabled
+	return 1.0; 
+#endif
+	// probability of choosing the coat (proportional to its directional albedo)
+	return CoatEnergy;
+}
+
+float ClearCoatFresnel(float VoH) {
+	// from hardcoded logic in ClearCoatBxDF
+	float Fc = Pow5(1 - VoH);
+	return Fc + (1 - Fc) * CLEAR_COAT_F0;
+}
+
+FMaterialEval ClearCoat_EvalMaterial(
+	float3 IncomingDirection,
+	float3 OutgoingDirection,
+	inout FPathTracingPayload Payload
+)
+{
+	FMaterialEval Result = NullMaterialEval();
+	
+	float3 V_World = -IncomingDirection;
+	float3 L_World = OutgoingDirection;
+	float3 N_World = Payload.WorldNormal;
+
+	float2 Alpha = 0;
+	float3x3 Basis = GetGGXBasis(Payload.GetClearCoatRoughness(), Payload.WorldNormal, Alpha);
+
+	// move vectors into right shading frame
+	float3 V = mul(Basis, V_World);
+	float3 L = mul(Basis, L_World);
+	float3 H = normalize(V + L);
+
+	float NoL = saturate(L.z);
+	float NoV = saturate(V.z);
+	float NoH = saturate(H.z);
+	float VoH = saturate(dot(V, H));
+
+	const FBxDFEnergyTerms Coat = ComputeGGXSpecEnergyTerms(Payload.GetClearCoatRoughness(), NoV, CLEAR_COAT_F0);
+
+	// Specular lobe
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Alpha);
+	const float F = ClearCoatFresnel(VoH);
+	const float3 SpecWeight = F * GGXResult.x * Coat.W;
+	const float SpecPdf = GGXResult.y;
+
+	const float CoatSelectionPdf = CalcClearCoatSelectionPdf(Coat.E.x);
+
+	AddLobeWithMIS(Result.Weight, Result.Pdf, SpecWeight, SpecPdf, CoatSelectionPdf);
+	
+
+	// bottom-layer clear coat evaluation
+	FMaterialEval BottomEval = NullMaterialEval();
+	Payload.WorldNormal = Payload.GetClearCoatBottomNormal();
+#if GREY_INNER_LAYER == 0
+	// NOTE: Should we try to account for the IOR ratio between layers? We could try to darken Specular Color by the coating IOR
+	// but this would apply to both the dielctric and metal portions equally ...
+	// It seems better to punt until we have a Strata going
+	BottomEval = DefaultLit_EvalMaterial(IncomingDirection, OutgoingDirection, Payload);
+#else
+	float3 OldColor = Payload.BaseColor;
+	Payload.BaseColor = 0.18;
+	BottomEval = Lambert_EvalMaterial(OutgoingDirection, Payload);
+	Payload.BaseColor = OldColor;
+#endif
+	Payload.WorldNormal = N_World;
+
+	// Calculate transmission through substrate
+	float3 Transmission = SimpleClearCoatTransmittance(NoL, NoV, Payload.Metallic, Payload.BaseColor);
+
+	BottomEval.Weight *= lerp(1.0, Transmission, Payload.GetClearCoat());
+	BottomEval.Weight *= 1.0 - Coat.E; // remove energy reflected by clearcoat to maintain energy preservation
+
+	AddLobeWithMIS(Result.Weight, Result.Pdf, BottomEval.Weight, BottomEval.Pdf, 1.0 - CoatSelectionPdf);
+
+	return Result;
+}
+
+FMaterialSample ClearCoat_SampleMaterial(
+	float3 RayDirection,
+	FPathTracingPayload Payload,
+	float4 RandSample
+)
+{
+	float3 N_World = Payload.WorldNormal;
+	float3 V_World = -RayDirection;
+
+	const float NoV = saturate(dot(N_World, V_World));
+	const FBxDFEnergyTerms Coat = ComputeGGXSpecEnergyTerms(Payload.Roughness, NoV, CLEAR_COAT_F0);
+
+	const float CoatSelectionPdf = CalcClearCoatSelectionPdf(Coat.E.x);
+
+	// choose between coat and bottom layer
+	float3 OutDirection = 0;
+	float OutRoughness = 0;
+	if (RandSample.x < CoatSelectionPdf)
+	{
+		RandSample.x /= CoatSelectionPdf;
+
+		// No anisotropy, just pick an arbitrary basis
+		float2 Alpha = 0;
+		float3x3 Basis = GetGGXBasis(Payload.GetClearCoatRoughness(), Payload.WorldNormal, Alpha);
+
+		float3 V = -mul(Basis, RayDirection);
+
+		// #dxr_todo: Switch to UniformSampleDiskConcentric after fixing 0/0 bug
+		float3 H = ImportanceSampleVisibleGGX_aniso(UniformSampleDisk(RandSample.xy), Alpha, V).xyz;
+
+		float3 L = reflect(-V, H);
+		if (L.z <= 0)
+		{
+			// invalid output direction, skip some work
+			return NullMaterialSample();
+		}
+		// reflect and transform
+		OutDirection = mul(L, Basis);
+		OutRoughness = Payload.GetClearCoatRoughness();
+	}
+	else
+	{
+		RandSample.x -= CoatSelectionPdf;
+		RandSample.x /= (1.0 - CoatSelectionPdf);
+
+#if GREY_INNER_LAYER == 0
+		float3 Weight = 0;
+		float Pdf = 0;
+		Payload.WorldNormal = Payload.GetClearCoatBottomNormal();
+		FMaterialSample InnerSample = DefaultLit_SampleMaterial(RayDirection, Payload, RandSample);
+		Payload.WorldNormal = N_World;
+
+		OutDirection = InnerSample.Direction;
+		OutRoughness = InnerSample.Roughness;
+#else
+		float3 Nb = Payload.GetClearCoatBottomNormal();
+		OutDirection = TangentToWorld(CosineSampleHemisphere(RandSample.xy).xyz, Nb);
+		OutRoughness = 1.0;
+#endif
+	}
+
+	// defer to eval for now to get proper MIS mix of both events
+	// TODO: could use temporary results above to inline Eval logic here
+	FMaterialEval Result = ClearCoat_EvalMaterial(RayDirection, OutDirection, Payload);
+	return CreateMaterialSample(OutDirection, Result.Weight, Result.Pdf, 1.0, OutRoughness);
+}

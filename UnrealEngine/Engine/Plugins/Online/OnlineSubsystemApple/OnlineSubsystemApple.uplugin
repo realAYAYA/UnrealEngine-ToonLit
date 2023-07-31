@@ -1,0 +1,38 @@
+{
+	"FileVersion" : 3,
+
+	"FriendlyName" : "Online Subsystem Apple",
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"Description" : "Access to Sign in with Apple platform",
+	"Category" : "Online Platform",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : false,
+
+	"SupportedTargetPlatforms": [
+		"Mac",
+		"IOS",
+		"TVOS",
+	],
+    "Modules": [
+        {
+            "Name": "OnlineSubsystemApple",
+            "Type": "Runtime",
+            "LoadingPhase": "Default",
+            "PlatformAllowList" :
+			[
+                "Mac",
+                "IOS",
+                "TVOS"
+			]
+        }
+    ],
+	"Plugins": [
+		{
+			"Name": "OnlineSubsystem",
+			"Enabled": true
+		}
+	]
+
+}

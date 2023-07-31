@@ -1,0 +1,26 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+
+Texture2D TextureA;
+SamplerState TextureSamplerA;
+
+Texture2D TextureB;
+SamplerState TextureSamplerB;
+
+float4x4 ColorTransformA;
+float4x4 ColorTransformB;
+
+float4 BackgroundColor;
+
+void Main(
+	in float2 TextureCoordinate : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+	)
+{
+	const float4 TextureSampleA = mul(Texture2DSample(TextureA, TextureSamplerA, TextureCoordinate), ColorTransformA);
+	const float4 TextureSampleB = mul(Texture2DSample(TextureB, TextureSamplerB, TextureCoordinate), ColorTransformB);
+	OutColor = RETURN_COLOR(TextureSampleA + TextureSampleB + BackgroundColor);
+}

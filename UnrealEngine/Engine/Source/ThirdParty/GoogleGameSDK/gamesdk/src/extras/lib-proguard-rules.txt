@@ -1,0 +1,3 @@
+-keep public class com.google.androidgamesdk.ChoreographerCallback { *; }
+-keep public class com.google.androidgamesdk.SwappyDisplayManager { *; }
+-keep public class com.google.androidgamesdk.DeviceInfoJni { *; }

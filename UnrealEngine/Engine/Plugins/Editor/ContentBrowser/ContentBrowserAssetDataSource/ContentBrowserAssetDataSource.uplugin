@@ -1,0 +1,25 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Content Browser - Asset Data Source",
+	"Description" : "Data Source plugin providing Asset Data to the Content Browser",
+	"Category" : "Content Browser",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : true,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "ContentBrowserAssetDataSource",
+			"Type" : "Editor",
+			"LoadingPhase" : "Default"
+		}
+	]
+}

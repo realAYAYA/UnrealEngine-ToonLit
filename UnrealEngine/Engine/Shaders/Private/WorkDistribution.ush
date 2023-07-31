@@ -1,0 +1,191 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+
+/*
+Provides functions to distribute uneven amounts of work uniformly across a wave.
+Work won't be distributed wider than the same wave.
+
+The following must be defined:
+void DoWork( FWorkContext Context, FWorkSourceType WorkSource, uint LocalItemIndex );
+*/
+
+#ifdef GENERATE_WORK
+
+/*
+This version can continuously generate work using the function:
+uint GenerateWork( FWorkContext Context, uint GroupIndex, inout FWorkSourceType WorkSource, inout bool bDone )
+{
+	Set WorkSource if there is a valid source of work.
+	if( No more work left from this thread )
+	{
+		bDone = true;
+	}
+	return NumWorkItems;
+}
+
+Once it has a full wave worth of work it consumes it.
+*/
+
+groupshared FWorkSourceType	WorkQueueSource[ THREADGROUP_SIZE * 2 ];
+groupshared uint			WorkQueueAccum[ THREADGROUP_SIZE * 2 ];
+groupshared uint			WorkBoundary[ THREADGROUP_SIZE ];
+
+void DistributeWork( FWorkContext Context, uint GroupIndex )
+{
+	const uint LaneCount	= WaveGetLaneCount();
+	const uint LaneIndex	= GroupIndex &  ( LaneCount - 1 );
+	const uint QueueOffset	= GroupIndex & ~( LaneCount - 1 );
+	const uint QueueSize	= LaneCount * 2;
+	const uint QueueMask	= QueueSize - 1;
+
+#define QUEUE_INDEX(i) ( QueueOffset*2 + ( (i) & QueueMask ) )
+
+	bool bDone = false;
+
+	int WorkRead = 0;
+	int WorkWrite = 0;
+	int SourceRead = 0;
+	int SourceWrite = 0;
+	WorkQueueAccum[ QueueOffset*2 + QueueMask ] = 0;
+
+	while( true )
+	{
+		// Need to queue more work to fill wave?
+		while( WorkWrite - WorkRead < LaneCount && WaveActiveAnyTrue( !bDone ) )
+		{
+			FWorkSourceType WorkSource;
+			
+			// Generate work and record the source.
+			// When sources run out set bDone = true.
+			uint NumWorkItems = GenerateWork( Context, GroupIndex, WorkSource, bDone );
+
+			// Queue work
+			uint FirstWorkItem = WorkWrite + WavePrefixSum( NumWorkItems );
+			uint WorkAccum = FirstWorkItem + NumWorkItems;				// Could use Inclusive sum instead.
+			WorkWrite = WaveReadLaneAt( WorkAccum, LaneCount - 1 );
+
+			bool bHasWork = NumWorkItems != 0;
+			uint QueueIndex = SourceWrite + WavePrefixCountBits( bHasWork );
+			if( bHasWork )
+			{
+				WorkQueueSource[ QUEUE_INDEX( QueueIndex ) ] = WorkSource;
+				WorkQueueAccum[  QUEUE_INDEX( QueueIndex ) ] = WorkAccum;
+			}
+			SourceWrite += WaveActiveCountBits( bHasWork );
+		}
+
+		// Any work left?
+		if( WorkWrite == WorkRead )
+			break;
+
+		// TODO read and write bytes instead (ds_write_b8, ds_read_u8_d16)
+		WorkBoundary[ GroupIndex ] = 0;
+		GroupMemoryBarrier();
+		
+		if( SourceRead + LaneIndex < SourceWrite )
+		{
+			// Mark the last work item of each source
+			uint LastItemIndex = WorkQueueAccum[ QUEUE_INDEX( SourceRead + LaneIndex ) ] - WorkRead - 1;
+			if( LastItemIndex < LaneCount )
+				WorkBoundary[ QueueOffset + LastItemIndex ] = 1;
+		}
+
+		GroupMemoryBarrier();
+
+		bool bIsBoundary = WorkBoundary[ GroupIndex ];
+
+		uint QueueIndex = SourceRead + WavePrefixCountBits( bIsBoundary );
+
+		// Distribute work
+		if( WorkRead + LaneIndex < WorkWrite )
+		{
+			uint FirstWorkItem = WorkQueueAccum[ QUEUE_INDEX( QueueIndex - 1 ) ];
+			uint LocalItemIndex = WorkRead + LaneIndex - FirstWorkItem;
+
+			FWorkSourceType WorkSource = WorkQueueSource[ QUEUE_INDEX( QueueIndex ) ];
+
+			DoWork( Context, WorkSource, LocalItemIndex );
+		}
+
+		// Did 1 wave of work
+		WorkRead = min( WorkRead + LaneCount, WorkWrite );
+		SourceRead += WaveActiveCountBits( bIsBoundary );
+	}
+
+#undef QUEUE_INDEX
+}
+
+#else
+
+// Simpler version where threads can only generate work once.
+// This is done before calling DistributeWork so a GenerateWork function doesn't need to be defined.
+
+groupshared FWorkSourceType	WorkQueueSource[ THREADGROUP_SIZE ];
+groupshared uint			WorkQueueAccum[ THREADGROUP_SIZE ];
+groupshared uint			WorkBoundary[ THREADGROUP_SIZE ];
+
+void DistributeWork( FWorkContext Context, uint GroupIndex, FWorkSourceType WorkSource, uint NumWorkItems )
+{
+	const uint LaneCount	= WaveGetLaneCount();
+	const uint LaneIndex	= GroupIndex &  ( LaneCount - 1 );
+	const uint QueueOffset	= GroupIndex & ~( LaneCount - 1 );
+
+	int WorkRead = 0;
+	int WorkWrite = 0;
+	int SourceRead = 0;
+
+	uint WorkAccum = 0;
+	if( WaveActiveAnyTrue( NumWorkItems != 0 ) )
+	{
+		// Queue work
+		uint FirstWorkItem = WavePrefixSum( NumWorkItems );
+		WorkAccum = FirstWorkItem + NumWorkItems;				// Could use Inclusive sum instead.
+		WorkWrite = WaveReadLaneAt( WorkAccum, LaneCount - 1 );
+
+		bool bHasWork = NumWorkItems != 0;
+		uint QueueIndex = WavePrefixCountBits( bHasWork );
+		if( bHasWork )
+		{
+			WorkQueueSource[ QueueOffset + QueueIndex ] = WorkSource;
+			WorkQueueAccum[  QueueOffset + QueueIndex ] = WorkAccum;
+		}
+	}
+	
+	// Pull work from queue
+	while( WorkRead < WorkWrite )
+	{
+		// TODO read and write bytes instead (ds_write_b8, ds_read_u8_d16)
+		WorkBoundary[ GroupIndex ] = 0;
+		GroupMemoryBarrier();
+		
+		// Mark the last work item of each source
+		uint LastItemIndex = WorkAccum - WorkRead - 1;
+		if( LastItemIndex < LaneCount )
+			WorkBoundary[ QueueOffset + LastItemIndex ] = 1;
+
+		GroupMemoryBarrier();
+
+		bool bIsBoundary = WorkBoundary[ GroupIndex ];
+
+		uint QueueIndex = SourceRead + WavePrefixCountBits( bIsBoundary );
+
+		if( WorkRead + LaneIndex < WorkWrite )
+		{
+			uint FirstWorkItem = QueueIndex > 0 ? WorkQueueAccum[ QueueOffset + QueueIndex - 1 ] : 0;
+			uint LocalItemIndex = WorkRead + LaneIndex - FirstWorkItem;
+
+			FWorkSourceType WorkSource = WorkQueueSource[ QueueOffset + QueueIndex ];
+
+			DoWork( Context, WorkSource, LocalItemIndex );
+		}
+
+		// Did 1 wave of work
+		WorkRead += LaneCount;
+		SourceRead += WaveActiveCountBits( bIsBoundary );
+	}
+}
+
+#endif

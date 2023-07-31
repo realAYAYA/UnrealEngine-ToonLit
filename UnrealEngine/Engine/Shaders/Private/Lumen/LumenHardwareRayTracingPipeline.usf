@@ -1,0 +1,158 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../MonteCarlo.ush"
+#include "../SceneTextureParameters.ush"
+
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#include "LumenReflectionCommon.ush"
+#include "LumenVisualizeTraces.ush"
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenHardwareRayTracingPipelineCommon.ush"
+
+Buffer<uint> RayAllocator;
+RWBuffer<uint> RWCompactRaysIndirectArgs;
+
+[numthreads(1, 1, 1)]
+void FLumenHWRTCompactRaysIndirectArgsCS()
+{
+	RWCompactRaysIndirectArgs[0] = (RayAllocator[0] + THREADGROUP_SIZE_1D - 1) / THREADGROUP_SIZE_1D;
+	RWCompactRaysIndirectArgs[1] = 1;
+	RWCompactRaysIndirectArgs[2] = 1;
+}
+
+RWBuffer<uint> RWRayAllocator;
+
+Buffer<uint2> TraceTexelDataPacked;
+RWBuffer<uint2> RWTraceTexelDataPacked;
+
+StructuredBuffer<FTraceDataPacked> TraceDataPacked;
+RWStructuredBuffer<FTraceDataPacked> RWTraceDataPacked;
+
+groupshared uint SharedRayAllocator;
+groupshared uint SharedGroupOffset;
+groupshared uint2 SharedTraceTexelDataPacked[THREADGROUP_SIZE_1D];
+groupshared FTraceDataPacked SharedTraceDataPacked[THREADGROUP_SIZE_1D];
+
+#define COMPACT_MODE_HIT_LIGHTING_RETRACE 0
+#define COMPACT_MODE_FAR_FIELD_RETRACE 1
+#define COMPACT_MODE_FORCE_HIT_LIGHTING 2
+#define COMPACT_MODE_APPEND_RAYS 3
+
+[numthreads(THREADGROUP_SIZE_1D, 1, 1)]
+void FLumenHWRTCompactRaysCS(
+	uint GroupThreadId : SV_GroupThreadID,
+	uint DispatchThreadId : SV_DispatchThreadID)
+{
+	SharedRayAllocator = 0;
+	GroupMemoryBarrierWithGroupSync();
+
+	uint RayIndex = DispatchThreadId;
+	FTraceData TraceData = UnpackTraceData(TraceDataPacked[RayIndex]);
+#if DIM_COMPACT_MODE == COMPACT_MODE_HIT_LIGHTING_RETRACE
+	bool bIsRayValid = TraceData.bIsHit && !TraceData.bIsRadianceCompleted;
+#elif DIM_COMPACT_MODE == COMPACT_MODE_FORCE_HIT_LIGHTING
+	bool bIsRayValid = TraceData.bIsHit;
+#elif DIM_COMPACT_MODE == COMPACT_MODE_FAR_FIELD_RETRACE
+	bool bIsRayValid = !TraceData.bIsHit;
+#else // COMPACT_MODE_APPEND_RAYS
+	bool bIsRayValid = true;
+#endif // DIM_COMPACT_MODE
+	if (bIsRayValid && (RayIndex < RayAllocator[0]))
+	{
+		// Allocate rays to re-trace with hit lighting
+		uint ThreadOffset;
+		InterlockedAdd(SharedRayAllocator, 1, ThreadOffset);
+
+		SharedTraceDataPacked[ThreadOffset] = TraceDataPacked[RayIndex];
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId == 0)
+	{
+		InterlockedAdd(RWRayAllocator[0], SharedRayAllocator, SharedGroupOffset);
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId < SharedRayAllocator)
+	{
+		RWTraceDataPacked[SharedGroupOffset + GroupThreadId] = SharedTraceDataPacked[GroupThreadId];
+	}
+}
+
+RWBuffer<uint> RWBucketRaysByMaterialIdIndirectArgs;
+
+#ifndef ELEMENTS_PER_THREAD
+#define ELEMENTS_PER_THREAD 16
+#endif // ELEMENTS_PER_THREAD
+
+[numthreads(1, 1, 1)]
+void FLumenHWRTBucketRaysByMaterialIdIndirectArgsCS()
+{
+	const uint ElementsPerGroup = THREADGROUP_SIZE_1D * ELEMENTS_PER_THREAD;
+	RWBucketRaysByMaterialIdIndirectArgs[0] = (RayAllocator[0] + ElementsPerGroup - 1) / ElementsPerGroup;
+	RWBucketRaysByMaterialIdIndirectArgs[1] = 1;
+	RWBucketRaysByMaterialIdIndirectArgs[2] = 1;
+}
+
+#define NUM_BINS (THREADGROUP_SIZE_1D / 2)
+groupshared uint BinSize[NUM_BINS];
+groupshared uint BinOffset[NUM_BINS];
+
+#define NUM_ELEMENTS THREADGROUP_SIZE_1D * ELEMENTS_PER_THREAD
+
+[numthreads(THREADGROUP_SIZE_1D, 1, 1)]
+void FLumenHWRTBucketRaysByMaterialIdCS(
+	uint GroupId : SV_GroupID,
+	uint GroupThreadId : SV_GroupThreadID)
+{
+	const uint GroupOffset = GroupId * NUM_ELEMENTS;
+
+	if (GroupThreadId < NUM_BINS)
+	{
+		BinSize[GroupThreadId] = 0;
+		BinOffset[GroupThreadId] = 0;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	uint Hash[NUM_ELEMENTS / THREADGROUP_SIZE_1D];
+	FTraceData TraceDataCache[NUM_ELEMENTS / THREADGROUP_SIZE_1D];
+
+	for (int i = GroupThreadId; i < NUM_ELEMENTS; i += THREADGROUP_SIZE_1D)
+	{
+		uint RayIndex = GroupOffset + i;
+		if (RayIndex < RayAllocator[0])
+		{
+			TraceDataCache[i / THREADGROUP_SIZE_1D] = UnpackTraceData(TraceDataPacked[RayIndex]);
+			uint BinIndex = TraceDataCache[i / THREADGROUP_SIZE_1D].MaterialId % NUM_BINS;
+
+			InterlockedAdd(BinSize[BinIndex], 1, Hash[i / THREADGROUP_SIZE_1D]);
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupThreadId < NUM_BINS)
+	{
+		for (int i = 0; i < GroupThreadId; ++i)
+		{
+			BinOffset[GroupThreadId] += BinSize[i];
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	for (int i = GroupThreadId; i < NUM_ELEMENTS; i += THREADGROUP_SIZE_1D)
+	{
+		uint RayIndex = GroupOffset + i;
+		if (RayIndex < RayAllocator[0])
+		{
+			uint BinIndex = TraceDataCache[i / THREADGROUP_SIZE_1D].MaterialId % NUM_BINS;
+			uint OutputIndex = GroupOffset + BinOffset[BinIndex] + Hash[i / THREADGROUP_SIZE_1D];
+
+			RWTraceDataPacked[OutputIndex] = PackTraceData(TraceDataCache[i / THREADGROUP_SIZE_1D]);
+		}
+	}
+}

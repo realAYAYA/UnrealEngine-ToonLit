@@ -1,0 +1,42 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+int						{ParameterName}_TextureSize;
+RWTextureCube<float4>	{ParameterName}_RWTexture;
+TextureCube<float4>		{ParameterName}_Texture;
+SamplerState			{ParameterName}_TextureSampler;
+
+void SetRenderTargetValue_{ParameterName}_UEImpureCall(bool bExecute, int IndexX, int IndexY, int Face, float4 Value)
+{
+	if ( bExecute )
+	{
+		{ParameterName}_RWTexture[int3(IndexX, IndexY, Face)] = Value;
+	}
+}
+
+// Not possible to load from Cube textures
+//void GetRenderTargetValue_{ParameterName}(int IndexX, int IndexY, int Face, out float4 Value)
+//{
+//	Value = {ParameterName}_Texture.Load(int4(IndexX, IndexY, Face, 0));
+//}
+
+void SampleRenderTargetValue_{ParameterName}(float3 UVW, out float4 Value)
+{
+	Value = {ParameterName}_Texture.SampleLevel({ParameterName}_TextureSampler, UVW, 0.0f);
+}
+
+void GetRenderTargetSize_{ParameterName}(out int Size)
+{
+	Size = {ParameterName}_TextureSize;
+}
+
+void LinearToIndex_{ParameterName}(int Linear, out int IndexX, out int IndexY, out int Face)
+{
+	IndexX = Linear % {ParameterName}_TextureSize;
+	IndexY = (Linear / {ParameterName}_TextureSize) % {ParameterName}_TextureSize;
+	Face = Linear / ({ParameterName}_TextureSize * {ParameterName}_TextureSize);
+}
+
+void ExecToIndex_{ParameterName}(out int IndexX, out int IndexY, out int Face)
+{
+	LinearToIndex_{ParameterName}(ExecIndex(), IndexX, IndexY, Face);
+}

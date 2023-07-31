@@ -1,0 +1,69 @@
+// Copyright LiuD Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	Toon.usf: Toon shader code
+=============================================================================#1#*/
+
+#pragma once
+
+float3 Mix(float3 Base, float3 Over, float Scalar)
+{
+	return lerp(Base, Over, Scalar);
+}
+
+float3 Mix_Multiply(float3 Base, float3 Over, float Scalar)
+{
+	return lerp(Base, Base * Over, Scalar);
+}
+
+float4 ConvertRGBA8ToFloat4(uint Val)
+{
+	return float4(
+		float((Val & 0x000000FF)),
+		float((Val & 0x0000FF00) >> 8U),
+		float((Val & 0x00FF0000) >> 16U),
+		float((Val & 0xFF000000) >> 24U));
+}
+
+uint ConvertFloat4ToRGBA8(float4 Val)
+{
+	return (uint(Val.w) & 0x000000FF) << 24U |
+		(uint(Val.z) & 0x000000FF) << 16U |
+			(uint(Val.y) & 0x000000FF) << 8U |
+				(uint(Val.x) & 0x000000FF);
+}
+
+float ToonDiffuse(float NoL, float Sharp/*Metallic*/)
+{
+	float Y1 = (Sharp + 0.3f) * 0.1f;
+	return smoothstep(0.5f - Y1, 0.5f + Y1, NoL);
+}
+
+// Specular
+float ToonStep(float Roughness, float Ndc)
+{
+	float Y = Roughness + 0.3f;
+	float Width = 0.05f * Y + 0.01f;
+	float Y2 = Y * Y * Width;
+	return smoothstep(1 - Width - Y2, 1- Width + Y2, Ndc);
+}
+
+// Fresnel
+float3 Fresnel_Schlick(float VoN, float3 rF0) {
+	return rF0 + (1 - rF0) * Pow5(1 - VoN);
+}
+
+float3 FresnelColor(float _FresnelEff, float NoV, float VoL, float3 rF0)
+{
+	return _FresnelEff * Fresnel_Schlick(NoV, rF0) * smoothstep(0.0f, -1.0f, VoL);
+}
+
+// Hair
+float ToonKajiyaKay(float3 T, float3 N, float3 H, float Shift, float Pow)
+{
+	float3 TShift = normalize(T + Shift * N);
+	float ToH = dot(TShift, H);
+	float Diratten = smoothstep(-1.0, 0.0, ToH);
+	float SinToH = sqrt(1 - ToH * ToH);
+	return Diratten * pow(SinToH, Pow);
+}

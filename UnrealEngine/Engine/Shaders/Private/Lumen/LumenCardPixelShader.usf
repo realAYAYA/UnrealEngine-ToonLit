@@ -1,0 +1,163 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenCardPixelShader.usf
+=============================================================================*/
+
+#define LUMEN_CARD_CAPTURE 1
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+
+#define SceneTexturesStruct LumenCardPass.SceneTextures 
+#define EyeAdaptationStruct LumenCardPass
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+struct FLumenCardInterpolantsVSToPS
+{
+
+};
+
+void Main(
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FLumenCardInterpolantsVSToPS PassInterpolants,
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position		// after all interpolators
+	OPTIONAL_IsFrontFace,
+	out float4 OutTarget0 : SV_Target0,
+	out float4 OutTarget1 : SV_Target1,
+	out float4 OutTarget2 : SV_Target2)
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters MaterialParameters;
+
+	#if LUMEN_MULTI_VIEW_CAPTURE
+	{
+		FPackedNaniteView PackedView = Nanite.InViews[Interpolants.ViewIndex];
+		FNaniteView NaniteView = UnpackNaniteView(PackedView);
+
+		PatchViewState(NaniteView, ResolvedView);
+		MaterialParameters = GetMaterialPixelParameters(NaniteView, Interpolants, SvPosition);
+	}
+	#else
+	{
+		MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+	}
+	#endif
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+#if TEMPLATE_USES_STRATA
+	const float3 V = MaterialParameters.WorldNormal; // Use the normal to avoid view dependent transmittance effects when baking non directional card data.
+	const float3 L = MaterialParameters.WorldNormal;
+
+	float3 DiffuseColor  = 0;
+	float3 SpecularColor = 0;
+	float3 WorldNormal   = 0;
+	float3 Emissive      = 0;
+	float TotalCoverage  = 1.f;
+
+  #if STRATA_OPTIMIZED_UNLIT
+	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+	Emissive = BSDF_GETEMISSIVE(UnlitBSDF);
+	TotalCoverage = UnlitBSDF.Coverage;
+  #else // STRATA_OPTIMIZED_UNLIT
+	// Initialise a Strata header with normal in registers
+	FStrataData StrataData = PixelMaterialInputs.FrontMaterial;
+	FStrataPixelHeader StrataPixelHeader = InitialiseStrataPixelHeader();
+	StrataPixelHeader.StrataTree = MaterialParameters.StrataTree;
+	StrataPixelHeader.BSDFCount = MaterialParameters.StrataTree.BSDFCount;
+	StrataPixelHeader.SharedLocalBases = MaterialParameters.SharedLocalBases;
+	StrataPixelHeader.IrradianceAO = InitIrradianceAndOcclusion();
+	StrataPixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+	
+	FStrataTree StrataTree = StrataPixelHeader.StrataTree;
+	if (StrataTree.BSDFCount > 0)
+	{
+		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(true /*bForceFullyRough*/, true /*bRoughDiffuseEnabled*/, 0 /*PeelLayersAboveDepth*/);
+		float3 TotalTransmittancePreCoverage = 0;
+		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
+		StrataUpdateTree(NullStrataAddressing, StrataPixelHeader, StrataTree, StrataData, V, Settings, TotalCoverage, TotalTransmittancePreCoverage);
+
+		// Extract averaged DiffuseAlbedo / SpecularColor
+		STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
+		for (int BSDFIdx = 0; BSDFIdx < StrataTree.BSDFCount; ++BSDFIdx)
+		{
+			#define CurrentBSDF StrataTree.BSDFs[BSDFIdx]
+			if (StrataIsBSDFVisible(CurrentBSDF))
+			{
+				FStrataBSDFContext StrataBSDFContext = StrataCreateBSDFContext(StrataPixelHeader, CurrentBSDF, NullStrataAddressing, V, L);
+				FStrataEnvLightResult StrataEnvLight = StrataEvaluateForEnvLight(StrataBSDFContext, true /*bEnableSpecular*/, Settings);
+				const float3 Weight = CurrentBSDF.LuminanceWeightV; // Use LuminanceWeightV instead of LuminanceWeight(..) as we only need to weight these value with the view transmittance, not the light transmittance;
+				DiffuseColor  += Weight * StrataEnvLight.DiffuseWeight;
+				SpecularColor += Weight * StrataEnvLight.SpecularWeight;
+				WorldNormal   += Weight * StrataBSDFContext.N;
+				Emissive      += Weight * CurrentBSDF.Emissive;
+			}
+			#undef CurrentBSDF
+		}
+	}
+  #endif // STRATA_OPTIMIZED_UNLIT
+	
+	float Opacity = 1.0f;
+#if MATERIALBLENDING_ANY_TRANSLUCENT
+	Opacity = TotalCoverage > 0.5f ? 1.0f : 0.0f;
+#elif MATERIALBLENDING_MASKED
+	Opacity = TotalCoverage - GetMaterialOpacityMaskClipValue() >= 0.0f ? 1.0f : 0.0f;
+#endif
+
+#else // TEMPLATE_USES_STRATA
+
+	float3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+	float Metallic = GetMaterialMetallic(PixelMaterialInputs);
+	float Specular = GetMaterialSpecular(PixelMaterialInputs);
+	float Roughness = GetMaterialRoughness(PixelMaterialInputs);
+	float3 Emissive = GetMaterialEmissive(PixelMaterialInputs);
+	float3 WorldNormal = MaterialParameters.WorldNormal;
+
+	float Opacity = 1.0f;
+#if MATERIALBLENDING_ANY_TRANSLUCENT
+	Opacity = GetMaterialOpacity(PixelMaterialInputs) > 0.5f ? 1.0f : 0.0f;
+#elif MATERIALBLENDING_MASKED
+	Opacity = GetMaterialMask(PixelMaterialInputs) >= 0.0f ? 1.0f : 0.0f;
+#endif
+
+	float3 DiffuseColor = BaseColor - BaseColor * Metallic;
+	float3 SpecularColor = lerp(0.08f * Specular.xxx, BaseColor, Metallic.xxx);
+
+	EnvBRDFApproxFullyRough(DiffuseColor, SpecularColor);
+
+	uint ShadingModel = GetMaterialShadingModel(PixelMaterialInputs);
+
+	float3 SubsurfaceColor = 0.0f;
+#if MATERIAL_SHADINGMODEL_SUBSURFACE || MATERIAL_SHADINGMODEL_PREINTEGRATED_SKIN || MATERIAL_SHADINGMODEL_SUBSURFACE_PROFILE || MATERIAL_SHADINGMODEL_TWOSIDED_FOLIAGE || MATERIAL_SHADINGMODEL_CLOTH || MATERIAL_SHADINGMODEL_EYE
+	if (ShadingModel == SHADINGMODELID_SUBSURFACE || ShadingModel == SHADINGMODELID_PREINTEGRATED_SKIN || ShadingModel == SHADINGMODELID_SUBSURFACE_PROFILE || ShadingModel == SHADINGMODELID_TWOSIDED_FOLIAGE || ShadingModel == SHADINGMODELID_CLOTH || ShadingModel == SHADINGMODELID_EYE)
+	{
+		float4 SubsurfaceData = GetMaterialSubsurfaceData(PixelMaterialInputs);
+		DiffuseColor += SubsurfaceData.rgb;
+	}
+#endif
+
+#endif // TEMPLATE_USES_STRATA
+
+	// Normals are stored in local card space
+	float3 CardSpaceNormal = float3(0, 0, 1);
+
+	// As of 04/06/2022 sometimes we get NaN normals from Nanite meshes with WPO
+	if (all(IsFinite(WorldNormal)))
+	{
+		WorldNormal = normalize(WorldNormal);
+		CardSpaceNormal = mul(float4(WorldNormal, 0.0f), ResolvedView.TranslatedWorldToView).xyz;
+	}
+
+	OutTarget0 = float4(sqrt(DiffuseColor), Opacity);
+	OutTarget1 = float4(CardSpaceNormal.xy * 0.5f + 0.5f, 0.0f, /*bValid*/ 1.0f);
+	OutTarget2 = float4(Emissive, 0.0f);
+}

@@ -1,0 +1,154 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	PathTracingEye.usf: Path tracing BRDF model for the eye material
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingFresnel.ush"
+#include "PathTracingEnergyConservation.ush"
+
+FMaterialEval Eye_EvalMaterial(
+	float3 IncomingDirection,
+	float3 OutgoingDirection,
+	FPathTracingPayload Payload
+)
+{
+	FMaterialEval Result = NullMaterialEval();
+
+	const float3 V_World = -IncomingDirection;
+	const float3 L_World = OutgoingDirection;
+	const float3 N_World = Payload.WorldNormal;
+
+	float2 Alpha = 0;
+	const float3x3 Basis = GetGGXBasis(Payload.Roughness, Payload.WorldNormal, Alpha);
+
+	// move vectors into right shading frame
+	const float3 V = mul(Basis, V_World);
+	const float3 L = mul(Basis, L_World);
+	const float3 H = normalize(V + L);
+
+	const float NoV = saturate(V.z);
+	const float NoL = saturate(L.z);
+	const float VoH = saturate(dot(V, H));
+
+	const FBxDFEnergyTerms Spec = ComputeGGXSpecEnergyTerms(Payload.Roughness, NoV, Payload.SpecularColor);
+
+	// Probability of picking diffuse lobe vs. specular lobe
+	const float LobeSelectionPdf = LobeSelectionProb(Payload.DiffuseColor * (1 - Spec.E), Spec.E);
+
+
+	const float IrisMask = Payload.Anisotropy;
+	const float3 IrisNormal = Payload.WorldTangent;
+	const float3 CausticNormal = Payload.CustomVector;
+	const float IrisNoL = saturate(dot(IrisNormal, L_World));
+	const float Power = lerp(12, 1, IrisNoL);
+	const float Caustic = 0.8 + 0.2 * (Power + 1) * pow(saturate(dot(CausticNormal, L_World)), Power);
+	const float Iris = IrisNoL * Caustic;
+	const float Sclera = NoL;
+
+	const float EyeDiffuseTweak = 2 * lerp(Sclera, Iris, IrisMask);
+
+
+	// Diffuse Lobe
+	AddLobeWithMIS(Result.Weight, Result.Pdf, (1 - Spec.E) * Payload.DiffuseColor * EyeDiffuseTweak, 1 / (2 * PI), LobeSelectionPdf);
+
+	// Specular lobe
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Alpha);
+	const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+	const float3 SpecWeight = F * GGXResult.x * Spec.W;
+	const float SpecPdf = GGXResult.y;
+
+	AddLobeWithMIS(Result.Weight, Result.Pdf, SpecWeight, SpecPdf, 1.0 - LobeSelectionPdf);
+
+	return Result;
+}
+
+FMaterialSample Eye_SampleMaterial(
+	float3 RayDirection,
+	FPathTracingPayload Payload,
+	float4 RandSample
+)
+{
+	float3 N = Payload.WorldNormal;
+	float3 V = -RayDirection;
+
+	float2 Alpha;
+	float3x3 Basis = GetGGXBasis(Payload.Roughness, Payload.Anisotropy, Payload.WorldNormal, Payload.WorldTangent, Alpha);
+
+	V = mul(Basis, V);
+
+	const float NoV = saturate(V.z);
+	const FBxDFEnergyTerms Spec = ComputeGGXSpecEnergyTerms(Payload.Roughness, NoV, Payload.SpecularColor);
+
+	// Probability of picking diffuse lobe vs. specular lobe
+	const float LobeSelectionPdf = LobeSelectionProb(Payload.DiffuseColor * (1 - Spec.E), Spec.E);
+
+	// Randomly choose to sample diffuse or specular
+	float3 L = 0, H = 0;
+	float OutRoughness = 0;
+	if (RandSample.x < LobeSelectionPdf)
+	{
+		RandSample.x /= LobeSelectionPdf;
+
+		// Lambert
+		// TODO: evaluate CosineSampleHemisphereConcentric
+		float4 Result = UniformSampleHemisphere(RandSample.xy);
+
+		L = Result.xyz;
+		H = normalize(L + V);
+		OutRoughness = 1.0;
+	}
+	else
+	{
+		RandSample.x -= LobeSelectionPdf;
+		RandSample.x /= (1.0 - LobeSelectionPdf);
+
+		// #dxr_todo: Evaluate UniformSampleDiskConcentric
+		H = ImportanceSampleVisibleGGX_aniso(UniformSampleDisk(RandSample.xy), Alpha, V).xyz;
+
+		L = reflect(-V, H);
+		if (L.z <= 0)
+		{
+			// invalid output direction, exit early
+			return NullMaterialSample();
+		}
+		OutRoughness = Payload.Roughness;
+	}
+
+	// With a valid direction in hand -- now evaluate the BxDF (taking advantage of already computed terms)
+
+	const float3 L_World = normalize(mul(L, Basis));
+
+	const float NoL = saturate(L.z);
+	const float VoH = saturate(dot(V, H));
+
+	float3 OutWeight = 0;
+	float OutPdf = 0;
+
+	const float IrisMask = Payload.Anisotropy;
+	const float3 IrisNormal = Payload.WorldTangent;
+	const float3 CausticNormal = Payload.CustomVector;
+	const float IrisNoL = saturate(dot(IrisNormal, L_World));
+	const float Power = lerp(12, 1, IrisNoL);
+	const float Caustic = 0.8 + 0.2 * (Power + 1) * pow(saturate(dot(CausticNormal, L_World)), Power);
+	const float Iris = IrisNoL * Caustic;
+	const float Sclera = NoL;
+
+	const float EyeDiffuseTweak = 2 * lerp(Sclera, Iris, IrisMask);
+
+	// Diffuse Lobe
+	AddLobeWithMIS(OutWeight, OutPdf, (1 - Spec.E) * Payload.DiffuseColor * EyeDiffuseTweak, 1 / (2 * PI), LobeSelectionPdf);
+
+	// Specular lobe
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Alpha);
+	const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+	const float3 SpecWeight = F * GGXResult.x * Spec.W;
+	const float SpecPdf = GGXResult.y;
+	AddLobeWithMIS(OutWeight, OutPdf, SpecWeight, SpecPdf, 1.0 - LobeSelectionPdf);
+
+	// transform to world space
+	return CreateMaterialSample(L_World, OutWeight, OutPdf, 1.0, OutRoughness);
+}

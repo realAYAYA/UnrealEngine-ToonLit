@@ -1,0 +1,99 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define PATH_TRACING 1
+#define SCENE_TEXTURES_DISABLED 1 // Ray tracing shaders cannot access scene textures
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+
+#define DecalTilePosition RayTracingDecalParameters.DecalTilePosition
+#define WorldToDecal RayTracingDecalParameters.WorldToDecal
+#define SvPositionToDecal WorldToDecal
+#define DecalToWorld RayTracingDecalParameters.DecalToWorld
+#define DecalToWorldInvScale RayTracingDecalParameters.DecalToWorldInvScale
+#define DecalOrientation RayTracingDecalParameters.DecalOrientation
+#define DecalParams RayTracingDecalParameters.DecalParams
+#define DecalWriteFlags RayTracingDecalParameters.DecalWriteFlags
+
+// DECAL_PRIMITIVE informs material templates which functions to expose when rendering decals.
+#define DECAL_PRIMITIVE 1
+#include "/Engine/Generated/Material.ush"
+
+RAY_TRACING_ENTRY_CALLABLE(RayTracingDecalMaterialShader, FDecalShaderParams, Params)
+{
+	ResolvedView = ResolveView();
+
+	const float3 TranslatedWorldPosition = Params.GetInputTranslatedWorldPosition();
+	const uint2 PixelCoord = Params.GetPixelCoord();
+
+	float4 DecalPos = mul(float4(TranslatedWorldPosition.xyz, 1), WorldToDecal);
+
+	if (any(abs(DecalPos.xyz) > 1))
+	{
+		// clip content outside the decal
+		return;
+	}
+
+	float3 CameraVector = normalize(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition.xyz);
+
+	// can be optimized
+	float3 DecalVector = DecalPos.xyz * 0.5f + 0.5f;
+
+	// Swizzle so that DecalVector.xy are perpendicular to the projection direction and DecalVector.z is distance along the projection direction
+	float3 SwizzlePos = DecalVector.zyx;
+
+	// By default, map textures using the vectors perpendicular to the projection direction
+	float2 DecalUVs = SwizzlePos.xy;
+
+	FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
+#if NUM_MATERIAL_TEXCOORDS
+	for (int CoordinateIndex = 0; CoordinateIndex < NUM_MATERIAL_TEXCOORDS; CoordinateIndex++)
+	{
+		MaterialParameters.TexCoords[CoordinateIndex] = DecalUVs;
+	}
+#endif
+	MaterialParameters.TwoSidedSign = 1;
+	MaterialParameters.VertexColor = 1;
+	MaterialParameters.CameraVector = CameraVector;
+	MaterialParameters.SvPosition = float4(PixelCoord.xy, 0.0, 1.0);
+	MaterialParameters.ScreenPosition = SvPositionToResolvedScreenPosition(MaterialParameters.SvPosition);
+	MaterialParameters.LightVector = SwizzlePos;
+
+	MaterialParameters.AbsoluteWorldPosition = MaterialParameters.WorldPosition_NoOffsets = LWCSubtract(TranslatedWorldPosition.xyz, PrimaryView.PreViewTranslation);
+	MaterialParameters.WorldPosition_CamRelative = MaterialParameters.WorldPosition_NoOffsets_CamRelative = TranslatedWorldPosition.xyz;
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcPixelMaterialInputs(MaterialParameters, PixelMaterialInputs);
+
+	const float DecalFading = saturate(4 - 4 * abs(SwizzlePos.z * 2 - 1)) * DecalParams.x;
+	Params.SetOpacity(GetMaterialOpacity(PixelMaterialInputs) * DecalFading);
+
+	if (DecalWriteFlags & DECAL_WRITE_BASE_COLOR_FLAG)
+	{
+		Params.SetBaseColor(GetMaterialBaseColor(PixelMaterialInputs));
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_NORMAL_FLAG)
+	{
+		Params.SetWorldNormal(MaterialParameters.WorldNormal);
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_ROUGHNESS_SPECULAR_METALLIC_FLAG)
+	{
+		Params.SetMetallic(GetMaterialMetallic(PixelMaterialInputs));
+		Params.SetSpecular(GetMaterialSpecular(PixelMaterialInputs));
+		Params.SetRoughness(GetMaterialRoughness(PixelMaterialInputs));
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_AMBIENT_OCCLUSION_FLAG)
+	{
+		Params.SetAO(GetMaterialAmbientOcclusion(PixelMaterialInputs));
+	}
+
+	if (DecalWriteFlags & DECAL_WRITE_EMISSIVE_FLAG)
+	{
+		Params.SetEmissive(GetMaterialEmissive(PixelMaterialInputs));
+	}
+
+	Params.SetFlags(DecalWriteFlags);
+}

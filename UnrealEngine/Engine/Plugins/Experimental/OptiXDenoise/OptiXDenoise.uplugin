@@ -1,0 +1,29 @@
+{
+	"FileVersion" : 1,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "OptiXDenoise",
+	"Description" : "Denoising engine for the Unreal Path Tracer based on NVIDIA's OptiX AI-Accelerated Denoiser library.",
+	"Category" : "Denoising",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsExperimental" : true,
+	"IsExperimentalVersion": true, 
+	"Installed" : false,
+	"Modules" :
+	[
+		{
+			"Name" : "OptiXDenoise",
+			"Type" : "RuntimeAndProgram",
+			"LoadingPhase" : "Default",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		}
+	]
+}

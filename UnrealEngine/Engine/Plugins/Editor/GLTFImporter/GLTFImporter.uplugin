@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1.0,
+	"VersionName": "1.0",
+	"FriendlyName": "glTF Importer",
+	"Description": "An importer for Khronos glTF 3D models.",
+	"Category": "Importers",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"EnabledByDefault": false,
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Modules":
+	[
+		{
+			"Name": "GLTFCore",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "GLTFImporter",
+			"Type": "Editor"
+		}
+	]
+}

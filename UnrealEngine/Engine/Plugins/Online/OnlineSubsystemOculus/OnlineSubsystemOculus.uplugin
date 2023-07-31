@@ -1,0 +1,38 @@
+{
+	"FileVersion": 3,
+	"Version": 2,
+	"VersionName": "1.32.0",
+	"FriendlyName": "Online Subsystem Oculus",
+	"Description": "Access to Oculus platform",
+	"Category": "Online Platform",
+	"CreatedBy": "Oculus",
+	"CreatedByURL": "https://www.oculus.com/",
+	"DocsURL": "https://developer.oculus.com/documentation/platform/latest/concepts/pgsg-unreal-gsg/",
+	"MarketplaceURL": "",
+	"SupportURL": "https://forums.oculusvr.com/developer/categories/platform-sdk",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "OnlineSubsystemOculus",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Android"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "OnlineSubsystem",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineSubsystemUtils",
+			"Enabled": true
+		}
+	]
+}

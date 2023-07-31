@@ -1,0 +1,329 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "TSRCommon.ush"
+
+#if DIM_MOTION_BLUR_DIRECTIONS > 0
+	#define CONFIG_MAX_RANGE_SIZE (DIM_MOTION_BLUR_DIRECTIONS)
+	#include "../MotionBlur/MotionBlurVelocityFlatten.ush"
+#endif
+
+
+//------------------------------------------------------- CONFIG
+
+#if DIM_MOTION_BLUR_DIRECTIONS > 0
+	#define TILE_SIZE (VELOCITY_FLATTEN_TILE_SIZE)
+#else
+	#define TILE_SIZE 8
+#endif
+
+#define AA_CROSS 1
+
+#define CONFIG_USE_SCENE_VELOCITY 1
+
+#define CONFIG_DEPTH_EDGE_DETECTION 1
+
+#define CONFIG_VELOCITY_EXTRAPOLATION 1
+
+
+//------------------------------------------------------- PARAMETERS
+
+float4x4 RotationalClipToPrevClip;
+float2 PrevOutputBufferUVMin;
+float2 PrevOutputBufferUVMax;
+float WorldDepthToDepthError;
+float VelocityExtrapolationMultiplier;
+float InvFlickeringMaxParralaxVelocity;
+uint bOutputIsMovingTexture;
+
+Texture2D<float> SceneDepthTexture;
+Texture2D SceneVelocityTexture;
+
+RWTexture2D<float2> DilatedVelocityOutput;
+RWTexture2D<float> ClosestDepthOutput;
+RWTexture2D<uint> PrevUseCountOutput;
+RWTexture2D<uint> PrevClosestDepthOutput;
+RWTexture2DArray<uint> R8Output;
+
+RWTexture2D<float3>	VelocityFlattenOutput;
+RWTexture2D<float4>	VelocityTileOutput0;
+RWTexture2D<float4>	VelocityTileOutput1;
+
+
+//------------------------------------------------------- ENTRY POINT
+
+uint PackDepthAndOffset(const int2 Offset, float DeviceZ)
+{
+	return ((asuint(DeviceZ) << 2) & ~0xF) | (uint(1 + Offset.x) << 0) | (uint(1 + Offset.y) << 2);
+}
+
+void UnpackDepthAndOffset(uint Packed, out int2 Offset, out float DeviceZ)
+{
+	DeviceZ = asfloat((Packed & ~0xF) >> 2);
+	Offset.x = int((Packed >> 0) & 0x3) - 1;
+	Offset.y = int((Packed >> 2) & 0x3) - 1;
+}
+
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(TILE_SIZE * TILE_SIZE, 1, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	float4 Debug = 0.0;
+
+	uint2 DispatchThreadId = (
+		ZOrder2D(GroupThreadIndex, uint(log2(float(TILE_SIZE)))) +
+		GroupId * uint2(TILE_SIZE, TILE_SIZE));
+
+	uint2 InputPixelPos = InputInfo_ViewportMin + DispatchThreadId;
+	
+	float2 ViewportUV = (float2(DispatchThreadId) + 0.5f) * InputInfo_ViewportSizeInverse;
+	float2 ScreenPos = ViewportUVToScreenPos(ViewportUV);
+	float2 InputBufferUV = (InputPixelPos + 0.5) * InputInfo_ExtentInverse;
+
+	float DeviceZ = SceneDepthTexture[InputPixelPos];
+
+	float ClosestDeviceZ = DeviceZ;
+	int2 VelocityPixelOffset = int2(0, 0);
+	float ParallaxFactorForHistory = 1.0;
+	float ParallaxFactorForHistoryRejection = 1.0;
+	#if AA_CROSS
+	{
+		const int2 kOffsets[4] = {
+			int2( 1,  0),
+			int2( 1,  1),
+			int2( 0,  1),
+			int2(-1,  1),
+		};
+
+		uint PackedDepthOffset = PackDepthAndOffset(/* Offset = */ int2(0, 0), DeviceZ);
+		
+		float FurthestPairDeviceZ = DeviceZ;
+		float FurthestDeviceZ = DeviceZ;
+
+		float DeviceZError;
+		{
+			float Depth = ConvertFromDeviceZ(DeviceZ);
+			float ErrorCorrectedDeviceZ = ConvertToDeviceZ(Depth + Depth * WorldDepthToDepthError);
+			DeviceZError = abs(ErrorCorrectedDeviceZ - DeviceZ);
+		}
+
+		#if 1
+			UNROLL_N(4)
+			for (uint i = 0; i < 4; i++)
+		#else
+			UNROLL_N(2)
+			for (uint i = 1; i < 4; i+= 2)
+		#endif
+		{
+			const int2 Offset = kOffsets[i];
+
+			float SampleDeviceZ0 = SceneDepthTexture[int2(InputPixelPos) + Offset];
+			float SampleDeviceZ1 = SceneDepthTexture[int2(InputPixelPos) - Offset];
+			
+			#if CONFIG_DEPTH_EDGE_DETECTION
+			{
+				float DepthDiff = abs(SampleDeviceZ1 - SampleDeviceZ0);
+				float DepthVariation = (SampleDeviceZ0 + SampleDeviceZ1) * 0.5 - DeviceZ;
+
+				FLATTEN
+				if (DepthVariation > max(DepthDiff * 0.25, DeviceZError))
+				{
+					PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(+Offset, SampleDeviceZ0));
+					PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(-Offset, SampleDeviceZ1));
+				}
+			}
+			#else
+			{
+				PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(+Offset, SampleDeviceZ0));
+				PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(-Offset, SampleDeviceZ1));
+			}
+			#endif
+
+			FurthestPairDeviceZ = min(FurthestPairDeviceZ, max(SampleDeviceZ0, SampleDeviceZ1));
+			FurthestDeviceZ = min(FurthestDeviceZ, min(SampleDeviceZ0, SampleDeviceZ1));
+		}
+
+		ParallaxFactorForHistory = clamp(DeviceZ / FurthestPairDeviceZ, 0.0, MAX_PARALLAX_FACTOR);
+		ParallaxFactorForHistoryRejection = clamp(DeviceZ / FurthestDeviceZ, 0.0, MAX_PARALLAX_FACTOR);
+
+		UnpackDepthAndOffset(PackedDepthOffset, /* out */ VelocityPixelOffset, /* out */ ClosestDeviceZ);
+	}
+	#endif
+	
+	// Camera motion for pixel.
+	float3 FinalScreenVelocity = 0.0;
+
+	// Compute final screen vecocity.
+	#if CONFIG_VELOCITY_EXTRAPOLATION
+	BRANCH
+	if (VelocityExtrapolationMultiplier > 0.0)
+	{
+		int2 PixelCoord1 = int2(InputBufferUV * InputInfo_Extent) + VelocityPixelOffset * 1;
+		int2 PixelCoord2 = int2(InputBufferUV * InputInfo_Extent) + VelocityPixelOffset * 2;
+
+		PixelCoord2 = clamp(PixelCoord2, InputPixelPosMin, InputPixelPosMax);
+
+		float ClosestDeviceZ1 = ClosestDeviceZ;
+		float ClosestDeviceZ2 = SceneDepthTexture[PixelCoord2];
+
+		float4 EncodedVelocity1 = SceneVelocityTexture[PixelCoord1];
+		float4 EncodedVelocity2 = SceneVelocityTexture[PixelCoord2];
+
+		float3 ScreenVelocity1 = ComputeStaticVelocity(ScreenPos, ClosestDeviceZ1);
+		float3 ScreenVelocity2 = ComputeStaticVelocity(ScreenPos, ClosestDeviceZ2);
+		
+		#if CONFIG_USE_SCENE_VELOCITY
+		{
+			if (EncodedVelocity1.x > 0.0)
+			{
+				ScreenVelocity1 = DecodeVelocityFromTexture(EncodedVelocity1);
+			}
+			if (EncodedVelocity2.x > 0.0)
+			{
+				ScreenVelocity2 = DecodeVelocityFromTexture(EncodedVelocity2);
+			}
+		}
+		#endif
+
+		float3 VelocityDelta = ScreenVelocity1 - ScreenVelocity2;
+		float ExtrapolationBilateral = ComputeScreenVelocityBilateralWeight(VelocityDelta.xy);
+
+		FinalScreenVelocity = ScreenVelocity1 + VelocityDelta * ExtrapolationBilateral * VelocityExtrapolationMultiplier;
+	}
+	else
+	#endif
+	{
+		FinalScreenVelocity = ComputeStaticVelocity(ScreenPos, ClosestDeviceZ);
+		
+		float4 EncodedVelocity = SceneVelocityTexture[uint2(InputBufferUV * InputInfo_Extent) + VelocityPixelOffset];
+
+		#if CONFIG_USE_SCENE_VELOCITY
+		{
+			if (EncodedVelocity.x > 0.0)
+			{
+				FinalScreenVelocity = DecodeVelocityFromTexture(EncodedVelocity);
+			}
+		}
+		#endif
+	}
+
+	tsr_half IsMovingMask = tsr_half(0.0);
+	BRANCH
+	if (bOutputIsMovingTexture)
+	{
+		float Depth = ConvertFromDeviceZ(ClosestDeviceZ);
+		float PrevDepth = ConvertFromDeviceZ(ClosestDeviceZ - FinalScreenVelocity.z);
+		float2 PrevScreenPos = ScreenPos - FinalScreenVelocity.xy;
+		
+		float4 ThisClip = float4(ScreenPos, DeviceZ, 1);
+		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); 
+		float2 PrevScreen = PrevClip.xy / PrevClip.w;
+			
+		float4 RotationalPrevClip = mul(ThisClip, RotationalClipToPrevClip);
+		float2 RotationalPrevScreen = RotationalPrevClip.xy / RotationalPrevClip.w;
+			
+		tsr_half PixelParallaxVelocity = tsr_half(0.5) * length(tsr_half2(RotationalPrevScreen - PrevScreen) * tsr_half2(InputInfo_ViewportSize));
+			
+		float4 ClipPosition = float4(ScreenPos * (View.ViewToClip[3][3] < 1.0f ? Depth : 1.0f), Depth, 1);
+		float4 PrevClipPosition = float4(PrevScreenPos * (View.ViewToClip[3][3] < 1.0f ? PrevDepth : 1.0f), PrevDepth, 1);
+		
+		float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+		float3 TranslatedWorldPosition = mul(ClipPosition, View.ScreenToTranslatedWorld).xyz;
+		float3 PrevTranslatedWorldPosition = mul(PrevClipPosition, View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
+		
+		float WorldDepthToPixelWorldRadius = 2.0 * GetTanHalfFieldOfView().x * View.ViewSizeAndInvSize.z;
+		float StaticWorldRadius = Depth * WorldDepthToPixelWorldRadius;
+
+		IsMovingMask = max(
+			tsr_half(saturate(length(TranslatedWorldPosition - PrevTranslatedWorldPosition) * rcp(StaticWorldRadius) - 1.0)),
+			saturate(PixelParallaxVelocity * tsr_half(InvFlickeringMaxParralaxVelocity) - tsr_half(0.5)));
+	}
+
+	// Do motion blur velocity flatten.
+	#if DIM_MOTION_BLUR_DIRECTIONS > 0
+		FVelocityRange VelocityPolarRange;
+		float2 VelocityPolar;
+		ReduceVelocityFlattenTile(GroupThreadIndex, FinalScreenVelocity.xy, /* out */ VelocityPolarRange, /* out */ VelocityPolar);
+	#endif
+
+	Debug.rg = VelocityPixelOffset * 0.5 + 0.5;
+
+	{
+		bool bValidOutputPixel = all(InputPixelPos < InputInfo_ViewportMax);
+		
+		// Scatter parallax rejection
+		#if 1
+		{
+			float2 PrevScreenPos = ScreenPos - FinalScreenVelocity.xy;
+			float2 PrevInputBufferUV = (InputInfo_ScreenPosToViewportScale * PrevScreenPos + InputInfo_ScreenPosToViewportBias) * InputInfo_ExtentInverse;
+
+			float2 PixelVelocity = FinalScreenVelocity.xy * 0.5 * InputInfo_ViewportSize;
+			uint EncodedHoleFillingVelocity = EncodeHoleFillingVelocity(PixelVelocity);
+
+			uint PrevClosestDepth = (f32tof16(ClosestDeviceZ) << VELOCITY_HOLE_FILLING_BITS) | EncodedHoleFillingVelocity;
+			
+			bool bValidHistoryCoord = bValidOutputPixel && all(and(PrevInputBufferUV > PrevOutputBufferUVMin, PrevInputBufferUV < PrevOutputBufferUVMax));
+
+			FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(PrevInputBufferUV, InputInfo_Extent, InputInfo_ExtentInverse);
+
+			UNROLL_N(4)
+			for (uint i = 0; i < 4; i++)
+			{
+				float Weight = GetSampleWeight(BilinearInter, i);
+				uint2 PixelPos = GetSamplePixelCoord(BilinearInter, i);
+
+				uint FinalAdd = uint(round(Weight * PREV_USE_COUNT_QUANTIZATION));
+			
+				PixelPos.x = ((FinalAdd > 0) && bValidHistoryCoord) ? PixelPos.x : (~0);
+
+				#if COMPRESS_PREV_USE_COUNT
+					uint2 CompressedUseCountPixelPos;
+					uint Shift;
+					ComputeCompressedUseCountPixelCoordinates(PixelPos, /* out */ CompressedUseCountPixelPos, /* out */ Shift);
+
+					FinalAdd = FinalAdd << (8 * Shift);
+				#else
+					uint2 CompressedUseCountPixelPos = PixelPos;
+				#endif
+
+				InterlockedAdd(PrevUseCountOutput[CompressedUseCountPixelPos], FinalAdd);
+				InterlockedMax(PrevClosestDepthOutput[PixelPos], PrevClosestDepth);
+			}
+		}
+		#endif
+		
+		float4 EncodedVelocity = SceneVelocityTexture[uint2(InputBufferUV * InputInfo_Extent)];
+		
+		uint2 OutputPixelPos = bValidOutputPixel ? InputPixelPos : uint(~0).xx;
+
+		//DilatedVelocityOutput[OutputPixelPos] = EncodedVelocity.xy; //EncodeVelocityToTexture(float3(FinalScreenVelocity.xy, 0.0)).xy;
+		DilatedVelocityOutput[OutputPixelPos] = EncodeVelocityToTexture(float3(FinalScreenVelocity.xy, 0.0)).xy;
+		ClosestDepthOutput[OutputPixelPos] = ClosestDeviceZ;
+		R8Output[uint3(OutputPixelPos, 0)] = CompressParallaxFactor(tsr_half(ParallaxFactorForHistory)) | (CompressParallaxFactor(tsr_half(ParallaxFactorForHistoryRejection)) << 4);
+
+		BRANCH
+		if (bOutputIsMovingTexture)
+		{
+			R8Output[uint3(OutputPixelPos, 1)] = uint(round(IsMovingMask * 255.0));
+		}
+
+		// Output motion blur velocity flatten
+		#if DIM_MOTION_BLUR_DIRECTIONS > 0
+		{
+			VelocityFlattenOutput[OutputPixelPos] = EncodeVelocityFlatten(VelocityPolar, ClosestDeviceZ);
+			
+			uint2 OutputTilePos = GroupThreadIndex == 0 ? GroupId : uint(~0).xx;
+			StoreVelocityRange(VelocityTileOutput0, VelocityTileOutput1, OutputTilePos, PolarToCartesian(VelocityPolarRange));
+		}
+		#endif
+
+		#if DEBUG_OUTPUT && 0 // running out of UAVs
+		{
+			DebugOutput[tsr_short3(OutputPixelPos, 0)] = Debug;
+		}
+		#endif
+	}
+}

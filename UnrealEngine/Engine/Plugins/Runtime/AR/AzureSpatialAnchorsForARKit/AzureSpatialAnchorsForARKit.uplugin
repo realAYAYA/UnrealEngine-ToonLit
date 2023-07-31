@@ -1,0 +1,46 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Azure Spatial Anchors For ARKit",
+	"Description" : "Microsoft Azure Spatial Anchors implementation for ARKit",
+	"Category" : "Augmented Reality",
+	"CreatedBy" : "Epic Games",
+	"CreatedByURL" : "epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsExperimentalVersion" : true,
+	"IsBetaVersion" : true,
+	"Installed" : false,
+	"SupportedTargetPlatforms": [
+		"IOS"
+	],
+	"Modules": [
+		{
+			"Name": "AzureSpatialAnchorsForARKit",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"IOS"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "AzureSpatialAnchors",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"IOS"
+			]
+		},
+        {
+            "Name": "AppleARKit",
+            "Enabled": true,
+            "PlatformAllowList": [
+                "IOS"
+            ]
+        }
+	]
+}

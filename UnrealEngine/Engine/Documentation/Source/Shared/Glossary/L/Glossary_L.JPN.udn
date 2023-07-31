@@ -1,0 +1,24 @@
+﻿INTSourceChangelist:3810557
+Title:L
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_L]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+レベル
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_level]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_L]
+
+[COMMENT:none]
+[EXCERPT:Glossary_level]
+**レベル** は、ゲームプレイのユーザー定義領域です。含まれているアクタのプロパティを配置、変換、編集することにより、レベルが作成、表示または修正されます。アンリアル エディタにおいて、各レベルは個別の「.umap」ファイルに保存されるので、これらのファイルはマップと称されることがあります。 
+[/EXCERPT:Glossary_level]
+[/COMMENT]

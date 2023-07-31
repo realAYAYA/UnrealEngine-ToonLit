@@ -1,0 +1,68 @@
+{
+	"FileVersion": 3,
+	"Version": 0.1,
+	"VersionName": "0.1.0-alpha",
+	"FriendlyName": "Neural Network Inference (NNI)",
+	"Description": "Cross-platform framework for running deep learning and neural network inference in Unreal Engine, supporting both CPU and GPU acceleration.",
+	"Category": "Experimental",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "NeuralNetworkInference",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "NeuralNetworkInferenceShaders",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "NeuralNetworkInferenceQA",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "NeuralNetworkInferenceProfiling",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "ONNXRuntime",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64", "Linux", "Mac"
+			]
+		},
+		{
+			"Name": "ThirdPartyHelperAndDLLLoader",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "ModelProto",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "ModelProtoFileReader",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "NeuralNetworkInferenceEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

@@ -1,0 +1,51 @@
+﻿INTSourceChangelist:3810557
+Title:F
+Crumbs:Shared/Glossary
+Description:
+Availability:NoPublish
+
+[EXCERPT:Glossary_F]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+FBX文件
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_FBX_file]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+流量控制
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_Flow_Control]
+	[/PARAM]
+[/OBJECT]
+
+[OBJECT:GlossaryItem]
+	[PARAM:Term]
+框架
+	[/PARAM]
+	[PARAM:Definition]
+		[INCLUDE:#Glossary_framework]
+	[/PARAM]
+[/OBJECT]
+
+[/EXCERPT:Glossary_F]
+
+[COMMENT:none]
+[EXCERPT:Glossary_FBX_file]
+ **FBX** 是Autodesk开发的一种文件格式。该文件格式用于将静态网格体（Static Meshes）、骨架网格体（Skeletal Meshes）和动画序列（Animation Sequences）导入虚幻编辑器（Unreal Editor）。
+[/EXCERPT:Glossary_FBX_file]
+[EXCERPT:Glossary_Flow_Control]
+ **流量控制（Flow Control）** 操作允许在蓝图中显式控制执行流程。这种控制可以表现为如下形式：根据某个条件是否为真来选择要执行的图表的一个分支、 
+多次执行某个特定分支、按特定顺序执行多个分支、 
+等等。默认的流量控制操作包括分支（if语句）、循环（for和while）、 
+入口和序列。
+[/EXCERPT:Glossary_Flow_Control]
+[EXCERPT:Glossary_framework]
+ **框架（Framework）** 系统构成了虚幻引擎中游戏进程的基础。游戏进程框架可以分为三个类别：游戏类型、玩家和界面。每个类别负责游戏进程的某个特定方面，每个类别由一个或多个系统和类组成，这些系统和类定义了不同的部分以及它们的协作方式。
+[/EXCERPT:Glossary_framework]
+[/COMMENT]

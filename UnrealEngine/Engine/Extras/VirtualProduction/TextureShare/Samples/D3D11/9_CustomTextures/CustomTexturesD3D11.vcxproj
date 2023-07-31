@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="../../ThirdParty/AppCoreD3D11/AppCoreD3D11.vcxproj" />
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{5445263C-84B8-4AB3-A1AA-52EB37ACCD54}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectName>9_CustomTexturesD3D11</ProjectName>
+  </PropertyGroup>
+</Project>

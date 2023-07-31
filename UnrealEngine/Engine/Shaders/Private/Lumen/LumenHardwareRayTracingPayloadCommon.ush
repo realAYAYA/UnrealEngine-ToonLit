@@ -1,0 +1,99 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../RayTracing/RayTracingCommon.ush"
+
+#define PRIMITIVE_INDEX 2
+#define INSTANCE_INDEX 3
+#define NORMAL_INDEX 1
+#define MATERIAL_INDEX 0
+
+struct FLumenMinimalPayload : FMinimalPayload
+{
+	uint PackedData[4];
+
+	void SetIsTranslucent(uint bIsTranslucent)
+	{
+		PackedData[MATERIAL_INDEX] = (PackedData[MATERIAL_INDEX] & 0x7FFFFFFF) | ((bIsTranslucent & 0x01) << 31);
+	}
+
+	uint IsTranslucent()
+	{
+		uint bIsTranslucent = (PackedData[MATERIAL_INDEX] >> 31) & 0x1;
+		return bIsTranslucent;
+	}
+
+	void SetIsTwoSided(uint bIsTwoSided)
+	{
+		PackedData[MATERIAL_INDEX] = (PackedData[MATERIAL_INDEX] & 0xBFFFFFFF) | ((bIsTwoSided & 0x01) << 30);
+	}
+
+	uint IsTwoSided()
+	{
+		uint bIsTwoSided = (PackedData[MATERIAL_INDEX] >> 30) & 0x1;
+		return bIsTwoSided;
+	}
+
+	void SetMaterialShaderIndex(uint MaterialShaderIndex)
+	{
+		PackedData[MATERIAL_INDEX] = (PackedData[MATERIAL_INDEX] & 0xC0000000) | (MaterialShaderIndex & 0x3FFFFFFF);
+	}
+
+	uint GetMaterialShaderIndex()
+	{
+		uint MaterialShaderIndex = PackedData[MATERIAL_INDEX] & 0x3FFFFFFF;
+		return MaterialShaderIndex;
+	}
+
+	void SetWorldNormal(float3 WorldNormal)
+	{
+		float2 WorldNormalAsOctahedron = UnitVectorToOctahedron(WorldNormal);
+		uint2 QuantizedOctahedron = clamp((WorldNormalAsOctahedron * 0.5 + 0.5) * 65535.0 + 0.5, 0.0, 65535.0);
+		PackedData[NORMAL_INDEX] = ((QuantizedOctahedron.x & 0xFFFF) << 16) | (QuantizedOctahedron.y & 0xFFFF);
+	}
+
+	float3 GetWorldNormal()
+	{
+		uint2 QuantizedOctahedron = uint2((PackedData[NORMAL_INDEX] >> 16) & 0xFFFF, PackedData[NORMAL_INDEX] & 0xFFFF);
+		float2 WorldNormalAsOctahedron = ((QuantizedOctahedron / 65535.0) - 0.5) * 2.0;
+		float3 WorldNormal = OctahedronToUnitVector(WorldNormalAsOctahedron);
+		return WorldNormal;
+	}
+
+	void SetPrimitiveIndex(int PrimitiveIndex)
+	{
+		PackedData[PRIMITIVE_INDEX] = PrimitiveIndex;
+	}
+
+	int GetPrimitiveIndex()
+	{
+		return asint(PackedData[PRIMITIVE_INDEX]);
+	}
+
+	void SetInstanceIndex(int InstanceIndex)
+	{
+		PackedData[INSTANCE_INDEX] = InstanceIndex;
+	}
+
+	int GetInstanceIndex()
+	{
+		return PackedData[INSTANCE_INDEX];
+	}
+};
+
+uint GetGPUSceneInstanceIndex(uint PrimitiveIndex, uint InstanceIndex)
+{
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	// Handle ray tracing auto instancing which can cause PrimitiveInstanceIndex to be above 0 for meshes with a single instance
+	if (GetPrimitiveData(PrimitiveIndex).NumInstanceSceneDataEntries == 1)
+	{
+		InstanceIndex = 0;
+	}
+
+	return GetPrimitiveData(PrimitiveIndex).InstanceSceneDataOffset + InstanceIndex;
+#else
+
+	return 0;
+#endif
+}

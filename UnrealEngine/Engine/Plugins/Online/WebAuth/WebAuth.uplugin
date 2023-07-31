@@ -1,0 +1,27 @@
+{
+	"FileVersion" : 3,
+
+	"FriendlyName" : "Web Authentication Plugin",
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"Description" : "Access to Web Authenticated Sessions.",
+	"Category" : "Online Platform",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : false,
+
+	"Modules": [
+		{
+			"Name": "WebAuth",
+			"Type": "Runtime",
+			"LoadingPhase" : "Default",
+			"PlatformAllowList" :
+			[
+				"Win64",
+				"IOS",
+				"Android"
+			],
+			"TargetDenyList": [ "Server" ]
+		}
+	]
+}

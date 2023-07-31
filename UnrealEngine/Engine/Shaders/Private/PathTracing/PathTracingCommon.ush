@@ -1,0 +1,311 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	PathTracingCommon.ush: path tracing payload structures
+=============================================================================*/
+
+#pragma once
+
+#include "../RayTracing/RayTracingCommon.ush"
+#include "../OctahedralCommon.ush"
+
+// These flags are analogous to RAY_TRACING_PAYLOAD_* flags. There are currently 6 bits available
+#define PATH_TRACING_PAYLOAD_OUTPUT_FLAG_FRONT_FACE                   (1 << 0) // Indicates that ray has hit the front face of a primitive. Set by closest hit shader.
+#define PATH_TRACING_PAYLOAD_OUTPUT_FLAG_DECAL_RECEIVER               (1 << 1) // Indicates that ray has hit a primitive that receives decals. Set by closest hit shader.
+
+#define PATH_TRACING_PAYLOAD_INPUT_FLAG_IGNORE_SKY_MATERIALS          (1 << 0) // Indicates that the AHS/CHS should skip processing if the material is tagged as sky
+#define PATH_TRACING_PAYLOAD_INPUT_FLAG_PATHTRACER_VISIBILITY         (1 << 1) // Indicates that this is a path tracer visibility ray (which supports material evaluation for transparent shadows and fake caustics)
+
+#define PATH_TRACING_PAYLOAD_NORMAL_BITS  24
+
+// shading model extensions beyond the default count
+#define SHADINGMODELID_MEDIUM  (SHADINGMODELID_NUM + 1)
+
+
+uint PayloadEncodeUnitVector(float3 Normal)
+{
+	const int BITS = PATH_TRACING_PAYLOAD_NORMAL_BITS;
+	const float Scale = float((1u << (BITS / 2)) - 2) / 2; // largest representable even number (so we can encode 0)
+	float2 OctF = UnitVectorToOctahedron(Normal);
+	int2 Oct = int2(round(OctF * Scale + Scale));
+	return Oct.x + (1u << (BITS / 2)) * Oct.y;
+}
+
+float3 PayloadDecodeUnitVector(uint Encoded)
+{
+	const int BITS = PATH_TRACING_PAYLOAD_NORMAL_BITS;
+	const uint Mask = (1u << (BITS / 2)) - 1;
+	const float Scale = float((1u << (BITS / 2)) - 2);
+
+	int2 Oct = int2(Encoded & Mask, (Encoded >> (BITS / 2)) & Mask);
+	float2 OctF = saturate(float2(Oct) / Scale);
+	return OctahedronToUnitVector(2 * OctF - 1);
+}
+
+// This payload structure is what we transport between RGS/CHS/AHS programs
+struct FPackedPathTracingPayload : FMinimalPayload
+{
+	// float FMinimalPayload::HitT                       // 4  bytes
+	uint PackedPixelCoord;                               // 4  bytes
+	uint PackedData[14];								 // 56 bytes (encoded data, depends on shading model and ray type)
+														 // 64 bytes total
+
+	void SetPixelCoord(uint2 PixelCoord) { PackedPixelCoord = (PixelCoord.x & 0xFFFF) | (PixelCoord.y << 16); }
+	uint2 GetPixelCoord() { return uint2(PackedPixelCoord & 0xFFFF, PackedPixelCoord >> 16); }
+
+	uint GetFlags() { return (PackedData[7] >> 23) & 0x3F; }
+	void SetFlag(uint Flag) { PackedData[7] |= Flag << 23; }
+	uint GetPrimitiveLightingChannelMask() { return (PackedData[7] >> 29) & 0x7; }
+
+	// Flag methods
+	void SetIgnoreSkyMaterials() { SetFlag(PATH_TRACING_PAYLOAD_INPUT_FLAG_IGNORE_SKY_MATERIALS); }
+	bool IsIgnoreSkyMaterials() { return (GetFlags() & PATH_TRACING_PAYLOAD_INPUT_FLAG_IGNORE_SKY_MATERIALS) != 0; }
+
+	void SetVisibilityRay() { SetFlag(PATH_TRACING_PAYLOAD_INPUT_FLAG_PATHTRACER_VISIBILITY); }
+	bool IsVisibilityRay() { return (GetFlags() & PATH_TRACING_PAYLOAD_INPUT_FLAG_PATHTRACER_VISIBILITY) != 0; }
+
+	bool IsFrontFace() { return (GetFlags() & PATH_TRACING_PAYLOAD_OUTPUT_FLAG_FRONT_FACE) != 0; }
+
+
+	// These method are meant to be used only when IsVisibilityRay() is true
+	float3 GetRayThroughput()
+	{
+		return float3(
+			asfloat(PackedData[0]),
+			asfloat(PackedData[1]),
+			asfloat(PackedData[2])
+		);
+	}
+
+	void SetRayThroughput(float3 RayThroughput)
+	{
+		PackedData[0] = asuint(RayThroughput.x);
+		PackedData[1] = asuint(RayThroughput.y);
+		PackedData[2] = asuint(RayThroughput.z);
+	}
+
+	float GetPathRoughness()
+	{
+		return asfloat(PackedData[3]);
+	}
+
+	void SetPathRoughness(float PathRoughness)
+	{
+		PackedData[3] = asuint(PathRoughness);
+	}
+
+	// tau: optical depth along shadow ray, this is the integral of the extinction coefficient
+	float3 GetTau()
+	{
+		return float3(
+			asfloat(PackedData[4]),
+			asfloat(PackedData[5]),
+			asfloat(PackedData[6])
+		);
+	}
+
+	void SetTau(float3 Tau)
+	{
+		PackedData[4] = asuint(Tau.x);
+		PackedData[5] = asuint(Tau.y);
+		PackedData[6] = asuint(Tau.z);
+	}
+};
+
+// This payload structure is the expanded version of the above which is more convenient to work with
+struct FPathTracingPayload : FMinimalPayload
+{
+	float3 Radiance;
+	float3 WorldGeoNormal;           // normal of the actual triangle (faceted)
+	float3 WorldNormal;              // normal output of the material (includes normal/bump)
+	float3 WorldSmoothNormal;        // smooth normal before normal/bump is applied
+	float3 BaseColor;
+	float3 DiffuseColor;
+	float3 SpecularColor;
+	float  Opacity;
+	float  Metallic;
+	float  Specular;
+	float  Roughness;
+	float  Ior;
+	uint   ShadingModelID;
+	uint   BlendingMode;
+	uint   Flags;
+	uint   PrimitiveLightingChannelMask;
+	float4 CustomData;
+	float3 CustomVector;
+	float3 WorldTangent;
+	float3 SubsurfaceRadius;
+	float  Anisotropy;
+	float3 TranslatedWorldPos;
+
+	void SetFrontFace() { Flags |= PATH_TRACING_PAYLOAD_OUTPUT_FLAG_FRONT_FACE; }
+	bool IsFrontFace() { return (Flags & PATH_TRACING_PAYLOAD_OUTPUT_FLAG_FRONT_FACE) != 0; }
+
+	void SetDecalReceiver() { Flags |= PATH_TRACING_PAYLOAD_OUTPUT_FLAG_DECAL_RECEIVER; }
+	bool IsDecalReceiver() { return (Flags & PATH_TRACING_PAYLOAD_OUTPUT_FLAG_DECAL_RECEIVER) != 0; }
+
+
+	// Various ways to interpret CustomData (depending on ShadingModelID)
+	float GetClearCoat() { return CustomData.x; }
+	float GetClearCoatRoughness() { return CustomData.y; }
+	void SetClearCoatRoughness(float ClearCoatRoughness) { CustomData.y = ClearCoatRoughness; }
+	float3 GetClearCoatBottomNormal() { return CustomVector; }
+
+	uint GetSubsurfaceProfileId() { return uint(CustomData.a * 255.0 + 0.5); }
+
+	float3 GetSubsurfaceColor() { return CustomData.xyz; }
+	void SetSubsurfaceColor(float3 SubsurfaceColor) { CustomData.xyz = SubsurfaceColor; }
+	
+	// Steal an unused float3 (the only material with dual specular does not support anisotropy)
+	// Data is encoded as (x: roughness 0, y: roughness 1, z: roughness mix)
+	float3 GetDualRoughnessSpecular() { return WorldTangent; }
+	void SetDualRoughnessSpecular(float3 RoughnessData)
+	{
+		// store data in unused field and compute average roughness
+		WorldTangent = RoughnessData;
+		Roughness = lerp(RoughnessData.x, RoughnessData.y, RoughnessData.z);
+	}
+
+	bool IsMaterialSolidGlass()
+	{
+		return ShadingModelID == SHADINGMODELID_DEFAULT_LIT && BlendingMode == RAY_TRACING_BLEND_MODE_TRANSLUCENT && Ior != 1.0 && Opacity < 1;
+	}
+
+	bool IsMaterialTransmissive()
+	{
+		return ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE ||
+			   ShadingModelID == SHADINGMODELID_THIN_TRANSLUCENT || 
+			   ShadingModelID == SHADINGMODELID_HAIR ||
+			   ShadingModelID == SHADINGMODELID_MEDIUM ||
+			   ShadingModelID == SHADINGMODELID_SINGLELAYERWATER ||	
+			   IsMaterialSolidGlass();
+	}
+
+	bool IsSubsurfaceMaterial()
+	{
+		return ShadingModelID == SHADINGMODELID_SUBSURFACE ||
+			   ShadingModelID == SHADINGMODELID_PREINTEGRATED_SKIN ||
+			   ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE ||
+			   ShadingModelID == SHADINGMODELID_EYE;
+	}
+};
+
+FPackedPathTracingPayload InitPathTracingPayload(uint2 PixelCoord, bool bIgnoreSkyMaterials)
+{
+	FPackedPathTracingPayload Output = (FPackedPathTracingPayload)0;
+	Output.SetPixelCoord(PixelCoord);
+	if (bIgnoreSkyMaterials)
+	{
+		Output.SetIgnoreSkyMaterials();
+	}
+	return Output;
+}
+
+FPackedPathTracingPayload InitPathTracingVisibilityPayload(uint2 PixelCoord, float PathRoughness)
+{
+	FPackedPathTracingPayload Output = (FPackedPathTracingPayload)0;
+	Output.SetPixelCoord(PixelCoord);
+	// Signal to the AHS we want to evaluate the opacity
+	// The payload is used to carry the path throughput (for transparent shadows)
+	// and current path roughness (for approximate caustics)
+	Output.SetVisibilityRay();
+	Output.SetPathRoughness(PathRoughness);
+	Output.SetRayThroughput(1.0);
+	return Output;
+}
+
+
+FPackedPathTracingPayload PackPathTracingPayload(FPathTracingPayload Input)
+{
+	FPackedPathTracingPayload Output = (FPackedPathTracingPayload)0;
+	Output.HitT = Input.HitT;
+
+	Output.PackedData[0] = f32tof16(Input.Radiance.x);
+	Output.PackedData[0] |= f32tof16(Input.Radiance.y) << 16;
+	Output.PackedData[1] = f32tof16(Input.Radiance.z);
+
+	uint ShdNormal = PayloadEncodeUnitVector(Input.WorldNormal);
+	uint GeoNormal = PayloadEncodeUnitVector(Input.WorldGeoNormal);
+	Output.PackedData[1] |= ShdNormal << 16; // pack low 16 bits
+	Output.PackedData[2] = ShdNormal >> 16;  // pack upper 8 bits
+	Output.PackedData[2] |= GeoNormal << 8;  // pack all 24 bits
+
+	Output.PackedData[3] = f32tof16(Input.BaseColor.x);
+	Output.PackedData[3] |= f32tof16(Input.BaseColor.y) << 16;
+	Output.PackedData[4] = f32tof16(Input.BaseColor.z);
+
+	Output.PackedData[4] |= f32tof16(Input.Opacity) << 16;
+
+	Output.PackedData[5] = f32tof16(Input.Metallic);
+	Output.PackedData[5] |= f32tof16(Input.Specular) << 16;
+	Output.PackedData[6] = f32tof16(Input.Roughness);
+	Output.PackedData[6] |= f32tof16(Input.Anisotropy) << 16;
+
+	Output.PackedData[7] = f32tof16(Input.Ior);                              // 16 bits
+	Output.PackedData[7] |= (Input.ShadingModelID & 0xF) << 16;               // 4 bits
+	Output.PackedData[7] |= (Input.BlendingMode & 0x7) << 20;                 // 3 bits
+	Output.PackedData[7] |= (Input.Flags & 0x3F) << 23;                       // 6 bits
+	Output.PackedData[7] |= (Input.PrimitiveLightingChannelMask & 0x7) << 29; // 3 bits
+                                                                       // total 32 bits
+
+	uint SmoothNormal = PayloadEncodeUnitVector(Input.WorldSmoothNormal);
+	uint TangentVec   = PayloadEncodeUnitVector(Input.WorldTangent);
+	Output.PackedData[8] = SmoothNormal;                     // pack all 24 bits
+	Output.PackedData[8] |= (TangentVec << 8) & 0xFF000000u; // pack upper 8 bits
+	Output.PackedData[9] = TangentVec & 0xFFFFu;             // pack lower 16 bits
+
+	Output.PackedData[9] |= f32tof16(Input.CustomVector.x) << 16;
+	Output.PackedData[10] = f32tof16(Input.CustomVector.y);
+	Output.PackedData[10] |= f32tof16(Input.CustomVector.z) << 16;
+
+	Output.PackedData[11] = f32tof16(Input.CustomData.x);
+	Output.PackedData[11] |= f32tof16(Input.CustomData.y) << 16;
+	Output.PackedData[12] = f32tof16(Input.CustomData.z);
+	Output.PackedData[12] |= f32tof16(Input.CustomData.w) << 16;
+
+	return Output;
+}
+
+FPathTracingPayload UnpackPathTracingPayload(FPackedPathTracingPayload Input, FRayDesc Ray)
+{
+	FPathTracingPayload Output = (FPathTracingPayload)0;
+
+	Output.HitT = Input.HitT;
+	Output.Radiance.x = f16tof32(Input.PackedData[0]);
+	Output.Radiance.y = f16tof32(Input.PackedData[0] >> 16);
+	Output.Radiance.z = f16tof32(Input.PackedData[1]);
+	Output.WorldNormal = PayloadDecodeUnitVector((Input.PackedData[1] >> 16) | ((Input.PackedData[2] & 0xFF) << 16));
+	Output.WorldGeoNormal = PayloadDecodeUnitVector(Input.PackedData[2] >> 8);
+	Output.BaseColor.x = f16tof32(Input.PackedData[3]);
+	Output.BaseColor.y = f16tof32(Input.PackedData[3] >> 16);
+	Output.BaseColor.z = f16tof32(Input.PackedData[4]);
+	Output.Opacity = f16tof32(Input.PackedData[4] >> 16);
+	Output.Metallic = f16tof32(Input.PackedData[5]);
+	Output.Specular = f16tof32(Input.PackedData[5] >> 16);
+	Output.Roughness = f16tof32(Input.PackedData[6]);
+	Output.Anisotropy = f16tof32(Input.PackedData[6] >> 16);
+	Output.Ior = f16tof32(Input.PackedData[7]);
+	Output.ShadingModelID = (Input.PackedData[7] >> 16) & 0xF;
+	Output.BlendingMode = (Input.PackedData[7] >> 20) & 0x7;
+	Output.Flags = Input.GetFlags();
+	Output.PrimitiveLightingChannelMask = Input.GetPrimitiveLightingChannelMask();
+
+	Output.WorldSmoothNormal = PayloadDecodeUnitVector(Input.PackedData[8] & 0x00FFFFFFu);
+	Output.WorldTangent = PayloadDecodeUnitVector((Input.PackedData[8] & 0xFF000000u) >> 8 | (Input.PackedData[9] & 0xFFFFu));
+
+	Output.CustomVector.x = f16tof32(Input.PackedData[9] >> 16);
+	Output.CustomVector.y = f16tof32(Input.PackedData[10]);
+	Output.CustomVector.z = f16tof32(Input.PackedData[10] >> 16);
+
+	Output.CustomData.x = f16tof32(Input.PackedData[11]);
+	Output.CustomData.y = f16tof32(Input.PackedData[11] >> 16);
+	Output.CustomData.z = f16tof32(Input.PackedData[12]);
+	Output.CustomData.w = f16tof32(Input.PackedData[12] >> 16);
+
+	Output.TranslatedWorldPos = Ray.Origin + Output.HitT * Ray.Direction;
+
+	Output.DiffuseColor = Output.BaseColor - Output.BaseColor * Output.Metallic;
+	Output.SpecularColor = ComputeF0(Output.Specular, Output.BaseColor, Output.Metallic);
+
+	return Output;
+}

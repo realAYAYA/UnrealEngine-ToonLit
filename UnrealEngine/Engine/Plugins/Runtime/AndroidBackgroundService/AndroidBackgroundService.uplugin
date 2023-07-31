@@ -1,0 +1,32 @@
+{
+	"FileVersion" : 3,
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"FriendlyName" : "Android Background Service",
+	"Description" : "Allows you to use AndroidX WorkManager to perform background work on Android",
+	"Category" : "Android Background Service",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "http://epicgames.com",
+	"EnabledByDefault" : false,
+	"SupportedTargetPlatforms": [
+		"Android"
+	],
+	"Modules" :
+	[
+		{
+			"Name": "AndroidBackgroundService",
+			"Type": "RuntimeNoCommandlet",
+			"LoadingPhase": "PreEarlyLoadingScreen",
+			"PlatformAllowList": [
+				"Android"
+			]
+		}
+	],
+	"LocalizationTargets": 
+	[
+		{
+			"Name": "AndroidBackgroundService",
+			"LoadingPolicy": "Always"
+		}
+	]
+}
