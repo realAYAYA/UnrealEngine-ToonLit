@@ -952,6 +952,23 @@ FDirectLighting PreintegratedSkinBxDF( FGBufferData GBuffer, half3 N, half3 V, h
 	return Lighting;
 }
 
+// Change-begin
+
+FDirectLighting ToonShadow( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, float NoL, FAreaLight AreaLight, FShadowTerms Shadow )
+{
+	FDirectLighting Lighting;
+
+	float RampID = GBuffer.Metallic;
+	float Y = saturate(dot(N, L) * .5 + .5);
+	
+	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
+	Lighting.Diffuse = ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
+	Lighting.Specular = float3(0, 0, 0);
+	Lighting.Transmission = float3(0, 0, 0);
+	
+	return Lighting;
+}
+
 // Specular
 float ToonStep(float Roughness, float Ndc)
 {
@@ -961,7 +978,6 @@ float ToonStep(float Roughness, float Ndc)
 	return smoothstep(1 - Width - Y2, 1- Width + Y2, Ndc);
 }
 
-// Change-begin
 FDirectLighting ToonLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, float NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
 	BxDFContext Context;

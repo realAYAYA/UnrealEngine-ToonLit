@@ -480,8 +480,25 @@ FLightAccumulator AccumulateDynamicLighting(
 			LightAccumulator.EstimatedCost += 0.4f;		// add the cost of the lighting computations (should sum up to 1 form one light)
 		#endif
 		}
+		// Change-begin
+		else
+		{
+			#if NON_DIRECTIONAL_DIRECT_LIGHTING
+			#else
+			if (ShadingModelID == SHADINGMODELID_TOON_LIT || ShadingModelID == SHADINGMODELID_TOON_HAIR)
+			{
+				if (!LightData.bSpotLight && !LightData.bRectLight)
+				{
+					FDirectLighting Lighting = ToonShadow( GBuffer, N, V, ToLight, 0, dot(N, ToLight), (FAreaLight)0, Shadow );
+					LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, 0.0f, 0, float3(1, 1, 1), false );
+				}
+			}
+			#endif
+		}
+		// Change-end
 #endif // SHADING_PATH_MOBILE
 	}
+	
 	return LightAccumulator;
 }
 
