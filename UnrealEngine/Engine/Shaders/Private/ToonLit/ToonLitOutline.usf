@@ -18,6 +18,7 @@ half InverseLerpClamp(half From, half To, half Value)
 // For this shader, we will keep things simple and use this slower but convenient method to get camera fov
 float GetCameraFOV()
 {
+	//View.ViewToClip[3][3] < 1.0f
 	//https://answers.unity.com/questions/770838/how-can-i-extract-the-fov-information-from-the-pro.html
 	float T = View.ClipToView[0][0];//T = ResolveView().TranslatedWorldToClip[1][1];
 	float RadianToDegree = 57.295799f;//180.0f / 3.1415f;
@@ -97,12 +98,7 @@ struct FOutlinePassVSToPS
 };
 
 // Uniform form cpp
-float OutlineWidth;					// Range[0,4] = 1
-float OutlineZOffset;				// Range[0,1] = 0.0001
-//float OutlineZOffsetWeight = 1;	// From VertexData
-float OutlineZOffsetMaskRemapStart;	// Range[0,1] = 0
-float OutlineZOffsetMaskRemapEnd;	// Range[0,1] = 1
-float4 CustomOutlineColor;
+
 
 #if VERTEXSHADER
 void MainVS(
@@ -120,14 +116,11 @@ void MainVS(
 	WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
 
 	float OutlineMask = 1.0f;// From Model's UV2.y
-
-#if NUM_MATERIAL_TEXCOORDS_VERTEX > 10
-	WorldNormal = float3(VertexParameters.TexCoords[2].y, VertexParameters.TexCoords[3].x, VertexParameters.TexCoords[3].y);
-	FLWCMatrix LocalToWorld = VertexParameters.SceneData.InstanceData.LocalToWorld;
-	float3 InvScale = VertexParameters.SceneData.InstanceData.InvNonUniformScale;
- 	WorldNormal = RotateLocalToWorld(WorldNormal, LocalToWorld, InvScale);
-	//OutlineMask = VertexParameters.TexCoords[2].y;
-#endif
+	float OutlineWidth = 100;					// Range[0,4] = 1
+	float OutlineZOffset = 0.0001;				// Range[0,1] = 0.0001
+	//float OutlineZOffsetWeight = 1;	// From VertexData
+	float OutlineZOffsetMaskRemapStart = 0;	// Range[0,1] = 0
+	float OutlineZOffsetMaskRemapEnd = 1;	// Range[0,1] = 1
 
 	// Expand along WorldNormal
 	WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth * OutlineMask);
@@ -147,13 +140,17 @@ void MainVS(
 	// Interpolation
 	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 }
-#endif // VERTEXSHADER
+#endif
 
 void MainPS(
 	FOutlinePassVSToPS Input,
 	out float4 OutColor : SV_Target0)
 {
-	float3 VertexColor = float3(0, 0, 0);//GetMaterialPixelParameters(Input.FactoryInterpolants, Input.Position).VertexColor;
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Input.FactoryInterpolants, Input.Position);
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, Input.Position, true);
 	
-	OutColor = float4(VertexColor * (1 - CustomOutlineColor.a) + CustomOutlineColor.rgb * CustomOutlineColor.a, 1.0f);
+	half3 OutlineColor = GetMaterialBaseColor(PixelMaterialInputs);
+	
+	OutColor = float4(OutlineColor, 1.0f);
 }

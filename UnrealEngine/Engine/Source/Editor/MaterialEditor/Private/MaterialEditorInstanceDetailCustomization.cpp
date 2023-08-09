@@ -1235,18 +1235,10 @@ void FMaterialInstanceParameterDetails::CreateBasePropertyOverrideWidgets(IDetai
 
 	// Change-begin
 	TAttribute<bool> IsOverrideUseToonOutlineEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineEnabled));
-	TAttribute<bool> IsOverrideOutlineWidthEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineWidthEnabled));
-	TAttribute<bool> IsOverrideOutlineZOffsetEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetEnabled));
-	TAttribute<bool> IsOverrideOutlineZOffsetMaskRemapStartEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapStartEnabled));
-	TAttribute<bool> IsOverrideOutlineZOffsetMaskRemapEndEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapEndEnabled));
-	TAttribute<bool> IsOverrideCustomOutlineColorEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideCustomOutlineColorEnabled));
+	TAttribute<bool> IsOverrideOutlineMaterilEnabled = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled));
 	
 	TSharedPtr<IPropertyHandle> UseToonOutlineProperty = BasePropertyOverridePropery->GetChildHandle("bUseToonOutline");
-	TSharedPtr<IPropertyHandle> OutlineWidthProperty = BasePropertyOverridePropery->GetChildHandle("OutlineWidth");
-	TSharedPtr<IPropertyHandle> OutlineZOffsetProperty = BasePropertyOverridePropery->GetChildHandle("OutlineZOffset");
-	TSharedPtr<IPropertyHandle> OutlineZOffsetMaskRemapStartProperty = BasePropertyOverridePropery->GetChildHandle("OutlineZOffsetMaskRemapStart");
-	TSharedPtr<IPropertyHandle> OutlineZOffsetMaskRemapEndProperty = BasePropertyOverridePropery->GetChildHandle("OutlineZOffsetMaskRemapEnd");
-	TSharedPtr<IPropertyHandle> CustomOutlineColorProperty = BasePropertyOverridePropery->GetChildHandle("CustomOutlineColor");
+	TSharedPtr<IPropertyHandle> OutlineMaterialProperty = BasePropertyOverridePropery->GetChildHandle("OutlineMaterial");
 
 	{
 		FIsResetToDefaultVisible IsUseToonOutlinePropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
@@ -1269,98 +1261,22 @@ void FMaterialInstanceParameterDetails::CreateBasePropertyOverrideWidgets(IDetai
 	}
 	{
 		FIsResetToDefaultVisible IsOutlineWidthPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.OutlineWidth != MaterialEditorInstance->Parent->GetOutlineWidth() : false;
+			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.OutlineMaterial != MaterialEditorInstance->Parent->GetOutlineMaterial() : false;
 			});
 		FResetToDefaultHandler ResetOutlineWidthPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
 			if (MaterialEditorInstance->Parent != nullptr)
 			{
-				MaterialEditorInstance->BasePropertyOverrides.OutlineWidth = MaterialEditorInstance->Parent->GetOutlineWidth();
+				MaterialEditorInstance->BasePropertyOverrides.OutlineMaterial = MaterialEditorInstance->Parent->GetOutlineMaterial();
 			}
 			});
 		FResetToDefaultOverride ResetOutlineWidthPropertyOverride = FResetToDefaultOverride::Create(IsOutlineWidthPropertyResetVisible, ResetOutlineWidthPropertyHandler);
-		IDetailPropertyRow& OutlineWidthPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(OutlineWidthProperty.ToSharedRef());
+		IDetailPropertyRow& OutlineWidthPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(OutlineMaterialProperty.ToSharedRef());
 		OutlineWidthPropertyRow
-			.DisplayName(OutlineWidthProperty->GetPropertyDisplayName())
-			.ToolTip(OutlineWidthProperty->GetToolTipText())
-			.EditCondition(IsOverrideOutlineWidthEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineWidthChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineWidthEnabled)))
+			.DisplayName(OutlineMaterialProperty->GetPropertyDisplayName())
+			.ToolTip(OutlineMaterialProperty->GetToolTipText())
+			.EditCondition(IsOverrideOutlineMaterilEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialChanged))
+			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineMaterilEnabled)))
 			.OverrideResetToDefault(ResetOutlineWidthPropertyOverride);
-	}
-	{
-		FIsResetToDefaultVisible IsOutlineZOffsetPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.OutlineZOffset != MaterialEditorInstance->Parent->GetOutlineZOffset() : false;
-			});
-		FResetToDefaultHandler ResetOutlineZOffsetPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			if (MaterialEditorInstance->Parent != nullptr)
-			{
-				MaterialEditorInstance->BasePropertyOverrides.OutlineZOffset = MaterialEditorInstance->Parent->GetOutlineZOffset();
-			}
-			});
-		FResetToDefaultOverride ResetOutlineZOffsetPropertyOverride = FResetToDefaultOverride::Create(IsOutlineZOffsetPropertyResetVisible, ResetOutlineZOffsetPropertyHandler);
-		IDetailPropertyRow& OutlineZOffsetPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(OutlineZOffsetProperty.ToSharedRef());
-		OutlineZOffsetPropertyRow
-			.DisplayName(OutlineZOffsetProperty->GetPropertyDisplayName())
-			.ToolTip(OutlineZOffsetProperty->GetToolTipText())
-			.EditCondition(IsOverrideOutlineZOffsetEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineZOffsetEnabled)))
-			.OverrideResetToDefault(ResetOutlineZOffsetPropertyOverride);
-	}
-	{
-		FIsResetToDefaultVisible IsOutlineZOffsetMaskRemapStartPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.OutlineZOffsetMaskRemapStart != MaterialEditorInstance->Parent->GetOutlineZOffsetMaskRemapStart() : false;
-			});
-		FResetToDefaultHandler ResetOutlineZOffsetMaskRemapStartPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			if (MaterialEditorInstance->Parent != nullptr)
-			{
-				MaterialEditorInstance->BasePropertyOverrides.OutlineZOffsetMaskRemapStart = MaterialEditorInstance->Parent->GetOutlineZOffsetMaskRemapStart();
-			}
-			});
-		FResetToDefaultOverride ResetOutlineZOffsetMaskRemapStartPropertyOverride = FResetToDefaultOverride::Create(IsOutlineZOffsetMaskRemapStartPropertyResetVisible, ResetOutlineZOffsetMaskRemapStartPropertyHandler);
-		IDetailPropertyRow& OutlineZOffsetMaskRemapStartPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(OutlineZOffsetMaskRemapStartProperty.ToSharedRef());
-		OutlineZOffsetMaskRemapStartPropertyRow
-			.DisplayName(OutlineZOffsetMaskRemapStartProperty->GetPropertyDisplayName())
-			.ToolTip(OutlineZOffsetMaskRemapStartProperty->GetToolTipText())
-			.EditCondition(IsOverrideOutlineZOffsetMaskRemapStartEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapStartChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineZOffsetMaskRemapStartEnabled)))
-			.OverrideResetToDefault(ResetOutlineZOffsetMaskRemapStartPropertyOverride);
-	}
-	{
-		FIsResetToDefaultVisible IsOutlineZOffsetMaskRemapEndPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.OutlineZOffsetMaskRemapEnd != MaterialEditorInstance->Parent->GetOutlineZOffsetMaskRemapEnd() : false;
-			});
-		FResetToDefaultHandler ResetOutlineZOffsetMaskRemapEndPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			if (MaterialEditorInstance->Parent != nullptr)
-			{
-				MaterialEditorInstance->BasePropertyOverrides.OutlineZOffsetMaskRemapEnd = MaterialEditorInstance->Parent->GetOutlineZOffsetMaskRemapEnd();
-			}
-			});
-		FResetToDefaultOverride ResetOutlineZOffsetMaskRemapEndPropertyOverride = FResetToDefaultOverride::Create(IsOutlineZOffsetMaskRemapEndPropertyResetVisible, ResetOutlineZOffsetMaskRemapEndPropertyHandler);
-		IDetailPropertyRow& OutlineZOffsetMaskRemapEndPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(OutlineZOffsetMaskRemapEndProperty.ToSharedRef());
-		OutlineZOffsetMaskRemapEndPropertyRow
-			.DisplayName(OutlineZOffsetMaskRemapEndProperty->GetPropertyDisplayName())
-			.ToolTip(OutlineZOffsetMaskRemapEndProperty->GetToolTipText())
-			.EditCondition(IsOverrideOutlineZOffsetMaskRemapEndEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapEndChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideOutlineZOffsetMaskRemapEndEnabled)))
-			.OverrideResetToDefault(ResetOutlineZOffsetMaskRemapEndPropertyOverride);
-	}
-	{
-		FIsResetToDefaultVisible IsCustomOutlineColorPropertyResetVisible = FIsResetToDefaultVisible::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			return MaterialEditorInstance->Parent != nullptr ? MaterialEditorInstance->BasePropertyOverrides.CustomOutlineColor != MaterialEditorInstance->Parent->GetCustomOutlineColor() : false;
-			});
-		FResetToDefaultHandler ResetCustomOutlineColorPropertyHandler = FResetToDefaultHandler::CreateLambda([this](TSharedPtr<IPropertyHandle> InHandle) {
-			if (MaterialEditorInstance->Parent != nullptr)
-			{
-				MaterialEditorInstance->BasePropertyOverrides.CustomOutlineColor = MaterialEditorInstance->Parent->GetCustomOutlineColor();
-			}
-			});
-		FResetToDefaultOverride ResetCustomOutlineColorPropertyOverride = FResetToDefaultOverride::Create(IsCustomOutlineColorPropertyResetVisible, ResetCustomOutlineColorPropertyHandler);
-		IDetailPropertyRow& CustomOutlineColorPropertyRow = BasePropertyOverrideGroup.AddPropertyRow(CustomOutlineColorProperty.ToSharedRef());
-		CustomOutlineColorPropertyRow
-			.DisplayName(CustomOutlineColorProperty->GetPropertyDisplayName())
-			.ToolTip(CustomOutlineColorProperty->GetToolTipText())
-			.EditCondition(IsOverrideCustomOutlineColorEnabled, FOnBooleanValueChanged::CreateSP(this, &FMaterialInstanceParameterDetails::OnOverrideCustomOutlineColorChanged))
-			.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateSP(this, &FMaterialInstanceParameterDetails::IsOverriddenAndVisible, IsOverrideCustomOutlineColorEnabled)))
-			.OverrideResetToDefault(ResetCustomOutlineColorPropertyOverride);
 	}
 	// Change-end
 
@@ -1589,29 +1505,9 @@ bool FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineEnabled() const
 	return MaterialEditorInstance->BasePropertyOverrides.bOverride_UseToonOutline;
 }
 
-bool FMaterialInstanceParameterDetails::OnOverrideOutlineWidthEnabled() const
+bool FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialEnabled() const
 {
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineWidth;
-}
-
-bool FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetEnabled() const
-{
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineZOffset;
-}
-
-bool FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapStartEnabled() const
-{
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineZOffsetMaskRemapStart;
-}
-
-bool FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapEndEnabled() const
-{
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineZOffsetMaskRemapEnd;
-}
-
-bool FMaterialInstanceParameterDetails::OnOverrideCustomOutlineColorEnabled() const
-{
-	return MaterialEditorInstance->BasePropertyOverrides.bOverride_CustomOutlineColor;
+	return MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineMaterial;
 }
 
 void FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineChanged(bool NewValue)
@@ -1620,36 +1516,13 @@ void FMaterialInstanceParameterDetails::OnOverrideUseToonOutlineChanged(bool New
 	MaterialEditorInstance->PostEditChange();
 	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
 }
-void FMaterialInstanceParameterDetails::OnOverrideOutlineWidthChanged(bool NewValue)
+void FMaterialInstanceParameterDetails::OnOverrideOutlineMaterialChanged(bool NewValue) const
 {
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineWidth = NewValue;
+	MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineMaterial = NewValue;
 	MaterialEditorInstance->PostEditChange();
 	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
 }
-void FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetChanged(bool NewValue)
-{
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineZOffset = NewValue;
-	MaterialEditorInstance->PostEditChange();
-	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
-}
-void FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapStartChanged(bool NewValue)
-{
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineZOffsetMaskRemapStart = NewValue;
-	MaterialEditorInstance->PostEditChange();
-	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
-}
-void FMaterialInstanceParameterDetails::OnOverrideOutlineZOffsetMaskRemapEndChanged(bool NewValue)
-{
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_OutlineZOffsetMaskRemapEnd = NewValue;
-	MaterialEditorInstance->PostEditChange();
-	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
-}
-void FMaterialInstanceParameterDetails::OnOverrideCustomOutlineColorChanged(bool NewValue)
-{
-	MaterialEditorInstance->BasePropertyOverrides.bOverride_CustomOutlineColor = NewValue;
-	MaterialEditorInstance->PostEditChange();
-	FEditorSupportDelegates::RedrawAllViewports.Broadcast();
-}
+
 // Change-end
 
 #undef LOCTEXT_NAMESPACE

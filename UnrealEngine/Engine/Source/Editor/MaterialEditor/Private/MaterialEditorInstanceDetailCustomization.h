@@ -122,18 +122,11 @@ private:
 
 	// Change-begin
 	bool OnOverrideUseToonOutlineEnabled() const;
-	bool OnOverrideOutlineWidthEnabled() const;
-	bool OnOverrideOutlineZOffsetEnabled() const;
-	bool OnOverrideOutlineZOffsetMaskRemapStartEnabled() const;
-	bool OnOverrideOutlineZOffsetMaskRemapEndEnabled() const;
-	bool OnOverrideCustomOutlineColorEnabled() const;
+	bool OnOverrideOutlineMaterialEnabled() const;
 	
 	void OnOverrideUseToonOutlineChanged(bool NewValue);
-	void OnOverrideOutlineWidthChanged(bool NewValue);
-	void OnOverrideOutlineZOffsetChanged(bool NewValue);
-	void OnOverrideOutlineZOffsetMaskRemapStartChanged(bool NewValue);
-	void OnOverrideOutlineZOffsetMaskRemapEndChanged(bool NewValue);
-	void OnOverrideCustomOutlineColorChanged(bool NewValue);
+	void OnOverrideOutlineMaterialChanged(bool NewValue) const;
+	
 	// Change-end
 
 private:

@@ -1637,11 +1637,7 @@ public:
 
 	// Change-begin
 	ENGINE_API virtual bool UseToonOutline() const { return false; }
-	ENGINE_API virtual float GetOutlineWidth() const { return 1.0f; }
-	ENGINE_API virtual float GetOutlineZOffset() const { return 0.0001f; }
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapStart() const { return 0.0f; }
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapEnd() const { return 1.0f; }
-	ENGINE_API virtual FLinearColor GetCustomOutlineColor() const { return FLinearColor(0.0f, 0.0f, 0.0f, 0.0f); }
+	ENGINE_API virtual FMaterial* GetOutlineMaterial(ERHIFeatureLevel::Type InFeatureLevel) const { return nullptr; }
 	// Change-end
 
 #if UE_CHECK_FMATERIAL_LIFETIME
@@ -2833,11 +2829,6 @@ public:
 
 	// Change-begin
 	ENGINE_API virtual bool UseToonOutline() const override;
-	ENGINE_API virtual float GetOutlineWidth() const override;
-	ENGINE_API virtual float GetOutlineZOffset() const override;
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapStart() const override;
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapEnd() const override;
-	ENGINE_API virtual FLinearColor GetCustomOutlineColor() const override;
 	// Change-end
 
 	void SetMaterial(UMaterial* InMaterial, UMaterialInstance* InInstance, ERHIFeatureLevel::Type InFeatureLevel, EMaterialQualityLevel::Type InQualityLevel = EMaterialQualityLevel::Num)

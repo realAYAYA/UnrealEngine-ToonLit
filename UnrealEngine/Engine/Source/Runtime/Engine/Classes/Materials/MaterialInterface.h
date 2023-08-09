@@ -219,11 +219,7 @@ class UMaterialInterface : public UObject, public IBlendableInterface, public II
 
 	// Change-begin
 	ENGINE_API virtual bool UseToonOutline() const { return false; }
-	ENGINE_API virtual float GetOutlineWidth() const { return 1.0f; }
-	ENGINE_API virtual float GetOutlineZOffset() const { return 0.0001f; }
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapStart() const { return 0.0f; }
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapEnd() const { return 1.0f; }
-	ENGINE_API virtual FLinearColor GetCustomOutlineColor() const { return FLinearColor(0.0f, 0.0f, 0.0f, 0.0f); }
+	ENGINE_API virtual UMaterialInterface* GetOutlineMaterial() const { return nullptr; }
 	// Change-end
 
 #if WITH_EDITORONLY_DATA

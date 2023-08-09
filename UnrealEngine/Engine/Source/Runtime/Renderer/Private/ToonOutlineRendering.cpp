@@ -38,12 +38,16 @@ void FToonOutlineMeshPassProcessor::AddMeshBatch(
 	const FMaterialRenderProxy* FallBackMaterialRenderProxyPtr = nullptr;
 	const FMaterial& Material = MaterialRenderProxy->GetMaterialWithFallback(Scene->GetFeatureLevel(), FallBackMaterialRenderProxyPtr);
 
-	// only set in Material will draw outline
-	//const FMaterialRenderProxy* OutlineMatProxy = Cast<FSkeletalMeshSceneProxy>(PrimitiveSceneProxy).OverlayMaterial->GetRenderProxy();
-	//const FMaterial& OutlineMaterial = OutlineMatProxy->GetMaterialWithFallback(Scene->GetFeatureLevel(), FallBackMaterialRenderProxyPtr);
+	const UMaterialInterface* MaterialInterface = Material.GetMaterialInterface()->GetOutlineMaterial();
+	if (!Material.UseToonOutline() || !MaterialInterface)
+		return;
+	
+	const FMaterial* OutlineMaterial = MaterialInterface->GetMaterialResource(Scene->GetFeatureLevel());
+	const FMaterialRenderProxy* OutlineMaterialRenderProxy = MaterialInterface->GetRenderProxy();
+	if (!OutlineMaterial || !OutlineMaterialRenderProxy)
+		return;
 
-	if (Material.GetRenderingThreadShaderMap()
-		&& Material.UseToonOutline())
+	if (OutlineMaterial->GetRenderingThreadShaderMap())
 	{
 		// Determine the mesh's material and blend mode.
 		const EBlendMode BlendMode = Material.GetBlendMode();
@@ -56,8 +60,8 @@ void FToonOutlineMeshPassProcessor::AddMeshBatch(
 				BatchElementMask,
 				StaticMeshId,
 				PrimitiveSceneProxy,
-				*MaterialRenderProxy,
-				Material,
+				*OutlineMaterialRenderProxy,
+				*OutlineMaterial,
 				FM_Solid,
 				CM_CCW);
 		}

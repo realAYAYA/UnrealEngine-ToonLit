@@ -209,31 +209,6 @@ bool FMaterialResource::UseToonOutline() const
 {
 	return MaterialInstance ? MaterialInstance->bUseToonOutline : Material ? Material->bUseToonOutline : false;
 }
-
-float FMaterialResource::GetOutlineWidth() const
-{
-	return MaterialInstance ? MaterialInstance->OutlineWidth : Material ? Material->OutlineWidth : 1.0f;
-}
-
-float FMaterialResource::GetOutlineZOffset() const
-{
-	return MaterialInstance ? MaterialInstance->OutlineZOffset : Material ? Material->OutlineZOffset : 0.0001f;
-}
-
-float FMaterialResource::GetOutlineZOffsetMaskRemapStart() const
-{
-	return MaterialInstance ? MaterialInstance->OutlineZOffsetMaskRemapStart : Material ? Material->OutlineZOffsetMaskRemapStart : 0.0f;
-}
-
-float FMaterialResource::GetOutlineZOffsetMaskRemapEnd() const
-{
-	return MaterialInstance ? MaterialInstance->OutlineZOffsetMaskRemapEnd : Material ? Material->OutlineZOffsetMaskRemapEnd : 1.0f;
-}
-
-FLinearColor FMaterialResource::GetCustomOutlineColor() const
-{
-	return MaterialInstance ? MaterialInstance->CustomOutlineColor : Material ? Material->CustomOutlineColor : FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
-}
 // Change-end
 
 int32 FMaterialResource::CompilePropertyAndSetMaterialProperty(EMaterialProperty Property, FMaterialCompiler* Compiler, EShaderFrequency OverrideShaderFrequency, bool bUsePreviousFrameTime) const

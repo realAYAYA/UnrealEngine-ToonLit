@@ -62,10 +62,7 @@ public:
 	FToonOutlineVS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
 		: FMeshMaterialShader(Initializer)
 	{
-		OutlineWidth.Bind(Initializer.ParameterMap, TEXT("OutlineWidth"));
-		OutlineZOffset.Bind(Initializer.ParameterMap, TEXT("OutlineZOffset"));
-		OutlineZOffsetMaskRemapStart.Bind(Initializer.ParameterMap, TEXT("OutlineZOffsetMaskRemapStart"));
-		OutlineZOffsetMaskRemapEnd.Bind(Initializer.ParameterMap, TEXT("OutlineZOffsetMaskRemapEnd"));
+		//OutlineWidth.Bind(Initializer.ParameterMap, TEXT("OutlineWidth"));
 		//BindSceneTextureUniformBufferDependentOnShadingPath(Initializer, PassUniformBuffer, PassUniformBuffer);
 	}
 
@@ -98,17 +95,12 @@ public:
 		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
 
 		// Get ToonOutLine Data from Material
-		ShaderBindings.Add(OutlineWidth, Material.GetOutlineWidth());
-		ShaderBindings.Add(OutlineZOffset, Material.GetOutlineWidth());
-		ShaderBindings.Add(OutlineZOffsetMaskRemapStart, Material.GetOutlineWidth());
-		ShaderBindings.Add(OutlineZOffsetMaskRemapEnd, Material.GetOutlineWidth());
+		//ShaderBindings.Add(OutlineWidth, Material.GetOutlineWidth());
+		
 	}
 
 	/** The parameter to use for setting the Mesh OutLine Scale. */
-	LAYOUT_FIELD(FShaderParameter, OutlineWidth);
-	LAYOUT_FIELD(FShaderParameter, OutlineZOffset);
-	LAYOUT_FIELD(FShaderParameter, OutlineZOffsetMaskRemapStart);
-	LAYOUT_FIELD(FShaderParameter, OutlineZOffsetMaskRemapEnd);
+	//LAYOUT_FIELD(FShaderParameter, OutlineWidth);
 };
 
 /**
@@ -124,7 +116,7 @@ public:
 	FToonOutlinePS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
 		: FMeshMaterialShader(Initializer)
 	{
-		CustomOutlineColor.Bind(Initializer.ParameterMap, TEXT("CustomOutlineColor"));
+		//CustomOutlineColor.Bind(Initializer.ParameterMap, TEXT("CustomOutlineColor"));
 	}
 
 	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
@@ -154,15 +146,11 @@ public:
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
 		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
-
-		// Get ToonOutLine Data from Material
-		const FLinearColor OutLineColorFromMat = Material.GetCustomOutlineColor();
-		const FVector4f Color(OutLineColorFromMat.R, OutLineColorFromMat.G, OutLineColorFromMat.B, OutLineColorFromMat.A);
-
+		
 		// Bind to Shader
-		ShaderBindings.Add(CustomOutlineColor, Color);
+		//ShaderBindings.Add(CustomOutlineColor, Color);
 	}
 	
 	/** The parameter to use for setting the Mesh OutLine Color. */
-	LAYOUT_FIELD(FShaderParameter, CustomOutlineColor);
+	//LAYOUT_FIELD(FShaderParameter, CustomOutlineColor);
 };

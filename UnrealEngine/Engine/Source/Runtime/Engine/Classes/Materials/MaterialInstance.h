@@ -484,35 +484,17 @@ class UMaterialInstance : public UMaterialInterface
 
 	// Change-begin
 	/** If true, Mesh with this Material will be added in ToonOutlinePass. */
-	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
+	UPROPERTY(EditAnywhere, Category = Toon)
 	uint8 bUseToonOutline : 1;
-
-	/** ToonOutlineWidth */
-	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineWidth = 1.0f;
-
-	/**  */
-	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineZOffset = 0.0001f;
 	
-	/**  */
-	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineZOffsetMaskRemapStart = 0.0f;
-
-	/**  */
-	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	float OutlineZOffsetMaskRemapEnd = 1.0f;
-
-	/** Custom Outline Color, Alpha is Blend Value */
-	UPROPERTY(EditAnywhere, Category = Toon, AdvancedDisplay)
-	FLinearColor CustomOutlineColor;
+	/** Outline material. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Toon, AssetRegistrySearchable)
+	TObjectPtr<class UMaterialInterface> OutlineMaterial;
 	
 	ENGINE_API virtual bool UseToonOutline() const override { return bUseToonOutline; }
-	ENGINE_API virtual float GetOutlineWidth() const override { return OutlineWidth; }
-	ENGINE_API virtual float GetOutlineZOffset() const override { return OutlineZOffset; }
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapStart() const override { return OutlineZOffsetMaskRemapStart; }
-	ENGINE_API virtual float GetOutlineZOffsetMaskRemapEnd() const override { return OutlineZOffsetMaskRemapEnd; }
-	ENGINE_API virtual FLinearColor GetCustomOutlineColor() const override { return CustomOutlineColor; }
+
+	ENGINE_API virtual UMaterialInterface* GetOutlineMaterial() const override { return OutlineMaterial; }
+	
 	// Change-end
 	
 	/** Physical material to use for this graphics material. Used for sounds, effects etc.*/

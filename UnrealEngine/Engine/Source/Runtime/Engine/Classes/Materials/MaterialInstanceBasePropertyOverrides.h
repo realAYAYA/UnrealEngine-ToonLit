@@ -74,43 +74,16 @@ struct ENGINE_API FMaterialInstanceBasePropertyOverrides
 	uint8 bOverride_UseToonOutline : 1;
 
 	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bOverride_OutlineWidth : 1;
-
-	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bOverride_OutlineZOffset : 1;
-
-	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bOverride_OutlineZOffsetMaskRemapStart : 1;
-
-	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bOverride_OutlineZOffsetMaskRemapEnd : 1;
-
-	UPROPERTY(EditAnywhere, Category = Toon)
-	uint8 bOverride_CustomOutlineColor : 1;
+	uint8 bOverride_OutlineMaterial : 1;
 
 	/** If true, Mesh with this Material will be added in ToonOutlinePass. */
 	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_UseToonOutline"))
 	uint8 bUseToonOutline : 1;
 
-	/** ToonOutlineWidth */
-	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_OutlineWidth"))
-	float OutlineWidth;
-
-	/**  */
-	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_OutlineZOffset"))
-	float OutlineZOffset;
+	/** Outline material. */
+	UPROPERTY(EditAnywhere, Category = Toon, AssetRegistrySearchable)
+	TObjectPtr<class UMaterialInterface> OutlineMaterial;
 	
-	/**  */
-	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_OutlineZOffsetMaskRemapStart"))
-	float OutlineZOffsetMaskRemapStart;
-
-	/**  */
-	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_OutlineZOffsetMaskRemapEnd"))
-	float OutlineZOffsetMaskRemapEnd;
-
-	/** Custom Outline Color, Alpha is Blend Value */
-	UPROPERTY(EditAnywhere, Category = Toon, meta = (editcondition = "bOverride_CustomOutlineColor"))
-	FLinearColor CustomOutlineColor;
 	// Change-end
 
 	FMaterialInstanceBasePropertyOverrides();

@@ -5132,18 +5132,10 @@ FMaterialInstanceBasePropertyOverrides::FMaterialInstanceBasePropertyOverrides()
 
 	// Change-begin
 	, bOverride_UseToonOutline(false)
-	, bOverride_OutlineWidth(false)
-	, bOverride_OutlineZOffset(false)
-	, bOverride_OutlineZOffsetMaskRemapStart(false)
-	, bOverride_OutlineZOffsetMaskRemapEnd(false)
-	, bOverride_CustomOutlineColor(false)
+	, bOverride_OutlineMaterial(false)
 
 	, bUseToonOutline(false)
-	, OutlineWidth(1.0f)
-	, OutlineZOffset(0.0001f)
-	, OutlineZOffsetMaskRemapStart(0.0f)
-	, OutlineZOffsetMaskRemapEnd(1.0f)
-	, CustomOutlineColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f))
+	, OutlineMaterial(nullptr)
 	// Change-end
 {
 
@@ -5166,17 +5158,9 @@ bool FMaterialInstanceBasePropertyOverrides::operator==(const FMaterialInstanceB
 			
 		// Change-begin
 		bOverride_UseToonOutline == Other.bOverride_UseToonOutline &&
-		bOverride_OutlineWidth == Other.bOverride_OutlineWidth &&
-		bOverride_OutlineZOffset == Other.bOverride_OutlineZOffset &&
-		bOverride_OutlineZOffsetMaskRemapStart == Other.bOverride_OutlineZOffsetMaskRemapStart &&
-		bOverride_OutlineZOffsetMaskRemapEnd == Other.bOverride_OutlineZOffsetMaskRemapEnd &&
-		bOverride_CustomOutlineColor == Other.bOverride_CustomOutlineColor &&
+		bOverride_OutlineMaterial == Other.bOverride_OutlineMaterial &&
 		bUseToonOutline == Other.bUseToonOutline &&
-		OutlineWidth == Other.OutlineWidth &&
-		OutlineZOffset == Other.OutlineZOffset &&
-		OutlineZOffsetMaskRemapStart == Other.OutlineZOffsetMaskRemapStart &&
-		OutlineZOffsetMaskRemapEnd == Other.OutlineZOffsetMaskRemapEnd &&
-		CustomOutlineColor == Other.CustomOutlineColor;
+		OutlineMaterial == Other.OutlineMaterial;
 		// Change-end
 }
 

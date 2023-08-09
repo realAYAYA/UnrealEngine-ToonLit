@@ -2002,11 +2002,7 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 
 		// Change-begin
 		bUseToonOutline = false;
-		OutlineWidth = 1.0f;
-		OutlineZOffset = 0.0001f;
-		OutlineZOffsetMaskRemapStart = 0.0f;
-		OutlineZOffsetMaskRemapEnd = 1.0f;
-		CustomOutlineColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
+		OutlineMaterial = nullptr;
 		// Change-end
 		
 		return;
@@ -2023,55 +2019,16 @@ void UMaterialInstance::UpdateOverridableBaseProperties()
 		BasePropertyOverrides.bUseToonOutline = bUseToonOutline;
 	}
 
-	if (BasePropertyOverrides.bOverride_OutlineWidth)
+	if (BasePropertyOverrides.bOverride_OutlineMaterial)
 	{
-		OutlineWidth = BasePropertyOverrides.OutlineWidth;
+		OutlineMaterial = BasePropertyOverrides.OutlineMaterial;
 	}
 	else
 	{
-		OutlineWidth = Parent->GetOutlineWidth();
-		BasePropertyOverrides.OutlineWidth = OutlineWidth;
+		OutlineMaterial = Parent->GetOutlineMaterial();
+		BasePropertyOverrides.OutlineMaterial = OutlineMaterial;
 	}
-
-	if (BasePropertyOverrides.bOverride_OutlineZOffset)
-	{
-		OutlineZOffset = BasePropertyOverrides.OutlineZOffset;
-	}
-	else
-	{
-		OutlineZOffset = Parent->GetOutlineZOffset();
-		BasePropertyOverrides.OutlineZOffset = OutlineZOffset;
-	}
-
-	if (BasePropertyOverrides.bOverride_OutlineZOffsetMaskRemapStart)
-	{
-		OutlineZOffsetMaskRemapStart = BasePropertyOverrides.OutlineZOffsetMaskRemapStart;
-	}
-	else
-	{
-		OutlineZOffsetMaskRemapStart = Parent->GetOutlineZOffsetMaskRemapStart();
-		BasePropertyOverrides.OutlineZOffsetMaskRemapStart = OutlineZOffsetMaskRemapStart;
-	}
-
-	if (BasePropertyOverrides.bOverride_OutlineZOffsetMaskRemapEnd)
-	{
-		OutlineZOffsetMaskRemapEnd = BasePropertyOverrides.OutlineZOffsetMaskRemapEnd;
-	}
-	else
-	{
-		OutlineZOffsetMaskRemapEnd = Parent->GetOutlineZOffsetMaskRemapEnd();
-		BasePropertyOverrides.OutlineZOffsetMaskRemapEnd = OutlineZOffsetMaskRemapEnd;
-	}
-
-	if (BasePropertyOverrides.bOverride_CustomOutlineColor)
-	{
-		CustomOutlineColor = BasePropertyOverrides.CustomOutlineColor;
-	}
-	else
-	{
-		CustomOutlineColor = Parent->GetCustomOutlineColor();
-		BasePropertyOverrides.CustomOutlineColor = CustomOutlineColor;
-	}
+	
 	// Change-end
 
 	if (BasePropertyOverrides.bOverride_OpacityMaskClipValue)
@@ -4155,44 +4112,12 @@ void UMaterialInstance::GetBasePropertyOverridesHash(FSHAHash& OutHash)const
 		Hash.Update((uint8*)&bUsedToonOutline, sizeof(bUsedToonOutline));
 		bHasOverrides = true;
 	}
-	float UsedOutlineWidth = GetOutlineWidth();
-	if (UsedOutlineWidth != Mat->GetOutlineWidth())
+	const UMaterialInterface* NewOutlineMaterial = GetOutlineMaterial();
+	if (NewOutlineMaterial != Mat->GetOutlineMaterial())
 	{
-		const FString HashString = TEXT("bOverride_OutlineWidth");
+		const FString HashString = TEXT("bOverride_OutlineMaterial");
 		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedOutlineWidth, sizeof(UsedOutlineWidth));
-		bHasOverrides = true;
-	}
-	float UsedGetOutlineZOffset = GetOutlineZOffset();
-	if (UsedGetOutlineZOffset != Mat->GetOutlineZOffset())
-	{
-		const FString HashString = TEXT("bOverride_OutlineZOffset");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedGetOutlineZOffset, sizeof(UsedGetOutlineZOffset));
-		bHasOverrides = true;
-	}
-	float UsedOutlineZOffsetMaskRemapStart = GetOutlineZOffsetMaskRemapStart();
-	if (UsedOutlineZOffsetMaskRemapStart != Mat->GetOutlineZOffsetMaskRemapStart())
-	{
-		const FString HashString = TEXT("bOverride_OutlineZOffsetMaskRemapStart");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedOutlineZOffsetMaskRemapStart, sizeof(UsedOutlineZOffsetMaskRemapStart));
-		bHasOverrides = true;
-	}
-	float UsedOutlineZOffsetMaskRemapEnd = GetOutlineZOffsetMaskRemapEnd();
-	if (UsedOutlineZOffsetMaskRemapEnd != Mat->GetOutlineZOffsetMaskRemapEnd())
-	{
-		const FString HashString = TEXT("bOverride_OutlineZOffsetMaskRemapEnd");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedOutlineZOffsetMaskRemapEnd, sizeof(UsedOutlineZOffsetMaskRemapEnd));
-		bHasOverrides = true;
-	}
-	FLinearColor UsedCustomOutlineColor = GetCustomOutlineColor();
-	if (UsedCustomOutlineColor != Mat->GetCustomOutlineColor())
-	{
-		const FString HashString = TEXT("bOverride_CustomOutlineColor");
-		Hash.UpdateWithString(*HashString, HashString.Len());
-		Hash.Update((uint8*)&UsedCustomOutlineColor, sizeof(UsedCustomOutlineColor));
+		Hash.Update((uint8*)&NewOutlineMaterial, sizeof(NewOutlineMaterial));
 		bHasOverrides = true;
 	}
 	// Change-end
@@ -4217,11 +4142,7 @@ bool UMaterialInstance::HasOverridenBaseProperties()const
 		(IsTranslucencyWritingVelocity() != Parent->IsTranslucencyWritingVelocity()) ||
 		// Change-begin
 		(UseToonOutline() != Parent->UseToonOutline()) ||
-		(GetOutlineWidth() != Parent->GetOutlineWidth()) ||
-		(GetOutlineZOffset() != Parent->GetOutlineZOffset()) ||
-		(GetOutlineZOffsetMaskRemapStart() != Parent->GetOutlineZOffsetMaskRemapStart()) ||
-		(GetOutlineZOffsetMaskRemapEnd() != Parent->GetOutlineZOffsetMaskRemapEnd()) ||
-		(GetCustomOutlineColor() != Parent->GetCustomOutlineColor())
+		(GetOutlineMaterial() != Parent->GetOutlineMaterial())
 		// Change-end
 		))
 	{
