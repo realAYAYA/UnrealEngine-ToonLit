@@ -50,10 +50,7 @@ void FToonOutlineMeshPassProcessor::AddMeshBatch(
 	if (OutlineMaterial->GetRenderingThreadShaderMap())
 	{
 		// Determine the mesh's material and blend mode.
-		const EBlendMode BlendMode = Material.GetBlendMode();
-
-		bool bResult = true;
-		if (BlendMode == BLEND_Opaque)
+		if (Material.GetBlendMode() == BLEND_Opaque)
 		{
 			Process<false, false>(
 				MeshBatch,
