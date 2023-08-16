@@ -106,7 +106,6 @@ void MainVS(
 	ResolvedView = ResolveView();
 	
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
-	
 	float4 WorldPos = VertexFactoryGetWorldPosition(Input, VFIntermediates);
 	float3 WorldNormal = VertexFactoryGetWorldNormal(Input, VFIntermediates);
 	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
@@ -114,23 +113,25 @@ void MainVS(
 
 	// Interpolation
 	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
-
-	WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
-
+	
 	// GetMaterial Attributes
 	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Output.FactoryInterpolants, float4(0, 0, 0, 0));
 	FPixelMaterialInputs PixelMaterialInputs;
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, Input.Position, true);
 
-	float OutlineMask = 1.0f;// From Model's UV2.y
-	float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 100;
-	float OutlineZOffset = 0.0001;				// Range[0,1] = 0.0001
-	//float OutlineZOffsetWeight = 1;	// From VertexData
-	float OutlineZOffsetMaskRemapStart = 0;	// Range[0,1] = 0
-	float OutlineZOffsetMaskRemapEnd = 1;	// Range[0,1] = 1
-
 	// Expand along WorldNormal
-	WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth * OutlineMask);
+	float3 WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
+	if (WorldPositionOffset.x + WorldPositionOffset.y + WorldPositionOffset.z > 0)
+	{
+		// Use Custom Outline Algorithm form MATERIAL
+		WorldPos.xyz += WorldPositionOffset;
+	}
+	else
+	{
+		// Use NiloCat Outline Algorithm
+		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 100;
+		WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth);
+	}
 
 	// WorldToClip
 	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
@@ -138,10 +139,13 @@ void MainVS(
 
 	// [Remap ZOffset value]
 	// Flip read value so default black area = apply ZOffset, because usually outline mask texture are using this format(black = hide outline)
-	float OutlineZOffsetWeight = 1 - 0;// From Model's UV2
+	float OutlineZOffsetMaskRemapStart = GetMaterialSpecular(PixelMaterialInputs);		// Range[0,1] = 0
+	float OutlineZOffsetMaskRemapEnd = GetMaterialRoughness(PixelMaterialInputs);		// Range[0,1] = 1
+	float OutlineZOffsetWeight = 1 - GetMaterialAmbientOcclusion(PixelMaterialInputs);	// From Model's UV2.y
 	OutlineZOffsetWeight = InverseLerpClamp(OutlineZOffsetMaskRemapStart, OutlineZOffsetMaskRemapEnd, OutlineZOffsetWeight);
 	
 	// [Apply ZOffset, Use remapped value as ZOffset]
+	//float OutlineZOffset = GetMaterialPixelDepthOffset(PixelMaterialInputs);	// Range[0,1] = 0.0001
 	//Output.Position = GetNewClipPosWithZOffset(Output.Position, OutlineZOffset * OutlineZOffsetWeight);// + 0.03f if IsFace
 }
 #endif
@@ -154,7 +158,7 @@ void MainPS(
 	FPixelMaterialInputs PixelMaterialInputs;
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, Input.Position, true);
 	
-	half3 OutlineColor = GetMaterialBaseColor(PixelMaterialInputs);
+	half3 OutlineColor = GetMaterialEmissive(PixelMaterialInputs);//GetMaterialBaseColor(PixelMaterialInputs);
 	
 	OutColor = float4(OutlineColor, 1.0f);
 }
