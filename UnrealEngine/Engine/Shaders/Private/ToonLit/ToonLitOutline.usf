@@ -142,7 +142,7 @@ void MainVS(
 	else
 	{
 		// Use NiloCat Outline Algorithm
-		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 100;
+		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 1000;
 		WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth);
 	}
 
