@@ -1,3 +1,0 @@
-#include <windows.h>
-
-ShaderOpArithTable.xml DATASOURCE_XML "ShaderOpArithTable.xml"

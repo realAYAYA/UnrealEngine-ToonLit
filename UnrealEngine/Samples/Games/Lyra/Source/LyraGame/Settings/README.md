@@ -1,3 +1,0 @@
-﻿# Lyra Settings
-
-Todo

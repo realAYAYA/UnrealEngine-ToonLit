@@ -1,1 +1,0 @@
-@call %~dp0RunUAT.bat BuildGraph -Script=Engine/Build/EditorPerf.xml -Target="Baseline EditorPerf Results" -set:Platforms=Win64 -set:Phases="Cold;Warm" -append:Projects="AncientGame" -append:Projects="EngineTest" -append:Projects="ShooterGame" %*

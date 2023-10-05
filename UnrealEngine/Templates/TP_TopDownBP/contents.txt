@@ -1,4 +1,0 @@
-../../../Templates/TP_TopDownBP/manifest.json
-../../../Templates/TP_TopDownBP/Config/config.ini
-../../../Templates/TP_TopDownBP/Media/TP_TopDownBP.png
-../../../Templates/TP_TopDownBP/Media/TP_TopDownBP_Preview.png

@@ -1,6 +1,0 @@
-﻿{
-  "type": "object",
-  "additionalProperties": {
-    "$ref": "#/components/schemas/ComplexModel"
-  }
-}

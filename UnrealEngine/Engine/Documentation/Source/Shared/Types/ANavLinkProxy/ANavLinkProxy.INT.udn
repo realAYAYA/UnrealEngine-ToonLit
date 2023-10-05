@@ -1,9 +1,0 @@
-Availability:NoPublish
-Title:ANavLinkProxy
-Crumbs:
-Description:Overview of the NavLinkProxy class
-
-[EXCERPT:ANavLinkProxy]
-
-NavLinkProxy Actors are used to specify where Pawns can jump or drop off ledges, allowing them to temporarily leave the NavMesh in order to cross gaps in it.
-[/EXCERPT:ANavLinkProxy]

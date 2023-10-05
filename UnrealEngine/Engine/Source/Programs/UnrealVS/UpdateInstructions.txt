@@ -1,5 +1,0 @@
-1. Make your changes
-2. Update version number in both VSIX manifest files and both AssemblyInfo files.
-3. update ReleaseNotes.txt with the changes
-4. Checkout the VSIX files and rebuild 2019 IN VS2019, 2022 in VS2022
-5. Checkin all the above in 1 CL
