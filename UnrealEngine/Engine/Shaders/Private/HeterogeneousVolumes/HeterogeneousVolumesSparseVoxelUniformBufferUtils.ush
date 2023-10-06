@@ -1,0 +1,117 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+float4x4 GetLocalToWorld()
+{
+	return SparseVoxelUniformBuffer.LocalToWorld;
+}
+
+float4x4 GetWorldToLocal()
+{
+	return SparseVoxelUniformBuffer.WorldToLocal;
+}
+
+float3 GetLocalBoundsOrigin()
+{
+	return SparseVoxelUniformBuffer.LocalBoundsOrigin;
+}
+
+float3 GetLocalBoundsExtent()
+{
+	return SparseVoxelUniformBuffer.LocalBoundsExtent;
+}
+
+float GetMaxTraceDistance()
+{
+	return SparseVoxelUniformBuffer.MaxTraceDistance;
+}
+
+float GetMaxShadowTraceDistance()
+{
+	return SparseVoxelUniformBuffer.MaxShadowTraceDistance;
+}
+
+float GetStepSize()
+{
+	return SparseVoxelUniformBuffer.StepSize;
+}
+
+float GetStepFactor()
+{
+	return SparseVoxelUniformBuffer.StepFactor;
+}
+
+float GetShadowStepSize()
+{
+	return SparseVoxelUniformBuffer.ShadowStepSize;
+}
+
+float GetShadowStepFactor()
+{
+	return SparseVoxelUniformBuffer.ShadowStepFactor;
+}
+
+uint3 GetVolumeResolution()
+{
+	return SparseVoxelUniformBuffer.VolumeResolution;
+}
+
+uint GetNumVoxels()
+{
+	return SparseVoxelUniformBuffer.NumVoxelsBuffer[0];
+}
+
+FVoxelDataPacked GetVoxelDataPacked(uint VoxelIndex)
+{
+	return SparseVoxelUniformBuffer.VoxelBuffer[VoxelIndex];
+}
+
+struct FVolumeSampleContext
+{
+	float3 UVW;
+	float MipLevel;
+};
+
+FVolumeSampleContext CreateVolumeSampleContext(float3 LocalPosition, float3 WorldPosition, float MipLevel)
+{
+	float3 LocalBoundsMin = GetLocalBoundsOrigin() - GetLocalBoundsExtent();
+	float3 LocalBoundsMax = GetLocalBoundsOrigin() + GetLocalBoundsExtent();
+
+	FVolumeSampleContext VolumeSampleContext;
+	VolumeSampleContext.UVW = (LocalPosition - LocalBoundsMin) / (LocalBoundsMax - LocalBoundsMin);
+	VolumeSampleContext.MipLevel = MipLevel;
+
+	return VolumeSampleContext;
+}
+
+float3 SampleExtinction(inout FVolumeSampleContext Context)
+{
+	float3 Extinction = Texture3DSampleLevel(
+		SparseVoxelUniformBuffer.ExtinctionTexture,
+		SparseVoxelUniformBuffer.TextureSampler,
+		Context.UVW,
+		Context.MipLevel).rgb;
+
+	return Extinction;
+}
+
+float3 SampleEmission(inout FVolumeSampleContext Context)
+{
+	float3 Emission = Texture3DSampleLevel(
+		SparseVoxelUniformBuffer.EmissionTexture,
+		SparseVoxelUniformBuffer.TextureSampler,
+		Context.UVW,
+		Context.MipLevel).xyz;
+
+	return Emission;
+}
+
+float3 SampleAlbedo(inout FVolumeSampleContext Context)
+{
+	float3 Albedo = Texture3DSampleLevel(
+		SparseVoxelUniformBuffer.AlbedoTexture,
+		SparseVoxelUniformBuffer.TextureSampler,
+		Context.UVW,
+		Context.MipLevel).xyz;
+
+	return Albedo;
+}

@@ -1,0 +1,24 @@
+#include "../Common.ush"
+
+Texture2D<float4> HeterogeneousVolumeRadiance;
+RWTexture2D<float4> RWColorTexture;
+
+[numthreads(THREADGROUP_SIZE_2D, THREADGROUP_SIZE_2D, 1)]
+void HeterogeneousVolumesCompositeCS(
+	uint2 GroupThreadId : SV_GroupThreadID,
+	uint2 DispatchThreadId : SV_DispatchThreadID
+)
+{
+	uint2 PixelCoord = DispatchThreadId.xy;
+	if (any(PixelCoord >= View.ViewSizeAndInvSize.xy))
+	{
+		return;
+	}
+
+	float4 Result;
+	float HeterogeneousVolumeTransmittance = saturate(1.0 - HeterogeneousVolumeRadiance[PixelCoord].a);
+	Result.rgb = HeterogeneousVolumeRadiance[PixelCoord].rgb + RWColorTexture[PixelCoord].rgb * HeterogeneousVolumeTransmittance;
+	Result.a = RWColorTexture[PixelCoord].a * HeterogeneousVolumeTransmittance;
+
+	RWColorTexture[PixelCoord] = Result;
+}

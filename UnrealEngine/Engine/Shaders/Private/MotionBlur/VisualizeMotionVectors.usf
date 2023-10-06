@@ -1,0 +1,88 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ScreenPass.ush"
+
+
+//------------------------------------------------------- PARAMETERS
+
+Texture2D ColorTexture;
+Texture2D VelocityTexture;
+Texture2D DepthTexture;
+Texture2D PrevColorTexture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Color)
+SCREEN_PASS_TEXTURE_VIEWPORT(Velocity)
+SCREEN_PASS_TEXTURE_VIEWPORT(PrevColor)
+
+SamplerState ColorSampler;
+SamplerState VelocitySampler;
+SamplerState DepthSampler;
+SamplerState PrevColorSampler;
+
+FScreenTransform SvPositionToVelocity;
+FScreenTransform SvPositionToColor;
+FScreenTransform SvPositionToScreenPos;
+FScreenTransform PrevScreenPosToPrevColor;
+
+
+//------------------------------------------------------- FUNCTIONS
+
+float2 ComputeStaticVelocity(float2 ScreenPos, float DeviceZ)
+{
+	float3 PosN = float3(ScreenPos, DeviceZ);
+
+	float4 ThisClip = float4(PosN, 1);
+	float4 PrevClip = mul( ThisClip, View.ClipToPrevClip );
+	float2 PrevScreen = PrevClip.xy / PrevClip.w;
+	return PosN.xy - PrevScreen;
+}
+
+
+//------------------------------------------------------- ENTRY POINT
+
+void MainPS(
+	float4 SvPosition : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	float2 ColorTextureUV = ApplyScreenTransform(SvPosition.xy, SvPositionToColor);
+	float2 VelocityTextureUV = ApplyScreenTransform(SvPosition.xy, SvPositionToVelocity);
+	float2 ScreenPos = ApplyScreenTransform(SvPosition.xy, SvPositionToScreenPos);
+
+	ColorTextureUV = clamp(ColorTextureUV, Color_UVViewportBilinearMin, Color_UVViewportBilinearMax);
+	VelocityTextureUV = clamp(VelocityTextureUV, Velocity_UVViewportBilinearMin, Velocity_UVViewportBilinearMax);
+
+	float4 Color = ColorTexture.SampleLevel(ColorSampler, ColorTextureUV, 0.0);
+	float4 EncodedVelocity = VelocityTexture.SampleLevel(VelocitySampler, VelocityTextureUV, 0.0);
+	float DeviceZ = DepthTexture.SampleLevel(DepthSampler, VelocityTextureUV, 0.0).r;
+	
+	float2 ScreenVelocity = ComputeStaticVelocity(ScreenPos, DeviceZ);
+	bool bIsRenderedVelocity = EncodedVelocity.x > 0.0;
+	if (bIsRenderedVelocity)
+	{
+		ScreenVelocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
+	}
+
+	float2 PrevScreenPos = ScreenPos - ScreenVelocity;
+	float2 PrevColorTextureUV = ApplyScreenTransform(PrevScreenPos, PrevScreenPosToPrevColor);
+	PrevColorTextureUV = clamp(PrevColorTextureUV, Color_UVViewportBilinearMin, Color_UVViewportBilinearMax);
+
+	float4 PrevColor = PrevColorTexture.SampleLevel(PrevColorSampler, PrevColorTextureUV, 0.0);
+
+	float Luma = Luminance(Color.rgb);
+	float PrevLuma = Luminance(PrevColor.rgb);
+
+	uint2 SubTileCoord = (uint2(SvPosition.xy) >> 4) & 0x1;
+	float Checker = SubTileCoord.x == SubTileCoord.y ? 1.0 : 0.0;
+
+	if (bIsRenderedVelocity)
+	{
+		OutColor.rgb = (Luma + PrevLuma).xxx * 0.5 + abs(Color.xyz - PrevColor.xyz);
+		//OutColor.rgb = (Color + PrevColor) * 0.5;
+		OutColor.a = min(Color.a, PrevColor.a);
+	}
+	else
+	{
+		OutColor = float4(Luma.xxx * (0.25 + 0.25 * Checker), Color.a);
+	}
+}

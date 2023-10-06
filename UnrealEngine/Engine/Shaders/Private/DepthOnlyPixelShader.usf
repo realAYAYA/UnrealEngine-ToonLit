@@ -1,0 +1,101 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DepthOnlyPixelShader.hlsl: Depth-only pixel shader.
+=============================================================================*/
+
+#include "Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+void Main(
+#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position,
+#endif
+
+#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants
+	, float4 PixelPosition : TEXCOORD6 //-- Not used currently
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+	, float3 PixelPositionExcludingWPO : TEXCOORD7
+#endif
+	OPTIONAL_IsFrontFace
+	OPTIONAL_OutDepthConservative,
+#endif
+	out float4 OutColor : SV_Target0
+#if MATERIALBLENDING_MASKED_USING_COVERAGE
+	, out uint OutCoverage : SV_Coverage
+#endif
+	)
+{
+#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
+	#if INSTANCED_STEREO
+		ResolvedView = ResolveView(FactoryInterpolants.EyeIndex);
+	#else
+		ResolvedView = ResolveView();
+	#endif
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(FactoryInterpolants, SvPosition);
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, PixelPositionExcludingWPO);	
+	#else
+		CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, bIsFrontFace);
+	#endif
+
+	#if OUTPUT_PIXEL_DEPTH_OFFSET
+		#if ALLOW_DEBUG_VIEW_MODES
+		OutDepth = SvPosition.z;
+		if (!ResolvedView.DebugViewModeMask)
+		#endif
+		{
+			ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, OutDepth);
+		}
+	#endif
+
+
+
+
+
+	#if STRATA_ENABLED
+		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
+
+		FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
+		FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+
+		float MaterialOpacity = 1.0f;
+		if (StrataPixelHeader.BSDFCount > 0)
+		{
+			// Update tree (coverage/transmittance/luminace weights)
+			const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+			const float3 V = MaterialParameters.CameraVector;
+			StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+
+			MaterialOpacity = StrataPixelHeader.StrataTree.Operators[StrataData.OperatorIndex].Coverage;
+		}
+
+	#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+		MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs); 
+	#endif
+
+	#else // STRATA_ENABLED
+
+		float MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs);
+
+	#endif // STRATA_ENABLED
+		
+
+	#if MATERIALBLENDING_TRANSLUCENT
+		clip(MaterialOpacity - GetMaterialOpacityMaskClipValue());
+	#elif MATERIALBLENDING_MASKED_USING_COVERAGE
+		OutCoverage = DiscardMaterialWithPixelCoverage(MaterialParameters, PixelMaterialInputs);
+	#else
+		GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
+	#endif
+#endif
+
+	OutColor = 0;
+}

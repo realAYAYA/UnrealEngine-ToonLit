@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ASA Android plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+  <gameActivityImportAdditions>
+    <insert>
+      import com.microsoft.CloudServices;
+    </insert>
+  </gameActivityImportAdditions>
+
+  <gameActivityOnCreateAdditions>
+    <insert>
+      CloudServices.initialize(this);
+    </insert>
+  </gameActivityOnCreateAdditions>
+  <buildGradleAdditions>
+    <insert>
+      repositories {
+        mavenLocal()
+        google()
+        jcenter()
+	    flatDir {
+          dirs 'libs'
+        }
+      }
+	  
+      def azureSpatialAnchorsSdkVersion = '2.7.2'
+
+	  // Create a configuration to mark which aars to extract .so files from
+      configurations { natives }
+
+      dependencies {
+          implementation "com.microsoft.azure.spatialanchors:spatialanchors_ndk:[${azureSpatialAnchorsSdkVersion}]"
+		  natives "com.microsoft.azure.spatialanchors:spatialanchors_ndk:[${azureSpatialAnchorsSdkVersion}]"
+	  }
+      
+    </insert>
+  </buildGradleAdditions>
+</root>

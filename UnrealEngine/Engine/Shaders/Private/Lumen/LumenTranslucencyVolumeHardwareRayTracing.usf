@@ -1,0 +1,147 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenTranslucencyVolumeHardwareRayTracing.usf
+=============================================================================*/
+
+// TODO: Remove hair dependency
+#include "../HairStrands/HairStrandsVoxelPageCommonStruct.ush"
+
+#include "../Common.ush"
+#include "../SHCommon.ush"
+#include "../MonteCarlo.ush"
+#include "../OctahedralCommon.ush"
+#include "../SceneTextureParameters.ush"
+
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenTranslucencyVolumeLightingShared.ush"
+
+#if LUMEN_HARDWARE_RAYTRACING
+#include "LumenHardwareRayTracingCommon.ush"
+
+#ifndef DIM_LIGHTING_MODE
+#define DIM_LIGHTING_MODE LIGHTING_FROM_SURFACE_CACHE
+#endif
+
+RaytracingAccelerationStructure TLAS;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+StructuredBuffer<FHitGroupRootConstants> HitGroupData;
+StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+RWTexture3D<float3> RWVolumeTraceRadiance;
+RWTexture3D<float> RWVolumeTraceHitDistance;
+uint MaxTraversalIterations;
+
+LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenTranslucencyVolumeHardwareRayTracing)
+{
+	uint OctahedralAtlasSizeX = TranslucencyGIGridSize.x * TranslucencyVolumeTracingOctahedronResolution;
+	// DispatchThreadId to match compute version
+	uint3 DispatchThreadId = uint3(DispatchThreadIndex.x % OctahedralAtlasSizeX, DispatchThreadIndex.y, DispatchThreadIndex.x / OctahedralAtlasSizeX);
+
+#define DEINTERLEAVED_VOLUME_TRACING 0
+#if DEINTERLEAVED_VOLUME_TRACING
+	uint3 GridCoordinate = uint3(DispatchThreadId.xy % TranslucencyGIGridSize.xy, DispatchThreadId.z);
+	uint2 TraceTexelCoord = DispatchThreadId.xy / TranslucencyGIGridSize.xy;
+#else
+	uint3 GridCoordinate = uint3(DispatchThreadId.xy / TranslucencyVolumeTracingOctahedronResolution, DispatchThreadId.z);
+	uint2 TraceTexelCoord = DispatchThreadId.xy - GridCoordinate.xy * TranslucencyVolumeTracingOctahedronResolution;
+#endif
+
+	if (all(GridCoordinate < TranslucencyGIGridSize) && all(TraceTexelCoord < TranslucencyVolumeTracingOctahedronResolution))
+	{
+		FRayTracedLightingResult TraceLightingResult;
+		TraceLightingResult.Radiance = 0;
+		TraceLightingResult.TraceHitDistance = MaxTraceDistance;
+
+		if (IsFroxelVisible(GridCoordinate))
+		{
+			float3 WorldPosition = ComputeCellWorldPosition(GridCoordinate, FrameJitterOffset.xyz);
+
+			float2 ProbeUV;
+			float ConeHalfAngle;
+			GetProbeTracingUV(TraceTexelCoord, GetProbeTexelCenter(GridCoordinate), ProbeUV, ConeHalfAngle);
+
+			float3 WorldConeDirection = EquiAreaSphericalMapping(ProbeUV);
+
+			float TraceDistance = MaxTraceDistance;
+
+			FRadianceCacheCoverage Coverage;
+			Coverage.bValid = false;
+
+			#if USE_RADIANCE_CACHE
+				Coverage = GetRadianceCacheCoverage(WorldPosition, WorldConeDirection, .5f);
+				
+				if (Coverage.bValid)
+				{
+					TraceDistance = min(TraceDistance, Coverage.MinTraceDistanceBeforeInterpolation);
+				}
+			#endif
+
+			FRayDesc Ray;
+			Ray.Origin = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+			Ray.Direction = WorldConeDirection;
+			Ray.TMin = 0;
+			Ray.TMax = TraceDistance;
+
+			FRayCone RayCone = (FRayCone)0;
+			RayCone = PropagateRayCone(RayCone, ConeHalfAngle, 0.0);
+
+			const uint LinearCoord = GridCoordinate.y * TranslucencyGIGridSize.x + GridCoordinate.x;
+			const uint CullingMode = 0;
+			FRayTracedLightingContext Context = CreateRayTracedLightingContext(RayCone, GridCoordinate.xy, LinearCoord, CullingMode, MaxTraversalIterations);
+
+			#if DIM_LIGHTING_MODE == LIGHTING_FROM_SURFACE_CACHE
+				{
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+					Context.HitGroupData = HitGroupData;
+					Context.RayTracingSceneMetadata = RayTracingSceneMetadata;
+#endif
+					TraceLightingResult = TraceAndCalculateRayTracedLightingFromSurfaceCache(TLAS, Ray, Context);
+				}
+			#else
+				{
+					TraceLightingResult = TraceAndCalculateRayTracedLighting(TLAS, Ray, Context, DIM_LIGHTING_MODE, false);
+				}
+			#endif
+
+			if (!TraceLightingResult.bIsHit)
+			{
+				float Transparency = 1.0f;
+
+#if USE_RADIANCE_CACHE
+				if (Coverage.bValid)
+				{
+					SampleRadianceCacheAndApply(Coverage, WorldPosition, WorldConeDirection, ConeHalfAngle, TraceLightingResult.Radiance, Transparency);
+				}
+				else
+#endif
+				{
+					FConeTraceResult TraceResult;
+					TraceResult.Lighting = TraceLightingResult.Radiance;
+					TraceResult.Transparency = Transparency;
+					ApplySkylightToTraceResult(WorldConeDirection, TraceResult);
+					TraceLightingResult.Radiance = TraceResult.Lighting;
+				}
+			}
+
+			TraceLightingResult.Radiance *= View.PreExposure;
+
+			float MaxLighting = max3(TraceLightingResult.Radiance.x, TraceLightingResult.Radiance.y, TraceLightingResult.Radiance.z);
+
+			if (MaxLighting > MaxRayIntensity)
+			{
+				TraceLightingResult.Radiance *= MaxRayIntensity / MaxLighting;
+			}
+		}
+
+		uint3 WriteCoord = uint3(GridCoordinate.xy * TranslucencyVolumeTracingOctahedronResolution + TraceTexelCoord, GridCoordinate.z);
+		RWVolumeTraceRadiance[WriteCoord] = TraceLightingResult.Radiance;
+		RWVolumeTraceHitDistance[WriteCoord] = min(TraceLightingResult.TraceHitDistance, MaxHalfFloat);
+	}
+}
+
+#endif // LUMEN_HARDWARE_RAYTRACING

@@ -1,0 +1,123 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// SVT_TODO: Unify with macros in SparseVolumeTexture.h
+#define SPARSE_VOLUME_TILE_RES 16
+#define SPARSE_VOLUME_TILE_BORDER 1
+#define SPARSE_VOLUME_TILE_RES_PADDED (SPARSE_VOLUME_TILE_RES + 2 * SPARSE_VOLUME_TILE_BORDER)
+
+#define SVTADDRESSMODE_CLAMP 0u
+#define SVTADDRESSMODE_WRAP 1u
+#define SVTADDRESSMODE_MIRROR 2u
+
+float SparseVolumeTextureApplyAddressModeMirror(float v)
+{
+	float t = frac(v * 0.5f) * 2.0f;
+	return 1.0f - abs(t - 1.0f);
+}
+
+float SparseVolumeTextureApplyAddressMode(float v, uint AddressMode)
+{
+	// For CLAMP address mode, can't clamp to 1.0f, otherwise 'int(UVW * VolumePageResolution)' might overflow page table bounds by 1
+	// Instead, clamp to slightly below 1, this ensures that when rounded down to int, above value will be at most 'PageTableResolution - 1'
+	// The actual texel we clamp to doesn't matter too much for sampling physical texture, since we have borders around the physical pages
+	// Just need to make sure we don't clamp too far and chop off valid texels at the edge of texture
+	const float MaxTextureSize = 65536.0f;
+
+	switch (AddressMode)
+	{
+	case SVTADDRESSMODE_WRAP: return frac(v);
+	case SVTADDRESSMODE_MIRROR: return SparseVolumeTextureApplyAddressModeMirror(v);
+	default: return clamp(v, 0.0f, 1.0f - (1.0f / MaxTextureSize));
+	}
+}
+
+float3 SparseVolumeTextureApplyAddressMode(float3 UVW, uint AddressU, uint AddressV, uint AddressW)
+{
+	return float3(
+		SparseVolumeTextureApplyAddressMode(UVW.x, AddressU),
+		SparseVolumeTextureApplyAddressMode(UVW.y, AddressV),
+		SparseVolumeTextureApplyAddressMode(UVW.z, AddressW));
+}
+
+struct FSparseVolumeTextureUniforms
+{
+	float3			VolumePageResolution;
+	float3			PageTableOffset;
+	float3			TileDataTexelSize;
+	int				FrameIndex;
+	int             HighestMipLevel;
+	int				LowestResidentMipLevel;
+};
+
+FSparseVolumeTextureUniforms SparseVolumeTextureUnpackUniforms(const uint4 Packed0, const uint4 Packed1, ByteAddressBuffer StreamingInfoBuffer)
+{
+	FSparseVolumeTextureUniforms Result;
+	Result.VolumePageResolution = asfloat(Packed0.xyz);
+	Result.PageTableOffset.x = float(Packed0.w & 0x7FFu);
+	Result.PageTableOffset.y = float((Packed0.w >> 11u) & 0x7FFu);
+	Result.PageTableOffset.z = float((Packed0.w >> 22u) & 0x3FFu);
+	Result.TileDataTexelSize = asfloat(Packed1.xyz);
+	Result.FrameIndex = int(Packed1.w & 0xFFFFu);
+	Result.HighestMipLevel = int((Packed1.w >> 16u) & 0xFFFFu);
+	Result.LowestResidentMipLevel = asint(StreamingInfoBuffer.Load(Result.FrameIndex << 2));
+
+	return Result;
+}
+
+float3 SparseVolumeTextureGetVoxelCoord(const uint PackedPhysicalTileCoord, const float3 PageTableCoord)
+{
+	const int3 PhysicalTileCoord = int3(
+		PackedPhysicalTileCoord & 0xFF,
+		(PackedPhysicalTileCoord >> 8) & 0xFF,
+		(PackedPhysicalTileCoord >> 16) & 0xFF);
+
+	const float3 VoxelCoord = float3(PhysicalTileCoord) * float(SPARSE_VOLUME_TILE_RES_PADDED) + (frac(PageTableCoord) * float(SPARSE_VOLUME_TILE_RES) + float(SPARSE_VOLUME_TILE_BORDER));
+	return VoxelCoord;
+}
+
+float3 SparseVolumeTextureSamplePageTable(Texture3D<uint> PageTable, FSparseVolumeTextureUniforms Uniforms, float3 UVW, uint AddressU, uint AddressV, uint AddressW, int MipLevel = 0)
+{
+	// Apply address mode to UVW and clamp mip level to resident levels
+	UVW = SparseVolumeTextureApplyAddressMode(UVW, AddressU, AddressV, AddressW);
+	MipLevel = clamp(MipLevel, Uniforms.LowestResidentMipLevel, Uniforms.HighestMipLevel);
+
+	const float RcpMipLevelFactor = rcp(float(1u << (uint)MipLevel));
+	const float3 VolumePageCoord = UVW * Uniforms.VolumePageResolution;
+	const float3 MipPageTableOffset = floor(Uniforms.PageTableOffset * RcpMipLevelFactor);
+	const float3 PageTableCoord = VolumePageCoord * RcpMipLevelFactor - MipPageTableOffset;
+
+	const uint PackedPhysicalTileCoord = PageTable.Load(int4(floor(PageTableCoord), MipLevel)).x;
+
+	const float3 VoxelCoord = SparseVolumeTextureGetVoxelCoord(PackedPhysicalTileCoord, PageTableCoord);
+	const float3 VoxelUVW = VoxelCoord * Uniforms.TileDataTexelSize;
+	return VoxelUVW;
+}
+
+int3 SparseVolumeTextureLoadPageTable(Texture3D<uint> PageTable, FSparseVolumeTextureUniforms Uniforms, int3 TexelCoord, int MipLevel = 0)
+{
+	if (MipLevel < Uniforms.LowestResidentMipLevel || MipLevel > Uniforms.HighestMipLevel)
+	{
+		return 0; // Point to null tile
+	}
+	const float RcpMipLevelFactor = rcp(float(1u << (uint)MipLevel));
+	const float3 VolumeMipPageCoord = (TexelCoord + 0.5f) / float(SPARSE_VOLUME_TILE_RES);
+	const float3 MipPageTableOffset = floor(Uniforms.PageTableOffset * RcpMipLevelFactor);
+	const float3 PageTableCoord = VolumeMipPageCoord - MipPageTableOffset;
+
+	const uint PackedPhysicalTileCoord = PageTable.Load(int4(floor(PageTableCoord), MipLevel)).x;
+
+	const float3 VoxelCoord = SparseVolumeTextureGetVoxelCoord(PackedPhysicalTileCoord, PageTableCoord);
+	return int3(VoxelCoord);
+}
+
+float4 SparseVolumeTextureSamplePhysicalTileData(Texture3D PhysicalTileDataA, Texture3D PhysicalTileDataB, SamplerState TileDataSampler, float3 VoxelUVW, int PhysicalTileDataIndex)
+{
+	switch (PhysicalTileDataIndex)
+	{
+	case 0: return PhysicalTileDataA.SampleLevel(TileDataSampler, VoxelUVW, 0.0f);
+	case 1: return PhysicalTileDataB.SampleLevel(TileDataSampler, VoxelUVW, 0.0f);
+	default: return 0.0f;
+	}
+}

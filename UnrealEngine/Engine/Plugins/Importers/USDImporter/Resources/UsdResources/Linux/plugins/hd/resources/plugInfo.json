@@ -1,0 +1,12 @@
+{
+    "Plugins": [
+        {
+            "Info": {},
+            "LibraryPath": "../../../../../Source/ThirdParty/Linux/bin/x86_64-unknown-linux-gnu/libusd_hd.so",
+            "Name": "hd",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

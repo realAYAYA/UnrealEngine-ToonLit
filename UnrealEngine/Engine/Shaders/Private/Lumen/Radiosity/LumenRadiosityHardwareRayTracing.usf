@@ -1,0 +1,137 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenRadiosityProbeGatherHardwareRayTracing.usf
+=============================================================================*/
+
+// TODO: Remove hair dependency
+#include "../../HairStrands/HairStrandsVoxelPageCommonStruct.ush"
+
+#include "../../Common.ush"
+#include "../../MonteCarlo.ush"
+#include "../../MortonCode.ush"
+#include "../../SceneTextureParameters.ush"
+#include "../../RayTracing/RayGenUtils.ush"
+
+#include "../LumenCardCommon.ush"
+#include "../LumenTracingCommon.ush"
+#include "../LumenHardwareRayTracingCommon.ush"
+#include "../LumenSceneLighting.ush"
+#include "../LumenCardTile.ush"
+#include "LumenRadiosity.ush"
+
+RWTexture2D<float3> RWTraceRadianceAtlas;
+RWTexture2D<float> RWTraceHitDistanceAtlas;
+
+RaytracingAccelerationStructure TLAS;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+StructuredBuffer<FHitGroupRootConstants> HitGroupData;
+StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+float MinTraceDistance;
+float MaxTraceDistance;
+float MinTraceDistanceToSampleSurfaceCache;
+float SurfaceBias;
+float HeightfieldSurfaceBias;
+float AvoidSelfIntersectionTraceDistance;
+float MaxRayIntensity;
+uint NumThreadsToDispatch;
+float TanRadiosityRayConeHalfAngle;
+uint MaxTraversalIterations;
+
+LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenRadiosityHardwareRayTracing)
+{	
+	uint GlobalThreadIndex = GetUnWrappedRayTracingDispatchThreadId(DispatchGroupId, THREADGROUP_SIZE);
+
+// When running with indirect inline RT, ThreadIndex is actually GroupIndex, so we need to account for that.
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+	GlobalThreadIndex = GlobalThreadIndex * INLINE_RAY_TRACING_THREAD_GROUP_SIZE_X + DispatchGroupIndex;
+#endif
+
+	if (GlobalThreadIndex < CardTileAllocator[ViewIndex] * NumTracesPerProbe * RadiosityTileSize * RadiosityTileSize)
+	{
+		uint CardTileIndex;
+		uint2 CoordInCardTile;
+		uint2 TraceTexelCoord;
+		UnswizzleTexelTraceCoords(GlobalThreadIndex, CardTileIndex, CoordInCardTile, TraceTexelCoord);
+
+		FRadiosityTexel RadiosityTexel = GetRadiosityTexelFromCardTile(CardTileIndex, CoordInCardTile);
+
+		if (RadiosityTexel.bInsideAtlas)
+		{
+			float3 Radiance = 0.0f;
+			float TraceHitDistance = MaxTraceDistance;
+
+			if (RadiosityTexel.bValid)
+			{
+				float3 TranslatedWorldPosition = RadiosityTexel.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+				float3 WorldNormal = RadiosityTexel.WorldNormal;
+				
+				float3 WorldRayDirection;
+				float ConeHalfAngle;
+				float PDF;
+				GetRadiosityRay(RadiosityTexel, RadiosityTexel.CardCoord / ProbeSpacingInRadiosityTexels, TraceTexelCoord, WorldRayDirection, ConeHalfAngle, PDF);
+
+				float ReceiverBias = 0.0f;
+				if (RadiosityTexel.bHeightfield)
+				{
+					float3 TranslatedWorldCameraOrigin = PrimaryView.TranslatedWorldCameraOrigin;
+					ReceiverBias = CalculateDistanceBasedHeightfieldBias(HeightfieldSurfaceBias, TranslatedWorldPosition, TranslatedWorldCameraOrigin);
+				}
+
+				FRayDesc Ray;
+				Ray.Origin = TranslatedWorldPosition + WorldNormal * (SurfaceBias + ReceiverBias);
+				Ray.Direction = WorldRayDirection;
+				Ray.TMin = MinTraceDistance;
+
+				FRayCone RayCone = (FRayCone)0;
+				RayCone = PropagateRayCone(RayCone, ConeHalfAngle, 0.0);
+
+				const uint LinearCoord = CoordInCardTile.y * CARD_TILE_SIZE + CoordInCardTile.x;
+				const uint OriginalCullingMode = 0;
+				FRayTracedLightingContext Context = CreateRayTracedLightingContext(RayCone, CoordInCardTile, LinearCoord, OriginalCullingMode, MaxTraversalIterations);
+				Context.MinTraceDistanceToSampleSurfaceCache = MinTraceDistanceToSampleSurfaceCache;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+				Context.HitGroupData = HitGroupData;
+				Context.RayTracingSceneMetadata = RayTracingSceneMetadata;
+#endif
+
+				Ray.TMax = MaxTraceDistance;
+				FRayTracedLightingResult RayResult = TraceAndCalculateRayTracedLightingFromSurfaceCache(TLAS, Ray, Context);
+
+				if (RayResult.bIsHit)
+				{
+					Radiance = RayResult.Radiance;
+
+					// Recalculate TraceHitDistance to incorporate biases
+					float3 HitPosition = Ray.Origin + Ray.Direction * RayResult.TraceHitDistance;
+					TraceHitDistance = length(TranslatedWorldPosition - HitPosition);
+				}
+				else
+				{
+					Radiance = EvaluateSkyRadiance(WorldRayDirection);
+				}
+
+				float MaxLighting = max3(Radiance.x, Radiance.y, Radiance.z);
+
+				if (MaxLighting > MaxRayIntensity * View.OneOverPreExposure)
+				{
+					Radiance *= MaxRayIntensity * View.OneOverPreExposure / MaxLighting;
+				}
+			}
+
+			FCardTileData CardTile = GetCardTile(CardTileIndex);
+			FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+			uint2 RadiosityProbeTracingAtlasCoord = GetRadiosityProbeAtlasCoord(CardPage, CardTile, CoordInCardTile) * HemisphereProbeResolution + TraceTexelCoord;
+			RWTraceRadianceAtlas[RadiosityProbeTracingAtlasCoord] = Radiance;
+
+			if (UseProbeOcclusion > 0)
+			{
+				RWTraceHitDistanceAtlas[RadiosityProbeTracingAtlasCoord] = TraceHitDistance;
+			}
+		}
+	}
+}

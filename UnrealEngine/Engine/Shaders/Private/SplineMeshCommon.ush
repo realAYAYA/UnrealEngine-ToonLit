@@ -1,0 +1,400 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Shared/SplineMeshShaderParams.h"
+#include "ShaderPrint.ush"
+#include "SceneData.ush"
+
+FSplineMeshShaderParams SplineMeshLoadParamsFromInstancePayload(FInstanceSceneData InstanceData)
+{
+	const float4 SplineParams[SPLINE_MESH_PARAMS_FLOAT4_SIZE] =
+	{
+		LoadInstancePayloadExtensionElement(InstanceData, 0),
+		LoadInstancePayloadExtensionElement(InstanceData, 1),
+		LoadInstancePayloadExtensionElement(InstanceData, 2),
+		LoadInstancePayloadExtensionElement(InstanceData, 3),
+		LoadInstancePayloadExtensionElement(InstanceData, 4),
+		LoadInstancePayloadExtensionElement(InstanceData, 5),
+		LoadInstancePayloadExtensionElement(InstanceData, 6),
+		LoadInstancePayloadExtensionElement(InstanceData, 7),
+	};
+
+	return UnpackSplineMeshParams(SplineParams);
+}
+
+/** Calculate normalized distance along the spline based on local mesh position */
+float SplineMeshCalcSplineDistance(FSplineMeshShaderParams Params, float3 LocalPos)
+{
+	float ZPos = dot(LocalPos, Params.MeshDir);
+	return ZPos * Params.MeshScaleZ - Params.MeshMinZ;
+}
+
+/** Evaluates the position on the spline based on normalized distance along the spline */
+float3 SplineMeshEvalPos(FSplineMeshShaderParams Params, float SplineDist)
+{
+	float A = SplineDist;
+	float A2 = A  * A;
+	float A3 = A2 * A;
+
+	return (((2*A3)-(3*A2)+1) * Params.StartPos) +
+		   ((A3-(2*A2)+A) * Params.StartTangent) +
+		   ((A3-A2) * Params.EndTangent) +
+		   (((-2*A3)+(3*A2)) * Params.EndPos);
+}
+
+/** Evaluates the normalized tangent direction of the spline at a specified normalized distance along the spline */
+float3 SplineMeshEvalDir(FSplineMeshShaderParams Params, float SplineDist)
+{
+	float3 C = (6*Params.StartPos) + (3*Params.StartTangent) + (3*Params.EndTangent) - (6*Params.EndPos);
+	float3 D = (-6*Params.StartPos) - (4*Params.StartTangent) - (2*Params.EndTangent) + (6*Params.EndPos);
+	float3 E = Params.StartTangent;
+
+	float A = SplineDist;
+	float A2 = A * A;
+
+	return normalize((C * A2) + (D * A) + E);
+}
+
+/** Evaluates the scale, roll, and offset of a slice of the spline at the specified normalized distance */
+void SplineMeshEvalScaleRollOffset(FSplineMeshShaderParams Params, float SplineDist, inout float2 Scale, inout float Roll, inout float2 Offset)
+{
+	// Apply hermite interp to SplineDist if desired
+	float HermiteAlpha = Params.bSmoothInterpRollScale ? smoothstep(0.0, 1.0, SplineDist) : SplineDist;
+
+	Scale = lerp(Params.StartScale, Params.EndScale, HermiteAlpha);
+	Roll = lerp(Params.StartRoll, Params.EndRoll, HermiteAlpha);
+	Offset = lerp(Params.StartOffset, Params.EndOffset, HermiteAlpha);
+}
+
+/** Calculate full transform that defines frame along spline, given the normalized distance along the spline. */
+float4x3 SplineMeshCalcSliceTransform(FSplineMeshShaderParams Params, float SplineDist)
+{
+	// Find the point and direction of the spline at this point along it
+	float3 SplinePos = SplineMeshEvalPos( Params, SplineDist );
+	float3 SplineDir = SplineMeshEvalDir( Params, SplineDist );
+
+	// Find base frenet frame
+	float3 BaseXVec = normalize( cross(Params.SplineUpDir, SplineDir) );
+	float3 BaseYVec = cross(SplineDir, BaseXVec);
+
+	float2 Scale, Offset;
+	float Roll;
+	SplineMeshEvalScaleRollOffset(Params, SplineDist, Scale, Roll, Offset);
+
+	// Apply roll to frame around spline
+	float SinAng, CosAng;
+	sincos(Roll, SinAng, CosAng);
+	float3 XVec = (CosAng * BaseXVec) - (SinAng * BaseYVec);
+	float3 YVec = (CosAng * BaseYVec) + (SinAng * BaseXVec);
+
+	// Apply scale at this point along spline
+	XVec *= Scale.x;
+	YVec *= Scale.y;
+
+	// Offset from the spline, using the frenet frame
+	SplinePos += Offset.x * BaseXVec;
+	SplinePos += Offset.y * BaseYVec;
+
+	// Build overall transform
+	float3x3 SliceTransform3 = mul(transpose(float3x3(Params.MeshDir, Params.MeshX, Params.MeshY)), float3x3(float3(0,0,0), XVec, YVec));
+	float4x3 SliceTransform = float4x3(SliceTransform3[0], SliceTransform3[1], SliceTransform3[2], SplinePos);
+
+	return SliceTransform;
+}
+
+/** Calculate full transform that defines frame along spline, given the local position of a vertex. */
+float4x3 SplineMeshCalcSliceTransformFromLocalPos(FSplineMeshShaderParams Params, float3 LocalPos)
+{
+	return SplineMeshCalcSliceTransform(Params, SplineMeshCalcSplineDistance(Params, LocalPos));
+}
+
+/** Calculate full transform that defines frame along spline, given the local position of a vertex. */
+float3 SplineMeshDeformLocalPos(FSplineMeshShaderParams Params, float4 LocalPos)
+{
+	return mul(LocalPos, SplineMeshCalcSliceTransformFromLocalPos(Params, LocalPos.xyz));
+}
+
+/** Calculate rotation matrix that defines frame along spline, given the normalized distance along the spline. */
+half3x3 SplineMeshCalcSliceRot(FSplineMeshShaderParams Params, float SplineDist)
+{
+	// Find the point and direction of the spline at this point along it
+	half3 SplineDir = SplineMeshEvalDir( Params, SplineDist );
+
+	// Find base frenet frame
+	half3 BaseXVec = normalize( cross(Params.SplineUpDir, (half3)SplineDir) );
+	half3 BaseYVec = cross((half3)SplineDir, BaseXVec);
+
+	float2 Scale, Offset;
+	float Roll;
+	SplineMeshEvalScaleRollOffset(Params, SplineDist, Scale, Roll, Offset);
+
+	// Apply roll to frame around spline
+	half SinAng, CosAng;
+	sincos(Roll, SinAng, CosAng);
+	half3 XVec = (CosAng * BaseXVec) - (SinAng * BaseYVec);
+	half3 YVec = (CosAng * BaseYVec) + (SinAng * BaseXVec);
+
+	// Flip X or Y direction when negative scale
+	XVec *= Scale.x >= 0.0f ? 1.0f : -1.0f;
+	YVec *= Scale.y >= 0.0f ? 1.0f : -1.0f;
+
+	// Build rotation transform
+	half3x3 SliceTransform = mul(transpose(half3x3(Params.MeshDir, Params.MeshX, Params.MeshY)), half3x3(SplineDir, XVec, YVec));
+
+	return SliceTransform;
+}
+
+/** Calculate rotation matrix that defines frame along spline, given the local position of a vertex. */
+half3x3 SplineMeshCalcSliceRotFromLocalPos(FSplineMeshShaderParams Params, float3 LocalPos)
+{
+	return SplineMeshCalcSliceRot(Params, SplineMeshCalcSplineDistance(Params, LocalPos));
+}
+
+struct FSplineMeshDeformBoundsContext
+{
+	FSplineMeshShaderParams Params;
+	float3 MeshMinBounds;
+	float3 MeshMaxBounds;
+	float3 MeshBoundsExtent;
+	float3 DeformedMinBounds;
+	float3 DeformedMaxBounds;
+	float3 LastSplinePos;
+	float CurSplineLength;
+	float2 MaxSizeXY;
+	FShaderPrintContext ShaderPrint;
+	float4x4 LocalToTWS;
+};
+
+struct FSplineMeshDeformedLocalBounds
+{
+	float3 BoundsCenter;
+	float3 BoundsExtent;
+	float2 DeformScaleMinMax;
+};
+
+FSplineMeshDeformBoundsContext SplineMeshInitializeDeformBoundsContext(
+	FSplineMeshShaderParams Params,
+	float3 MeshBoundsCenter,
+	float3 MeshBoundsExtent,
+	FShaderPrintContext ShaderPrint,
+	float4x4 LocalToTWS
+)
+{
+	FSplineMeshDeformBoundsContext Result;
+	Result.Params				= Params;
+	Result.MeshMinBounds		= MeshBoundsCenter - MeshBoundsExtent;
+	Result.MeshMaxBounds		= MeshBoundsCenter + MeshBoundsExtent;
+	Result.MeshBoundsExtent		= MeshBoundsExtent;
+	Result.DeformedMinBounds	= (float3)POSITIVE_INFINITY;
+	Result.DeformedMaxBounds	= (float3)NEGATIVE_INFINITY;
+	Result.CurSplineLength		= -1.0f; // Negative to mark as not started
+	Result.ShaderPrint			= ShaderPrint;
+	Result.LocalToTWS			= LocalToTWS;
+
+	return Result;
+}
+
+FSplineMeshDeformBoundsContext SplineMeshInitializeDeformBoundsContext(
+	FSplineMeshShaderParams Params,
+	float3 MeshBoundsCenter,
+	float3 MeshBoundsExtent
+)
+{
+	FSplineMeshDeformBoundsContext Result;
+	Result.Params				= Params;
+	Result.MeshMinBounds		= MeshBoundsCenter - MeshBoundsExtent;
+	Result.MeshMaxBounds		= MeshBoundsCenter + MeshBoundsExtent;
+	Result.MeshBoundsExtent		= MeshBoundsExtent;
+	Result.DeformedMinBounds	= (float3)POSITIVE_INFINITY;
+	Result.DeformedMaxBounds	= (float3)NEGATIVE_INFINITY;
+	Result.CurSplineLength		= -1.0f; // Negative to mark as not started
+
+	Result.ShaderPrint.bIsActive	= false;
+	Result.LocalToTWS				= (float4x4)0;
+
+	return Result;
+}
+
+/** Solves post-deformed bounds of a slice of a spline mesh given the mesh-local bounds (iterative step) */
+void SplineMeshDeformLocalBoundsStep(inout FSplineMeshDeformBoundsContext Context, float SplineDist)
+{
+	// Find the point and direction of the spline at this point along it
+	float3 SplinePos = SplineMeshEvalPos( Context.Params, SplineDist );
+	const float3 SplineDir = SplineMeshEvalDir( Context.Params, SplineDist );
+
+	// Find base frenet frame
+	const float3 BaseXVec = normalize( cross(Context.Params.SplineUpDir, SplineDir) );
+	const float3 BaseYVec = cross(SplineDir, BaseXVec);
+
+	// Calculate the mesh bounds along the X/Y of the slice
+	float2 MeshMinXY = { dot(Context.Params.MeshX, Context.MeshMinBounds), dot(Context.Params.MeshY, Context.MeshMinBounds) };
+	float2 MeshMaxXY = { dot(Context.Params.MeshX, Context.MeshMaxBounds), dot(Context.Params.MeshY, Context.MeshMaxBounds) };
+
+	float2 Scale, Offset;
+	float Roll;
+	SplineMeshEvalScaleRollOffset(Context.Params, SplineDist, Scale, Roll, Offset);
+
+	// Scale the mesh min/max XY
+	MeshMinXY = MeshMinXY * Scale;
+	MeshMaxXY = MeshMaxXY * Scale;
+
+	// Calculate the offset from the spline
+	SplinePos += Offset.x * BaseXVec + Offset.y * BaseYVec;
+
+	// Get the rotated X/Y directions
+	float SinAng, CosAng;
+	sincos(Roll, SinAng, CosAng);
+	const float3 XVec = (CosAng * BaseXVec) - (SinAng * BaseYVec);
+	const float3 YVec = (CosAng * BaseYVec) + (SinAng * BaseXVec);
+
+	// Determine local-space AABB for a slice of the spline by transforming rect cross-section of bounds and take min/max
+	const float3 RectPoints[4] =
+	{
+		SplinePos + XVec * MeshMinXY.x + YVec * MeshMinXY.y,
+		SplinePos + XVec * MeshMinXY.x + YVec * MeshMaxXY.y,
+		SplinePos + XVec * MeshMaxXY.x + YVec * MeshMaxXY.y,
+		SplinePos + XVec * MeshMaxXY.x + YVec * MeshMinXY.y
+	};
+
+	const float3 SliceMin = min(min(RectPoints[0], RectPoints[1]), min(RectPoints[2], RectPoints[3]));
+	const float3 SliceMax = max(max(RectPoints[0], RectPoints[1]), max(RectPoints[2], RectPoints[3]));
+
+	// Extend current AABB and approximate spline length
+	Context.DeformedMinBounds = min(Context.DeformedMinBounds, SliceMin);
+	Context.DeformedMaxBounds = max(Context.DeformedMaxBounds, SliceMax);
+	if (Context.CurSplineLength < 0.0f)
+	{
+		Context.CurSplineLength = 0.0f;
+	}
+	else
+	{
+		Context.CurSplineLength += length(SplinePos - Context.LastSplinePos);
+	}
+	Context.MaxSizeXY = max(Context.MaxSizeXY, abs(MeshMaxXY - MeshMinXY));
+	Context.LastSplinePos = SplinePos;
+
+	// Debug draw
+	if (Context.ShaderPrint.bIsActive)
+	{
+		float3 RectPointsTWS[4];
+		UNROLL_N(4)
+		for(int i = 0; i < 4; ++i)
+		{
+			RectPointsTWS[i] = mul(float4(RectPoints[i], 1.0f), Context.LocalToTWS).xyz;
+		}
+
+		const float4 MinColor = { 1.0f, 0.0f, 0.0f, 1.0f };
+		const float4 MaxColor = { 0.0f, 1.0f, 0.0f, 1.0f };
+		AddLineTWS(Context.ShaderPrint, RectPointsTWS[0], RectPointsTWS[1], MinColor);
+		AddLineTWS(Context.ShaderPrint, RectPointsTWS[1], RectPointsTWS[2], MaxColor);
+		AddLineTWS(Context.ShaderPrint, RectPointsTWS[2], RectPointsTWS[3], MaxColor);
+		AddLineTWS(Context.ShaderPrint, RectPointsTWS[3], RectPointsTWS[0], MinColor);
+	}
+}
+
+/** Solves for approximate post-deformed bounds of a region of spline mesh given the mesh-local bounds */
+FSplineMeshDeformedLocalBounds SplineMeshDeformLocalBounds(FSplineMeshDeformBoundsContext Context)
+{
+	// Find the min and max distance along the spline
+	const float SplineDistMin = SplineMeshCalcSplineDistance(Context.Params, Context.MeshMinBounds);
+	const float SplineDistMax = SplineMeshCalcSplineDistance(Context.Params, Context.MeshMaxBounds);
+
+	const uint NUM_SLICE_SAMPLES = 5; // How many slices to sample along the length of the bounds
+	float CurSplineDist = SplineDistMin;
+	const float SplineDistStep = (SplineDistMax - SplineDistMin) / float(NUM_SLICE_SAMPLES - 1);
+	for (int i = 0; i < NUM_SLICE_SAMPLES; ++i)
+	{
+		SplineMeshDeformLocalBoundsStep(Context, CurSplineDist);
+		CurSplineDist += SplineDistStep;
+	}
+
+	FSplineMeshDeformedLocalBounds Result;
+	Result.BoundsCenter = (Context.DeformedMinBounds + Context.DeformedMaxBounds) * 0.5f;
+	Result.BoundsExtent = (Context.DeformedMaxBounds - Context.DeformedMinBounds) * 0.5f;
+
+	const float3 PreDeformSize =
+	{
+		2.0f * abs(dot(Context.Params.MeshDir, Context.MeshBoundsExtent)),
+		2.0f * abs(dot(Context.Params.MeshX, Context.MeshBoundsExtent)),
+		2.0f * abs(dot(Context.Params.MeshY, Context.MeshBoundsExtent))
+	};
+	const float3 DeformScale = {
+		PreDeformSize.x == 0.0f ? 1.0f : Context.CurSplineLength * rcp(PreDeformSize.x),
+		PreDeformSize.y == 0.0f ? 1.0f : Context.MaxSizeXY.x * rcp(PreDeformSize.y),
+		PreDeformSize.z == 0.0f ? 1.0f : Context.MaxSizeXY.y * rcp(PreDeformSize.z)
+	};
+
+	Result.DeformScaleMinMax = float2(
+		min3(DeformScale.x, DeformScale.y, DeformScale.z),
+		max3(DeformScale.x, DeformScale.y, DeformScale.z)
+	);
+
+	return Result;
+}
+
+FSplineMeshDeformedLocalBounds SplineMeshDeformLocalBounds(FSplineMeshShaderParams Params, float3 BoundsCenter, float3 BoundsExtent)
+{
+	return SplineMeshDeformLocalBounds(
+		SplineMeshInitializeDeformBoundsContext(
+			Params,
+			BoundsCenter,
+			BoundsExtent
+		)
+	);
+}
+
+FSplineMeshDeformedLocalBounds SplineMeshDeformLocalBoundsDebug(
+	FSplineMeshShaderParams Params,
+	FShaderPrintContext ShaderPrint,
+	float4x4 LocalToTWS,
+	float3 BoundsCenter,
+	float3 BoundsExtent
+)
+{
+	return SplineMeshDeformLocalBounds(
+		SplineMeshInitializeDeformBoundsContext(
+			Params,
+			BoundsCenter,
+			BoundsExtent,
+			ShaderPrint,
+			LocalToTWS
+		)
+	);
+}
+
+/**
+ * Deforms a local-space mesh bounding sphere to *approximately* match its post-deformation equivalent along the spline.
+ *
+ * NOTE: This is currently only needed for Nanite LOD spheres, which are pretty tolerant to being very approximate
+ * without having huge repercussions to the LOD quality. This is not a good solution if you need an accurate
+ * transformation of local bounds (e.g. for use with culling). Also, this solution is not a monotonic transformation,
+ * which is known to potentially create issues with Nanite's LOD selection.
+ */
+float4 SplineMeshDeformLODSphereBounds(FSplineMeshShaderParams Params, float4 LODSphere)
+{
+	const float SplineDist = saturate(SplineMeshCalcSplineDistance(Params, LODSphere.xyz));
+	const float3 SplinePos = SplineMeshEvalPos(Params, SplineDist);
+	const float3 SplineDir = SplineMeshEvalDir(Params, SplineDist);
+
+	float2 Scale, Offset;
+	float Roll;
+	SplineMeshEvalScaleRollOffset(Params, SplineDist, Scale, Roll, Offset);
+
+	const float3 BaseXVec = normalize( cross(Params.SplineUpDir, SplineDir) );
+	const float3 BaseYVec = cross(SplineDir, BaseXVec);
+
+	float SinAng, CosAng;
+	sincos(Roll, SinAng, CosAng);
+	const float3 XVec = (CosAng * BaseXVec) - (SinAng * BaseYVec);
+	const float3 YVec = (CosAng * BaseYVec) + (SinAng * BaseXVec);
+
+	const float2 LocalCenterXY = { dot(Params.MeshX, LODSphere.xyz), dot(Params.MeshY, LODSphere.xyz) };
+	const float3 SliceCenter = SplinePos +
+		XVec * LocalCenterXY.x * Scale.x +
+		YVec * LocalCenterXY.y * Scale.y +
+		BaseXVec * Offset.x +
+		BaseYVec * Offset.y;
+
+	return float4(SliceCenter, LODSphere.w * Params.MeshDeformScaleMinMax.y);
+}

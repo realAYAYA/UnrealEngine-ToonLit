@@ -1,0 +1,13 @@
+﻿INTSourceChangelist:19906333
+Availability:NoPublish
+Title:HLOD系统
+Crumbs:
+
+[EXCERPT:main]
+分层细节级别（HLOD）是一种既能增加性能，同时又使项目保持较高质量标准的技巧。 
+
+HLOD本质上是将多个静态网格体合并成一个对象，以单一的、简化后的几何体取代原有的网格体。当这些对象位于远处时，系统会绘制它们的HLOD，而不是单独绘制它们。这能减少每帧在场景中渲染的Actor的数量，从而提高性能。 
+[VAR:ToolTipFullLink]
+Engine/HLOD
+[/VAR]
+[/EXCERPT:main]

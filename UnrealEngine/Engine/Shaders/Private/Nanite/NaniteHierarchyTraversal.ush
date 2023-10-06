@@ -1,0 +1,384 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "NaniteDataDecode.ush"
+#include "NaniteHierarchyTraversalCommon.ush"
+
+#include "../Common.ush"
+#include "../WaveOpUtil.ush"
+#include "../ComputeShaderUtils.ush"
+
+#ifndef NANITE_HIERARCHY_TRAVERSAL_TYPE
+#	error "NANITE_HIERARCHY_TRAVERSAL_TYPE must be defined."
+#endif
+
+#ifndef CHECK_AND_TRIM_CLUSTER_COUNT
+#	define CHECK_AND_TRIM_CLUSTER_COUNT 0
+#endif
+
+#if GROUP_NODE_SIZE == 2
+
+groupshared uint2 GroupNodeData[NANITE_MAX_BVH_NODES_PER_GROUP];
+uint4 GetGroupNodeData(uint NodeIndex) { return uint4(GroupNodeData[NodeIndex], 0, 0); }
+void SetGroupNodeData(uint NodeIndex, uint4 Data) { GroupNodeData[NodeIndex] = Data.xy; }
+
+#elif GROUP_NODE_SIZE == 3
+
+groupshared uint3 GroupNodeData[NANITE_MAX_BVH_NODES_PER_GROUP];
+uint4 GetGroupNodeData(uint NodeIndex) { return uint4(GroupNodeData[NodeIndex], 0); }
+void SetGroupNodeData(uint NodeIndex, uint4 Data) { GroupNodeData[NodeIndex] = Data.xyz; }
+
+#else
+#	error "Unexpected Group Node Size."
+#endif
+
+RWCoherentStructuredBuffer(FQueueState)	QueueState;
+
+groupshared uint	GroupNumCandidateNodes;
+groupshared uint	GroupCandidateNodesOffset;
+
+groupshared int		GroupNodeCount;
+groupshared uint	GroupNodeBatchStartIndex;
+groupshared uint	GroupNodeMask;
+
+groupshared uint	GroupClusterBatchStartIndex;
+groupshared uint	GroupClusterBatchReadySize;
+
+// Need manually strip unused template functions here due to a compiler issue: https://github.com/microsoft/DirectXShaderCompiler/issues/4649
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS || NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_NODES
+
+template<typename FNaniteTraversalCallback>
+void ProcessNodeBatch(uint BatchSize, uint GroupIndex, uint QueueStateIndex)
+{
+	const uint LocalNodeIndex = (GroupIndex >> NANITE_MAX_BVH_NODE_FANOUT_BITS);
+	const uint ChildIndex = GroupIndex & NANITE_MAX_BVH_NODE_FANOUT_MASK;
+	const uint FetchIndex = min(LocalNodeIndex, BatchSize - 1);
+
+	FNaniteTraversalCallback TraversalCallback;
+	TraversalCallback.Init(ChildIndex, LocalNodeIndex, FetchIndex);
+
+	const FHierarchyNodeSlice HierarchyNodeSlice = GetHierarchyNodeSlice(TraversalCallback.GetHierarchyNodeIndex(), ChildIndex);
+
+	bool bVisible = HierarchyNodeSlice.bEnabled;
+	bool bLoaded = HierarchyNodeSlice.bLoaded;
+
+	if (LocalNodeIndex >= BatchSize)
+	{
+		bVisible = false;
+	}
+
+	bVisible = TraversalCallback.ShouldVisitChild(HierarchyNodeSlice, bVisible);
+
+	uint CandidateNodesOffset = 0;
+
+	const bool bOutputChild = bVisible && bLoaded;
+	BRANCH
+	if (bOutputChild && !HierarchyNodeSlice.bLeaf)
+	{
+		WaveInterlockedAddScalar_(GroupNumCandidateNodes, 1, CandidateNodesOffset);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupIndex == 0)
+	{
+		InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeWriteOffset, GroupNumCandidateNodes, GroupCandidateNodesOffset);
+		InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeCount, (int)GroupNumCandidateNodes);	// NodeCount needs to be conservative, so child count is added before the actual children.
+	}
+
+	AllMemoryBarrierWithGroupSync();
+
+	// GPU might not be filled, so latency is important here. Kick new jobs as soon as possible.
+	if (bOutputChild && !HierarchyNodeSlice.bLeaf)
+	{
+		CandidateNodesOffset += GroupCandidateNodesOffset;
+
+		if (CandidateNodesOffset < MaxNodes)
+		{
+			TraversalCallback.StoreChildNode(CandidateNodesOffset, HierarchyNodeSlice);
+		}
+	}
+	DeviceMemoryBarrierWithGroupSync();
+
+	// Continue with remaining independent work
+	if (bOutputChild && HierarchyNodeSlice.bLeaf)
+	{
+		uint NumClusters = HierarchyNodeSlice.NumChildren;
+
+#if CHECK_AND_TRIM_CLUSTER_COUNT
+		uint ClusterIndex = 0;
+		WaveInterlockedAdd_(QueueState[0].TotalClusters, NumClusters, ClusterIndex);
+
+		// Trim any clusters above MaxCandidateClusters
+		const uint ClusterIndexEnd = min(ClusterIndex + NumClusters, MaxCandidateClusters);
+		NumClusters = (uint)max((int)ClusterIndexEnd - (int)ClusterIndex, 0);
+#endif
+
+		uint CandidateClustersOffset = 0;
+		WaveInterlockedAdd_(QueueState[0].PassState[QueueStateIndex].ClusterWriteOffset, NumClusters, CandidateClustersOffset);
+
+		const uint BaseClusterIndex = HierarchyNodeSlice.ChildStartReference & NANITE_MAX_CLUSTERS_PER_PAGE_MASK;
+		const uint StartIndex = CandidateClustersOffset;
+		const uint EndIndex = min(CandidateClustersOffset + NumClusters, MaxCandidateClusters);
+
+		for (uint Index = StartIndex; Index < EndIndex; Index++)
+		{
+			TraversalCallback.StoreCluster(Index, HierarchyNodeSlice, BaseClusterIndex + (Index - StartIndex));
+		}
+
+		DeviceMemoryBarrier();
+
+		// Once the cluster indices have been committed to memory, we can update the cluster counters of the overlapping cluster batches.
+		for (uint Index = StartIndex; Index < EndIndex;)
+		{
+			const uint BatchIndex = Index / NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE;
+			const uint NextIndex = (Index & ~(NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE - 1u)) + NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE;
+			const uint MaxIndex = min(NextIndex, EndIndex);
+			const uint Num = MaxIndex - Index;
+			TraversalCallback.AddToClusterBatch(BatchIndex, Num);
+			Index = NextIndex;
+		}
+	}
+
+	DeviceMemoryBarrierWithGroupSync();
+	if (GroupIndex == 0)
+	{
+		// Done writing clusters/nodes for current pass. Subtract us from NodeCount.
+		InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeCount, -(int)BatchSize);
+	}
+
+	TraversalCallback.OnPostNodeVisit(HierarchyNodeSlice);
+}
+
+#endif
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS || NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_CLUSTERS
+
+template<typename FNaniteTraversalCallback>
+void ProcessClusterBatch(uint BatchStartIndex, uint BatchSize, uint GroupIndex)
+{
+	FNaniteTraversalCallback TraversalCallback;
+
+	if (GroupIndex < BatchSize)
+	{
+		const uint CandidateIndex = BatchStartIndex * NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE + GroupIndex;
+		const uint4 PackedCluster = TraversalCallback.LoadPackedCluster(CandidateIndex);
+
+		TraversalCallback.ProcessCluster(PackedCluster);
+	}
+
+	// Clear batch so the buffer is cleared for next pass.
+	TraversalCallback.ClearClusterBatch(BatchStartIndex);
+}
+
+#endif
+
+// Persistent threads culling shader
+// This shader is responsible for the recursive culling and traversal of the per-mesh cluster hierarchies.
+// It is also responsible for culling the triangle clusters found during this traversal and producing
+// lists of visible clusters for rasterization. Clusters are binned for SW or HW rasterization based on
+// screen-projected size.
+
+// Mapping tree-culling to the GPU is awkward as the number of leaf nodes that need to be accepted
+// is dynamic and can be anywhere from none to hundreds of thousands. Mapping threads 1:1 to trees can result in
+// extremely long serial processing that severely underutilizes the GPU. Conversely, mapping threads 1:1 to
+// leaf nodes can end up leaving most threads idle.
+
+// What we really need is the ability to dynamically spawn threads for children as they are determined
+// to be visible during the traversal. This is unfortunately not possible (yet), so instead we use
+// persistent threads. We spawn just enough worker threads to fill the GPU, keep them running and manually
+// distribute work to them.
+
+// For this we use a simple MPMC job queue. Instead of spawning new threads, new jobs are added to the queue
+// to be consumed by workers. Initially the queue is populated with work generated by preceding shader passes.
+// When the persistent shader is running, its workers will continuously consuming items from the queue, but also
+// produce new items.
+
+// When BVH nodes are processed they will append work items to the queue for each of the visible children.
+// Clusters are only consumed and will never generate new work. The workers keep running until the queue is empty.
+// At that point the trees have been recursively traversed and all the relevant clusters have been processed.
+
+// A given node can't be processed before all of its ancestors have been processed. This forms a dependency chain
+// of jobs that can be as long as the height of the tree. Especially for small or moderately-sized scenes, the total
+// latency from these dependent jobs can end up determining the total BVH processing time, leaving the GPU underutilized.
+// This issue is one of the main motivations for handling the cluster culling in the same shader.
+// Workers always favor node processing to make progress on the critical path, but when no nodes are available
+// they process clusters while waiting, instead of going idle.
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_PERSISTENT_NODES_AND_CLUSTERS
+
+template<typename FNaniteTraversalCallback>
+void PersistentNodeAndClusterCull(uint GroupIndex, uint QueueStateIndex)
+{
+	FNaniteTraversalCallback TraversalCallback;
+
+	bool bProcessNodes			= true;						// Should we still try to consume nodes?
+	uint NodeBatchReadyOffset	= NANITE_MAX_BVH_NODES_PER_GROUP;
+	uint NodeBatchStartIndex	= 0;
+	uint ClusterBatchStartIndex = 0xFFFFFFFFu;
+	
+	while(true)
+	{
+		GroupMemoryBarrierWithGroupSync();	// Make sure we are done reading from group shared
+		if (GroupIndex == 0)
+		{
+			GroupNumCandidateNodes	= 0;
+			GroupNodeMask			= 0;
+		}
+
+		TraversalCallback.OnPreProcessNodeBatch(GroupIndex);
+		
+		GroupMemoryBarrierWithGroupSync();
+
+		uint NodeReadyMask = 0;
+		if (bProcessNodes)	// Try grabbing and processing nodes if they could be available.
+		{
+			if (NodeBatchReadyOffset == NANITE_MAX_BVH_NODES_PER_GROUP)
+			{
+				// No more data in current batch. Grab a new batch.
+				if (GroupIndex == 0)
+				{
+					InterlockedAdd(QueueState[0].PassState[QueueStateIndex].NodeReadOffset, NANITE_MAX_BVH_NODES_PER_GROUP, GroupNodeBatchStartIndex);
+				}
+				GroupMemoryBarrierWithGroupSync();
+
+				NodeBatchReadyOffset = 0;
+				NodeBatchStartIndex = GroupNodeBatchStartIndex;
+				if (NodeBatchStartIndex >= MaxNodes)
+				{
+					// The node range is out of bounds and so will any future range be.
+					bProcessNodes = false;
+					continue;
+				}	
+			}
+
+			// Check which nodes in the range have been completely written and are ready for processing.
+			const uint NodeIndex = NodeBatchStartIndex + NodeBatchReadyOffset + GroupIndex;
+			bool bNodeReady = (NodeBatchReadyOffset + GroupIndex < NANITE_MAX_BVH_NODES_PER_GROUP);
+			if (bNodeReady)
+			{
+				bNodeReady = TraversalCallback.LoadCandidateNodeDataToGroup(NodeIndex, GroupIndex);
+			}
+
+			if (bNodeReady)
+			{
+				InterlockedOr(GroupNodeMask, 1u << GroupIndex);
+			}
+			AllMemoryBarrierWithGroupSync();
+			NodeReadyMask = GroupNodeMask;
+
+			// Process nodes if at least the first one is ready.
+			if (NodeReadyMask & 1u)
+			{
+				uint BatchSize = firstbitlow(~NodeReadyMask);
+				ProcessNodeBatch<FNaniteTraversalCallback>(BatchSize, GroupIndex, QueueStateIndex);
+				if (GroupIndex < BatchSize)
+				{
+					// Clear processed element so we leave the buffer cleared for next pass.
+					TraversalCallback.ClearCandidateNodeData(NodeIndex);
+				}
+
+				NodeBatchReadyOffset += BatchSize;
+				continue;
+			}
+		}
+
+		// No nodes were ready. Process clusters instead.
+
+		// Grab a range of clusters, if we don't already have one.
+		if (ClusterBatchStartIndex == 0xFFFFFFFFu)
+		{
+			if (GroupIndex == 0)
+			{
+				InterlockedAdd(QueueState[0].PassState[QueueStateIndex].ClusterBatchReadOffset, 1, GroupClusterBatchStartIndex);
+			}
+			GroupMemoryBarrierWithGroupSync();
+			ClusterBatchStartIndex = GroupClusterBatchStartIndex;
+		}
+
+		if (!bProcessNodes && GroupClusterBatchStartIndex >= GetMaxClusterBatches())
+			break;	// Has to be break instead of return to make FXC happy.
+
+		if (GroupIndex == 0)
+		{
+			GroupNodeCount = QueueState[0].PassState[QueueStateIndex].NodeCount;
+			GroupClusterBatchReadySize = TraversalCallback.LoadClusterBatch(ClusterBatchStartIndex);
+		}
+		GroupMemoryBarrierWithGroupSync();
+
+		uint ClusterBatchReadySize = GroupClusterBatchReadySize;
+		if (!bProcessNodes && ClusterBatchReadySize == 0)	// No more clusters to process and no nodes are available to 
+			break;	// Has to be break instead of return to make FXC happy.
+
+		if ((bProcessNodes && ClusterBatchReadySize == NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE) || (!bProcessNodes && ClusterBatchReadySize > 0))
+		{
+			ProcessClusterBatch<FNaniteTraversalCallback>(ClusterBatchStartIndex, ClusterBatchReadySize, GroupIndex);
+			ClusterBatchStartIndex = 0xFFFFFFFFu;
+		}
+
+		if (bProcessNodes && GroupNodeCount == 0)
+		{
+			bProcessNodes = false;
+		}
+	}
+}
+
+#endif
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_NODES
+
+template<typename FNaniteTraversalCallback>
+void NodeCull(uint GroupID, uint GroupIndex, uint QueueStateIndex)
+{
+	const uint ClampedReadOffset		= min(QueueState[0].PassState[QueueStateIndex].NodeReadOffset, MaxNodes);
+	const uint ClampedPrevWriteOffset	= min(QueueState[0].PassState[QueueStateIndex].NodePrevWriteOffset, MaxNodes);
+	const uint BatchNumNodes			= ClampedPrevWriteOffset - ClampedReadOffset;
+
+	const uint BatchNodeBaseIndex		= GroupID * NANITE_MAX_BVH_NODES_PER_GROUP;
+	const uint BatchSize				= min(BatchNodeBaseIndex + NANITE_MAX_BVH_NODES_PER_GROUP, BatchNumNodes) - BatchNodeBaseIndex;
+
+	const uint NodeIndex				= ClampedReadOffset + BatchNodeBaseIndex + GroupIndex;
+
+	if (GroupIndex == 0)
+	{
+		GroupNumCandidateNodes = 0;
+	}
+
+	FNaniteTraversalCallback TraversalCallback;
+	TraversalCallback.OnPreProcessNodeBatch(GroupIndex);
+
+	bool bClear = false;
+	if (GroupIndex < BatchSize)
+	{
+		TraversalCallback.LoadCandidateNodeDataToGroup(NodeIndex, GroupIndex, false);
+
+		bClear = true;
+	}
+	AllMemoryBarrierWithGroupSync();
+
+	ProcessNodeBatch<FNaniteTraversalCallback>(BatchSize, GroupIndex, QueueStateIndex);
+	if (bClear)
+	{
+		// Clear processed element so we leave the buffer cleared for next pass.
+		TraversalCallback.ClearCandidateNodeData(NodeIndex);
+	}
+}
+
+#endif
+
+#if NANITE_HIERARCHY_TRAVERSAL_TYPE == NANITE_CULLING_TYPE_CLUSTERS
+
+template<typename FNaniteTraversalCallback>
+void ClusterCull(uint GroupID, uint GroupIndex, uint QueueStateIndex)
+{
+	const uint ClampedNumCandidateClusters = min(QueueState[0].PassState[QueueStateIndex].ClusterWriteOffset, MaxCandidateClusters);
+	const uint ClampedStartIndex = min(GroupID * NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE, ClampedNumCandidateClusters);
+	const uint ClampedEndIndex = min((GroupID + 1) * NANITE_PERSISTENT_CLUSTER_CULLING_GROUP_SIZE, ClampedNumCandidateClusters);
+
+	const uint BatchSize = ClampedEndIndex - ClampedStartIndex;
+	ProcessClusterBatch<FNaniteTraversalCallback>(GroupID, BatchSize, GroupIndex);
+}
+
+#endif

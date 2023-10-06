@@ -1,0 +1,21 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+/*=============================================================================
+	StrataPublic.ush: Public facing API for external users of Strata.
+=============================================================================*/
+
+#include "/Engine/Private/Strata/Strata.ush"
+
+#if STRATA_ENABLED
+
+/** Public facing functions allowing external users access to some Strata data. */
+float3 StrataPublic_GetWorldNormal(uint2 PixelCoord)
+{
+  return StrataUnpackTopLayerData(StrataPublic.TopLayerTexture.Load(uint3(PixelCoord, 0))).WorldNormal;
+}
+
+//TODO: Implement other accessors that were previously available via SceneTextures.
+
+#endif

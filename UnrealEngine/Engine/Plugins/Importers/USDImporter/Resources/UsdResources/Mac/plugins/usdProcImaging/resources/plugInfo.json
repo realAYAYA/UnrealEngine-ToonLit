@@ -1,0 +1,22 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    
+                    "UsdProcImagingGenerativeProceduralAdapter": {
+                        "bases": [
+                            "UsdImagingPrimAdapter"
+                        ], 
+                        "primTypeName": "GenerativeProcedural"
+                    }
+                }
+            }, 
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/libusd_usdProcImaging.dylib", 
+            "Name": "usdProcImaging", 
+            "ResourcePath": "resources", 
+            "Root": "..", 
+            "Type": "library"
+        }
+    ]
+}

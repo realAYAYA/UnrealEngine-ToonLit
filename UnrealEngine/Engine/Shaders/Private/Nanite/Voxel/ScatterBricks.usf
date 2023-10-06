@@ -1,0 +1,176 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "Brick.ush"
+#include "Voxel.ush"
+
+Texture2D< uint >		TileCount;
+RWTexture2D< uint >		RWTileCount;
+
+void WritePixel( uint TriIndex, uint2 PixelPos, float DeviceZ )
+{
+	uint DepthInt = asuint( DeviceZ );
+
+	// Top 2 bits won't be used for range [0,1].
+	DepthInt <<= 2;
+
+	// Steal low mantisa bits
+	uint Pixel = ( DepthInt & 0xffffff00 ) | ( TriIndex & 0xff );
+
+	//uint CurrentPixel = RWTileCount[ PixelPos ];
+	//if( Pixel > CurrentPixel )
+		InterlockedMax( RWTileCount[ PixelPos ], Pixel );
+}
+
+[numthreads(4, 4, 4)]
+void ScatterVoxels(
+	uint	BrickIndex	: SV_GroupID,
+	uint3	Voxel		: SV_GroupThreadID ) 
+	//uint	VoxelIndex	: SV_GroupIndex )
+{
+	//uint NumBricks = GetNumBricks();
+
+	//if( BrickIndex < NumBricks )
+	{
+		FBrick Brick = BrickBuffer[ BrickIndex ];
+
+		float3 BrickPos;
+		float CubeSize;
+		DecodeBrickKey( Brick.Key, BrickPos, CubeSize );
+
+		float3 WorldMin = BrickPos * CubeSize;
+		float3 WorldMax = WorldMin + CubeSize;
+		
+		uint  VoxelIndex = uint( Voxel.x + Voxel.y * 4 + Voxel.z * 16 );
+
+#if 1
+		float3 PointWorld = lerp( WorldMin, WorldMax, Voxel * 0.25 + 0.125 );
+		float4 PointClip = mul( float4( PointWorld, 1 ), View.TranslatedWorldToClip );
+		float3 PointScreen = PointClip.xyz / PointClip.w;
+		uint2  PointPixels = uint2( ( PointScreen.xy * float2( 0.5, -0.5 ) + 0.5 ) * View.ViewSizeAndInvSize.xy );
+
+		bool bInsideViewport = all( PointScreen.xy < View.ViewSizeAndInvSize.xy );
+
+		BRANCH
+		if( bInsideViewport )
+		{
+			//float Depth = ConvertFromDeviceZ( PointScreen.z );
+			float DeviceZ = saturate( PointScreen.z );
+
+			{
+				uint2 RootBlock = BlockBuffer.Load2( 8 * Brick.BlockOffset );
+
+				bool VoxelIndexLow = VoxelIndex < 32;
+				uint VoxelShift = VoxelIndex - ( VoxelIndexLow ? 0 : 32 );
+				uint VoxelMask = 1 << VoxelShift;
+
+				bool bVoxelExists = ( VoxelIndexLow ? RootBlock.x : RootBlock.y ) & VoxelMask;
+
+				if( !bVoxelExists )
+					DeviceZ = 0;
+			}
+
+			WritePixel( VoxelIndex, PointPixels, DeviceZ );
+		}
+#else
+		float3 Bounds[2] = { WorldMin, WorldMax };
+		
+		Bounds[0] = lerp( WorldMin, WorldMax, Voxel * 0.25 );
+		Bounds[1] = lerp( WorldMin, WorldMax, Voxel * 0.25 + 0.25 );
+
+		// Screen rect from bounds
+		float3 RectMin = float3(  1,  1,  1 );
+		float3 RectMax = float3( -1, -1, -1 );
+
+		UNROLL for( uint i = 0; i < 8; i++ )
+		{
+			float3 PointWorld;
+			PointWorld.x = Bounds[ (i >> 0) & 1 ].x;
+			PointWorld.y = Bounds[ (i >> 1) & 1 ].y;
+			PointWorld.z = Bounds[ (i >> 2) & 1 ].z;
+
+			float4 PointClip = mul( float4( PointWorld, 1 ), View.TranslatedWorldToClip );
+			float3 PointScreen = PointClip.xyz / PointClip.w;
+
+			RectMin = min( RectMin, PointScreen );
+			RectMax = max( RectMax, PointScreen );
+		}
+
+		float4 Rect = saturate( float4( RectMin.xy, RectMax.xy ) * float2( 0.5, -0.5 ).xyxy + 0.5 ).xwzy;
+		uint4 RectPixels = uint4( Rect * View.ViewSizeAndInvSize.xyxy );
+
+		//float Depth = ConvertFromDeviceZ( RectMax.z );
+		float DeviceZ = saturate( RectMax.z );
+
+		{
+			uint2 RootBlock = BlockBuffer.Load2( 8 * Brick.BlockOffset );
+
+			bool VoxelIndexLow = VoxelIndex < 32;
+			uint VoxelShift = VoxelIndex - ( VoxelIndexLow ? 0 : 32 );
+			uint VoxelMask = 1 << VoxelShift;
+
+			bool bVoxelExists = ( VoxelIndexLow ? RootBlock.x : RootBlock.y ) & VoxelMask;
+
+			if( !bVoxelExists )
+				return;
+				//DeviceZ = 0;
+		}
+
+		for( uint x = RectPixels.x; x <= RectPixels.z; x++ )
+		{
+			for( uint y = RectPixels.y; y <= RectPixels.w; y++ )
+			{
+#if 1
+				FRay Ray = GetViewRay( View.ViewRectMin.xy + float2(x,y) + 0.5 );
+
+				Ray.Time = Intersect( Ray, Bounds );
+				if( Ray.Time[0] > Ray.Time[1] )
+					continue;
+
+				DeviceZ = ConvertToDeviceZ( Ray.Time[0] );
+#endif
+
+				WritePixel( VoxelIndex, uint2(x,y), DeviceZ );
+			}
+		}
+#endif
+	}
+}
+
+
+RWTexture2D< float4 >	OutSceneColor;
+
+[numthreads(8, 8, 1)]
+void ScatterResolve( uint2 PixelPos : SV_DispatchThreadID ) 
+{
+	float4 OutColor = 0;
+
+	bool bInsideViewport = all( PixelPos < View.ViewSizeAndInvSize.xy );
+
+	BRANCH
+	if( !bInsideViewport )
+		return;
+
+	uint Pixel = TileCount[ PixelPos + View.ViewRectMin.xy ];
+
+	uint DepthInt = ( Pixel & 0xffffff00 ) >> 2;
+	uint VoxelIndex = Pixel & 63;
+
+	float Depth = ConvertFromDeviceZ( asfloat( DepthInt ) );
+
+	uint3 Voxel;
+	Voxel.x = ( VoxelIndex >> 0 ) & 3;
+	Voxel.y = ( VoxelIndex >> 2 ) & 3;
+	Voxel.z = ( VoxelIndex >> 4 ) & 3;
+
+	OutColor.r = Voxel.x * 0.25 + 0.25;
+	OutColor.g = Voxel.y * 0.25 + 0.25;
+	OutColor.b = Voxel.z * 0.25 + 0.25;
+
+	float3 DepthTint = 0.5 + 0.5*cos( 3.0 + ( DepthInt >> 8 ) * 0.0001 + float3(0.0,0.6,1.0) );
+	OutColor.rgb *= DepthTint;
+
+	//OutColor = float( VoxelIndex & 63 ) / 63.0;
+
+	OutSceneColor[ PixelPos + View.ViewRectMin.xy ] = OutColor;
+}

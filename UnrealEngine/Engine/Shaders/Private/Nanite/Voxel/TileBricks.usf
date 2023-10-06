@@ -1,0 +1,367 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "../../WaveOpUtil.ush"
+#include "Brick.ush"
+#include "Voxel.ush"
+
+static const uint TileShift = 3;	// 8x8
+
+struct FTileListElement
+{
+	//float	Depth;
+	uint	Bounds;
+	uint	BrickIndex;
+	uint	NextIndex;
+};
+
+struct FTileArrayElement
+{
+	float	Depth;
+	uint	BrickIndex;
+};
+
+StructuredBuffer< FTileListElement >	TileListBuffer;
+RWStructuredBuffer< FTileListElement >	RWTileListBuffer;
+
+StructuredBuffer< FTileArrayElement >	TileArrayBuffer;
+RWStructuredBuffer< FTileArrayElement >	RWTileArrayBuffer;
+
+Texture2D< uint >		TileHead;
+RWTexture2D< uint >		RWTileHead;
+
+Texture2D< uint >		TileCount;
+RWTexture2D< uint >		RWTileCount;
+
+Texture2D< uint >		TileOffset;
+RWTexture2D< uint >		RWTileOffset;
+
+
+[numthreads(64, 1, 1)]
+void BinBricksInTiles( uint	BrickIndex : SV_DispatchThreadID ) 
+{
+	uint NumBricks = GetNumBricks();
+
+	if( BrickIndex < NumBricks )
+	{
+		FBrick Brick = BrickBuffer[ BrickIndex ];
+
+		float3 BrickPos;
+		float CubeSize;
+		DecodeBrickKey( Brick.Key, BrickPos, CubeSize );
+
+		float3 WorldMin = BrickPos * CubeSize;
+		float3 WorldMax = WorldMin + CubeSize;
+		
+		uint2 RootBlock = BlockBuffer.Load2( 8 * Brick.BlockOffset );
+
+		uint3 BrickMin, BrickMax;
+		BlockBounds( RootBlock, BrickMin, BrickMax );
+		BrickMax--;
+
+		uint BrickBounds;
+		BrickBounds  = BrickMin.x;
+		BrickBounds |= BrickMin.y << 2;
+		BrickBounds |= BrickMin.z << 4;
+		BrickBounds |= BrickMax.x << 6;
+		BrickBounds |= BrickMax.y << 8;
+		BrickBounds |= BrickMax.z << 10;
+
+		if(1)
+		{
+			BrickMax++;
+
+			float3 UnitMin = BrickMin * 0.25;
+			float3 UnitMax = BrickMax * 0.25;
+
+			float3 NewWorldMin = lerp( WorldMin, WorldMax, UnitMin );
+			float3 NewWorldMax = lerp( WorldMin, WorldMax, UnitMax );
+		
+			WorldMin = NewWorldMin;
+			WorldMax = NewWorldMax;
+		}
+
+		float3 Bounds[2] = { WorldMin, WorldMax };
+
+		// Screen rect from bounds
+		float3 RectMin = float3(  1,  1,  1 );
+		float3 RectMax = float3( -1, -1, -1 );
+
+		UNROLL for( uint i = 0; i < 8; i++ )
+		{
+			float3 PointWorld;
+			PointWorld.x = Bounds[ (i >> 0) & 1 ].x;
+			PointWorld.y = Bounds[ (i >> 1) & 1 ].y;
+			PointWorld.z = Bounds[ (i >> 2) & 1 ].z;
+
+			float4 PointClip = mul( float4( PointWorld, 1 ), View.TranslatedWorldToClip );
+			float3 PointScreen = PointClip.xyz / PointClip.w;
+
+			RectMin = min( RectMin, PointScreen );
+			RectMax = max( RectMax, PointScreen );
+		}
+
+		float4 RectUV = saturate( float4( RectMin.xy, RectMax.xy ) * float2( 0.5, -0.5 ).xyxy + 0.5 ).xwzy;
+		uint4 RectPixels = uint4( floor( RectUV.xy * View.ViewSizeAndInvSize.xy ), ceil( RectUV.zw * View.ViewSizeAndInvSize.xy ) );
+		uint4 RectTiles = RectPixels >> TileShift;
+
+		float Depth = ConvertFromDeviceZ( RectMax.z );
+
+		for( uint x = RectTiles.x; x <= RectTiles.z; x++ )
+		{
+			for( uint y = RectTiles.y; y <= RectTiles.w; y++ )
+			{
+				uint2 TileIndex = { x, y };
+			
+				// Add to linked list
+				//uint ListIndex = RWTileListBuffer.IncrementCounter();
+				uint ListIndex = 0;
+				WaveInterlockedAddScalar_( RWDispatchIndirectArgs[4], 1, ListIndex );
+				//if( NodeIndex < TileListBufferSize )
+				{
+					//FTileListElement Element = { Depth, BrickIndex,  0 };
+					FTileListElement Element = { BrickBounds, BrickIndex,  0 };
+
+					InterlockedExchange( RWTileHead[ TileIndex ], ListIndex + 1, Element.NextIndex );	// Zero is reserved
+					InterlockedAdd( RWTileCount[ TileIndex ], 1 );
+
+					RWTileListBuffer[ ListIndex ] = Element;
+				}
+			}
+		}
+	}
+}
+
+
+#define SUM_IN_GROUP_SHARED	1
+
+#if SUM_IN_GROUP_SHARED
+groupshared uint GroupArrayNum;
+groupshared uint GroupArrayOffset;
+#endif
+
+[numthreads(8, 8, 1)]
+void BuildTileArrays(
+	uint2	TileIndex	: SV_DispatchThreadID,
+	uint	GroupIndex	: SV_GroupIndex )
+{
+#if SUM_IN_GROUP_SHARED
+	if( GroupIndex == 0 )
+	{
+		GroupArrayNum = 0;
+	}
+	
+	GroupMemoryBarrierWithGroupSync();
+#endif
+
+	uint ArrayNum = TileCount[ TileIndex ];
+	uint ArrayOffset = 0;
+	
+	if( ArrayNum )
+	{
+		// Alloc space
+#if SUM_IN_GROUP_SHARED
+		// Reduce global atomics by accumulating to LDS first
+		// TODO use ballot and remove syncs
+		InterlockedAdd( GroupArrayNum, ArrayNum, ArrayOffset );
+#else
+		InterlockedAdd( RWDispatchIndirectArgs[3], ArrayNum, ArrayOffset );
+
+		RWTileOffset[ TileIndex ] = ArrayOffset;
+#endif
+	}
+
+#if SUM_IN_GROUP_SHARED
+	GroupMemoryBarrierWithGroupSync();
+
+	if( GroupIndex == 0 )
+	{
+		// Should be GDS
+		InterlockedAdd( RWDispatchIndirectArgs[3], GroupArrayNum, GroupArrayOffset );
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if( ArrayNum )
+	{
+		ArrayOffset += GroupArrayOffset;
+
+		RWTileOffset[ TileIndex ] = ArrayOffset;
+	}
+#endif
+
+	// Convert linked list to array
+	uint ArrayIndex = ArrayOffset;
+	uint ListIndex = TileHead[ TileIndex ];
+	while( ListIndex )
+	{
+		FTileListElement This = TileListBuffer[ ListIndex - 1 ];
+		ListIndex = This.NextIndex;
+
+		// Insertion sort
+		uint i = ArrayIndex++;
+		while( i > ArrayOffset )
+		{
+			FTileArrayElement Prev = RWTileArrayBuffer[ i - 1 ];
+
+			//if( This.Depth >= Prev.Depth )
+				break;
+
+			RWTileArrayBuffer[i] = Prev;
+			i--;
+		}
+		RWTileArrayBuffer[i].Depth		= 0;//This.Depth;
+		RWTileArrayBuffer[i].BrickIndex	= This.BrickIndex;
+	}
+
+	/*
+	// Prefix sum
+	s = LaneSwizzle( scan, 30, 0, 0 );
+	if( threadID.x & 1 )		scan += s;
+
+	s = LaneSwizzle( scan, 28, 1, 0 );
+	if( (threadID.x >> 1) & 1 )	scan += s;
+
+	s = LaneSwizzle( scan, 24, 3, 0 );
+	if( (threadID.x >> 2) & 1 )	scan += s;
+
+	s = LaneSwizzle( scan, 16, 7, 0 );
+	if( (threadID.x >> 3) & 1 )	scan += s;
+
+	s = LaneSwizzle( scan, 0, 15, 0 );
+	if( (threadID.x >> 4) & 1 )	scan += s;
+
+	s = ReadLane( scan, 31 );
+	if( (threadID.x >> 5) & 1 )	scan += s;
+	*/
+}
+
+
+RWTexture2D< float4 >	OutSceneColor;
+
+[numthreads(8, 8, 1)]
+void RayCastTiles( uint2 PixelPos : SV_DispatchThreadID ) 
+{
+	float4 OutColor = 0;
+
+	bool bInsideViewport = all( PixelPos < View.ViewSizeAndInvSize.xy );
+
+	BRANCH
+	if( !bInsideViewport )
+		return;
+	
+	FRay Ray = GetViewRay( (float2)PixelPos + 0.5 );
+
+	uint2 TileIndex = PixelPos >> TileShift;
+
+	//float Volume = 0;
+	uint BrickCount = 0;
+#if 1
+	uint ListIndex = TileHead[ TileIndex ];
+	while( ListIndex )
+	{
+		FBrick Brick;
+		FRay LocalRay;
+
+		//do
+		{
+			FTileListElement Node = TileListBuffer[ ListIndex - 1 ];
+			ListIndex = Node.NextIndex;
+
+			uint BrickIndex = Node.BrickIndex;
+#else
+	uint Offset = TileOffset[ TileIndex ];
+	uint Num = TileCount[ TileIndex ];
+	for( uint i = Offset; i < Offset + Num; i++ )
+	{
+		FBrick Brick;
+		FRay LocalRay;
+
+		{
+			uint BrickIndex = TileArrayBuffer[i].BrickIndex;
+#endif
+			Brick = BrickBuffer[ BrickIndex ];
+			BrickCount++;
+
+			float3 BrickPos;
+			float CubeSize;
+			DecodeBrickKey( Brick.Key, BrickPos, CubeSize );
+		
+			// Transform to local space
+			LocalRay = Ray;
+			LocalRay.Origin    = Ray.Origin    / CubeSize - BrickPos.xyz;
+			LocalRay.Direction = Ray.Direction / CubeSize;
+
+			if(1)
+			{
+				float3 Bounds[2] = { float3(0,0,0), float3(1,1,1) };
+				
+				if(0)
+				{
+					uint2 RootBlock = BlockBuffer.Load2( 8 * Brick.BlockOffset );
+
+					uint3 Min, Max;
+					BlockBounds( RootBlock, Min, Max );
+					Bounds[0] = Min * 0.25;
+					Bounds[1] = Max * 0.25;
+				}
+				else
+				{
+					uint3 Min, Max;
+					Min.x = BitFieldExtractU32( Node.Bounds, 2, 0 );
+					Min.y = BitFieldExtractU32( Node.Bounds, 2, 2 );
+					Min.z = BitFieldExtractU32( Node.Bounds, 2, 4 );
+					Max.x = BitFieldExtractU32( Node.Bounds, 2, 6 );
+					Max.y = BitFieldExtractU32( Node.Bounds, 2, 8 );
+					Max.z = BitFieldExtractU32( Node.Bounds, 2, 10 );
+					Max++;
+
+					Bounds[0] = Min * 0.25;
+					Bounds[1] = Max * 0.25;
+				}
+		
+				LocalRay.Time = Intersect( LocalRay, Bounds );
+
+				if( LocalRay.Time[0] > LocalRay.Time[1] )
+					continue;
+
+				//float3 Extent = Bounds[1] - Bounds[0];
+				//Volume = Extent.x * Extent.y * Extent.z;
+			}
+		}
+		//while( LocalRay.Time[0] > LocalRay.Time[1] && ListIndex );
+
+		FRayCastCounters Counters = (FRayCastCounters)0;
+
+#if VOXEL_NUM_LEVELS == 2
+		//float HitTime = RayCastBrick_L1( LocalRay, Brick.BlockOffset, Counters );
+		//float HitTime = RayCastBrick_L2( LocalRay, Brick.BlockOffset, Counters );
+		float HitTime = RayCastBrick_L2_WhileWhile( LocalRay, Brick.BlockOffset, Counters );
+		//float HitTime = RayCastBrick_L2_Flat( LocalRay, Brick.BlockOffset, Counters );
+#else
+		float HitTime = RayCastBrick_L1( LocalRay, Brick.BlockOffset, Counters );
+#endif
+
+		if( HitTime < LocalRay.Time[1] )
+		{
+			Ray.Time[1] = HitTime;
+
+			OutColor.r = Counters.Tests / 20.0;
+			OutColor.g = Counters.Steps / 20.0;
+			OutColor.g = Counters.StepIn / 10.0;
+			OutColor.b = Counters.StepOut / 10.0;
+		}
+
+		//BrickCount++;
+	}
+
+	//OutColor = ( TileHead[ TileIndex ] & 0xff ) / 255.0;
+	//OutColor.rgb = VisualizeCount( BrickCount );
+	//OutColor.rgb = BrickCount / 60.0;
+	OutColor = OutColor.r;
+	//OutColor = BrickCount / 6.0;
+
+	//OutColor.rgb = frac( Ray.Time[1] / 1000 );
+
+	OutSceneColor[ PixelPos + View.ViewRectMin.xy ] = OutColor;
+}

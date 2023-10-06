@@ -1,0 +1,175 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	VelocityShader.usf: Calculates velocity vectors.
+=============================================================================*/
+
+#include "Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "VelocityCommon.ush"
+
+// Move all geometry a little bit towards the camera to not get z fighting with existing depth
+// buffer of the same meshes rendered with slightly different float computations.
+// This is a positive number as our z buffer is inverted for better precision.
+
+// 0.0f as the isolate code should do a good job to prevent this case (can be increased if that is not the case e.g. if the platform ignores the isolate)
+static const float GDepthBias = 0.001f;
+
+struct FVelocityInterpsVSToPS
+{
+	// float4(ScreenPos.xyzw)
+	float4 PackedVelocityA : TEXCOORD6;
+	// float4(PrevScreenPos.xyzw)
+	float4 PackedVelocityC : TEXCOORD7;
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+};
+
+struct FVelocityVSToPS
+{
+	float4 Position : SV_POSITION;
+	FVelocityInterpsVSToPS Interps;
+};
+
+#define FVertexOutput FVelocityVSToPS
+#define VertexFactoryGetInterpolants VertexFactoryGetInterpolantsVSToPS
+
+/*=============================================================================
+ * Vertex Shader
+ *============================================================================*/
+#if VERTEXSHADER
+void MainVertexShader(
+	FVertexFactoryInput Input,
+	out FVertexOutput Output 
+#if USE_GLOBAL_CLIP_PLANE
+	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
+#endif
+#if INSTANCED_STEREO
+	, out uint ViewportIndex : SV_ViewPortArrayIndex
+#endif
+	)
+{
+#if INSTANCED_STEREO
+	const uint EyeIndex = GetEyeIndexFromVF(Input);
+	ViewportIndex = EyeIndex;
+#endif
+	ResolvedView = ResolveViewFromVF(Input);
+	
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 TranslatedWorldPosition = VertexFactoryGetWorldPosition( Input, VFIntermediates );
+	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal( Input, VFIntermediates );
+
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, TranslatedWorldPosition.xyz, TangentToLocal);
+	// Isolate instructions used for world position offset on xbox 360, 
+	// As these cause the optimizer to generate different position calculating instructions in each pass, resulting in self-z-fighting.
+	// This is only necessary for shaders used in passes that have depth testing enabled.
+	{
+		TranslatedWorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+	}
+
+	Output.Interps.FactoryInterpolants = VertexFactoryGetInterpolants( Input, VFIntermediates, VertexParameters );
+
+	float4 PrevTranslatedWorldPosition = VertexFactoryGetPreviousWorldPosition( Input, VFIntermediates );	
+	VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, PrevTranslatedWorldPosition.xyz, TangentToLocal);
+	PrevTranslatedWorldPosition.xyz += GetMaterialPreviousWorldPositionOffset(VertexParameters);
+	
+	{
+		float4 ScreenPos;
+		// compute the old screen pos with the old world position and the old camera matrix
+		float4 PrevScreenPosObj = mul(float4(PrevTranslatedWorldPosition.xyz, 1), ResolvedView.PrevTranslatedWorldToClip);
+
+		{
+			ScreenPos = mul(float4(TranslatedWorldPosition.xyz, 1), ResolvedView.TranslatedWorldToClip);
+			Output.Position = ScreenPos;
+		}
+
+#if USE_GLOBAL_CLIP_PLANE
+		OutGlobalClipPlaneDistance = dot(ResolvedView.GlobalClippingPlane, float4(TranslatedWorldPosition.xyz, 1));
+#endif
+
+		Output.Interps.PackedVelocityA = INVARIANT(ScreenPos);
+		Output.Interps.PackedVelocityC = INVARIANT(PrevScreenPosObj);
+	}
+
+// Move all geometry a little bit towards the camera (to not get z fighting with existing zbuffer of the same meshes rendered with slightly different float computations).
+    Output.Position.z += View.NumSceneColorMSAASamples > 1 ? GDepthBias * Output.Position.w : 0.0;
+
+#if INSTANCED_STEREO
+	Output.Interps.FactoryInterpolants.EyeIndex = EyeIndex;
+#endif
+}
+#endif // VERTEXSHADER
+
+/*=============================================================================
+ * Pixel Shader
+ *============================================================================*/
+
+#ifndef VELOCITY_THIN_TRANSLUCENT_MODE
+#define VELOCITY_THIN_TRANSLUCENT_MODE 0
+#endif
+
+void MainPixelShader(
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position,
+	FVelocityInterpsVSToPS Input
+	OPTIONAL_IsFrontFace
+	OPTIONAL_OutDepthConservative
+	,out ENCODED_VELOCITY_TYPE OutColor : SV_Target0
+#if MATERIALBLENDING_MASKED_USING_COVERAGE
+	, out uint OutCoverage : SV_Coverage
+#endif
+	)
+{
+#if INSTANCED_STEREO
+	ResolvedView = ResolveView(Input.FactoryInterpolants.EyeIndex);
+#else
+	ResolvedView = ResolveView();
+#endif
+
+	// Manual clipping here (alpha-test, etc)
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Input.FactoryInterpolants, SvPosition);
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, bIsFrontFace);
+
+#if OUTPUT_PIXEL_DEPTH_OFFSET
+	ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, OutDepth);
+#endif
+
+#if MATERIALBLENDING_MASKED_USING_COVERAGE
+	OutCoverage = DiscardMaterialWithPixelCoverage(MaterialParameters, PixelMaterialInputs);
+#else
+
+#if STRATA_ENABLED
+	const bool bThinTranslucentMaterial = false;
+	FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
+
+	FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
+	FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+
+	float MaterialOpacity = 1.0f;
+	if (StrataPixelHeader.BSDFCount > 0)
+	{
+		// Update tree (coverage/transmittance/luminace weights)
+		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+		const float3 V = MaterialParameters.CameraVector;
+		StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+
+		MaterialOpacity = StrataPixelHeader.StrataTree.Operators[StrataData.OperatorIndex].Coverage;
+	}
+
+#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+	MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs);
+#endif
+
+#else
+	const bool bThinTranslucentMaterial = VELOCITY_THIN_TRANSLUCENT_MODE > 0;
+	const float MaterialOpacity = GetMaterialOpacity(PixelMaterialInputs);
+#endif
+
+	GetMaterialClippingVelocity(MaterialParameters, PixelMaterialInputs, bThinTranslucentMaterial, MaterialOpacity);
+#endif
+
+	// 3d velocity, includes camera an object motion
+	float3 Velocity = Calculate3DVelocity(Input.PackedVelocityA, Input.PackedVelocityC);
+
+	OutColor = EncodeVelocityToTexture(Velocity);
+}

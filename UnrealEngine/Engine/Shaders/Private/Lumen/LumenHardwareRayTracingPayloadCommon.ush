@@ -1,0 +1,88 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../RayTracing/RayTracingCommon.ush"
+
+struct FLumenRayHitBookmark
+{
+	uint2 PackedData;
+};
+
+#define LUMEN_RAYHIT_BOOKMARK_MISS 0xFFFFFFFF
+
+#define PRIMITIVE_INDEX 2
+#define INSTANCE_INDEX 3
+#define NORMAL_INDEX 1
+#define MATERIAL_INDEX 0
+
+struct FLumenMinimalPayload : FMinimalPayload
+{
+	uint PackedData[4];
+
+	void SetIsTranslucent(uint bIsTranslucent)
+	{
+		PackedData[MATERIAL_INDEX] = (PackedData[MATERIAL_INDEX] & 0x7FFFFFFF) | ((bIsTranslucent & 0x01) << 31);
+	}
+
+	uint IsTranslucent()
+	{
+		uint bIsTranslucent = (PackedData[MATERIAL_INDEX] >> 31) & 0x1;
+		return bIsTranslucent;
+	}
+
+	void SetIsTwoSided(uint bIsTwoSided)
+	{
+		PackedData[MATERIAL_INDEX] = (PackedData[MATERIAL_INDEX] & 0xBFFFFFFF) | ((bIsTwoSided & 0x01) << 30);
+	}
+
+	uint IsTwoSided()
+	{
+		uint bIsTwoSided = (PackedData[MATERIAL_INDEX] >> 30) & 0x1;
+		return bIsTwoSided;
+	}
+
+	void SetMaterialShaderIndex(uint MaterialShaderIndex)
+	{
+		PackedData[MATERIAL_INDEX] = (PackedData[MATERIAL_INDEX] & 0xC0000000) | (MaterialShaderIndex & 0x3FFFFFFF);
+	}
+
+	uint GetMaterialShaderIndex()
+	{
+		uint MaterialShaderIndex = PackedData[MATERIAL_INDEX] & 0x3FFFFFFF;
+		return MaterialShaderIndex;
+	}
+
+	void SetWorldNormal(float3 WorldNormal)
+	{
+		PackedData[NORMAL_INDEX] = PackNormalToUInt32(WorldNormal);
+	}
+
+	float3 GetWorldNormal()
+	{
+		return UnpackNormalFromUInt32(PackedData[NORMAL_INDEX]);
+	}
+
+	void SetPrimitiveIndex(int PrimitiveIndex)
+	{
+		PackedData[PRIMITIVE_INDEX] = PrimitiveIndex;
+	}
+
+	int GetPrimitiveIndex()
+	{
+		return asint(PackedData[PRIMITIVE_INDEX]);
+	}
+
+	void SetInstanceIndex(int InstanceIndex)
+	{
+		PackedData[INSTANCE_INDEX] = InstanceIndex;
+	}
+
+	int GetInstanceIndex()
+	{
+		return PackedData[INSTANCE_INDEX];
+	}
+};
+#if IS_PAYLOAD_ENABLED(RT_PAYLOAD_TYPE_LUMEN_MINIMAL)
+CHECK_RT_PAYLOAD_SIZE(FLumenMinimalPayload)
+#endif

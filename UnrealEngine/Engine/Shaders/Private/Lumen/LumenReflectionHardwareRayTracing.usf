@@ -1,0 +1,294 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../MonteCarlo.ush"
+#include "../SceneTextureParameters.ush"
+
+// Ensure that DiffuseAlbedo is not overrident on SSS material (as we don't split lighting with the Lumen/RT integrator)
+#define STRATA_SSS_MATERIAL_OVERRIDE 0
+
+// When tracing from compute, STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE=0 is not automatically detected, so we notify the use of raytracing here.
+#define STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE 0 
+
+// Additional rewiring to make DeferredShadingCommon happy
+#define PreIntegratedGF				ReflectionStruct.PreIntegratedGF
+#define PreIntegratedGFSampler		GlobalBilinearClampedSampler
+
+#include "LumenMaterial.ush"
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#include "LumenReflectionCommon.ush"
+#include "LumenVisualizeTraces.ush"
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenScreenTracing.ush"
+#define USE_HAIRSTRANDS_VOXEL DIM_HAIRSTRANDS_VOXEL
+#include "LumenHairTracing.ush"
+
+#ifndef THREADGROUP_SIZE_2D
+#define THREADGROUP_SIZE_2D 8
+#endif
+
+#ifndef THREADGROUP_SIZE_1D
+#define THREADGROUP_SIZE_1D THREADGROUP_SIZE_2D * THREADGROUP_SIZE_2D
+#endif
+
+#define RAY_TRACING_PASS_DEFAULT		0
+#define RAY_TRACING_PASS_FAR_FIELD		1
+#define RAY_TRACING_PASS_HIT_LIGHTING	2
+
+uint2 OutputThreadGroupSize;
+RWBuffer<uint> RWHardwareRayTracingIndirectArgs;
+
+[numthreads(1, 1, 1)]
+void FLumenReflectionHardwareRayTracingIndirectArgsCS()
+{
+	WriteDispatchIndirectArgs(RWHardwareRayTracingIndirectArgs, 0, (CompactedTraceTexelAllocator[0] + OutputThreadGroupSize.x - 1) / OutputThreadGroupSize.x, 1, 1);
+}
+
+#if LUMEN_HARDWARE_RAYTRACING || LUMEN_HARDWARE_INLINE_RAYTRACING
+
+float3 FarFieldReferencePos;
+
+#include "LumenHardwareRayTracingCommon.ush"
+
+RaytracingAccelerationStructure TLAS;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+	StructuredBuffer<FHitGroupRootConstants> HitGroupData;
+	StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+int NearFieldLightingMode;
+float NearFieldMaxTraceDistance;
+uint UseReflectionCaptures;
+float FarFieldBias;
+float FarFieldMaxTraceDistance;
+float NearFieldMaxTraceDistanceDitherScale;
+float NearFieldSceneRadius;
+float PullbackBias;
+uint MaxTraversalIterations;
+int ApplySkyLight;
+int HitLightingForceEnabled;
+int SampleSceneColor;
+float RelativeDepthThickness;
+uint MaxReflectionBounces;
+
+Texture2D<uint2> TraceBookmark;
+
+RWTexture2D<float3> RWTraceRadiance;
+RWTexture2D<float> RWTraceHit;
+RWTexture2D<uint2> RWTraceBookmark;
+RWTexture2D<uint> RWTraceMaterialId;
+
+LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenReflectionHardwareRayTracing)
+{
+	uint ThreadIndex = DispatchThreadIndex.x;
+	uint GroupIndex = DispatchThreadIndex.y;
+	uint DispatchThreadId = GroupIndex * THREADGROUP_SIZE_1D + ThreadIndex;
+	
+	if (DispatchThreadId < CompactedTraceTexelAllocator[0])
+	{
+		const FReflectionTracingCoord ReflectionTracingCoord = DecodeTraceTexel(CompactedTraceTexelData[DispatchThreadId]);
+
+		bool bUnused;
+		float TraceHitDistance = DecodeRayDistance(RWTraceHit[ReflectionTracingCoord.CoordFlatten], bUnused);
+
+		float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
+		float2 ScreenCoord = ScreenUV * View.BufferSizeAndInvSize.xy;
+		uint LinearCoord = ScreenCoord.y * View.BufferSizeAndInvSize.x + ScreenCoord.x;
+
+		float SceneDepth = DownsampledDepth.Load(int3(ReflectionTracingCoord.CoordFlatten, 0)).x;
+		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+		const float3 WorldNormal = ReadMaterialData(uint2(ScreenCoord)).WorldNormal;
+		FRayData RayData = GetRayData(ReflectionTracingCoord.CoordFlatten);
+
+		float ClippedNearFieldMaxTraceDistance = ClipAndDitherNearFieldMaxTraceDistance(
+			TranslatedWorldPosition,
+			RayData.Direction,
+			ReflectionTracingCoord.CoordFlatten,
+			NearFieldSceneRadius,
+			NearFieldMaxTraceDistance,
+			NearFieldMaxTraceDistanceDitherScale);
+
+		float RayBias = (RAY_TRACING_PASS == RAY_TRACING_PASS_FAR_FIELD) ? FarFieldBias : 0.05f;
+
+		FRayDesc Ray;
+		Ray.Origin = TranslatedWorldPosition;
+		Ray.Direction = RayData.Direction;
+		Ray.TMin = max(TraceHitDistance - PullbackBias, RayBias);
+		Ray.TMax = max(ClippedNearFieldMaxTraceDistance - PullbackBias, RayBias);
+
+		// Clip ray to radiance cache probe if required. Otherwise skip some memory reads.
+		#if DIM_RADIANCE_CACHE
+		{
+			Ray.TMax = min(Ray.TMax, RayData.RadianceCacheMaxTraceDistance);
+		}
+		#endif
+
+		float NormalBias = 0.05;
+		ApplyPositionBias(Ray.Origin, Ray.Direction, WorldNormal, NormalBias);
+
+		FRayCone RayCone = (FRayCone)0;
+		RayCone.SpreadAngle = View.EyeToPixelSpreadAngle;
+		RayCone = PropagateRayCone(RayCone, RayData.ConeHalfAngle, SceneDepth);
+
+		const bool bHiResSurface = UseHighResSurface ? 1 : 0;
+		const uint CullingMode = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+		FRayTracedLightingContext Context = CreateRayTracedLightingContext(RayCone, ReflectionTracingCoord.Coord, LinearCoord, CullingMode, MaxTraversalIterations, bHiResSurface);
+		Context.MaxReflectionBounces = MaxReflectionBounces;
+		Context.FarFieldMaxTraceDistance = FarFieldMaxTraceDistance;
+		Context.FarFieldReferencePos = FarFieldReferencePos;
+		Context.bUseBookmark = true;
+
+		FRayTracedLightingResult Result = CreateRayTracedLightingResult();
+		#if RAY_TRACING_PASS == RAY_TRACING_PASS_HIT_LIGHTING
+		{
+			FLumenRayHitBookmark RayHitBookmark;
+			RayHitBookmark.PackedData = TraceBookmark[ReflectionTracingCoord.CoordFlatten].xy;
+
+			if (TraceHitDistance > ClippedNearFieldMaxTraceDistance)
+			{
+				Context.InstanceMask = RAY_TRACING_MASK_FAR_FIELD;
+				Ray.TMax = FarFieldMaxTraceDistance;
+			}
+			const float Epsilon = 0.5f;
+			Ray.TMin = max(TraceHitDistance - Epsilon, 0.0f);
+
+			Result = TraceAndCalculateRayTracedLighting(TLAS, Ray, Context, NearFieldLightingMode, UseReflectionCaptures != 0, RayHitBookmark);
+		}
+		#else
+		{
+			#if LUMEN_HARDWARE_INLINE_RAYTRACING
+			{
+				Context.HitGroupData = HitGroupData;
+				Context.RayTracingSceneMetadata = RayTracingSceneMetadata;
+			}
+			#endif
+
+			Result = TraceAndCalculateRayTracedLightingFromSurfaceCache(TLAS, Ray, Context);
+		}
+		#endif
+
+		FConeTraceResult TraceResult;
+		TraceResult.Lighting = Result.Radiance;
+		TraceResult.Transparency = 1;
+		TraceResult.OpaqueHitDistance = Result.TraceHitDistance;
+		TraceResult.GeometryWorldNormal = Result.GeometryWorldNormal;
+
+		// Trace against hair voxel structure, if enabled
+		#if DIM_HAIRSTRANDS_VOXEL && RAY_TRACING_PASS != RAY_TRACING_PASS_FAR_FIELD
+		{
+			float HairTraceDistance = min(Ray.TMax, TraceResult.OpaqueHitDistance);
+
+			bool bHairHit;
+			float HairTransparency;
+			float HairHitT;
+
+			TraceHairVoxels(
+				ReflectionTracingCoord.Coord,
+				SceneDepth,
+				// Use (Translated)WorldPosition instead of SamplePosition, as the bias is too strong otherwise. This is not an issue as 
+				// the voxel structure does not cause any self shadowing issue
+				TranslatedWorldPosition,
+				RayData.Direction,
+				HairTraceDistance,
+				true,
+				bHairHit,
+				HairTransparency,
+				HairHitT);
+
+			if (bHairHit && HairHitT < HairTraceDistance)
+			{
+				TraceResult.Lighting *= HairTransparency;
+				TraceResult.Transparency *= HairTransparency;
+				TraceResult.OpaqueHitDistance = min(HairHitT, TraceResult.OpaqueHitDistance);
+			}
+		}
+		#endif
+
+		bool bNeedsHitLightingPass = false;
+		#if RAY_TRACING_PASS == RAY_TRACING_PASS_DEFAULT || RAY_TRACING_PASS == RAY_TRACING_PASS_FAR_FIELD
+		{
+			if (Result.bIsHit && (HitLightingForceEnabled != 0 || !Result.bIsRadianceCompleted))
+			{
+				bNeedsHitLightingPass = true;
+			}
+
+			if (Result.bIsHit && SampleSceneColor > 0)
+			{
+				float3 HitTranslatedWorldPosition = Ray.Origin + Ray.Direction * TraceResult.OpaqueHitDistance;
+				if (SampleSceneColorAtHit(HitTranslatedWorldPosition, TraceResult.GeometryWorldNormal, ReflectionTracingCoord.Coord, RelativeDepthThickness, TraceResult.Lighting))
+				{
+					bNeedsHitLightingPass = false;
+				}
+			}
+		}
+		#endif
+
+		#if DIM_RADIANCE_CACHE
+		{
+			// If we're tracing a near field ray that missed, which has valid Radiance Cache coverage, use that for final lighting
+			if (!Result.bIsHit && RayData.bUseRadianceCache)
+			{
+				float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+				FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(WorldPosition, RayData.Direction, InterleavedGradientNoise(ReflectionTracingCoord.Coord, View.StateFrameIndexMod8));
+				SampleRadianceCacheAndApply(Coverage, WorldPosition, RayData.Direction, RayData.ConeHalfAngle, TraceResult.Lighting, TraceResult.Transparency);
+				Result.bIsHit = true;
+				bNeedsHitLightingPass = false;
+			}
+		}
+		#endif
+
+		if ((ApplySkyLight != 0) && !Result.bIsHit)
+		{
+			ApplySkylightToTraceResult(RayData.Direction, TraceResult);
+		}
+
+		TraceResult.Lighting += GetSkylightLeaking(Ray.Direction, TraceResult.OpaqueHitDistance);
+		TraceResult.Lighting *= View.PreExposure;
+
+		float MaxLighting = max3(TraceResult.Lighting.x, TraceResult.Lighting.y, TraceResult.Lighting.z);
+
+		if (SampleHeightFog > 0)
+		{
+			float CoverageForFog = 1.0; // There is always something of the sky fallback.
+			float3 OriginToCollider = Ray.Direction * TraceResult.OpaqueHitDistance;
+			TraceResult.Lighting.rgb = GetFogOnLuminance(TraceResult.Lighting.rgb, CoverageForFog, OriginToCollider);
+		}			
+
+		if (MaxLighting > MaxRayIntensity)
+		{
+			TraceResult.Lighting *= MaxRayIntensity / MaxLighting;
+		}
+
+		RWTraceRadiance[ReflectionTracingCoord.CoordFlatten] = TraceResult.Lighting;
+		RWTraceHit[ReflectionTracingCoord.CoordFlatten] = EncodeRayDistance(TraceResult.OpaqueHitDistance, Result.bIsHit);
+
+		#if WRITE_DATA_FOR_HIT_LIGHTING_PASS
+		{
+			RWTraceMaterialId[ReflectionTracingCoord.CoordFlatten] = PackTraceMaterialId(bNeedsHitLightingPass, Result.MaterialShaderIndex);
+			RWTraceBookmark[ReflectionTracingCoord.CoordFlatten] = Result.Bookmark.PackedData;
+		}
+		#endif
+
+		#define DEBUG_SUPPORT_VISUALIZE_TRACE_COHERENCY 0
+		#if DEBUG_SUPPORT_VISUALIZE_TRACE_COHERENCY
+		{
+			if (VisualizeTraceCoherency != 0)
+			{
+				uint DebugGroupIndex = 10240;
+				// UE_RAY_TRACING_DISPATCH_1D
+				int DebugTraceIndex = (int)RayIndex - (int)DebugGroupIndex * 32;
+
+				if (DebugTraceIndex >= 0 && DebugTraceIndex < 32)
+				{
+					float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+					WriteTraceForVisualization(DebugTraceIndex, WorldPosition, RayData.Direction, TraceResult.OpaqueHitDistance, / *TraceResult.Lighting* /float3(1, 0, 0));
+				}
+			}
+		}
+		#endif
+	}
+}
+
+#endif // LUMEN_HARDWARE_RAYTRACING

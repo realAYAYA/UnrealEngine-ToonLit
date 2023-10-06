@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <DefineConstants>UGS_LAUNCHER</DefineConstants>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <RootNamespace>UnrealGameSyncLauncher</RootNamespace>
+    <AssemblyName>UnrealGameSyncLauncher</AssemblyName>
+    <StartupObject>UnrealGameSyncLauncher.Program</StartupObject>
+    <ApplicationIcon>Resources\Icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifiers>win10-x64</RuntimeIdentifiers>
+    <Nullable>enable</Nullable>
+    <NeutralLanguage>en-US</NeutralLanguage>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\UnrealGameSync\Forms\ModalTaskWindow.cs">
+      <Link>UnrealGameSync\ModalTaskWindow.cs</Link>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="..\UnrealGameSync\Forms\ModalTaskWindow.Designer.cs">
+      <Link>UnrealGameSync\ModalTaskWindow.Designer.cs</Link>
+      <DependentUpon>ModalTaskWindow.cs</DependentUpon>
+    </Compile>
+    <Compile Include="..\UnrealGameSync\Forms\PasswordWindow.cs">
+      <Link>UnrealGameSync\PasswordWindow.cs</Link>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="..\UnrealGameSync\Forms\PasswordWindow.Designer.cs">
+      <Link>UnrealGameSync\PasswordWindow.Designer.cs</Link>
+      <DependentUpon>PasswordWindow.cs</DependentUpon>
+    </Compile>
+    <Compile Include="..\UnrealGameSync\ModalTask.cs">
+      <Link>UnrealGameSync\ModalTask.cs</Link>
+    </Compile>
+    <Compile Include="..\UnrealGameSync\PerforceModalTask.cs">
+      <Link>UnrealGameSync\PerforceModalTask.cs</Link>
+    </Compile>
+    <Compile Include="..\UnrealGameSync\GlobalSettings.cs">
+      <Link>UnrealGameSync\GlobalSettings.cs</Link>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\EpicGames.Core\EpicGames.Core.csproj" />
+    <ProjectReference Include="..\..\Shared\EpicGames.Perforce\EpicGames.Perforce.csproj" />
+    <ProjectReference Include="..\UnrealGameSyncShared\UnrealGameSyncShared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+    </None>
+  </ItemGroup>
+</Project>

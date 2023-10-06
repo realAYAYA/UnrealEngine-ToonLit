@@ -1,0 +1,139 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../../Engine/Build/Graph/Schema.xsd" >
+
+	<Option Name="PreflightChange" DefaultValue="" Description="Preflight changelist number"/>
+	<Option Name="Configuration" DefaultValue="release" Description="Configuration to build"/>
+	
+	<Property Name="EngineDir" Value="$(RootDir)/Engine"/>
+
+	<Property Name="Version" Value="$(EngineMajorVersion).$(EngineMinorVersion).$(EnginePatchVersion)"/>
+	<Property Name="InformationalVersion" Value="$(Version)-$(Change)"/>
+	<Property Name="InformationalVersion" Value="$(InformationalVersion)-PF-$(PreflightChange)" If="'$(PreflightChange)' != ''"/>
+	<Property Name="VersionArguments" Value="/p:Version=$(Version).0 /p:InformationalVersion=$(InformationalVersion)"/>
+
+	<!-- SERVER -->
+
+	<Agent Name="HordeServer" Type="Linux;Win64_Docker">
+		<Property Name="StagingDir" Value="$(RootDir)/Engine/Saved/Horde.Server"/>
+		
+		<Node Name="Check HordeServer Licenses">
+			<DotNet Arguments="build &quot;$(RootDir)/Engine/Source/Programs/Horde/Horde.Server/Horde.Server.csproj&quot; $(VersionArguments)"/>
+			<Property Name="IgnorePackages">
+				NETStandard.Library@2.0.0
+				Serilog.Enrichers.OpenTracing@0.0.2
+				SharpCompress@0.30.1
+			</Property>
+			<NuGet-LicenseCheck BaseDir="Engine/Source/Programs/Horde/Horde.Server" IgnorePackages="$(IgnorePackages)" LicenseDir="Engine/Source/Programs/Horde/ThirdParty/Licenses"/>
+		</Node>
+
+		<Node Name="Build HordeServer" Requires="Check HordeServer Licenses">
+			<!-- Tag all the files that need to be staged to build -->
+			<Property Name="StagePaths">
+				Engine/Binaries/DotNET/EpicGames.Perforce.Native/...
+				Engine/Source/Programs/Shared/...
+				Engine/Source/Programs/Horde/...
+				Engine/Source/Programs/AutomationTool/AutomationUtils/Matchers/...
+				Engine/Source/Programs/UnrealBuildTool/Matchers/...
+			</Property>
+			<Tag Files="$(StagePaths)" Except=".../.vs/...;.../.git/...;.../bin/...;.../obj/..." With="#InputFiles"/>
+
+			<!-- Build the Docker image and publish it -->
+			<Docker-Build BaseDir="Engine" Files="#InputFiles" Tag="hordeserver-public" DockerFile="Engine/Source/Programs/Horde/Horde.Server/Dockerfile" Arguments="--build-arg msbuild_args=&quot;$(VersionArguments)&quot;"/>
+		</Node>
+	</Agent>
+	
+	<!-- INSTALLER -->
+	
+	<Property Name="InstallerDir" Value="$(RootDir)/Engine/Source/Programs/Horde/Installer"/>
+	<Property Name="InstallerConfig" Value="Debug"/>
+	<Property Name="InstallerOutputDir" Value="$(RootDir)/Engine/Source/Programs/Horde/Installer/bin/$(InstallerConfig)"/>
+	
+	<Agent Name="HordeInstallerDashboard" Type="Linux">
+		<Property Name="StagingDir" Value="$(RootDir)/Staging"/>
+		<Property Name="DashboardVersion" Value="Unversioned"/>
+		<Property Name="DashboardVersion" Value="CL-$(Change)" If="'$(Change)' != ''"/>
+		<Property Name="DashboardVersion" Value="$(DashboardVersion)-PF-$(PreflightChange)" If="'$(PreflightChange)' != ''" />
+
+		<Node Name="Stage Horde Installer Dashboard" Produces="#DashboardOutputFiles">
+			<Delete Files="$(StagingDir)/Dashboard/..."/>		
+			<WriteTextFile File="$(StagingDir)/Dashboard/index.html" Text="placeholder"/>			
+		
+			<!-- Build the dashboard -->
+			<Tag Files="Engine/Source/Programs/Horde/HordeDashboard/..." With="#DashboardInputFiles"/>
+			<Docker-Build BaseDir="Engine/Source" Files="#DashboardInputFiles" Tag="hordedashboard:installer" DockerFile="Engine/Source/Programs/Horde/HordeDashboard/installer/Dockerfile" Arguments="--build-arg &quot;VersionInfo=$(DashboardVersion)&quot;"/>
+			
+			<!-- Create a container from the image that can copy files from, note that this does not start the container -->
+			<Docker Arguments="create --name horde-installer-container hordedashboard:installer"/>
+			
+			<!-- Copy the dashboard build to the server -->
+			<Docker Arguments="cp horde-installer-container:app/Dashboard/build/. &quot;$(StagingDir)/Dashboard&quot;"/>
+
+			<!-- Remove the container now that files are copied -->
+			<Docker Arguments="rm horde-installer-container"/>
+	
+			<!-- Copy the Horde documentation to the root folder -->
+			<Copy From="$(RootDir)/Engine/Restricted/NotForLicensees/Source/Programs/Horde/Docs/..." To="$(StagingDir)/Dashboard/documentation/Docs/..."/>		
+			<Copy From="$(RootDir)/Engine/Restricted/NotForLicensees/Source/Programs/Horde/README.md" To="$(StagingDir)/Dashboard/documentation/README.md"/>
+			
+			<Tag Files="$(StagingDir)/Dashboard/..." With="#DashboardOutputFiles"/>
+		</Node>
+	</Agent>
+	
+	<Agent Name="HordeInstaller" Type="Win64;CompileWin64">
+		<Property Name="StagingDir" Value="$(RootDir)/Staging"/>
+
+		<Node Name="Stage Horde Installer" Requires="#DashboardOutputFiles">
+			<Delete Files="$(StagingDir)/Tools/..."/>
+			<Delete Files="$(StagingDir)/Server/..."/>
+			<Delete Files="$(StagingDir)/Agent/..."/>
+			<DotNet Arguments="publish &quot;$(RootDir)/Engine/Source/Programs/Horde/Horde/Horde.csproj&quot; --output &quot;$(StagingDir)/Tools&quot; --runtime win-x64 --self-contained $(VersionArguments)"/>
+			<DotNet Arguments="publish &quot;$(RootDir)/Engine/Source/Programs/Horde/Horde.Server/Horde.Server.csproj&quot; --output &quot;$(StagingDir)/Server&quot; --runtime win-x64 --self-contained $(VersionArguments)"/>
+			<DotNet Arguments="publish &quot;$(RootDir)/Engine/Source/Programs/Horde/Horde.Agent/Horde.Agent.csproj&quot; --output &quot;$(StagingDir)/Agent&quot; --runtime win7-x64 --self-contained $(VersionArguments)"/>
+			<DotNet Arguments="publish &quot;$(RootDir)/Engine/Source/Programs/Horde/Horde.Agent.TrayApp/Horde.Agent.TrayApp.csproj&quot; --output &quot;$(StagingDir)/Agent&quot; --runtime win7-x64 --self-contained $(VersionArguments)"/>
+
+			<!-- Create another build of the agent, this time for all platforms. -->
+			<DotNet Arguments="publish &quot;$(RootDir)/Engine/Source/Programs/Horde/Horde.Agent/Horde.Agent.csproj&quot; --output &quot;$(StagingDir)/Server/Tools/horde-agent-loose&quot; $(VersionArguments)"/>
+
+			<!-- Copy the Dashboard -->
+			<Copy Files="#DashboardOutputFiles" From="$(StagingDir)/Dashboard/..." To="$(StagingDir)/Server/DashboardApp/..." />
+		</Node>
+
+		<Property Name="WixDir" Value="$(RootDir)/Engine/Source/ThirdParty/WiX/3.8"/>
+		<Property Name="ObjDir" Value="obj/$(InstallerConfig)"/>
+		<Property Name="BinDir" Value="bin/$(InstallerConfig)"/>
+		
+		<Node Name="Build Horde Installer" Requires="Stage Horde Installer">
+			<Property Name="CommonArgs" Value="-dConfiguration=$(InstallerConfig) -dPlatform=x64 -arch x64"/>
+
+			<!-- Create the tools file list -->
+			<Delete Files="$(StagingDir)/Tools-Bulk/..."/>
+			<Tag Files="$(StagingDir)/Tools/..." With="#ToolsFiles"/>
+			<Copy Files="#ToolsFiles" From="$(StagingDir)" To="$(StagingDir)/Tools-Bulk"/>
+
+			<Spawn Exe="$(WixDir)/heat.exe" Arguments="dir &quot;$(StagingDir)/Tools-Bulk&quot; -cg HordeToolsFiles -scom -sreg -gg -dr InstallDir -srd -var var.SourceDir -out &quot;$(InstallerDir)/HordeToolsFiles.wxs&quot;"/>
+			<Spawn Exe="$(WixDir)/candle.exe" Arguments="$(CommonArgs) HordeToolsFiles.wxs -dSourceDir=&quot;$(StagingDir)&quot; -out $(ObjDir)/HordeToolsFiles.wixobj" WorkingDir="$(InstallerDir)"/>
+
+			<!-- Create the agent file list -->
+			<Delete Files="$(StagingDir)/Agent-Bulk/..."/>
+			<Tag Files="$(StagingDir)/Agent/..." Except="HordeAgent.exe;Horde.Agent.TrayApp.exe" With="#AgentFiles"/>
+			<Copy Files="#AgentFiles" From="$(StagingDir)" To="$(StagingDir)/Agent-Bulk"/>
+
+			<Spawn Exe="$(WixDir)/heat.exe" Arguments="dir &quot;$(StagingDir)/Agent-Bulk&quot; -cg HordeAgentFiles -scom -sreg -gg -dr InstallDir -srd -var var.SourceDir -out &quot;$(InstallerDir)/HordeAgentFiles.wxs&quot;"/>
+			<Spawn Exe="$(WixDir)/candle.exe" Arguments="$(CommonArgs) HordeAgentFiles.wxs -dSourceDir=&quot;$(StagingDir)&quot; -out $(ObjDir)/HordeAgentFiles.wixobj" WorkingDir="$(InstallerDir)"/>
+
+			<!-- Create the server file list -->
+			<Delete Files="$(StagingDir)/Server-Bulk/..."/>
+			<Tag Files="$(StagingDir)/Server/..." Except="Horde.Server.exe" With="#ServerFiles"/>
+			<Copy Files="#ServerFiles" From="$(StagingDir)" To="$(StagingDir)/Server-Bulk"/>
+
+			<Spawn Exe="$(WixDir)/heat.exe" Arguments="dir &quot;$(StagingDir)/Server-Bulk&quot; -cg HordeServerFiles -scom -sreg -gg -dr InstallDir -srd -var var.SourceDir -out &quot;$(InstallerDir)/HordeServerFiles.wxs&quot;"/>
+			<Spawn Exe="$(WixDir)/candle.exe" Arguments="$(CommonArgs) HordeServerFiles.wxs -dSourceDir=&quot;$(StagingDir)&quot; -out $(ObjDir)/HordeServerFiles.wixobj" WorkingDir="$(InstallerDir)"/>
+
+			<!-- Main component -->
+			<Spawn Exe="$(WixDir)/candle.exe" Arguments="$(CommonArgs) Installer.wxs -dStagingDir=&quot;$(StagingDir)&quot; -out $(ObjDir)/Installer.wixobj -ext WixUtilExtension" WorkingDir="$(InstallerDir)"/>
+			<Spawn Exe="$(WixDir)/light.exe" Arguments="-out $(BinDir)/Horde.msi -sw1076 -pdbout $(BinDir)/Horde.pdb $(ObjDir)/Installer.wixobj $(ObjDir)/HordeAgentFiles.wixobj $(ObjDir)/HordeServerFiles.wixobj $(ObjDir)/HordeToolsFiles.wixobj -ext WixUtilExtension -ext WixUIExtension" WorkingDir="$(InstallerDir)"/>
+		</Node>
+		
+	</Agent>
+
+</BuildGraph>

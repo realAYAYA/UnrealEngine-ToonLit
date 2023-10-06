@@ -1,0 +1,41 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define FQuat half4
+
+FQuat QuatFromAxisAngle(in half3 AxisN, in float AngleRad)
+{
+	float S, C;
+	sincos(AngleRad * 0.5f, S, C);
+
+	return FQuat(AxisN * S, C);
+}
+
+FQuat QuatConjugate(in FQuat Q)
+{
+	return FQuat(-Q.xyz, Q.w);
+}
+
+float3 QuatRotateVector(in FQuat Q, in float3 V)
+{
+	float3 T = 2.0f * cross(Q.xyz, V);
+	return V + Q.w * T + cross(Q.xyz,T);
+}
+
+FQuat QuatMultiply(in FQuat Q1, in FQuat Q2)
+{
+	return FQuat(
+		(Q1.w * Q2.x) + (Q1.x * Q2.w) + (Q1.y * Q2.z) - (Q1.z * Q2.y),
+		(Q1.w * Q2.y) - (Q1.x * Q2.z) + (Q1.y * Q2.w) + (Q1.z * Q2.x),
+		(Q1.w * Q2.z) + (Q1.x * Q2.y) - (Q1.y * Q2.x) + (Q1.z * Q2.w),
+		(Q1.w * Q2.w) - (Q1.x * Q2.x) - (Q1.y * Q2.y) - (Q1.z * Q2.z)
+	);
+}
+
+half3x3 QuatToMatrix(in FQuat Q)
+{
+	return float3x3(
+		QuatRotateVector(Q, float3(1, 0, 0)),
+		QuatRotateVector(Q, float3(0, 1, 0)),
+		QuatRotateVector(Q, float3(0, 0, 1))
+	);
+}

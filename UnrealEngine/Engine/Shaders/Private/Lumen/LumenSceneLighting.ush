@@ -1,0 +1,36 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define CARD_UPDATE_CONTEXT_DIRECT_LIGHTING 0
+#define CARD_UPDATE_CONTEXT_INDIRECT_LIGHTING 1
+#define CARD_UPDATE_CONTEXT_MAX 2
+
+#define PRIORITY_HISTOGRAM_SIZE 16
+
+// [BucketIndex; NumBucketTiles]
+#define MAX_UPDATE_BUCKET_STRIDE 2
+
+// [NumAllocatedTiles; NumAllocatedTilesInLastBucket]
+#define CARD_PAGE_TILE_ALLOCATOR_STRIDE 2
+
+float CalculateDistanceBasedHeightfieldBias(float SurfaceBias, float3 WorldPosition, float3 WorldCameraOrigin)
+{
+		float DistanceBasedHeightfieldBias = SurfaceBias;
+		float WorldPositionDistanceToCamera = length(WorldPosition - WorldCameraOrigin);
+		DistanceBasedHeightfieldBias = SurfaceBias * WorldPositionDistanceToCamera;
+
+		return clamp(DistanceBasedHeightfieldBias, 0.01, 100.0);
+}
+
+float GetCardBiasForShadowing(float3 L, float3 WorldNormal, float BiasValue)
+{
+	float SurfaceBias = BiasValue;
+	float SlopeScaledSurfaceBias = 2.0f * BiasValue;
+	return SurfaceBias + SlopeScaledSurfaceBias * saturate(1 - dot(L, WorldNormal));
+}
+
+float3 GetCardWorldPositionForShadowing(float3 WorldPosition, float3 L, float3 WorldNormal, float BiasValue)
+{
+	return WorldPosition + L * GetCardBiasForShadowing(L, WorldNormal, BiasValue);
+}

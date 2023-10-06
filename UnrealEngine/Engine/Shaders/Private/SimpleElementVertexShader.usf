@@ -1,0 +1,42 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	SimpleElementVertexShader.hlsl: Vertex shader for drawing simple elements.
+=============================================================================*/
+
+#include "Common.ush"
+
+#ifndef ENABLE_LWC
+#define ENABLE_LWC 0
+#endif
+
+float4x4 Transform;
+#if ENABLE_LWC
+float3 TransformTilePosition;
+#endif
+
+void Main(
+	in float4 InRelativePosition : ATTRIBUTE0,
+	in float4 InTilePosition : ATTRIBUTE1,
+	in float2 InTextureCoordinate : ATTRIBUTE2,
+	in float4 InColor : ATTRIBUTE3,
+	in float4 InHitProxyId : ATTRIBUTE4,
+	out float2 OutTextureCoordinate : TEXCOORD0,
+	out float4 OutColor : TEXCOORD1,
+	out float4 OutHitProxyId : TEXCOORD2,
+	out float4 OutPosition : SV_POSITION
+	)
+{
+#if ENABLE_LWC
+	FLWCVector4 InPosition = MakeLWCVector4(InTilePosition, InRelativePosition);
+	FLWCInverseMatrix WorldToClip = MakeLWCInverseMatrix(TransformTilePosition, Transform);
+	OutPosition = LWCMultiply(InPosition, WorldToClip);
+	OutPosition.z = max(OutPosition.z, 0);
+#else
+	OutPosition = mul(InRelativePosition, Transform);
+#endif
+
+	OutTextureCoordinate = InTextureCoordinate;
+	OutColor = InColor;
+	OutHitProxyId = InHitProxyId;
+}

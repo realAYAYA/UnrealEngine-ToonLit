@@ -1,0 +1,27 @@
+.DS_Store
+
+# Gradle outputs or settings:
+**/.gradle
+
+**/local.properties
+**/captures
+**/build
+
+.temp
+.externalNativeBuild
+.cxx
+.project
+.settings
+.vscode
+
+# IntelliJ/Android Studio outputs or settings:
+**/.idea
+**/*.iml
+**/out
+
+# Protocol Buffers:
+third_party/protobuf-3.0.0/python/dist/
+
+# Third party libraries:
+src/oboe
+include/oboe

@@ -1,0 +1,194 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../SHCommon.ush"
+#include "../ShaderPrint.ush"
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#include "LumenSoftwareRayTracing.ush"
+#define RADIANCE_CACHE_DEPTH_TEST_SPHERE_PARALLAX 1
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenVisualizeTraces.ush"
+#include "LumenVisualize.ush"
+
+uint3 CullGridSize;
+uint CardGridPixelSizeShift;
+int VisualizeTileIndex;
+float VisualizeStepFactor;
+float MinTraceDistance;
+float MaxTraceDistance;
+float MaxMeshSDFTraceDistanceForVoxelTracing;
+float MaxMeshSDFTraceDistance;
+float CardInterpolateInfluenceRadius;
+
+RWTexture2D<float4> RWSceneColor;
+Buffer<uint> CulledCardGridHeader;
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 0
+#endif
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void VisualizeQuadsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint2 TraceCoord = DispatchThreadId.xy;
+	uint2 OutputScreenCoord = TraceCoord + OutputViewOffset;
+	float2 ViewportUV = (TraceCoord + 0.5f) / OutputViewSize;
+	uint2 PixelPos = ViewportUV * InputViewSize + InputViewOffset;
+
+	// Clip rendering outside of bounds
+	if (any(TraceCoord >= OutputViewSize))
+	{
+		return;
+	}
+
+	float2 ScreenPosition = float2(2.0f, -2.0f) * ViewportUV + float2(-1.0f, 1.0f);
+	// We are rendering after TAAU, remove jitter
+	float3 ScreenVector = ScreenVectorFromScreenRect(float4(ScreenPosition + View.TemporalAAJitter.xy, 1, 0));
+	float3 CameraVector = normalize(ScreenVector);
+	float Noise = InterleavedGradientNoise(PixelPos, View.StateFrameIndexMod8);
+
+	float ConeAngle = View.EyeToPixelSpreadAngle;
+	float TraceDistance = MaxTraceDistance;
+	bool bCoveredByRadianceCache = false;
+
+#if RADIANCE_CACHE
+	FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(LWCHackToFloat(PrimaryView.WorldCameraOrigin), CameraVector, .5f);
+				
+	if (Coverage.bValid)
+	{
+		TraceDistance = min(TraceDistance, Coverage.MinTraceDistanceBeforeInterpolation);
+	}
+#endif
+
+	FConeTraceInput TraceInput;
+	TraceInput.Setup(LWCHackToFloat(PrimaryView.WorldCameraOrigin), PrimaryView.TranslatedWorldCameraOrigin, CameraVector, ConeAngle, .01f, MinTraceDistance, TraceDistance, VisualizeStepFactor);
+	TraceInput.SDFStepFactor = lerp(.8f, 1.0f, Noise);
+	TraceInput.bDitheredTransparency = false;
+	TraceInput.DitherScreenCoord = PixelPos;
+	TraceInput.bHiResSurface = VisualizeHiResSurface != 0 ? true : false;
+
+	float3 Debug = -1;
+
+	bool bContinueCardTracing = false;
+#if TRACE_MESH_SDF || SCENE_TRACE_HEIGHTFIELDS
+	bContinueCardTracing = true;
+#endif
+
+	TraceInput.VoxelTraceStartDistance = CalculateVoxelTraceStartDistance(MinTraceDistance, TraceDistance, MaxMeshSDFTraceDistance, bContinueCardTracing);
+
+#if RADIANCE_CACHE
+	TraceInput.VoxelTraceStartDistance = min(TraceInput.VoxelTraceStartDistance, TraceDistance);
+#endif
+
+	// The visualization pass is after TAAU, correct for being after the upscaler
+	int2 RenderingViewportPixelPos = (PixelPos - InputViewOffset) * (int2)View.ViewSizeAndInvSize / InputViewSize;
+	int2 CellCoord = clamp((int2)RenderingViewportPixelPos >> CardGridPixelSizeShift, int2(0, 0), (int2)CullGridSize.xy - 1);
+	uint CardGridCellIndex = CellCoord.x + CellCoord.y * CullGridSize.x;
+
+	TraceInput.NumMeshSDFs = NumGridCulledMeshSDFObjects[CardGridCellIndex];
+	TraceInput.MeshSDFStartOffset = GridCulledMeshSDFObjectStartOffsetArray[CardGridCellIndex];
+	TraceInput.CardInterpolateInfluenceRadius = CardInterpolateInfluenceRadius;
+	//Debug = TraceInput.NumMeshSDFs / 20.0f;
+	TraceInput.bCalculateHitVelocity = true;
+	// Only expand the SDF surface when the ray traversal is far enough away to not self-intersect
+	TraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance = false;
+	TraceInput.InitialMaxDistance = 0;
+
+	FConeTraceResult TraceResult = (FConeTraceResult)0;
+	TraceResult.Transparency = 1;
+	TraceResult.OpaqueHitDistance = TraceInput.MaxTraceDistance;
+
+#if TRACE_MESH_SDF
+	ConeTraceLumenSceneCards(TraceInput, TraceResult);
+#endif
+
+#if SCENE_TRACE_HEIGHTFIELDS
+	TraceInput.NumHeightfields = NumGridCulledHeightfieldObjects[CardGridCellIndex];
+	TraceInput.HeightfieldStartOffset = GridCulledHeightfieldObjectStartOffsetArray[CardGridCellIndex];
+	ConeTraceLumenSceneHeightfields(TraceInput, TraceResult);
+#endif
+
+#if TRACE_GLOBAL_SDF
+	ConeTraceLumenSceneVoxels(TraceInput, TraceResult);
+#endif
+
+#if RADIANCE_CACHE
+	TraceResult.Lighting += SampleRadianceCacheInterpolated(Coverage, LWCHackToFloat(PrimaryView.WorldCameraOrigin), CameraVector, ConeAngle).xyz * TraceResult.Transparency;
+	TraceResult.Transparency = 0.0f;
+#else
+	ApplySkylightToTraceResult(CameraVector, TraceResult);
+#endif
+
+	//TraceResult.Lighting += GetSkylightLeaking(CameraVector, TraceResult.OpaqueHitDistance);
+	TraceResult.Lighting *= View.PreExposure;
+
+	if (SampleHeightFog > 0)
+	{
+		const float CoverageForFog = saturate(1.0 - TraceResult.Transparency);
+		float3 OriginToCollider = CameraVector * TraceResult.OpaqueHitDistance;
+		TraceResult.Lighting.rgb = GetFogOnLuminance(TraceResult.Lighting.rgb, CoverageForFog, OriginToCollider);
+	}
+
+	float4 FinalColor = 0.0f;
+
+	#define TRACE_VISUALIZE_MODE 0
+	#if TRACE_VISUALIZE_MODE == 0
+		FinalColor = float4(TraceResult.Lighting + float3(0 * (saturate(TraceResult.NumOverlaps / 20.0f)), 0, 0), 0);
+	#elif TRACE_VISUALIZE_MODE == 1
+		FinalColor = float4(frac(TraceResult.OpaqueHitDistance.xxx / 100.0f), 0);
+	#elif TRACE_VISUALIZE_MODE == 2
+		FinalColor = float4(TraceResult.Lighting + TraceResult.Debug, 0);
+	#elif TRACE_VISUALIZE_MODE == 3
+		FinalColor = float4(abs(TraceResult.WorldVelocity / 100.0f), 0);
+	#else 
+		FinalColor = float4(TraceResult.NumSteps.xxx / 100.0f, 0);
+	#endif
+
+	if (any(Debug >= 0))
+	{
+		FinalColor = float4(Debug, 0);
+	}
+
+	// The overview outputs after the tonemapper to overwrite editor primitives and must apply its own tonemapping
+	FinalColor.rgb = VisualizeTonemap(FinalColor.rgb);
+
+	RWSceneColor[OutputScreenCoord] = FinalColor;
+}
+
+Buffer<float4> VisualizeTracesData;
+
+struct FVisualizeTracesVertexOutput
+{
+	float3 TraceLighting : TEXCOORD0;	
+};
+
+void VisualizeTracesVS(
+	uint VertexIndex : SV_VertexID,
+	out FVisualizeTracesVertexOutput Output,
+	out float4 OutPosition : SV_POSITION
+	)
+{
+	uint TraceIndex = VertexIndex / 2;
+	float3 WorldPosition = VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 0].xyz;
+
+	if (VertexIndex & 1)
+	{
+		WorldPosition += VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 1].xyz;
+	}
+
+	OutPosition = mul(float4(WorldPosition, 1), LWCHackToFloat(PrimaryView.WorldToClip));
+	Output.TraceLighting = VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 2].xyz;
+} 
+
+void VisualizeTracesPS(
+	FVisualizeTracesVertexOutput Input,
+	in float4 SVPos : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	OutColor = float4(Input.TraceLighting, 0);
+}

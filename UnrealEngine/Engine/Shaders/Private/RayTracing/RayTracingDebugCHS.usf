@@ -1,0 +1,26 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../Hash.ush"
+
+#include "RayTracingCommon.ush"
+#include "RayTracingDebugUtils.ush"
+#include "RayTracingHitGroupCommon.ush"
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(RayTracingDebugMainCHS,
+	FRayTracingDebugPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	Payload.HitT = RayTCurrent();
+
+	const int ScenePrimitiveIndex = GetInstanceUserData();
+	const int ScenePrimitiveInstanceIndex = InstanceIndex() - GetBaseInstanceIndex();
+	Payload.InstanceHash = MurmurAdd(ScenePrimitiveIndex, ScenePrimitiveInstanceIndex);
+
+	Payload.TriangleIndex = PrimitiveIndex();
+
+	Payload.WorldNormal = GetGeometryNormalFromTriangleBaseAttributes(PrimitiveIndex());
+	Payload.GeometryInstanceIndex = GetHitGroupUserData();
+	Payload.InstanceIndex = InstanceIndex();
+	Payload.GeometryIndex = 0; // GeometryIndex();
+}

@@ -1,0 +1,217 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DeferredDecal.usf: Pixel shader for computing a deferred decal.
+=============================================================================*/
+
+#include "Common.ush"
+
+#if SHADING_PATH_MOBILE
+// Reroute MobileSceneTextures uniform buffer references to the base pass uniform buffer 
+#define MobileSceneTextures MobileBasePass.SceneTextures
+#define EyeAdaptationStruct MobileBasePass
+#else
+#define SceneTexturesStruct DecalPass.SceneTextures
+#define EyeAdaptationStruct DecalPass
+#endif
+
+#if PIXELSHADER
+
+// Decals require both inline & deferred shading path for reading & writing Strata data
+#define STRATA_INLINE_SHADING 1
+#define STRATA_DEFERRED_SHADING 1
+#include "Strata/Strata.ush"
+#include "DecalCommon.ush"
+
+#endif // PIXELSHADER
+
+// large world coordinate tile position
+float4 DecalTilePosition;
+// from SvPosition to decal space (for position), used like this: mul(float4(SvPosition.xyz, 1), SvPositionToDecal);
+float4x4 SvPositionToDecal;
+// to transform position from decal space to world space, for normals use transpose of inverse
+float4x4 DecalToWorld;
+float3 DecalToWorldInvScale;
+// decal orientation in world space, X axis. Used for ObjectOrientation material expression
+float3 DecalOrientation;
+// x - Fade alpha from screen size fading
+// y - Opacity over the lifetime of the decal. 1 -> 0
+float2 DecalParams;
+// from component to clip space (for decal frustum)
+float4x4 FrustumComponentToClip;
+// Decal color can be accessed using the material node
+float4 DecalColorParam;
+
+// Global decal vertex shader
+void MainVS(
+	in float4 InPosition : ATTRIBUTE0,
+	out float4 OutPosition : SV_POSITION
+)
+{
+	OutPosition = mul(InPosition, FrustumComponentToClip);
+}
+
+#if IS_DECAL && PIXELSHADER
+
+// DECAL_PRIMITIVE informs material templates which functions to expose when rendering decals.
+#define DECAL_PRIMITIVE 1
+#include "/Engine/Generated/Material.ush"
+
+// If virtual texture feedback is enabled then use early depth test so that UAV feedback buffer writes respect the depth test
+#if MATERIAL_VIRTUALTEXTURE_FEEDBACK
+	#if COMPILER_SUPPORTS_DEPTHSTENCIL_EARLYTEST_LATEWRITE
+		// If we support early depth test with late write behaviour then use it since we may be using discard, or modifying depth
+		#define PIXELSHADER_EARLYDEPTHSTENCIL DEPTHSTENCIL_EARLYTEST_LATEWRITE
+	#elif !OUTPUT_PIXEL_DEPTH_OFFSET
+		// Otherwise we can only use early depth test if not modifying depth
+		// Modifying depth will trigger the slow path where we write feedback to UAV even where depth occluded!
+		#define PIXELSHADER_EARLYDEPTHSTENCIL EARLYDEPTHSTENCIL
+	#endif
+#endif
+
+float4 SvPositionToScreenPosition2(float4 SvPosition)
+{
+	// assumed SvPosition.w = 1
+
+	float4 Ret;
+
+	Ret.x = ((SvPosition.x - View.ViewRectMin.x) * View.ViewSizeAndInvSize.z) * 2 - 1;
+	Ret.y = ((SvPosition.y - View.ViewRectMin.y) * View.ViewSizeAndInvSize.w) * -2 + 1;
+	Ret.z = ConvertFromDeviceZ(SvPosition.z);
+	Ret.w = 1;
+
+	Ret.xy *= Ret.z;
+
+	// so .w has the SceneDepth, some mobile code wants that
+//	Ret *= Ret.z;
+
+	return Ret;
+}
+
+// is called in MainPS() from PixelShaderOutputCommon.usf
+void FPixelShaderInOut_MainPS(inout FPixelShaderIn In, inout FPixelShaderOut Out)
+{
+	ResolvedView = ResolveView();
+
+	float2 ScreenUV = SvPositionToBufferUV(In.SvPosition);
+
+	// make SvPosition appear to be rasterized with the depth from the depth buffer
+	In.SvPosition.z = LookupDeviceZ(ScreenUV);
+
+	float4 DecalVectorHom = mul(float4(In.SvPosition.xyz,1), SvPositionToDecal);
+	float3 OSPosition = DecalVectorHom.xyz / DecalVectorHom.w;
+
+	// clip content outside the decal
+	// not needed if we stencil out the decal but we do that only on large (screen space) ones
+	clip(OSPosition.xyz + 1.0f);
+	clip(1.0f - OSPosition.xyz);
+
+	float3 TranslatedWorldPosition = SvPositionToTranslatedWorld(In.SvPosition);
+
+	float3 CameraVector = normalize(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+
+	// can be optimized
+	float3 DecalVector = OSPosition * 0.5f + 0.5f;
+
+	// Swizzle so that DecalVector.xy are perpendicular to the projection direction and DecalVector.z is distance along the projection direction
+	float3 SwizzlePos = DecalVector.zyx;
+
+	// By default, map textures using the vectors perpendicular to the projection direction
+	float2 DecalUVs = SwizzlePos.xy;
+
+	FMaterialPixelParameters MaterialParameters = MakeInitializedMaterialPixelParameters();
+#if NUM_MATERIAL_TEXCOORDS
+	for(int CoordinateIndex = 0;CoordinateIndex < NUM_MATERIAL_TEXCOORDS;CoordinateIndex++)
+	{
+		MaterialParameters.TexCoords[CoordinateIndex] = DecalUVs;
+	}
+#endif
+	MaterialParameters.TwoSidedSign = 1;
+	MaterialParameters.VertexColor = 1;
+	MaterialParameters.CameraVector = CameraVector;
+	MaterialParameters.SvPosition = In.SvPosition;
+	MaterialParameters.ScreenPosition = SvPositionToScreenPosition(In.SvPosition);
+	MaterialParameters.LightVector = SwizzlePos;
+
+	MaterialParameters.AbsoluteWorldPosition = MaterialParameters.WorldPosition_NoOffsets = LWCSubtract(TranslatedWorldPosition, PrimaryView.PreViewTranslation);
+	MaterialParameters.WorldPosition_CamRelative = MaterialParameters.WorldPosition_NoOffsets_CamRelative = TranslatedWorldPosition;
+
+#if MATERIAL_VIRTUALTEXTURE_FEEDBACK
+	InitializeVirtualTextureFeedback(MaterialParameters.VirtualTextureFeedback, (uint2)In.SvPosition.xy, View.FrameNumber);
+#endif
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcPixelMaterialInputs(MaterialParameters, PixelMaterialInputs);
+	
+	const float DecalFading = saturate(4 - 4 * abs(SwizzlePos.z * 2 - 1)) * DecalParams.x;
+
+#if STRATA_ENABLED    
+	FStrataPixelHeader StrataHeader = MaterialParameters.GetFrontStrataHeader();
+	StrataHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+
+	float Coverage = 0.0;
+	if (StrataHeader.StrataTree.BSDFCount > 0)
+	{
+		FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
+		const float3 V = MaterialParameters.CameraVector;
+
+		// Update tree (coverage/transmittance/luminace weights)
+		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, false /*bRoughDiffuseEnabled*/, 0, false/*bRoughnessTracking*/);
+		StrataHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+
+		// Either propagate the BSDF opacity, or use the one for AlphaComposite (premultiplied alpha)
+		float CoverageOverBackground = StrataHeader.StrataTree.BSDFs[0].Coverage * DecalFading;
+#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+		CoverageOverBackground = GetMaterialOpacity(PixelMaterialInputs);
+#endif 
+
+		// Since the Convert-To-Decal node forces parameter blending for the entire Strata tree, the BSDF we are interested in will be in 0.
+		Coverage = DecalCommonOutput(Out, StrataHeader, StrataHeader.StrataTree.BSDFs[0], DecalFading, CoverageOverBackground);
+
+	}
+	const float Opacity = Coverage;
+#else // STRATA_ENABLED
+	float3 Color = GetMaterialEmissive(PixelMaterialInputs);
+	
+	float Opacity = GetMaterialOpacity(PixelMaterialInputs) * DecalFading;
+
+	FGBufferData GBufferData;
+	GBufferData.WorldNormal = MaterialParameters.WorldNormal;
+	GBufferData.BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+	GBufferData.Metallic = GetMaterialMetallic(PixelMaterialInputs);
+	GBufferData.Specular = GetMaterialSpecular(PixelMaterialInputs);
+	GBufferData.Roughness = GetMaterialRoughness(PixelMaterialInputs);
+	GBufferData.CustomData = 0;
+	GBufferData.IndirectIrradiance = 0;
+	GBufferData.PrecomputedShadowFactors = 1;
+	GBufferData.GBufferAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+	GBufferData.ShadingModelID = SHADINGMODELID_DEFAULT_LIT;
+	GBufferData.SelectiveOutputMask = 0;
+	GBufferData.PerObjectGBufferData = 1; 
+	GBufferData.DiffuseIndirectSampleOcclusion = 0;
+	GBufferData.Velocity = 0;
+
+	DecalCommonOutput(In, Out, Color, Opacity, GBufferData);
+#endif // STRATA_ENABLED
+
+#if MATERIAL_VIRTUALTEXTURE_FEEDBACK
+	FinalizeVirtualTextureFeedback(
+		MaterialParameters.VirtualTextureFeedback,
+		MaterialParameters.SvPosition,
+		Opacity,
+		View.FrameNumber,
+		View.VTFeedbackBuffer
+	);
+#endif
+}
+
+//#define PIXELSHADEROUTPUT_MRT0 (DECAL_RENDERTARGET_COUNT > 0)
+//#define PIXELSHADEROUTPUT_MRT1 (DECAL_RENDERTARGET_COUNT > 1)
+//#define PIXELSHADEROUTPUT_MRT2 (DECAL_RENDERTARGET_COUNT > 2)
+//#define PIXELSHADEROUTPUT_MRT3 (DECAL_RENDERTARGET_COUNT > 3)
+//#define PIXELSHADEROUTPUT_MRT4 (DECAL_RENDERTARGET_COUNT > 4)
+// all PIXELSHADEROUTPUT_ and "void FPixelShaderInOut_MainPS()" need to be setup before this include
+// this include generates the wrapper code to call MainPS()
+#include "PixelShaderOutputCommon.ush"
+
+#endif // IS_DECAL

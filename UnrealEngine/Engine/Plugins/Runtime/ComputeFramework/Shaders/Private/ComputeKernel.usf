@@ -1,0 +1,6 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+
+// Include the generated kernel source.
+#include "/Plugin/ComputeFramework/Generated/ComputeKernel.ush"

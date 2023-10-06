@@ -1,0 +1,128 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DownSampleDepthPixelShader.usf: Downsamples scene depth by a factor of 2.
+=============================================================================*/
+
+#include "Common.ush"
+#include "DeferredShadingCommon.ush"
+#include "SceneTexturesCommon.ush"
+#include "Nanite/NaniteDataDecode.ush"
+
+// This must match EDownsampleDepthFilter
+#define DOWNSAMPLE_DEPTH_FILTER_POINT		0
+#define DOWNSAMPLE_DEPTH_FILTER_MAX			1
+#define DOWNSAMPLE_DEPTH_FILTER_CBMINMAX	2
+
+Texture2D<uint> NaniteShadingMask;
+Texture2D<float> DepthTexture;
+float2 DstToSrcPixelScale;
+float2 SourceMaxUV;
+float2 DestinationResolution;
+uint DownsampleDepthFilter;
+
+// Only valid when using OUTPUT_MIN_AND_MAX_DEPTH
+int4 DstPixelCoordMinAndMax;
+int4 SrcPixelCoordMinAndMax;
+
+float GetDeviceZ(float2 UV)
+{
+	return DepthTexture.Sample(GlobalPointClampedSampler, min(UV, SourceMaxUV));
+}
+
+void Main(
+	noperspective float4 OutUVAndScreenPos : TEXCOORD0,
+	in float4 SVPos : SV_POSITION,
+#if OUTPUT_MIN_AND_MAX_DEPTH
+	out float4 OutColor : SV_Target0
+#else
+	out float OutDepth : SV_DEPTH
+#endif
+)
+{
+	// Pixel coordinate for the output 
+	const int2 DstPixelPos = SVPos.xy;
+	// Lower left corner from the input 2x2 quad
+	const int2 PixelPos = float2(DstPixelPos) * DstToSrcPixelScale;
+
+	float DeviceZ0 = DepthTexture.Load(uint3(clamp(PixelPos + int2(0, 0), SrcPixelCoordMinAndMax.xy, SrcPixelCoordMinAndMax.zw), 0));
+	float DeviceZ1 = DepthTexture.Load(uint3(clamp(PixelPos + int2(0, 1), SrcPixelCoordMinAndMax.xy, SrcPixelCoordMinAndMax.zw), 0));
+	float DeviceZ2 = DepthTexture.Load(uint3(clamp(PixelPos + int2(1, 1), SrcPixelCoordMinAndMax.xy, SrcPixelCoordMinAndMax.zw), 0));
+	float DeviceZ3 = DepthTexture.Load(uint3(clamp(PixelPos + int2(1, 0), SrcPixelCoordMinAndMax.xy, SrcPixelCoordMinAndMax.zw), 0));
+
+#if OUTPUT_MIN_AND_MAX_DEPTH
+
+	const float MaxDeviceZ = max(max(DeviceZ0, DeviceZ1), max(DeviceZ2, DeviceZ3));
+	const float MinDeviceZ = min(min(DeviceZ0, DeviceZ1), min(DeviceZ2, DeviceZ3));
+	OutColor = float4(MinDeviceZ, MaxDeviceZ, 0.0f, 0.0f);
+
+#else // OUTPUT_MIN_AND_MAX_DEPTH
+
+	float Depth = 0;
+
+	if (DownsampleDepthFilter < DOWNSAMPLE_DEPTH_FILTER_CBMINMAX)
+	{
+#if HAS_INVERTED_Z_BUFFER
+		float FarDepth = min(min(DeviceZ0, DeviceZ1), min(DeviceZ2, DeviceZ3));
+#else
+		float FarDepth = max(max(DeviceZ0, DeviceZ1), max(DeviceZ2, DeviceZ3));
+#endif
+
+		// Max depth shrinks the silhouettes around foreground objects and is conservative for depth testing
+		// Sample 0 has consistent error, use whichever one is requested for this downsample
+		Depth = DownsampleDepthFilter == DOWNSAMPLE_DEPTH_FILTER_MAX ? FarDepth : DeviceZ0;
+	}
+	else // DownsampleDepthFilter == DOWNSAMPLE_DEPTH_FILTER_CBMINMAX
+	{
+		const float MaxDeviceZ = max(max(DeviceZ0, DeviceZ1), max(DeviceZ2, DeviceZ3));
+		const float MinDeviceZ = min(min(DeviceZ0, DeviceZ1), min(DeviceZ2, DeviceZ3));
+
+		const uint2 PixelPosStep = (DstPixelPos >> 1) * 2;
+		uint CheckerBoard = (DstPixelPos.x - PixelPosStep.x);									// horizontal alternance of black and white
+		CheckerBoard = (DstPixelPos.y - PixelPosStep.y) == 0 ? CheckerBoard : 1 - CheckerBoard;// vertical toggle of horizontal checker on odd lines
+
+		Depth = CheckerBoard > 0 ? MaxDeviceZ : MinDeviceZ;
+	}
+
+	OutDepth = Depth;
+
+#endif // OUTPUT_MIN_AND_MAX_DEPTH
+}
+
+#ifndef STENCIL_LIGHTING_CHANNELS_SHIFT 
+#define STENCIL_LIGHTING_CHANNELS_SHIFT 0
+#endif
+
+// Must match C++
+#define STENCIL_DISTANCE_FIELD_REPRESENTATION_BIT_ID 2
+
+void CopyStencilToLightingChannelsPS(  
+	noperspective float4 InUV : TEXCOORD0,
+	out uint4 OutValue : SV_Target0
+	)
+{
+	uint2 IntUV = (uint2)((float2)InUV.xy * (float2)View.BufferSizeAndInvSize.xy);
+
+	uint LightingChannels = 0;
+	uint HasDistanceFieldRepresentationMask = 0;
+
+#if NANITE_COMPOSITE
+	FShadingMask UnpackedMask = UnpackShadingMask(NaniteShadingMask.Load(uint3(IntUV, 0)));
+	BRANCH
+	if (UnpackedMask.bIsNanitePixel)
+	{
+		LightingChannels = UnpackedMask.LightingChannels;
+		HasDistanceFieldRepresentationMask = (select(UnpackedMask.bHasDistanceField, 1u, 0u) << LIGHTING_CHANNELS_TEXTURE_DISTANCE_FIELD_REPRESENTATION_BIT);
+	}
+	else
+#endif
+	{
+		const uint Stencil = SceneStencilTexture.Load(uint3(IntUV, 0)) STENCIL_COMPONENT_SWIZZLE;
+		const uint ShiftedStencil = Stencil >> STENCIL_LIGHTING_CHANNELS_SHIFT;
+		// Flip the lowest channel bit, it was stored inverted so we can clear stencil to 0 as a default
+		LightingChannels = (ShiftedStencil & 0x6) | (~ShiftedStencil & 0x1);
+		HasDistanceFieldRepresentationMask = ((Stencil >> STENCIL_DISTANCE_FIELD_REPRESENTATION_BIT_ID) & 0x1) << LIGHTING_CHANNELS_TEXTURE_DISTANCE_FIELD_REPRESENTATION_BIT;
+	}
+
+	OutValue = LightingChannels | HasDistanceFieldRepresentationMask;
+}

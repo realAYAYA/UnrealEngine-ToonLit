@@ -1,0 +1,12 @@
+{
+    "Plugins": [
+        {
+            "Info" : {},
+            "LibraryPath": "../../../../../../../../Binaries/Win64/usd_usdImagingGL.dll",
+            "Name": "usdImagingGL",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

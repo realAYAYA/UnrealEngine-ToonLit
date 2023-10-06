@@ -42,3 +42,69 @@
 4.  
 5.  
 6.  
+
+
+## Log
+
+#### Add Custom Variables in Material  
+1.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInterface.h  
+2.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\Material.h  
+3.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInstance.h  
+4.UnrealEngine\Engine\Source\Runtime\Engine\Public\MaterialShared.h  
+5.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\Material.cpp  
+
+6.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInstanceBasePropertyOverrides.h  
+7.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\MaterialShared.cpp  
+8.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\MaterialInstance.cpp  
+9.UnrealEngine\Engine\Source\Editor\MaterialEditor\Private\MaterialEditorInstanceDetailCustomization.h  
+10.UnrealEngine\Engine\Source\Editor\MaterialEditor\Private\MaterialEditorInstanceDetailCustomization.cpp  
+
+#### Add Custom MeshDrawPass  
+0.新增UnrealEngine\Engine\Source\Runtime\Engine\Classes\Engine\ToonRenderingSettings.h  
+0.新增UnrealEngine\Engine\Source\Runtime\Engine\Private\ToonRenderingSettings.cpp  
+
+1.新增UnrealEngine\Engine\Source\Runtime\Renderer\Private\ToonOutlinRendering.h  
+2.新增UnrealEngine\Engine\Source\Runtime\Renderer\Private\ToonOutlinRendering.cpp  
+3.新增UnrealEngine\Engine\Shaders\Private\ToonLit\ToonOutline.usf  
+4.UnrealEngine\Engine\Source\Runtime\Renderer\Private\SceneRendering.h  
+5.UnrealEngine\Engine\Source\Runtime\Renderer\Private\DeferredShadingRenderer.cpp  
+
+#### Add custom PreIntegrated-Texture  
+1.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Engine\Engine.h  
+2.UnrealEngine\Engine\Source\Runtime\Engine\Private\UnrealEngine.cpp  
+3.UnrealEngine\Engine\Source\Runtime\Engine\Public\SceneView.h  
+4.UnrealEngine\Engine\Source\Runtime\Engine\Private\SceneManagement.cpp  
+5.UnrealEngine\Engine\Source\Runtime\Renderer\Private\SceneRendering.cpp  
+
+#### Add Custom ShadingModel  
+1.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Engine\EngineTypes.h  
+2.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\MaterialShader.cpp  
+3.UnrealEngine\Engine\Source\Editor\PixelInspector\Private\PixelInspectorResult.h  
+4.UnrealEngine\Engine\Source\Editor\PixelInspector\Private\PixelInspectorResult.cpp  
+5.UnrealEngine\Engine\Source\Runtime\RenderCore\Public\ShaderMaterial.h  
+6.UnrealEngine\Engine\Source\Engine\Private\ShaderCompiler\ShaderGenerationUtil.cpp  
+7.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\HLSLMaterialTranslator.cpp  
+8.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\Material.cpp  
+9.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\MaterialAttributeDefinitionMap.cpp  
+10.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\MaterialHLSLEmitter.cpp  
+11.UnrealEngine\Engine\Source\Runtime\RenderCore\Public\ShaderMaterialDerivedHelpers  
+
+12.UnrealEngine\Engine\Shaders\Private\ShadingCommon.ush  
+13.UnrealEngine\Engine\Shaders\Private\Definitions.ush  
+14.UnrealEngine\Engine\Shaders\Private\ShadingModelsMaterial.ush  
+15.UnrealEngine\Engine\Shaders\Private\ClusteredDeferredShadingPixelShader.usf  
+16.UnrealEngine\Engine\Shaders\Private\ShadingModels.ush  
+17.UnrealEngine\Engine\Shaders\Private\BasePassPixelShader.usf  
+
+#### Custom Toon IndirectLighting  
+18.UnrealEngine\Engine\Shaders\Private\SkyLightingDiffuseShared.usf  
+19.UnrealEngine\Engine\Shaders\Private\BasePassPixelShader.usf  
+20.UnrealEngine\Engine\Shaders\Private\DeferredShadingCommon.ush  
+21.UnrealEngine\Engine\Shaders\Private\GBufferHelpers.ush  
+22.UnrealEngine\Engine\Shaders\Private\ReflectionEnvironment.usf  
+23.UnrealEngine\Engine\Shaders\Private\DiffuseIndirectComposite.usf  
+
+#### Enable Anisotropy for Shadingmodel  
+1.UnrealEngine\Engine\Source\Runtime\Engine\Private\Materials\Material.cpp  
+2.UnrealEngine\Engine\Source\Runtime\Renderer\Private\AnisotropyRendering.cpp  
+3.UnrealEngine\Engine\Source\Runtime\Renderer\Private\PrimitiveSceneInfo.cpp  

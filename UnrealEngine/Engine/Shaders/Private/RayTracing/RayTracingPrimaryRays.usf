@@ -1,0 +1,443 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#ifndef DIM_DENOISER_OUTPUT
+	#define DIM_DENOISER_OUTPUT 0
+#endif
+
+#include "../Common.ush"
+
+#define SUPPORT_CONTACT_SHADOWS		0
+#define USE_SOURCE_TEXTURE			1
+
+#define PreIntegratedGF				ReflectionStruct.PreIntegratedGF
+#define PreIntegratedGFSampler		GlobalBilinearClampedSampler
+
+#include "../DeferredShadingCommon.ush"
+#include "../DeferredLightingCommon.ush"
+#include "../ReflectionEnvironmentShared.ush"
+#include "../Montecarlo.ush"
+#include "../PathTracing/Utilities/PathTracingRandomSequence.ush" 
+#include "../PathTracing/Material/PathTracingFresnel.ush"
+#include "../HeightFogCommon.ush"
+#include "../SobolRandom.ush"
+#include "../SceneTextureParameters.ush"
+#include "RayTracingCommon.ush"
+#include "RayTracingDeferredShadingCommon.ush"
+#include "RayTracingHitGroupCommon.ush"
+
+#define	ERayTracingPrimaryRaysFlag_None                               0
+#define	ERayTracingPrimaryRaysFlag_UseGBufferForMaxDistance    (1u << 0)
+#define	ERayTracingPrimaryRaysFlag_PrimaryView                 (1u << 1)
+#define	ERayTracingPrimaryRaysFlag_AllowSkipSkySample          (1u << 2)
+
+
+int SamplesPerPixel;
+int MaxRefractionRays;
+int HeightFog;
+int ReflectedShadowsType;
+int ShouldDoDirectLighting;
+int ShouldDoEmissiveAndIndirectLighting;
+int UpscaleFactor;
+int ShouldUsePreExposure;
+uint PrimaryRayFlags;
+
+float TranslucencyMinRayDistance;
+float TranslucencyMaxRayDistance;
+float TranslucencyMaxRoughness;
+int  TranslucencyRefraction;
+float MaxNormalBias;
+
+Texture2D SceneColorTexture;
+
+RaytracingAccelerationStructure TLAS;
+
+RWTexture2D<float4> ColorOutput;
+RWTexture2D<float> RayHitDistanceOutput;
+
+#include "RayTracingLightingCommon.ush"
+
+#define FrontLayerTranslucencyReflectionsStruct LumenGIVolumeStruct
+#define RadianceCacheInterpolation LumenGIVolumeStruct
+
+#include "../Lumen/LumenTranslucencyVolumeShared.ush"
+
+float CalcNoT(float CosTheta1, float N1, float N2)
+{
+	float SinTheta1_Squared = 1.0 - CosTheta1 * CosTheta1;
+	float SinTheta2_Squared = (SinTheta1_Squared * N1 * N1) / (N2 * N2);
+	float CosTheta2_Squared = 1.0 - SinTheta2_Squared;
+	return CosTheta2_Squared > 0.0 ? sqrt(CosTheta2_Squared) : 0.0;
+}
+
+float FresnelDielectric(float Eta, float IoH, float ToH)
+{
+	float Rs = Square((Eta * IoH - ToH) / (Eta * IoH + ToH));
+	float Rp = Square((Eta * ToH - IoH) / (Eta * ToH + IoH));
+	return (Rs + Rp) / 2;
+}
+
+float3 GetSkyRadiance(float3 Direction, float Roughness)
+{
+	float SkyAverageBrightness = 1.0f;
+	return GetSkyLightReflection(Direction, Roughness, SkyAverageBrightness);
+}
+
+RAY_TRACING_ENTRY_RAYGEN(RayTracingPrimaryRaysRGS)
+{
+	// STRATA_TODO
+#if !STRATA_ENABLED
+	uint2 DispatchThreadId = DispatchRaysIndex().xy + View.ViewRectMin.xy;
+	uint2 PixelCoord = GetPixelCoord(DispatchThreadId, UpscaleFactor);
+	uint LinearIndex = PixelCoord.y * View.BufferSizeAndInvSize.x + PixelCoord.x; // TODO(Denoiser): PixelCoord or DispatchThreadId
+	
+	float2 InvBufferSize = View.BufferSizeAndInvSize.zw;
+	float2 UV = (float2(PixelCoord) + 0.5) * InvBufferSize;
+
+#if 0
+	FGBufferData GBufferData = GetGBufferDataFromSceneTextures(UV);
+#else
+	//#dxr-todo: workaround for flickering. UE-87281
+	FGBufferData GBufferData = GetGBufferDataFromSceneTexturesLoad(PixelCoord);
+#endif
+
+	float Depth = GBufferData.Depth;
+	float3 TranslatedWorldPosition = ReconstructTranslatedWorldPositionFromDepth(UV, Depth);
+
+	// Trace rays from camera origin to Gbuffer (only translucent objects are considered on the first ray, so a bias is not needed)
+	FRayDesc Ray = CreatePrimaryRay(UV);
+	FRayCone RayCone = (FRayCone)0;
+	RayCone.SpreadAngle = View.EyeToPixelSpreadAngle;
+
+	if((ERayTracingPrimaryRaysFlag_UseGBufferForMaxDistance & PrimaryRayFlags) != 0) 
+	{
+		// NOTE: we need a small epsilon even though we only trace RAY_TRACING_MASK_TRANSLUCENT objects at first
+		//       because we might have an object with a mix of materials on it and therefore still need to avoid
+		//       hitting the target surface if possible
+		Ray.TMax = dot(TranslatedWorldPosition - Ray.Origin, Ray.Direction) - 0.1; // assumes Ray.Direction is normalized
+	}
+
+	bool bAllowSkySampling;
+	if((ERayTracingPrimaryRaysFlag_AllowSkipSkySample & PrimaryRayFlags) != 0) 
+	{
+		// Sky is only sampled when infinite reflection rays are used.
+		bAllowSkySampling =  TranslucencyMaxRayDistance < 0;
+	} 
+	else 
+	{
+		bAllowSkySampling = true;
+	}
+	// Check if the Sky Light should affect reflection rays within translucency.
+	const bool bSkyLightAffectReflection = ShouldSkyLightAffectReflection();
+	
+	const bool bPrimaryView = (ERayTracingPrimaryRaysFlag_PrimaryView & PrimaryRayFlags) != 0;
+	bool bHasScattered = bPrimaryView;
+	float AccumulatedOpacity = 0.0;
+
+	// Integrated data by path tracing
+	float3 PathRadiance = 0.0;
+	float3 PathThroughput = 1.0;
+	float LastRoughness = 0.0;
+	float HitDistance = 0.0f;
+
+	for (uint RefractionRayIndex = 0; RefractionRayIndex < MaxRefractionRays; ++RefractionRayIndex)
+	{
+		const uint RefractionRayFlags = RefractionRayIndex == 0 ? RAY_FLAG_CULL_BACK_FACING_TRIANGLES : 0;
+		const uint RefractionInstanceInclusionMask = (!bPrimaryView && RefractionRayIndex == 0) || !TranslucencyRefraction ? RAY_TRACING_MASK_TRANSLUCENT : RAY_TRACING_MASK_ALL;
+		const bool bRefractionRayTraceSkyLightContribution = false;
+		const bool bRefractionDecoupleSampleGeneration = true;
+#if PROJECT_SUPPORTS_LUMEN
+		const bool bRefractionEnableSkyLightContribution = !IsLumenTranslucencyGIEnabled();
+#else
+		const bool bRefractionEnableSkyLightContribution = true;
+#endif
+		float3 PathVertexRadiance = float3(0, 0, 0);
+
+		RandomSequence RandSequence;
+
+		RandomSequence_Initialize(RandSequence, PixelCoord, RefractionRayIndex, View.StateFrameIndex, MaxRefractionRays);
+
+		FMaterialClosestHitPayload Payload = TraceRayAndAccumulateResults(
+			Ray,
+			TLAS,
+			RefractionRayFlags,
+			RefractionInstanceInclusionMask,
+			RandSequence,
+			PixelCoord,
+			MaxNormalBias,
+			ReflectedShadowsType,
+			ShouldDoDirectLighting,
+			ShouldDoEmissiveAndIndirectLighting,
+			bRefractionRayTraceSkyLightContribution,
+			bRefractionDecoupleSampleGeneration,
+			RayCone,
+			bRefractionEnableSkyLightContribution,
+			PathVertexRadiance);
+		LastRoughness = Payload.Roughness;
+
+		//
+		// Handle no hit condition
+		//
+		if (Payload.IsMiss())
+		{
+			if (bHasScattered && bAllowSkySampling)
+			{
+				// We only sample the sky if the ray has scattered (i.e. been refracted or reflected). Otherwise we are going ot use the regular scene color.
+				PathRadiance += PathThroughput * GetSkyRadiance(Ray.Direction, LastRoughness);
+			}
+			break;
+		}
+		float3 HitPoint = Ray.Origin + Ray.Direction * Payload.HitT;
+		float NextMaxRayDistance = Ray.TMax - Payload.HitT;
+
+		//
+		// Handle surface lighting
+		//
+
+		float vertexRadianceWeight = Payload.Opacity;	// Opacity as coverage. This works for RAY_TRACING_BLEND_MODE_OPAQUE and RAY_TRACING_BLEND_MODE_TRANSLUCENT.
+		// It is also needed for RAY_TRACING_BLEND_MODE_ADDITIVE and  RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE: radiance continbution is alway weighted by coverage.
+		// #dxr_todo: I have not been able to setup a material using RAY_TRACING_BLEND_MODE_MODULATE.
+
+		//
+		// Apply fog on primary ray (the first translucent surface encountered) if needed.
+		// We can only handle primary rays because height and volumetric fog are only setup for the camera point of view.
+		// 
+		float4 ViewFogInScatteringAndTransmittance = float4(0.0, 0.0, 0.0, 1.0);
+		if (HeightFog > 0)
+		{
+			float3 WorldPositionRelativeToCameraPrimaryRay = PrimaryView.TranslatedWorldCameraOrigin - (Ray.Origin + Ray.Direction * Payload.HitT);
+
+			// We always samplg the height fog to make sure all the intersected transparent surface get affected by it.
+			// We cannot only do it for the primary ray otherwise refelction on secondary surface will look too bright. 
+			// For that sample the fog for the hit position and view assuming no refraction. This seems acceptable.
+			ViewFogInScatteringAndTransmittance = CalculateHeightFog(WorldPositionRelativeToCameraPrimaryRay);
+
+			if (FogStruct.ApplyVolumetricFog > 0
+				&& !bHasScattered) // We can only sample the volumetric fog contribution (always camera aligned) if the ray is not scattered around
+			{
+				float4 ClipPos = mul(float4(HitPoint, 1.0f), PrimaryView.TranslatedWorldToClip); // HitPoint is translated world space
+				float3 VolumeUV = ComputeVolumeUVFromNDC(ClipPos);
+
+				ViewFogInScatteringAndTransmittance = CombineVolumetricFog(ViewFogInScatteringAndTransmittance, VolumeUV, 0/*EyeIndex*/, GBufferData.Depth);
+			}
+		}
+
+		PathRadiance += PathThroughput * vertexRadianceWeight * (PathVertexRadiance * ViewFogInScatteringAndTransmittance.a + ViewFogInScatteringAndTransmittance.rgb);
+
+		AccumulatedOpacity += vertexRadianceWeight;
+
+		//
+		// Handle reflection tracing with a ray per vertex of the refraction path
+		//
+
+		// Shorten the rays on rougher surfaces between user-provided min and max ray lengths.
+		// When a shortened ray misses the geometry, we fall back to local reflection capture sampling (similar to SSR).
+		const float LocalMaxRayDistance = bAllowSkySampling ? 1e27f : lerp(TranslucencyMaxRayDistance, TranslucencyMinRayDistance, Payload.Roughness);
+		if (Payload.Roughness < TranslucencyMaxRoughness)
+		{
+			// Trace reflection ray 
+			float2 RandSample = RandomSequence_GenerateSample2D(RandSequence);
+
+			FRayDesc ReflectionRay;
+			ReflectionRay.TMin = 0.01;
+			ReflectionRay.TMax = LocalMaxRayDistance;
+			ReflectionRay.Origin = HitPoint;
+
+			ModifyGGXAnisotropicNormalRoughness(Payload.WorldTangent, Payload.Anisotropy, Payload.Roughness, Payload.WorldNormal, Ray.Direction);
+
+			ReflectionRay.Direction = GenerateReflectedRayDirection(Ray.Direction, Payload.WorldNormal, Payload.Roughness, RandSample);
+			ApplyPositionBias(ReflectionRay, Payload.WorldNormal, MaxNormalBias);
+
+			const uint ReflectionRayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+			const uint ReflectionInstanceInclusionMask = RAY_TRACING_MASK_ALL;
+			const bool bReflectionRayTraceSkyLightContribution = false;
+			const bool bReflectionDecoupleSampleGeneration = true;
+			const bool bReflectionEnableSkyLightContribution = bSkyLightAffectReflection;
+			float3 ReflectionRadiance = float3(0, 0, 0);
+
+			FMaterialClosestHitPayload ReflectionPayload = TraceRayAndAccumulateResults(
+				ReflectionRay,
+				TLAS,
+				ReflectionRayFlags,
+				ReflectionInstanceInclusionMask,
+				RandSequence,
+				PixelCoord,
+				MaxNormalBias,
+				ReflectedShadowsType,
+				ShouldDoDirectLighting,
+				ShouldDoEmissiveAndIndirectLighting,
+				bReflectionRayTraceSkyLightContribution,
+				bReflectionDecoupleSampleGeneration,
+				RayCone,
+				bReflectionEnableSkyLightContribution,
+				ReflectionRadiance);
+
+			// If we have not hit anything, sample the distance sky radiance.
+			if (ReflectionPayload.IsMiss())
+			{
+				ReflectionRadiance = GetSkyRadiance(ReflectionRay.Direction, LastRoughness);
+			}
+
+			// #dxr_todo: reflection IOR and clear coat also? This only handles default material.
+			float NoV = saturate(dot(-Ray.Direction, Payload.WorldNormal));
+			const float3 ReflectionThroughput = EnvBRDF(Payload.SpecularColor, Payload.Roughness, NoV);
+
+			// For reflections, we can only sample the height fog (volumetric fog is only for primary rays)
+			if (HeightFog > 0)
+			{
+				float3 OriginToCollider = ReflectionPayload.TranslatedWorldPos - ReflectionRay.Origin;
+				float4 ReflectionFogInscatteringAndTransmittance = CalculateHeightFog(OriginToCollider);
+				ReflectionRadiance = ReflectionRadiance * ReflectionFogInscatteringAndTransmittance.a + ReflectionFogInscatteringAndTransmittance.rgb;
+			}
+
+			PathRadiance += PathThroughput * vertexRadianceWeight * ViewFogInScatteringAndTransmittance.a * ReflectionThroughput * ReflectionRadiance;
+		}
+
+		{
+			float3 VolumeLighting = 0;
+
+			const float3 TranslucencyEvaluationTranslatedPosition = HitPoint;
+
+#if PROJECT_SUPPORTS_LUMEN
+			if (IsLumenTranslucencyGIEnabled() && ShouldDoEmissiveAndIndirectLighting)
+			{
+				// Lumen Dynamic GI + shadowed Skylight
+				FLWCVector3 TranslucencyEvaluationPosition = LWCSubtract(TranslucencyEvaluationTranslatedPosition, PrimaryView.PreViewTranslation);
+
+				FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(TranslucencyEvaluationPosition, PrimaryView.WorldToClip, true);
+
+				// Diffuse convolution
+				FTwoBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH(Payload.WorldNormal, 1);
+				VolumeLighting.rgb += max(half3(0, 0, 0), DotSH(TranslucencyGISH, DiffuseTransferSH)) / PI;
+
+				const bool bEvaluateBackface = GetShadingModelRequiresBackfaceLighting(Payload.ShadingModelID);
+				if (bEvaluateBackface)
+				{
+					FTwoBandSHVector SubsurfaceTransferSH = CalcDiffuseTransferSH(-Payload.WorldNormal, 1);
+					VolumeLighting.rgb += max(half3(0, 0, 0), DotSH(TranslucencyGISH, SubsurfaceTransferSH)) / PI;
+				}
+			}
+#endif
+			else
+			{
+				// noop => if lumen is not enabled: bRefractionEnableSkyLightContribution == true
+			}
+
+			PathRadiance += PathThroughput * vertexRadianceWeight * VolumeLighting * Payload.DiffuseColor;
+		}
+
+		// Update the refraction/transparency path transmittance and check stop condition
+		switch (Payload.BlendingMode)
+		{
+			case RAY_TRACING_BLEND_MODE_ADDITIVE:
+			{
+				break;
+			}
+			case RAY_TRACING_BLEND_MODE_MODULATE:
+			{
+				PathThroughput *= Payload.Radiance;
+				break;
+			}
+			case RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE:
+			case RAY_TRACING_BLEND_MODE_TRANSLUCENT:
+			{
+				PathThroughput *= 1.0 - Payload.Opacity;
+				break;
+			}
+			default:
+			{
+				PathThroughput *= 0.0;
+				break;
+			}
+		}
+		
+		if (all(PathThroughput <= 0.0))
+		{
+			break;
+		}
+
+		//
+		// Handle refraction through the surface.
+		//
+
+		// Set refraction ray for next iteration
+		float3 RefractedDirection = Ray.Direction;
+		if (Payload.ShadingModelID == SHADINGMODELID_THIN_TRANSLUCENT)
+		{
+			const float3 N = Payload.WorldNormal;
+			const float3 V = -Ray.Direction;
+			const float NoV = dot(N, V);
+
+			const float F0 = F0RGBToF0(Payload.SpecularColor);
+			const float F = FresnelReflectance(NoV, 1.0, F0);
+			const float3 Transmittance = Payload.CustomData.xyz;
+			const float PathLength = rcp(saturate(abs(NoV) + 1e-5));
+			PathThroughput *= pow(Transmittance, PathLength) * Pow2(1 - F);
+		}
+		else if (TranslucencyRefraction && Payload.BlendingMode == RAY_TRACING_BLEND_MODE_TRANSLUCENT && Payload.Ior > 0.0)
+		{
+			float Ior = Payload.Ior;
+			bHasScattered |= Ior > 1.0 ? true : false;
+
+			bool bIsEntering = Payload.IsFrontFace();
+
+			float Eta = bIsEntering ? Ior : rcp(Ior);
+
+			float3 N = Payload.WorldNormal;
+			float3 V = -Ray.Direction;
+			float NoV = dot(N, V);
+
+			// Hack to allow one-sided materials to be modeled as dielectrics
+			if (NoV < 0.0)
+			{
+				NoV = -NoV;
+				N = -N;
+				bIsEntering = true;
+			}
+
+			float F0 = F0RGBToF0(Payload.SpecularColor);
+
+
+			float F = 0.0; // fresnel
+			SampleRefraction(-V, N, Eta, 1.0 /* always sample refraction or TIR */, RefractedDirection, F);
+			PathThroughput *= F;
+
+			// ray has bent, so it may need to go arbitrarily far
+			NextMaxRayDistance = LocalMaxRayDistance;
+		}
+
+
+		//
+		// Setup refracted ray to be traced
+		//
+
+		Ray.Origin = HitPoint;
+		Ray.TMin = 0.01;
+		Ray.TMax = NextMaxRayDistance;
+		Ray.Direction = RefractedDirection;
+		float SurfaceCurvature = 0.0f; /* #todo_dxr assume no curvature */
+		RayCone = PropagateRayCone(RayCone, SurfaceCurvature, Depth);
+	}
+
+	if (!bHasScattered)
+	{
+		// Use the scene radiance for ray that has not been scattered/refracted (no surface or IORin=IORout). Still apply the throughtput in case we have traversed surfaces with opacity>0.
+		PathRadiance += PathThroughput * SceneColorTexture.SampleLevel(GlobalPointClampedSampler, UV, 0).xyz / View.PreExposure;
+	}
+
+	float FinalAlpha = 0.0f;
+	if (AccumulatedOpacity > 0.0f)
+	{
+		FinalAlpha = saturate(1.0 - AccumulatedOpacity);
+	}
+	else
+	{
+		FinalAlpha = SceneColorTexture.SampleLevel(GlobalPointClampedSampler, UV, 0).w;
+	}
+
+	PathRadiance.rgb *= View.PreExposure;
+
+	PathRadiance = ClampToHalfFloatRange(PathRadiance);
+	ColorOutput[DispatchThreadId] = float4(PathRadiance, FinalAlpha);
+	RayHitDistanceOutput[DispatchThreadId] = HitDistance;
+#endif // !STRATA_ENABLED
+}

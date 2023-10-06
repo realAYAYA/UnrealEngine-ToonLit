@@ -1,0 +1,13 @@
+Availability:NoPublish
+Title:UBehaviorTree
+Crumbs:
+Description:Overview of the BehaviorTree class
+
+[EXCERPT:UBehaviorTree]
+
+Behavior Tree
+
+[VAR:ToolTipFullLink]
+InteractiveExperiences/ArtificialIntelligence/BehaviorTrees
+[/VAR]
+[/EXCERPT:UBehaviorTree]

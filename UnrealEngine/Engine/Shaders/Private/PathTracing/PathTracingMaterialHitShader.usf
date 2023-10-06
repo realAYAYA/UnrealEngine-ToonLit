@@ -1,0 +1,1358 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define PATH_TRACING 1
+#define ENABLE_SKY_LIGHT 1      
+#define NEEDS_LIGHTMAP_COORDINATE 0
+
+// This define controls if we use the "g" factor from the SSS profile or not. This is disabled by default because
+// we can get a better match to how Metahumans are currently dialed with an isotropic phase function. It may be possible to revisit this
+// if we get a better alignment between raster SSS techniques and the PT random walk.
+#define USE_SSS_PROFILE_ANISOTROPY 0
+
+#ifdef NEEDS_VERTEX_FACTORY_INTERPOLATION
+#undef NEEDS_VERTEX_FACTORY_INTERPOLATION
+#endif
+// Needed for VertexFactoryInterpolate to interpolate attributes from vertices to hit point
+#define NEEDS_VERTEX_FACTORY_INTERPOLATION 1
+
+// This should be good enough for path tracing and avoids having to bind an extra buffer
+#define EYE_ADAPTATION_PREV_FRAME_EXPOSURE 1
+
+// Ensure that SSS albedo comes through in the material
+#define STRATA_SSS_MATERIAL_OVERRIDE 0
+
+// Ensure specular profile and glints are supported
+#define STRATA_COMPLEXSPECIALPATH 1
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+#include "/Engine/Private/RayTracing/RayTracingHitGroupCommon.ush"
+#include "/Engine/Private/PathTracing/PathTracingShaderUtils.ush"
+#include "/Engine/Generated/Material.ush"   
+#include "/Engine/Generated/VertexFactory.ush"
+
+#include "/Engine/Private/RayTracing/RayTracingCalcInterpolants.ush"
+#include "/Engine/Private/ShadingCommon.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+#include "/Engine/Private/SubsurfaceProfileCommon.ush"
+#include "/Engine/Private/BurleyNormalizedSSSCommon.ush"
+#include "/Engine/Private/PathTracing/PathTracingCommon.ush"
+#include "/Engine/Private/PathTracing/Material/PathTracingFresnel.ush"
+#if STRATA_ENABLED
+#define MATERIAL_STRATA_OPAQUE_PRECOMPUTED_LIGHTING 0
+#include "/Engine/Private/Strata/StrataExport.ush"
+#endif
+
+float AdjustMaterialRoughness(float Roughness, float PathRoughness)
+{
+	// Modify the payload roughness to minimize difficult caustics
+	// This is inspired by a trick used in the Arnold renderer:
+	//   https://cgg.mff.cuni.cz/~jaroslav/gicourse2010/giai2010-02-marcos_fajardo-slides.pdf (slide 39)
+	//   https://www.arnoldrenderer.com/research/Arnold_TOG2018.pdf (section 4.2)
+	// NOTE: If approximate caustics are disabled, the path roughness passed in here will be 0.0 which effectively turns off this optimization
+	return max(Roughness, PathRoughness);
+}
+
+#if REFRACTION_USE_INDEX_OF_REFRACTION
+
+#if STRATA_ENABLED
+
+float GetRefractionIor(FPixelMaterialInputs PixelMaterialInputs, float3 F0)
+{
+#if REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT
+	float Ior = GetMaterialRefractionIOR(GetMaterialRefraction(PixelMaterialInputs));
+#else
+	float Ior = DielectricF0RGBToIor(F0);
+#endif
+	return Ior;
+}
+
+#else // STRATA_ENABLED
+
+float GetRefractionIor(FPixelMaterialInputs PixelMaterialInputs)
+{
+#if REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT
+	float Ior = GetMaterialRefractionIOR(GetMaterialRefraction(PixelMaterialInputs));
+#else
+	float3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+	float  Metallic = GetMaterialMetallic(PixelMaterialInputs);
+	float  Specular = GetMaterialSpecular(PixelMaterialInputs);
+	float3 F0 = ComputeF0(Specular, BaseColor, Metallic);
+	float Ior = DielectricF0RGBToIor(F0);
+#endif
+	return Ior;
+}
+
+#endif // STRATA_ENABLED
+
+
+float3 FakeCausticsPathFactor(float Roughness, float PathRoughness)
+{
+	// The heuristic used here is inspired by the following presentations:
+	//   - Kulla & Conty: Revisiting Physically Based Shading at Imageworks
+	//       https://blog.selfshadow.com/publications/s2017-shading-course/imageworks/s2017_pbs_imageworks_slides_v2.pdf
+	//   - Colin Barré-Brisebois - Pica Pica & Nvidia Turing
+	//       https://www.ea.com/seed/news/siggraph-2018-picapica-nv-turing
+
+	// NOTE: this returns 0.0 for PathRoughness <= Roughness which accounts for when we are not using ApproximateCaustics
+	return (1 - Roughness * Roughness) * saturate(PathRoughness - Roughness);
+}
+
+
+float FakeCaustics(float F0, float Ior, float NoV)
+{
+	// fake caustics for solid glass, approximates the effect of the boundaries' fresnel
+	float Fr = FresnelReflectance(abs(NoV), Ior, F0);
+	return Pow2(1 - Fr);
+}
+
+float3 ComputeOpticalDepthForHit(float3 LocalSigmaT, bool bIsFrontFace)
+{
+	// Does the material have any kind of volumetric absorption to apply?
+	// Now track the optical thickness so that we can account for Beer's law along the shadow ray
+	// TODO: to support lights inside glass we would need to track an extra offset, but this is hopefully an uncommon scenario
+	// TODO2: SingleLayerWater needs something similar, but it generally is setup with opaque or masked blend mode and water geometry does not cast shadows ...
+	float Distance = RayTCurrent();
+
+	// Front Face: remove contribution from the ray origin to the current hit (assuming the backside will be hit)
+	// Back Face:  add contribution from ray origin to current hit (backside) - excess portion not covered by the ray will be removed by the front face hit
+	Distance *= bIsFrontFace ? -1.0 : +1.0;
+
+	return LocalSigmaT * Distance;
+}
+
+
+#endif // REFRACTION_USE_INDEX_OF_REFRACTION
+
+float3 DecodeSSSProfileRadius(uint ProfileId, float3 DiffuseColor, float Opacity)
+{
+	// Burley parameterization
+	float3 SurfaceAlbedo = View.SSProfilesTexture.Load(int3(BSSS_SURFACEALBEDO_OFFSET, ProfileId, 0)).xyz;
+	float3 DiffuseMeanFreePath = DecodeDiffuseMeanFreePath(View.SSProfilesTexture.Load(int3(BSSS_DMFP_OFFSET, ProfileId, 0))).xyz;
+	float WorldUnitScale = DecodeWorldUnitScale(View.SSProfilesTexture.Load(int3(SSSS_TINT_SCALE_OFFSET, ProfileId, 0)).a) * BURLEY_CM_2_MM;
+
+	// Opacity acts as a per-pixel radius multiplier
+	// NOTE: this seems backwards? Opacity=0 acts like default-lit while Opacity=1 acts like SSS?
+	// NOTE2: Confirm if this interpretation of opacity is correct ...
+	float3 SSSRadius = GetMFPFromDMFPApprox(SurfaceAlbedo, DiffuseColor, Opacity * WorldUnitScale * DiffuseMeanFreePath);
+
+	return SSSRadius * BURLEY_MM_2_CM;
+}
+
+float DecodeSSSProfileScatteringDistribution(uint ProfileId)
+{
+	float EncodedScatteringDistribution = View.SSProfilesTexture.Load(int3(SSSS_TRANSMISSION_OFFSET, ProfileId, 0)).z;
+	return DecodeScatteringDistribution(EncodedScatteringDistribution);
+}
+
+#if STRATA_ENABLED
+
+float3 GetSimpleVolumeDiffuseColor(float3 DiffuseColor, float3 MeanFreePath)
+{
+	// See reference in StrataEvaluation.ush
+	// STRATA_TODO: In the case of thin materials, we should also include a backscattering diffuse portion
+	FParticipatingMedia PM = StrataSlabCreateParticipatingMedia(DiffuseColor, MeanFreePath);
+	const float DiffuseToVolumeBlend = StrataSlabDiffuseToVolumeBlend(PM);
+	const float3 SlabDirectionalAlbedo = IsotropicMediumSlabEnvDirectionalAlbedo(PM);
+	return lerp(DiffuseColor, SlabDirectionalAlbedo, DiffuseToVolumeBlend);
+}
+
+#endif
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(PathTracingMaterialCHS,
+	FPackedPathTracingPayload, PackedPayload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	PackedPayload.HitT = RayTCurrent();
+#if MATERIALBLENDING_SOLID || MATERIALBLENDING_ALPHAHOLDOUT || (MATERIALBLENDING_MASKED && !MATERIAL_DITHER_OPACITY_MASK) || STRATA_OPAQUE_MATERIAL
+	if (PackedPayload.IsVisibilityRay())
+	{
+		// Shadow ray case -- all these blend modes get treated as fully opaque, so exit early.
+		// In the case of Masked materials without dithered opacity, the masking logic was already handled by AHS.
+		PackedPayload.SetRayThroughput(0.0);
+		return;
+	}
+#endif
+#if MATERIALBLENDING_ADDITIVE
+	if (PackedPayload.IsVisibilityRay())
+	{
+		// should be fully invisible to shadow rays
+		// this case should be caught by making the mesh invisible to shadows, but it doesn't cost too much to have this extra check here just in case that fails
+		return;
+	}
+#endif
+	ResolvedView = ResolveView();
+
+	const float3 TranslatedWorldPosition = TranslatedWorldRayOrigin() + RayTCurrent() * WorldRayDirection();
+	const float4 SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+
+	CurrentPayloadInputFlags = PackedPayload.GetFlags();
+
+#if USE_DBUFFER && MATERIAL_USES_DECAL_LOOKUP
+	CurrentPayloadDBufferA = PackedPayload.GetDBufferA();
+	CurrentPayloadDBufferB = PackedPayload.GetDBufferB();
+	CurrentPayloadDBufferC = PackedPayload.GetDBufferC();
+#endif
+
+#if VF_SUPPORTS_RAYTRACING_PREPARE_MATERIAL_PIXEL_PARAMETERS
+	// this is a newer codepath that is both more flexible and allows for more direct calculation compared to the other codepath
+	// TODO: implement such a method for all vertex factories
+	float3 GeoNormal = 0;
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(TranslatedWorldRayOrigin(), WorldRayDirection(), RayTCurrent(), PrimitiveIndex(), Attributes, HitKind(), GeoNormal);
+#else
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+	float3 GeoNormal = 0;
+	CalcInterpolants((FRayCone)0, Attributes, Interpolants, GeoNormal);
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+#endif
+
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	const bool bIsFrontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+	{
+		const float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		MaterialParameters.CameraVector = -WorldRayDirection();
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+#if STRATA_ENABLED
+
+#if MATERIAL_IS_STRATA
+	FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
+
+#if STRATA_OPTIMIZED_UNLIT
+	const float3 Transparency = saturate(StrataData.InlinedBSDF.Coverage + (1.0 - StrataData.InlinedBSDF.Coverage) * UNLIT_TRANSMITTANCE(StrataData.InlinedBSDF));
+#else
+	FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+	// STRATA_TODO: These should actually be initialized via the corresponding cvars. To do this properly would require binding FStrataSceneData in the path tracing shaders
+	// For now, simply match the default substrate settings
+	FStrataIntegrationSettings IntegrationSettings = InitStrataIntegrationSettings(
+		false /* bForceFullyRough */,
+		true  /* StrataStruct.bRoughDiffuse */,
+		-1    /* StrataStruct.PeelLayersAboveDepth */,
+		true  /* StrataStruct.bRoughnessTracking */
+	);
+	FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
+#if STRATA_BLENDING_COLOREDTRANSMITTANCEONLY
+	const uint BSDFCount = 0;
+#else
+	const uint BSDFCount = StrataPixelHeader.StrataTree.BSDFCount;
+#endif
+	float TotalCoverage = 1;
+	float3 TotalTransmittancePreCoverage = 0;
+	const float3 V_World = MaterialParameters.CameraVector;
+	StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, StrataData, V_World, IntegrationSettings, TotalCoverage, TotalTransmittancePreCoverage);
+#if REFRACTION_USE_INDEX_OF_REFRACTION
+	// transparency is only used for coverage, transmittance happens through refraction (except for shadows potentially, which is handled below)
+	float3 Transparency = 1 - TotalCoverage; 
+#else
+	// transparency is used for both coverage and transmittance
+	// STRATA_TODO: Thin case does not seem to be properly handled here, so the TotalTransmittancePreCoverage is recomputed later
+	float3 Transparency = saturate((1 - TotalCoverage) + TotalCoverage * TotalTransmittancePreCoverage);
+#endif // REFRACTION_USE_INDEX_OF_REFRACTION
+#endif // STRATA_OPTIMIZED_UNLIT
+
+#else // MATERIAL_IS_STRATA
+	// This only happens for invalid materials
+    const float3 Transparency = 0;
+#endif
+
+#endif // STRATA_ENABLED
+
+	// the following blend modes need to process shadows after having executed the material
+#if MATERIALBLENDING_MODULATE || (MATERIALBLENDING_MASKED && MATERIAL_DITHER_OPACITY_MASK) || MATERIALBLENDING_ALPHACOMPOSITE || MATERIALBLENDING_TRANSLUCENT
+	if (PackedPayload.IsVisibilityRay())
+	{
+
+#if STRATA_ENABLED
+
+#if MATERIAL_IS_STRATA && !STRATA_OPTIMIZED_UNLIT
+		// We already figured out how much Transparency there is above
+		// So only do extra logic for refraction and thin refraction ases
+#if MATERIALBLENDING_TRANSLUCENT && (REFRACTION_USE_INDEX_OF_REFRACTION || MATERIAL_ISTHINSURFACE)
+
+		// STRATA_TODO: refraction handling
+		float PathRoughness = PackedPayload.GetPathRoughness();
+
+		// STRATA_TODO: This does not match the logic in DistortAccumulatePS.usf
+		//  The idea here is to take F0 from the bottom refraction layers since this matches most closely what the refraction logic below does (only bottom slabs can refract).
+		//  The distortion approximation on the raster side instead averages F0 across layers which may produce different results.
+		//  In both cases - we get a potentially strange answer when there is more than one bottom slab that produces refraction
+
+		// STRATA_TODO: How should we handle MFP when there are multiple bottom slabs?
+		float F0 = 0.0f;
+		float3 RoughnessData = 0.0;
+		float NoV = 0.0f;
+		float3 LocalSigmaT = 0.0f;
+		STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
+		for (int BSDFIdx = 0; BSDFIdx < StrataPixelHeader.StrataTree.BSDFCount; ++BSDFIdx)
+		{
+#define BSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
+			if (BSDF.bIsBottom)
+			{
+				// STRATA_TODO: Also consider the MFP to see how much this slab is contributing to refraction ....
+				F0 = F0RGBToF0(StrataGetBSDFSpecularF0(BSDF));
+				RoughnessData.x = SLAB_ROUGHNESS(BSDF);
+				if (BSDF_GETHASHAZINESS(BSDF))
+				{
+					// NOTE: It should be safe to assume that the clearcoat case cannot happen here as it is only triggered by legacy clearcoat materials which are unlikely to have refraction
+					const FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+					RoughnessData.y = Haziness.Roughness;
+					RoughnessData.z = Haziness.Weight;
+				}
+
+				float3 N = StrataPixelHeader.SharedLocalBases.Normals[BSDF_GETSHAREDLOCALBASISID(BSDF)];
+				LocalSigmaT = rcp(max(SLAB_SSSMFP(BSDF), 0.0001));
+				NoV = dot(N, V_World);
+				break;
+			}
+#undef BSDF
+		}
+
+
+#if REFRACTION_USE_INDEX_OF_REFRACTION
+		float Ior = GetRefractionIor(PixelMaterialInputs, F0);
+#else
+		float Ior = 0.0;
+#endif
+
+#if MATERIAL_ISTHINSURFACE
+		// Thin Glass Fake Caustics
+
+		// STRATA_TODO: Revisit this -- TotalTransmittancePreCoverage should probably account for this in the thin case
+		float3 Transmission = exp(-LocalSigmaT * STRATA_SIMPLEVOLUME_THICKNESS_CM);
+		float3 Tr = ComputeThinSlabWeights(Transmission, NoV, Ior, F0).Transmitted;
+#else
+		HLSL_STATIC_ASSERT(REFRACTION_USE_INDEX_OF_REFRACTION == 1, "Expect refraction to be true here");
+		// Solid Glass Fake Caustics
+		float Tr = FakeCaustics(F0, Ior, NoV);
+		// Account for transmission 
+		PackedPayload.SetTau(PackedPayload.GetTau() + ComputeOpticalDepthForHit(LocalSigmaT, bIsFrontFace));
+#endif
+
+		// If material is doing refraction, apply an extra factor to account for ApproximateCaustics
+#if REFRACTION_USE_INDEX_OF_REFRACTION
+		if (Ior > 0.0)
+		{
+			Tr *= lerp(FakeCausticsPathFactor(RoughnessData.x, PathRoughness),
+					   FakeCausticsPathFactor(RoughnessData.y, PathRoughness), RoughnessData.z);
+		}
+#endif
+		Transparency += TotalCoverage * Tr;
+
+		// STRATA_TODO: Is this sanity check necessary?
+		Transparency = saturate(Transparency);
+#endif // MATERIALBLENDING_TRANSLUCENT && (REFRACTION_USE_INDEX_OF_REFRACTION || MATERIAL_ISTHINSURFACE)
+
+#endif // MATERIAL_IS_STRATA && !STRATA_OPTIMIZED_UNLIT
+
+#else // STRATA_ENABLED
+
+#if MATERIALBLENDING_MODULATE
+		const float3 Transparency = GetMaterialEmissive(PixelMaterialInputs);
+#elif MATERIALBLENDING_ALPHACOMPOSITE
+		const float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+		const float Transparency = 1 - Opacity;
+#elif MATERIALBLENDING_MASKED && MATERIAL_DITHER_OPACITY_MASK
+		// See MATERIAL_DITHER_OPACITY_MASK comment below
+		const float Opacity = saturate(GetMaterialMaskInputRaw(PixelMaterialInputs));
+		const float Transparency = 1 - Opacity;
+#elif MATERIALBLENDING_TRANSLUCENT
+		const float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+#if MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT
+		// We can only get colored shadows for thin translucent (solid translucent case happens via absorption only)
+		float3 Transparency = 1 - Opacity;
+#else
+		float Transparency = 1 - Opacity;
+#endif
+		uint ShadingModelID = GetMaterialShadingModel(PixelMaterialInputs);
+
+#if MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT
+		if (ShadingModelID == SHADINGMODELID_THIN_TRANSLUCENT)
+		{
+			float3 Transmission = GetThinTranslucentMaterialOutput0(MaterialParameters);
+#if REFRACTION_USE_INDEX_OF_REFRACTION
+			float Ior = GetRefractionIor(PixelMaterialInputs);
+#else
+			float Ior = 0.0;
+#endif
+			float3 V = WorldRayDirection();
+			float3 N = normalize(MaterialParameters.WorldNormal);
+			float VoN = abs(dot(V, N));
+			if (Opacity < 1.0)
+			{
+				float PathRoughness = PackedPayload.GetPathRoughness();
+				float Roughness = GetMaterialRoughness(PixelMaterialInputs);
+				if (Ior > 0.0 && PathRoughness <= Roughness)
+				{
+					// not using fast caustic approximation - treat as opaque
+					PackedPayload.SetRayThroughput(0.0);
+					return;
+				}
+				// compute transmission through the slab (fresnel + absorption)
+				float3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+				float  Metallic = GetMaterialMetallic(PixelMaterialInputs);
+				float  Specular = GetMaterialSpecular(PixelMaterialInputs);
+				float  F0 = F0RGBToF0(ComputeF0(Specular, BaseColor, Metallic));
+				Transparency *= ComputeThinSlabWeights(Transmission, VoN, Ior, F0).Transmitted;
+
+				// fake caustic approximation (see comments below)
+#if REFRACTION_USE_INDEX_OF_REFRACTION
+				if (Ior > 0.0)
+				{
+					Transparency *= FakeCausticsPathFactor(Roughness, PathRoughness);
+				}
+#endif
+			}
+		}
+		else
+#endif // MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT
+#if MATERIAL_SHADINGMODEL_DEFAULT_LIT && REFRACTION_USE_INDEX_OF_REFRACTION
+		if (ShadingModelID == SHADINGMODELID_DEFAULT_LIT)
+		{
+			// Is refraction enabled?
+			float Ior = GetRefractionIor(PixelMaterialInputs);
+			if (Transparency > 0 && Ior > 0.0)
+			{
+				// current hit has some refraction
+				float PathRoughness = PackedPayload.GetPathRoughness();
+				float Roughness = GetMaterialRoughness(PixelMaterialInputs);
+
+				float3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+				float  Metallic = GetMaterialMetallic(PixelMaterialInputs);
+				float  Specular = GetMaterialSpecular(PixelMaterialInputs);
+				float  F0 = F0RGBToF0(ComputeF0(Specular, BaseColor, Metallic));
+
+				float3 N = normalize(MaterialParameters.WorldNormal);
+				float NoV = dot(WorldRayDirection(), N);
+
+				Transparency *= FakeCaustics(F0, Ior, NoV) * FakeCausticsPathFactor(Roughness, PathRoughness);
+
+#if HAVE_GetAbsorptionMediumMaterialOutput0
+				// Does the material have any kind of volumetric absorption to apply?
+				float3 TransmittanceColor = GetAbsorptionMediumMaterialOutput0(MaterialParameters);
+				float3 LocalSigmaT = PathTracingGlassTransmittanceToExtinction(TransmittanceColor);
+				
+				PackedPayload.SetTau(PackedPayload.GetTau() + ComputeOpticalDepthForHit(LocalSigmaT, bIsFrontFace));
+#endif // HAVE_GetAbsorptionMediumMaterialOutput0
+			}
+		}
+		else
+#endif // MATERIAL_SHADINGMODEL_DEFAULT_LIT
+		{
+			// base case for shadingmodel if/else
+		}
+#else // MATERIALBLENDING_*
+#error Unhandled blending mode!
+#endif
+
+#endif // STRATA_ENABLED
+
+		// Update the ray throughput (it is packed simply into the payload since we don't need to carry any other information across hits)
+		float3 RayThroughput = PackedPayload.GetRayThroughput();
+		RayThroughput *= Transparency;
+		PackedPayload.SetRayThroughput(RayThroughput);
+		return;
+	}
+#endif
+
+	FPathTracingPayload Payload = (FPathTracingPayload)0;
+
+#if !STRATA_ENABLED
+	/**
+	 * Set common material attributes for both full and simplified materials
+	 **/
+	Payload.ShadingModelID = GetMaterialShadingModel(PixelMaterialInputs);
+
+#if MATERIALBLENDING_ALPHACOMPOSITE
+	Payload.BSDFOpacity = 1.0;
+	Payload.TransparencyColor = 1.0 - GetMaterialOpacity(PixelMaterialInputs);
+#elif MATERIALBLENDING_ALPHAHOLDOUT
+	Payload.BSDFOpacity = GetMaterialOpacity(PixelMaterialInputs);
+	Payload.TransparencyColor = 1.0 - GetMaterialOpacity(PixelMaterialInputs);
+	Payload.SetHoldout();
+	HLSL_STATIC_ASSERT(MATERIAL_SHADINGMODEL_UNLIT == 1, "Alpha holdout blend mode requires unlit shading model");
+	Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+#elif MATERIALBLENDING_TRANSLUCENT
+	Payload.BSDFOpacity = GetMaterialOpacity(PixelMaterialInputs);
+	Payload.TransparencyColor = 1.0 - Payload.BSDFOpacity;
+#elif MATERIALBLENDING_ADDITIVE
+	Payload.BSDFOpacity = GetMaterialOpacity(PixelMaterialInputs);
+	Payload.TransparencyColor = 1.0;
+#elif MATERIALBLENDING_MODULATE
+	Payload.BSDFOpacity = 0.0;
+	Payload.TransparencyColor = GetMaterialEmissive(PixelMaterialInputs);
+	HLSL_STATIC_ASSERT(MATERIAL_SHADINGMODEL_UNLIT == 1, "Modulate blend mode requires unlit shading model");
+	Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+#elif MATERIALBLENDING_MASKED && MATERIAL_DITHER_OPACITY_MASK
+	// dithering emulates real transparency, so switch to translucent
+	// NOTE: the raster path technically takes into account the opacity mask clip value, so the effective transparency should be:
+	//        saturate(MaskRaw - ClipValue + 0.5)
+	// (See derivation in DitheredOpacityMaskToOpacity)
+	// However this behavior is surprising to most users and does not exactly match the rasterizer anyway due to how the realtime AA
+	// code performs blending.
+	// Since the goal of dithered opacity is to emulate ordinary transparency, just use the mask input as opacity directly and
+	// ignore the configured clip value.
+	Payload.BSDFOpacity = saturate(GetMaterialMaskInputRaw(PixelMaterialInputs));
+	Payload.TransparencyColor = 1.0 - Payload.BSDFOpacity;
+#elif MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED
+	Payload.BSDFOpacity = 1.0;
+	Payload.TransparencyColor = 0.0;
+#else
+#error Unknown material blending mode
+#endif
+
+#endif //  !STRATA_ENABLED
+
+	// fetch primitive flags only once
+	// TODO: would be nice to keep this inside MaterialParameters as it is also needed there as well
+	const uint PrimitiveFlags = GetPrimitiveData(MaterialParameters.PrimitiveId).Flags;
+
+	Payload.PrimitiveLightingChannelMask = GetPrimitive_LightingChannelMask_FromFlags(PrimitiveFlags);
+
+	Payload.HitT = RayTCurrent();
+	if (HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE)
+	{
+		Payload.SetFrontFace();
+	}
+
+#if MATERIAL_IS_SKY
+	if (!PackedPayload.IsCameraRay())
+	{
+		// avoid double counting what was captured by the skylight
+		// also avoid noise from hot spots (they can be properly
+		// importance sampled if a capturing skylight is added)
+		PackedPayload = PackPathTracingPayload(Payload);
+		return;
+	}
+#endif
+
+	float GeoNormalSign = MaterialParameters.TwoSidedSign;
+#if !VF_SUPPORTS_RAYTRACING_PREPARE_MATERIAL_PIXEL_PARAMETERS
+	// Because the geometric normal is computed directly in world space
+	// it doesn't reflect the sign flip from the object transform, so apply it here
+	GeoNormalSign *= GetPrimitive_DeterminantSign_FromFlags(PrimitiveFlags);
+#endif
+	Payload.WorldGeoNormal = GeoNormalSign * GeoNormal;
+	Payload.WorldSmoothNormal = MaterialParameters.TwoSidedSign * TransformTangentNormalToWorld(MaterialParameters.TangentToWorld, float3(0, 0, 1));
+	Payload.WorldSmoothNormal = AdjustShadingNormal(Payload.WorldSmoothNormal, Payload.WorldGeoNormal, WorldRayDirection());
+
+
+#if STRATA_ENABLED
+	// unless proven otherwise, we are a basic unlit material
+	Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+
+#if MATERIAL_IS_STRATA // This can become false if the material is invalid
+
+#if STRATA_OPTIMIZED_UNLIT
+	Payload.Radiance = BSDF_GETEMISSIVE(StrataData.InlinedBSDF);
+#if STRATA_OPAQUE_MATERIAL
+	Payload.BSDFOpacity = 1;
+	Payload.TransparencyColor = 0;
+#else
+	Payload.BSDFOpacity = StrataData.InlinedBSDF.Coverage;
+	Payload.TransparencyColor = UNLIT_TRANSMITTANCE(StrataData.InlinedBSDF);
+#endif
+
+#else // STRATA_OPTIMIZED_UNLIT
+
+	Payload.BSDFOpacity = 1;
+#if !STRATA_OPAQUE_MATERIAL
+	Payload.TransparencyColor = Transparency;
+#endif
+
+	if (BSDFCount > 0)
+	{
+		{
+#if HAIR_STRAND_MESH_FACTORY
+			Payload.WorldSmoothNormal = Payload.WorldGeoNormal;
+#else
+			// Nudge normal to avoid dark edges in bump
+			// Not that we must recompute tangent vector to keep the basis frame orthogonal
+			for (uint i = 0; i < StrataPixelHeader.SharedLocalBases.Count; ++i)
+			{
+				float3 N = normalize(StrataPixelHeader.SharedLocalBases.Normals[i]);
+#if !MATERIAL_TANGENTSPACENORMAL
+                // already flipped if the material was in tangent space, so add the flip if it wasn't
+				N *= MaterialParameters.TwoSidedSign;
+#endif
+				N = AdjustShadingNormal(N, Payload.WorldGeoNormal, WorldRayDirection());
+				StrataPixelHeader.SharedLocalBases.Normals[i]  = N;
+			}
+#endif
+		}
+
+#define BSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
+		int BSDFIdx = 0;
+
+		// Accumulate radiance across all BSDFs
+		Payload.Radiance = 0.0;
+		for (BSDFIdx = 0; BSDFIdx < BSDFCount; ++BSDFIdx)
+		{
+			Payload.Radiance += BSDF.LuminanceWeightV * BSDF_GETEMISSIVE(BSDF);
+		}
+
+
+#if STRATA_CLAMPED_BSDF_COUNT > 1
+		// The material might be using more than one slab -- insert code to stochastically pick one 
+		float SlabPdf = 1.0;
+		if (BSDFCount > 1)
+		{
+			float SlabCDF[STRATA_CLAMPED_BSDF_COUNT];
+			float SlabCDFSum = 0.0;
+			for (BSDFIdx = 0; BSDFIdx < BSDFCount; ++BSDFIdx)
+			{
+				float Pdf = 0.0; // The goal is to predict the weight of each BSDF
+				switch (BSDF_GETTYPE(BSDF))
+				{
+					case STRATA_BSDF_TYPE_SLAB:
+					{
+						const float3 WeightV = BSDF.LuminanceWeightV;
+						const float3 TransmittanceN = BSDF.TransmittanceAboveAlongN;
+						const float CoverageAboveAlongN = BSDF.CoverageAboveAlongN;
+						const float3 MaxLobeWeight = WeightV * lerp(1.0f, TransmittanceN, CoverageAboveAlongN); // largest value LobeWeight() could return
+
+						// accumulate visibility
+						Payload.Radiance += WeightV * BSDF_GETEMISSIVE(BSDF);
+
+						// Is the slab even visible at all?
+						if (any(MaxLobeWeight > 0.0))
+						{
+							const float3 N = StrataPixelHeader.SharedLocalBases.Normals[BSDF_GETSHAREDLOCALBASISID(BSDF)];
+							const float NoV = saturate(dot(N, V_World));
+
+							float3 DiffuseColor = SLAB_DIFFUSEALBEDO(BSDF);
+							float3 F0 = SLAB_F0(BSDF);
+							float3 F90 = SLAB_F90(BSDF) * F0RGBToMicroOcclusion(F0);
+
+							float Roughness0 = MakeRoughnessSafe(SLAB_ROUGHNESS(BSDF), PackedPayload.GetPathRoughness());
+							// STRATA_TODO: Support Fresnel82?
+							float3 Spec0E = ComputeGGXSpecEnergyTermsRGB(Roughness0, NoV, F0, F90).E;
+							float3 Spec1E = Spec0E;
+							float Roughness1 = Roughness0;
+							float SpecBlend = 0.0;
+							bool bUseClearCoat = false;
+							if (BSDF_GETHASHAZINESS(BSDF))
+							{
+								const FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+								SpecBlend = Haziness.Weight;
+								Roughness1 = MakeRoughnessSafe(Haziness.Roughness, PackedPayload.GetPathRoughness());
+								if (Haziness.bSimpleClearCoat)
+								{
+									Spec1E = ComputeGGXSpecEnergyTermsRGB(Roughness1, NoV, CLEAR_COAT_F0).E;
+									bUseClearCoat = true;
+								}
+								else
+								{
+									Spec1E = ComputeGGXSpecEnergyTermsRGB(Roughness1, NoV, F0, F90).E;
+								}
+							}
+							if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_SIMPLEVOLUME)
+							{
+								DiffuseColor = GetSimpleVolumeDiffuseColor(DiffuseColor, SLAB_SSSMFP(BSDF));
+							}
+
+							float FuzzAmount = 0.0;
+							float FuzzRoughness = 1.0;
+							float3 FuzzColor = 0.0;
+							if (BSDF_GETHASFUZZ(BSDF))
+							{
+								FuzzAmount = SLAB_FUZZ_AMOUNT(BSDF);
+								FuzzColor = SLAB_FUZZ_COLOR(BSDF);
+								FuzzRoughness = SLAB_FUZZ_ROUGHNESS(BSDF);
+								FuzzRoughness = MakeRoughnessSafe(FuzzRoughness, STRATA_MIN_FUZZ_ROUGHNESS);
+							}
+							
+							const float FuzzE = ComputeClothEnergyTermsA(FuzzRoughness, NoV).E;
+							const float FuzzAttenuation = 1.0 - FuzzAmount * FuzzE;
+							float DiffuseWeight = FuzzAttenuation;
+							float3 Spec0Albedo = FuzzAttenuation * Spec0E;
+							float3 Spec1Albedo = FuzzAttenuation * Spec1E;
+							if (bUseClearCoat)
+							{
+								// clearcoat slab
+								float CoatAttenuation = 1.0 - SpecBlend * Spec1E.x;
+								DiffuseWeight *= CoatAttenuation * (1.0 - Luminance(Spec0E));
+								Spec0Albedo *= CoatAttenuation;
+								Spec1Albedo *= SpecBlend;
+							}
+							else
+							{
+								// dual-specular slab
+								DiffuseWeight *= 1.0 - Luminance(lerp(Spec0E, Spec1E, SpecBlend));
+								Spec0Albedo *= 1.0 - SpecBlend;
+								Spec1Albedo *=       SpecBlend;
+							}
+							// STRATA_TODO: Need to account for glass case here for lobe selection ....
+							const float  FuzzAlbedo = FuzzAmount * FuzzE;
+							const float3 SlabAlbedo = MaxLobeWeight * (DiffuseWeight * DiffuseColor + Spec0Albedo + Spec1Albedo + FuzzAlbedo);
+							Pdf = LobeColorToWeight(SlabAlbedo);
+						}
+						break;
+					}
+					default:
+					{
+						// In theory none of the other slab types can be layered
+						break;
+					}
+				}
+				SlabCDFSum += Pdf;
+				SlabCDF[BSDFIdx] = SlabCDFSum;
+			}
+			if (SlabCDFSum > 0.0)
+			{
+				// linear search
+				float PreviousCdfValue = 0;
+				float RandSample = SlabCDFSum * PackedPayload.GetStochasticSlabRand();
+				for (BSDFIdx = 0; BSDFIdx < BSDFCount - 1; ++BSDFIdx)
+				{
+					if (RandSample < SlabCDF[BSDFIdx])
+					{
+						break;
+					}
+					PreviousCdfValue = SlabCDF[BSDFIdx];
+				}
+				SlabPdf = (SlabCDF[BSDFIdx] - PreviousCdfValue) / SlabCDFSum;
+			}
+			else
+			{
+				BSDFIdx = 0;
+				SlabPdf = 0.0;
+			}
+		}
+		if (SlabPdf > 0)
+		{
+#elif STRATA_CLAMPED_BSDF_COUNT == 1
+		if (BSDFCount > 0)
+		{
+			// There is only one slab active
+			BSDFIdx = 0;
+#else
+// shouldn't be possible to reach this point
+#error Unexpected BSDF Count
+#endif // STRATA_CLAMPED_BSDF_COUNT 
+
+
+#if STRATA_CLAMPED_BSDF_COUNT > 0
+			Payload.WorldNormal = StrataPixelHeader.SharedLocalBases.Normals[BSDF_GETSHAREDLOCALBASISID(BSDF)];
+			Payload.WorldTangent = StrataPixelHeader.SharedLocalBases.Tangents[BSDF_GETSHAREDLOCALBASISID(BSDF)];
+
+			switch (BSDF_GETTYPE(BSDF))
+			{
+				case STRATA_BSDF_TYPE_SLAB:
+				{
+					Payload.ShadingModelID    = SHADINGMODELID_STRATA;
+					Payload.DiffuseColor      = SLAB_DIFFUSEALBEDO(BSDF);
+					Payload.SpecularColor     = SLAB_F0(BSDF);
+					Payload.SpecularEdgeColor = SLAB_F90(BSDF);
+					Payload.RoughnessData.x   = MakeRoughnessSafe(SLAB_ROUGHNESS(BSDF), PackedPayload.GetPathRoughness());
+					Payload.RoughnessData.y = Payload.RoughnessData.x;
+					Payload.RoughnessData.z = 0;
+					if (BSDF_GETHASHAZINESS(BSDF))
+					{
+						const FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+						if (Haziness.bSimpleClearCoat)
+						{
+							Payload.ShadingModelID = SHADINGMODELID_CLEAR_COAT;
+						}
+						Payload.RoughnessData.y = MakeRoughnessSafe(Haziness.Roughness, PackedPayload.GetPathRoughness());
+						Payload.RoughnessData.z = Haziness.Weight;
+					}
+					Payload.Anisotropy = BSDF_GETHASANISOTROPY(BSDF) ? SLAB_ANISOTROPY(BSDF) : 0.0;
+					if (BSDF_GETHASFUZZ(BSDF))
+					{
+						Payload.FuzzAmount    = SLAB_FUZZ_AMOUNT(BSDF);
+						Payload.FuzzColor     = SLAB_FUZZ_COLOR(BSDF);
+						Payload.FuzzRoughness = MakeRoughnessSafe(SLAB_FUZZ_ROUGHNESS(BSDF), STRATA_MIN_FUZZ_ROUGHNESS);
+					}
+					else
+					{
+						Payload.FuzzAmount    = 0.0;
+						Payload.FuzzColor     = 0.0;
+						Payload.FuzzRoughness = 0.0;
+					}
+					if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_SIMPLEVOLUME)
+					{
+						Payload.DiffuseColor = GetSimpleVolumeDiffuseColor(Payload.DiffuseColor, SLAB_SSSMFP(BSDF));
+					}
+					else if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION)
+					{
+						Payload.MeanFreePath = SLAB_SSSMFP(BSDF);
+						Payload.PhaseG       = SLAB_SSSPHASEANISOTROPY(BSDF);
+					}
+					else if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE)
+					{
+						const uint ProfileId = StrataSubsurfaceProfileIdTo8bits(SLAB_SSSPROFILEID(BSDF));
+						const float Scale = SLAB_SSSPROFILERADIUSSCALE(BSDF);
+						Payload.MeanFreePath = DecodeSSSProfileRadius(ProfileId, Payload.DiffuseColor, Scale);
+#if USE_SSS_PROFILE_ANISOTROPY
+						Payload.PhaseG = DecodeSSSProfileScatteringDistribution(ProfileId);
+						Payload.MeanFreePath *= 1 - G; // Compensate the extra translucency by scaling down the MFP
+#else
+						Payload.PhaseG = 0.0;
+#endif
+					}
+					else
+					{
+						// STRATA_TODO: Do something meaningful for the other SSS types ...
+						Payload.MeanFreePath = 0;
+						Payload.PhaseG       = 0;
+					}
+					Payload.SpecularProfileId = 0;
+					if (BSDF_GETHASSPECPROFILE(BSDF))
+					{
+						Payload.SpecularProfileId = SLAB_SPECPROFILEID(BSDF);
+					}
+					Payload.GlintValue = 0;
+					if (BSDF_GETHASGLINT(BSDF))
+					{
+						Payload.GlintValue = SLAB_GLINT_VALUE(BSDF);
+						Payload.GlintUV = SLAB_GLINT_UV(BSDF);
+						
+						const float PlaceholderEpsilon = 0.001f;
+						Payload.GlintUVdx = float2(PlaceholderEpsilon, 0); // STRATA_TODO: SLAB_GLINT_UVDDX(BSDF)
+						Payload.GlintUVdy = float2(0, PlaceholderEpsilon); // STRATA_TODO: SLAB_GLINT_UVDDY(BSDF)
+					}
+					Payload.WeightV             = BSDF.LuminanceWeightV;
+					Payload.TransmittanceN      = BSDF.TransmittanceAboveAlongN;
+					Payload.CoverageAboveAlongN = BSDF.CoverageAboveAlongN;
+#if MATERIAL_ISTHINSURFACE && MATERIALBLENDING_ANY_TRANSLUCENT
+					Payload.ShadingModelID      = SHADINGMODELID_THIN_TRANSLUCENT;
+#endif
+
+#if MATERIALBLENDING_ANY_TRANSLUCENT && REFRACTION_USE_INDEX_OF_REFRACTION
+					// NOTE: only the bottom most layer can refract, coatings should never include a refraction lobe
+					Payload.Ior					= BSDF.bIsBottom ? GetRefractionIor(PixelMaterialInputs, Payload.SpecularColor) : 0.0;
+					Payload.MeanFreePath        = BSDF.bIsBottom ? SLAB_SSSMFP(BSDF) : Payload.MeanFreePath;
+#else
+					Payload.Ior                 = 0.0;
+#endif
+
+#if MATERIAL_ISTHINSURFACE && MATERIALBLENDING_ANY_TRANSLUCENT
+					// Material is configured as a thin surface, and refraction is disabled
+					if (BSDF.bIsBottom && !(Payload.Ior > 0.0))
+					{
+						Payload.MeanFreePath = SLAB_SSSMFP(BSDF);
+						float3 Transmission = Payload.GetTransmittanceColor();
+						const float NoV = saturate(dot(Payload.WorldNormal, V_World));
+						float3 Tr = ComputeThinSlabWeights(Transmission, NoV, Payload.Ior, F0RGBToF0(Payload.SpecularColor)).Transmitted;
+						Payload.TransparencyColor += TotalCoverage * Tr;
+					}
+#endif
+
+					break;
+				}
+				case STRATA_BSDF_TYPE_HAIR:
+				{
+					// clamp the roughness to whatever came along the path
+					Payload.SetBaseColor(HAIR_BASECOLOR(BSDF));
+					Payload.SetHairLongitudinalRoughness(max(HAIR_ROUGHNESS(BSDF), PackedPayload.GetPathRoughness()));
+					Payload.SetHairAzimuthalRoughness(HAIR_SCATTER(BSDF)); // STRATA_TODO: Map from scatter param to azimuthal roughness here instead of in the raygen
+					Payload.SetHairSpecular(HAIR_SPECULAR(BSDF));
+
+	#if HAIR_STRAND_MESH_FACTORY
+					Payload.WorldSmoothNormal = Payload.WorldNormal = Payload.WorldGeoNormal;
+					Payload.WorldTangent      = MaterialParameters.TangentToWorld[2];
+					Payload.SetHairPrimitiveUV(MaterialParameters.HairPrimitiveUV);
+	#else
+					Payload.SetHairPrimitiveUV(0.5);
+	#endif
+					Payload.ShadingModelID = SHADINGMODELID_HAIR;
+					break;
+				}
+				case STRATA_BSDF_TYPE_EYE:
+				{
+					Payload.DiffuseColor = EYE_DIFFUSEALBEDO(BSDF);
+					Payload.SpecularColor = EYE_F0(BSDF);
+					// NOTE: EYE_F90 is always 1.0 (does not exist in legacy model), so don't bother with it
+					Payload.SetEyeRoughness(max(EYE_ROUGHNESS(BSDF), PackedPayload.GetPathRoughness()));
+
+					if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE)
+					{
+						const uint ProfileId = StrataSubsurfaceProfileIdTo8bits(EYE_SSSPROFILEID(BSDF));
+						Payload.MeanFreePath = DecodeSSSProfileRadius(ProfileId, Payload.DiffuseColor, 1.0);
+						Payload.PhaseG = 0.0;
+					}
+
+
+					float IrisMask = EYE_IRISMASK(BSDF);
+					float IrisDistance = EYE_IRISDISTANCE(BSDF);
+
+					// see logic in non-substrate code below
+					const float3 PlaneNormal = normalize(EYE_IRISPLANENORMAL(BSDF));
+					const float3 CausticNormal = normalize(lerp(PlaneNormal, -Payload.WorldNormal, IrisMask * IrisDistance));
+
+					Payload.SetEyeCausticNormal(CausticNormal);
+					Payload.SetEyeIrisMask(IrisMask);
+					Payload.SetEyeIrisNormal(normalize(EYE_IRISNORMAL(BSDF)));
+					Payload.ShadingModelID = SHADINGMODELID_EYE;
+					break;
+				}
+				default:
+				{
+					// STRATA_TODO: handle all other cases
+					break;
+				}
+			}
+#if STRATA_CLAMPED_BSDF_COUNT > 1
+			// account for the probability of having chosen this slab
+			Payload.BSDFOpacity /= SlabPdf;
+#endif
+		} // close brace opened by STRATA_CLAMPED_BSDF_COUNT > 1 or STRATA_CLAMPED_BSDF_COUNT == 1 ifdefs above
+#endif // STRATA_CLAMPED_BSDF_COUNT > 0
+
+#undef  BSDF
+	} // if BSDFCount > 0
+
+
+#endif // STRATA_OPTIMIZED_UNLIT
+
+
+#if MATERIAL_TWOSIDED == 0
+	if (MaterialParameters.TwoSidedSign < 0)
+	{
+		// when viewing the surface from "inside", don't include emission
+		Payload.Radiance = 0;
+	}
+#endif
+
+#endif // MATERIAL_IS_STRATA
+
+#else // STRATA_ENABLED
+	Payload.Radiance = GetMaterialEmissive(PixelMaterialInputs);
+
+	Payload.WorldNormal = MaterialParameters.WorldNormal;
+#if !MATERIAL_TANGENTSPACENORMAL
+	// already flipped if the material was in tangent space, so add the flip if it wasn't
+	Payload.WorldNormal *= MaterialParameters.TwoSidedSign;
+#endif
+	Payload.WorldNormal = AdjustShadingNormal(Payload.WorldNormal, Payload.WorldGeoNormal, WorldRayDirection());
+
+	// Store the results in local variables and reuse instead of calling the functions multiple times.
+	half3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+	half  Metallic = GetMaterialMetallic(PixelMaterialInputs);
+	half  Specular = GetMaterialSpecular(PixelMaterialInputs);
+	half Roughness = GetMaterialRoughness(PixelMaterialInputs);
+	float Ior = 0.0;
+#if MATERIALBLENDING_TRANSLUCENT && REFRACTION_USE_INDEX_OF_REFRACTION && (MATERIAL_SHADINGMODEL_DEFAULT_LIT || MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT)
+	// NOTE: only default-lit and thin-translucent use ior, the other material models only support plain transparency
+	// This is an attempt to limit the complexity of the material eval/sample API which must take into account an extra lobe if supporting refraction
+	Ior = GetRefractionIor(PixelMaterialInputs);
+#endif
+
+
+	Payload.Radiance *= Payload.BSDFOpacity; // pre-multiply
+
+
+#if MATERIAL_TWOSIDED == 0
+	if (MaterialParameters.TwoSidedSign < 0)
+	{
+		// when viewing the surface from "inside", don't include emission
+		Payload.Radiance = 0;
+	}
+#endif
+	Payload.BaseColor = BaseColor;
+	Payload.Specular = Specular;
+	Payload.Metallic = Metallic;
+	Payload.Roughness = Roughness;
+
+#if MATERIAL_USES_ANISOTROPY
+	Payload.WorldTangent = CalculateAnisotropyTangent(MaterialParameters, PixelMaterialInputs);
+	Payload.Anisotropy = GetMaterialAnisotropy(PixelMaterialInputs);
+#endif	
+
+#if HAIR_STRAND_MESH_FACTORY
+	Payload.WorldSmoothNormal = Payload.WorldNormal = Payload.WorldGeoNormal;
+	Payload.WorldTangent = MaterialParameters.TangentToWorld[2];
+#endif
+
+#if MATERIAL_SHADINGMODEL_CLEAR_COAT
+	if (Payload.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+	{
+		const float ClearCoat = GetMaterialCustomData0(MaterialParameters);
+		const float ClearCoatRoughness = GetMaterialCustomData1(MaterialParameters);
+		Payload.SetClearCoat(ClearCoat);
+		Payload.SetClearCoatRoughness(AdjustMaterialRoughness(ClearCoatRoughness, PackedPayload.GetPathRoughness()));
+#if CLEAR_COAT_BOTTOM_NORMAL
+#if NUM_MATERIAL_OUTPUTS_CLEARCOATBOTTOMNORMAL > 0
+#if MATERIAL_TANGENTSPACENORMAL
+		float3 BottomNormal = normalize(TransformTangentVectorToWorld(MaterialParameters.TangentToWorld, ClearCoatBottomNormal0(MaterialParameters)));
+#else
+		float3 BottomNormal = ClearCoatBottomNormal0(MaterialParameters);
+#endif
+		
+		// if we got a custom normal for the clearcoat, adjust it now
+		BottomNormal = AdjustShadingNormal(BottomNormal, Payload.WorldGeoNormal, WorldRayDirection());
+		Payload.SetClearCoatBottomNormal(BottomNormal);
+#else
+		Payload.SetClearCoatBottomNormal(Payload.WorldNormal);
+#endif
+#else
+		Payload.SetClearCoatBottomNormal(Payload.WorldNormal);
+#endif
+		
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_CLOTH
+	if (Payload.ShadingModelID == SHADINGMODELID_CLOTH)
+	{
+		const float3 ClothColor = GetMaterialSubsurfaceData(PixelMaterialInputs).rgb;
+		const float Fuzz = saturate(GetMaterialCustomData0(MaterialParameters));
+		Payload.SetClothColor(ClothColor);
+		Payload.SetClothAmount(Fuzz);
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_TWOSIDED_FOLIAGE
+	if (Payload.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE)
+	{
+		const float3 SubsurfaceColor = GetMaterialSubsurfaceData(PixelMaterialInputs).rgb;
+		Payload.SetSubsurfaceColor(SubsurfaceColor);
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_SUBSURFACE || MATERIAL_SHADINGMODEL_PREINTEGRATED_SKIN
+	if (Payload.ShadingModelID == SHADINGMODELID_SUBSURFACE ||
+		Payload.ShadingModelID == SHADINGMODELID_PREINTEGRATED_SKIN)
+	{
+		const float3 SubsurfaceColor = GetMaterialSubsurfaceData(PixelMaterialInputs).rgb;
+		Payload.SetSubsurfaceColor(SubsurfaceColor);
+
+#if HAVE_GetSubsurfaceMediumMaterialOutput0
+		Payload.SetSubsurfaceRadius(GetSubsurfaceMediumMaterialOutput0(MaterialParameters));
+#else
+		// TODO: is this accurate enough? hard to measure exactly since the raster path uses a very different approach
+		const float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+		const float SSSRadius = (1 - Opacity) * 10.0; // simple formula, up to 10cm radius
+		Payload.SetSubsurfaceRadius(SSSRadius);
+#endif
+
+#if HAVE_GetSubsurfaceMediumMaterialOutput1
+		float ScatteringDistribution = clamp(GetSubsurfaceMediumMaterialOutput1(MaterialParameters), -0.99f, 0.99f);
+		Payload.SetSubsurfacePhaseFunction(ScatteringDistribution);
+#else
+		Payload.SetSubsurfacePhaseFunction(0.0);
+#endif
+	}
+	else
+#endif
+#if MATERIAL_SHADINGMODEL_SUBSURFACE_PROFILE
+	if (Payload.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE)
+	{
+		const uint ProfileId = ExtractSubsurfaceProfileInt(GetMaterialSubsurfaceDataRaw(PixelMaterialInputs).a);
+
+		// Decode dual roughness info
+		float Lobe0Roughness = 0;
+		float Lobe1Roughness = 0;
+		float LobeMix = 0;
+
+		// NOTE: we pass 1.0 for opacity because we don't really want to fade-out the dual roughness as opacity is lowered
+		GetSubsurfaceProfileDualSpecular(ProfileId, Payload.Roughness, 1.0, Lobe0Roughness, Lobe1Roughness, LobeMix);
+
+		Lobe0Roughness = AdjustMaterialRoughness(Lobe0Roughness, PackedPayload.GetPathRoughness());
+		Lobe1Roughness = AdjustMaterialRoughness(Lobe1Roughness, PackedPayload.GetPathRoughness());
+		Payload.SetDualRoughnessSpecular(Lobe0Roughness, Lobe1Roughness, LobeMix);
+
+#if HAVE_GetSubsurfaceMediumMaterialOutput0
+		Payload.SetSubsurfaceRadius(GetSubsurfaceMediumMaterialOutput0(MaterialParameters));
+#else
+		if (GetSubsurfaceProfileUseBurley(ProfileId))
+		{
+			// Decode SSS radius
+			const float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+			const float3 DiffuseColor = Payload.BaseColor * (1.0 - Payload.Metallic);
+			Payload.SetSubsurfaceRadius(DecodeSSSProfileRadius(ProfileId, DiffuseColor, Opacity));
+		}
+		else
+		{
+			Payload.SetSubsurfaceRadius(0.0);
+		}
+#endif
+
+#if HAVE_GetSubsurfaceMediumMaterialOutput1
+		float ScatteringDistribution = clamp(GetSubsurfaceMediumMaterialOutput1(MaterialParameters), -0.99f, 0.99f);
+		Payload.SetSubsurfacePhaseFunction(ScatteringDistribution);
+#elif USE_SSS_PROFILE_ANISOTROPY
+		float G = DecodeSSSProfileScatteringDistribution(ProfileId);
+		Payload.SetSubsurfacePhaseFunction(G);
+		Payload.SetSubsurfaceRadius(Payload.GetSubsurfaceRadius() * (1 - G));
+#else
+		Payload.SetSubsurfacePhaseFunction(0.0);
+#endif
+	}
+	else
+#endif
+#if MATERIAL_SHADINGMODEL_SINGLELAYERWATER
+	if (Payload.ShadingModelID == SHADINGMODELID_SINGLELAYERWATER)
+	{
+		// For single layer water we always want to treat it as front facing when evaluating parameters 
+		// as hitting back face is treated as being underwater and we get completely different parameters.
+		FMaterialPixelParameters WaterMaterialParameters = MaterialParameters;
+		WaterMaterialParameters.TwoSidedSign = 1; 
+
+		const float3 ScatteringCoeff = max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput0(WaterMaterialParameters)));
+		const float3 AbsorptionCoeff = max(0.0f, LWCToFloat(GetSingleLayerWaterMaterialOutput1(WaterMaterialParameters)));
+		const float PhaseG = clamp(LWCToFloat(GetSingleLayerWaterMaterialOutput2(WaterMaterialParameters)), -0.99f, 0.99f);
+
+		const float3 WaterExtinction = ScatteringCoeff + AbsorptionCoeff;
+		const float3 WaterAlbedo = select(WaterExtinction > 0.0, ScatteringCoeff / WaterExtinction, float3(0.0, 0.0, 0.0));
+
+		Payload.ShadingModelID = SHADINGMODELID_DEFAULT_LIT; // replace shading model to avoid extra cases in raygen
+		Payload.BaseColor = WaterAlbedo; // TODO: unused at the moment
+		Payload.SetExtinction(WaterExtinction);
+		Payload.Ior = DielectricF0ToIor(DielectricSpecularToF0(Specular));
+		// we are using actual refraction, so don't apply any transparency
+		Payload.TransparencyColor = 0.0;
+		Payload.BSDFOpacity = 0.0; // only shade with the glass portion
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT
+	if (Payload.ShadingModelID == SHADINGMODELID_THIN_TRANSLUCENT)
+	{
+		const float3 TransmittanceColor = GetThinTranslucentMaterialOutput0(MaterialParameters);
+		Payload.SetTransmittanceColor(TransmittanceColor);
+		Payload.Ior = Ior;
+		if (Ior > 0.0)
+		{
+			// In this mode we get rough refraction, so don't apply any transparency
+			Payload.TransparencyColor = 0.0;
+		}
+		else
+		{
+			// In this mode we just get straight transparency
+			const float3 V = WorldRayDirection();
+			const float3 N = normalize(Payload.WorldNormal);
+			const float VoN = abs(dot(V, N));
+			const float3 BaseColor = Payload.BaseColor;
+			const float  Metallic = Payload.Metallic;
+			const float  Specular = Payload.Specular;
+			const float  F0 = F0RGBToF0(ComputeF0(Specular, BaseColor, Metallic));
+			Payload.TransparencyColor = (1 - Payload.BSDFOpacity) * ComputeThinSlabWeights(TransmittanceColor, VoN, 0.0, F0).Transmitted;
+		}
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_HAIR
+	if (Payload.ShadingModelID == SHADINGMODELID_HAIR)
+	{
+		// TODO: encode hair specific info
+#if HAIR_STRAND_MESH_FACTORY
+		Payload.SetHairPrimitiveUV(MaterialParameters.HairPrimitiveUV);
+#else
+		Payload.SetHairPrimitiveUV(0.5);
+#endif
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_EYE
+	if (Payload.ShadingModelID == SHADINGMODELID_EYE)
+	{
+		// This is all based on logic from ShadingModelsMaterial.ush
+		const float IrisMask     = saturate(GetMaterialCustomData0(MaterialParameters));
+		const float IrisDistance = saturate(GetMaterialCustomData1(MaterialParameters));
+		Payload.SetEyeIrisMask(IrisMask);
+		Payload.Metallic = 0.0;
+#if NUM_MATERIAL_OUTPUTS_GETTANGENTOUTPUT > 0
+		// Blend in the negative intersection normal to create some concavity
+		// Not great as it ties the concavity to the convexity of the cornea surface
+		// No good justification for that. On the other hand, if we're just looking to
+		// introduce some concavity, this does the job.
+		const float3 PlaneNormal = normalize(GetTangentOutput0(MaterialParameters));
+		const float3 CausticNormal = normalize(lerp(PlaneNormal, -Payload.WorldNormal, IrisMask * IrisDistance));
+		Payload.SetEyeCausticNormal(CausticNormal);
+		// NOTE: calling AdjustShadingNormal on the custom normal does not seem necessary since this is only used for a diffuse calculation
+#else
+		const float3 PlaneNormal = Payload.WorldNormal;
+		Payload.SetEyeCausticNormal(Payload.WorldNormal);
+#endif
+
+#if IRIS_NORMAL // on
+		Payload.Specular = 0.25;
+
+	#if NUM_MATERIAL_OUTPUTS_CLEARCOATBOTTOMNORMAL > 0
+		float3 IrisNormal = normalize( ClearCoatBottomNormal0(MaterialParameters) );
+		#if MATERIAL_TANGENTSPACENORMAL
+		IrisNormal = normalize( TransformTangentVectorToWorld( MaterialParameters.TangentToWorld, IrisNormal ) );
+		#endif
+	#else
+		float3 IrisNormal = PlaneNormal;
+	#endif
+		Payload.SetEyeIrisNormal(IrisNormal);
+#else
+		// IRIS_NORMAL off
+		Payload.SetEyeIrisNormal(PlaneNormal);
+#endif
+
+#if HAVE_GetSubsurfaceMediumMaterialOutput0
+		Payload.SetSubsurfaceRadius(GetSubsurfaceMediumMaterialOutput0(MaterialParameters));
+#else		
+		const uint ProfileId = ExtractSubsurfaceProfileInt(GetMaterialSubsurfaceDataRaw(PixelMaterialInputs).a);
+		if (GetSubsurfaceProfileUseBurley(ProfileId))
+		{
+			// Decode SSS radius
+			const float Opacity = GetMaterialOpacity(PixelMaterialInputs);
+			const float3 DiffuseColor = Payload.BaseColor * (1.0 - Payload.Metallic);
+			Payload.SetSubsurfaceRadius(DecodeSSSProfileRadius(ProfileId, DiffuseColor, Opacity));
+		}
+		else
+		{
+			Payload.SetSubsurfaceRadius(0.0);
+		}
+#endif
+
+#if HAVE_GetSubsurfaceMediumMaterialOutput1
+		float ScatteringDistribution = clamp(GetSubsurfaceMediumMaterialOutput1(MaterialParameters), -0.99f, 0.99f);
+		Payload.SetSubsurfacePhaseFunction(ScatteringDistribution);
+#else
+		Payload.SetSubsurfacePhaseFunction(0.0);
+#endif
+
+	}
+	else
+#endif
+
+#if MATERIAL_SHADINGMODEL_DEFAULT_LIT
+	if (Payload.ShadingModelID == SHADINGMODELID_DEFAULT_LIT)
+	{
+		// only allow refraction for default lit materials since we need space for the absorption amount
+#if HAVE_GetAbsorptionMediumMaterialOutput0
+		Payload.SetExtinction(PathTracingGlassTransmittanceToExtinction(GetAbsorptionMediumMaterialOutput0(MaterialParameters)));
+#else
+		// Make the glass totally clear if no custom medium is set
+		Payload.SetExtinction(0.0);
+#endif
+		Payload.Ior = Ior;
+		if (Ior > 0.0)
+		{
+			// we are using actual refraction, so disable transparency
+			Payload.TransparencyColor = 0.0;
+		}
+	}
+	else
+#endif
+	{
+		// terminal case for the conditionals above
+	}
+
+	// adjust after everything else (because SSS profile case needs to decode the dual spec info from the unmodified roughness)
+	Payload.Roughness = AdjustMaterialRoughness(Payload.Roughness, PackedPayload.GetPathRoughness());
+
+#endif // STRATA_ENABLED
+
+	// Only opaque surfaces can recieve decals. This is both for compatibility with raster and improving performance when we have stacks of transparent surfaces
+#if MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED
+	if ((PrimitiveFlags & PRIMITIVE_SCENE_DATA_FLAG_DECAL_RECEIVER) != 0)
+	{
+#if USE_DBUFFER
+		Payload.SetDecalReceiver(MATERIALDECALRESPONSEMASK);
+#	if MATERIAL_USES_DECAL_LOOKUP
+		Payload.SetUseDBufferLookup();
+#	endif
+#else
+		Payload.SetDecalReceiver(0x07);
+#endif
+	}
+#endif
+
+#if MATERIALBLENDING_ALPHAHOLDOUT
+	// the material is already a holdout, no need to do anything else
+#else
+	if (PackedPayload.IsCameraRay())
+	{
+		if ((PrimitiveFlags & PRIMITIVE_SCENE_DATA_FLAG_HOLDOUT) != 0)
+		{
+			if (Payload.Ior != 0.0)
+			{
+				// If the surface is marked as refractive then treat it as opaque for holdout
+				Payload.BSDFOpacity = 1.0;
+			}
+			else
+			{
+				// keep the opacity from the material, it might indicate partial transparency
+				// so we should get a partial holdout
+			}
+
+			Payload.SetHoldout();
+			Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+			Payload.Radiance = 0;
+		}
+	}
+#endif
+
+	// Output depth for solid, masked 
+	// or when `output depth and velocity' is set and Opacity >= Opacity mask clip value to match the behavior of the rasterizer path. 
+#if (MATERIALBLENDING_SOLID || MATERIALBLENDING_MASKED)
+	Payload.SetOutputDepth();
+#elif (TRANSLUCENT_WRITING_VELOCITY && \
+	(MATERIALBLENDING_TRANSLUCENT || MATERIALBLENDING_ADDITIVE || MATERIALBLENDING_MODULATE || MATERIALBLENDING_ALPHACOMPOSITE || MATERIALBLENDING_ALPHAHOLDOUT))
+	if (GetMaterialOpacity(PixelMaterialInputs) >= GetMaterialOpacityMaskClipValue())
+	{
+		Payload.SetOutputDepth();
+	}
+#endif
+
+	PackedPayload = PackPathTracingPayload(Payload);
+}
+
+#if USE_MATERIAL_ANY_HIT_SHADER
+
+RAY_TRACING_ENTRY_ANY_HIT(PathTracingMaterialAHS,
+	FPackedPathTracingPayload, PackedPayload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+#if MATERIALBLENDING_MASKED && !MATERIAL_DITHER_OPACITY_MASK
+	// This is the only case which actually needs to run the full material
+	ResolvedView = ResolveView();
+
+	const float3 TranslatedWorldPosition = TranslatedWorldRayOrigin() + RayTCurrent() * WorldRayDirection();
+	const float4 SvPosition = mul(float4(TranslatedWorldPosition, 1.0f), ResolvedView.TranslatedWorldToClip);
+
+	CurrentPayloadInputFlags = PackedPayload.GetFlags();
+
+#if VF_SUPPORTS_RAYTRACING_PREPARE_MATERIAL_PIXEL_PARAMETERS
+	// this is a newer codepath that is both more flexible and allows for more direct calculation compared to the other codepath
+	// TODO: implement such a method for all vertex factories
+	float3 GeoNormal = 0;
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(TranslatedWorldRayOrigin(), WorldRayDirection(), RayTCurrent(), PrimitiveIndex(), Attributes, HitKind(), GeoNormal);
+#else
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+	float3 GeoNormal = 0;
+	CalcInterpolants((FRayCone)0, Attributes, Interpolants, GeoNormal);
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+#endif
+
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	const bool bIsFrontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+
+	{
+		const float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+
+		MaterialParameters.CameraVector = -WorldRayDirection();
+
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	// Regardless of payload flags -- we always apply this 
+	if (GetMaterialMask(PixelMaterialInputs) < 0)
+	{
+		IgnoreHit();
+	}
+#else
+	// All other blending modes need to run CHS to decide what to do, or are handled via the default opaque/translucent CHS/AHS materials.
+	// in these cases, the AHS should be disabled, so emit an error if we get here somehow
+	#error Unexpected blend mode encountered in AHS!
+#endif
+}
+
+#endif // USE_MATERIAL_ANY_HIT_SHADER

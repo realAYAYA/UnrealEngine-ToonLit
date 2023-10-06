@@ -1,0 +1,94 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../LargeWorldCoordinates.ush"
+#include "/Engine/Shared/VirtualShadowMapDefinitions.h"
+
+// Rougly the same structure as in VirtualShadowMapArray.h, with some logic around LWC values
+struct FVirtualShadowMapProjectionShaderData
+{
+	float4x4 TranslatedWorldToShadowViewMatrix;
+	float4x4 ShadowViewToClipMatrix;
+	float4x4 TranslatedWorldToShadowUVMatrix;
+	float4x4 TranslatedWorldToShadowUVNormalMatrix;
+
+	FLWCVector3 PreViewTranslation;
+	// TODO: Store Light ID and move this to GPU-Scene
+	uint LightType;		// Matches ELightComponentType via defines in SSDDefinitions.ush
+	float LightSourceRadius;
+
+	FLWCVector3 ClipmapWorldOrigin;
+	float ResolutionLodBias;
+
+	int2 ClipmapCornerRelativeOffset;
+	int ClipmapLevel;					// "Absolute" level, can be negative
+	int ClipmapLevelCountRemaining;		// Remaining levels, relative to this one
+
+	uint Flags;
+	float LightRadius;
+
+	// Derived data for convenience when passing the structure around
+	int VirtualShadowMapId;	
+	bool bCurrentDistantLight; // Low detail == single page only
+	bool bUnCached; // see VSM_PROJ_FLAG_UNCACHED
+};
+
+FVirtualShadowMapProjectionShaderData DecodeVirtualShadowMapProjectionData(ByteAddressBuffer ProjectionData, int VirtualShadowMapId)
+{
+	FVirtualShadowMapProjectionShaderData Result;
+	Result.VirtualShadowMapId = VirtualShadowMapId;
+
+	// Seems the FMatrix forces 16-byte alignment, so ensure padding matches the C++ structure size
+	const uint Stride = 16 * 21;
+	const uint Base = VirtualShadowMapId * Stride;
+
+	Result.TranslatedWorldToShadowViewMatrix[0]		= asfloat(ProjectionData.Load4(Base + 16*0));
+	Result.TranslatedWorldToShadowViewMatrix[1]		= asfloat(ProjectionData.Load4(Base + 16*1));
+	Result.TranslatedWorldToShadowViewMatrix[2]		= asfloat(ProjectionData.Load4(Base + 16*2));
+	Result.TranslatedWorldToShadowViewMatrix[3]		= asfloat(ProjectionData.Load4(Base + 16*3));
+	Result.ShadowViewToClipMatrix[0]				= asfloat(ProjectionData.Load4(Base + 16*4));
+	Result.ShadowViewToClipMatrix[1]				= asfloat(ProjectionData.Load4(Base + 16*5));
+	Result.ShadowViewToClipMatrix[2]				= asfloat(ProjectionData.Load4(Base + 16*6));
+	Result.ShadowViewToClipMatrix[3]				= asfloat(ProjectionData.Load4(Base + 16*7));
+	Result.TranslatedWorldToShadowUVMatrix[0]		= asfloat(ProjectionData.Load4(Base + 16*8));
+	Result.TranslatedWorldToShadowUVMatrix[1]		= asfloat(ProjectionData.Load4(Base + 16*9));
+	Result.TranslatedWorldToShadowUVMatrix[2]		= asfloat(ProjectionData.Load4(Base + 16*10));
+	Result.TranslatedWorldToShadowUVMatrix[3]		= asfloat(ProjectionData.Load4(Base + 16*11));
+	Result.TranslatedWorldToShadowUVNormalMatrix[0]	= asfloat(ProjectionData.Load4(Base + 16*12));
+	Result.TranslatedWorldToShadowUVNormalMatrix[1]	= asfloat(ProjectionData.Load4(Base + 16*13));
+	Result.TranslatedWorldToShadowUVNormalMatrix[2]	= asfloat(ProjectionData.Load4(Base + 16*14));
+	Result.TranslatedWorldToShadowUVNormalMatrix[3]	= asfloat(ProjectionData.Load4(Base + 16*15));
+
+	// NOTE: Stick with struct-element-sized loads for the moment since we may only be using subsets
+	// of the data in the calling code and we want to ensure the compiler has simple DCE options.
+	 
+	float3 PreViewTranslationTile			= asfloat(ProjectionData.Load3(Base + (16*16 + 4*0)));
+	Result.LightType						=		 (ProjectionData.Load (Base + (16*16 + 4*3)));
+
+	float3 PreViewTranslationOffset			= asfloat(ProjectionData.Load3(Base + (16*17 + 4*0)));
+	Result.LightSourceRadius				= asfloat(ProjectionData.Load (Base + (16*17 + 4*3)));
+
+	float3 NegativeClipmapWorldOriginOffset = asfloat(ProjectionData.Load3(Base + (16*18 + 4*0)));
+	Result.ResolutionLodBias				= asfloat(ProjectionData.Load (Base + (16*18 + 4*3)));
+		
+	Result.ClipmapCornerRelativeOffset		= asint  (ProjectionData.Load2(Base + (16*19 + 4*0)));
+	Result.ClipmapLevel						= asint  (ProjectionData.Load (Base + (16*19 + 4*2)));
+	Result.ClipmapLevelCountRemaining		= asint  (ProjectionData.Load (Base + (16*19 + 4*3)));
+
+	Result.Flags 							= asuint (ProjectionData.Load (Base + (16*20 + 4*0)));
+	Result.LightRadius 						= asfloat(ProjectionData.Load (Base + (16*20 + 4*1)));
+
+	Result.PreViewTranslation				= MakeLWCVector3(PreViewTranslationTile, PreViewTranslationOffset);
+	Result.ClipmapWorldOrigin				= LWCNegate(MakeLWCVector3(PreViewTranslationTile, NegativeClipmapWorldOriginOffset));
+
+	Result.bCurrentDistantLight = (Result.Flags & VSM_PROJ_FLAG_CURRENT_DISTANT_LIGHT) != 0U;
+	Result.bUnCached = (Result.Flags & VSM_PROJ_FLAG_UNCACHED) != 0U;
+
+	return Result;
+}
+
+FVirtualShadowMapProjectionShaderData GetVirtualShadowMapProjectionData(int VirtualShadowMapId)
+{
+	return DecodeVirtualShadowMapProjectionData(VirtualShadowMap.ProjectionData, VirtualShadowMapId);
+}

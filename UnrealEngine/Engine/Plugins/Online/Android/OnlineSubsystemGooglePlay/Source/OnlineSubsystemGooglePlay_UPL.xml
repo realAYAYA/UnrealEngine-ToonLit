@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--OnlineSubsystemGooglePlay plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">	
+	<init>
+	  <log text="Subsystem Google Play SDK Android init"/>
+	</init>
+	
+	<prebuildCopies>
+		<log text="Copying Google Play BillingApiV2 java files"/>
+		<copyDir src="$S(PluginDir)/Java/BillingApiV2"
+				 dst = "$S(BuildDir)/src" />
+	</prebuildCopies>
+	
+	<!-- gradle dependencies additions -->
+	<buildGradleAdditions>
+		<insert>
+			dependencies {
+			implementation 'com.android.billingclient:billing:6.0.0'
+			}
+		</insert>
+	</buildGradleAdditions>
+
+	<gameActivityAndroidThunkJavaIapBeginPurchase>
+		<insert>
+public boolean AndroidThunkJava_IapBeginPurchase(String[] ProductIds, String AccountId)
+{
+	Log.debug("[JAVA] - AndroidThunkJava_IapBeginPurchase");
+	boolean bTriggeredPurchase = false;
+	if( IapStoreHelper != null )
+	{
+		// sha-256 the accountId and get the hex string representation
+		String ObfuscatedAccountId = null;
+		if (AccountId != null)
+		{
+			try
+			{
+				MessageDigest md = MessageDigest.getInstance("SHA-256");
+				byte[] sha256hash = md.digest(AccountId.getBytes("UTF-8"));
+				StringBuilder builder = new StringBuilder(sha256hash.length * 2);
+				for (byte b : sha256hash)
+				{
+					builder.append(String.format("%02x", b));
+				}
+				ObfuscatedAccountId = builder.toString();
+			}
+			catch (NoSuchAlgorithmException ae)
+			{
+			}
+			catch (UnsupportedEncodingException ee)
+			{
+			}
+		}
+		bTriggeredPurchase = IapStoreHelper.BeginPurchase(ProductIds, ObfuscatedAccountId);
+	}
+	else
+	{
+		Log.debug("[JAVA] - Store Helper is invalid");
+	}
+	return bTriggeredPurchase;
+}
+		</insert>
+	</gameActivityAndroidThunkJavaIapBeginPurchase>
+	
+	<!-- optional additions to GameActivity imports in GameActivity.java -->
+	<gameActivityImportAdditions>
+		<insert>
+import com.epicgames.unreal.GooglePlayStoreHelper;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+		</insert>
+	</gameActivityImportAdditions>
+
+	<gameActivityIapSetupServiceAdditions>
+		<insert>
+		if (getPackageManager().checkPermission("com.android.vending.BILLING", getPackageName()) == getPackageManager().PERMISSION_GRANTED)
+		{
+			IapStoreHelper = new GooglePlayStoreHelper(this, Log);
+			if (IapStoreHelper != null)
+			{
+				Log.debug("[JAVA] - AndroidThunkJava_IapSetupService - Setup started");
+			}
+			else
+			{
+				Log.debug("[JAVA] - AndroidThunkJava_IapSetupService - Failed to setup IAP service");
+			}
+		}
+		else
+		{
+			Log.debug("[JAVA] - AndroidThunkJava_IapSetupService - You do not have the appropriate permission setup.");
+			Log.debug("[JAVA] - AndroidThunkJava_IapSetupService - Please ensure com.android.vending.BILLING is added to the manifest.");
+		}
+		</insert>
+	</gameActivityIapSetupServiceAdditions>
+	
+	<!-- optional additions to GameActivity onCreate in GameActivity.java -->
+	<gameActivityOnCreateAdditions>
+		<insert>
+			//Google Play SDK onCreate additions
+			try {
+				GoogleApiClient.Builder gbuilder = new GoogleApiClient.Builder(this);
+				gbuilder.addConnectionCallbacks(this);
+				gbuilder.addOnConnectionFailedListener(this);
+				googleClient = gbuilder.build();
+			}
+			catch (Exception e)
+			{
+				Log.debug("GoogleApiClient exception caught: " + e.toString());
+			}
+			Log.debug("googleClient is " + ((googleClient == null) ? "disabled" : "valid"));
+		</insert>
+	</gameActivityOnCreateAdditions>
+
+</root>

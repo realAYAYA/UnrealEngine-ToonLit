@@ -1,0 +1,48 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+// Reroute SceneTexturesStruct uniform buffer references to the appropriate pass uniform buffer
+#define SceneTexturesStruct LumenCardPass.SceneTextures
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+struct FLumenCardInterpolantsVSToPS
+{
+
+};
+
+struct FLumenCardVSToPS
+{
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+	FLumenCardInterpolantsVSToPS PassInterpolants;
+	float4 Position : SV_POSITION;
+};
+
+void Main(
+	FVertexFactoryInput Input,
+	out FLumenCardVSToPS Output
+	)
+{
+	ResolvedView = ResolveView();
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPositionExcludingWPO = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float4 WorldPosition = WorldPositionExcludingWPO;
+	float4 ClipSpacePosition;
+
+	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);	
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
+
+	ISOLATE
+	{
+		// Don't use WPO as Lumen cards and mesh SDF are computed without them
+		//WorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
+		ClipSpacePosition = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+		Output.Position = ClipSpacePosition;
+	}
+
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+}

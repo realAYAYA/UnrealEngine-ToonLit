@@ -1,0 +1,69 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+#include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
+#include "/Engine/Private/HairStrands/HairStrandsAttributeCommon.ush"
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Bindings
+
+HAIR_STRANDS_INSTANCE_PARAMETERS({DataInterfaceName})
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Helpers
+
+FHairControlPoint ReadControlPointData_{DataInterfaceName}(uint ControlPointIndex)
+{
+	const uint MaxControlPoints = {DataInterfaceName}_PointCount;
+	if (ControlPointIndex >= MaxControlPoints)
+	{
+		return (FHairControlPoint)0;
+	}
+
+	// Hair deformer work in local space so no need for position offset
+	return UnpackHairControlPoint(
+		{DataInterfaceName}_PositionBuffer[ControlPointIndex], 
+		{DataInterfaceName}_PositionOffsetBuffer[0].xyz,
+		{DataInterfaceName}_Radius, 
+		{DataInterfaceName}_RootScale, 
+		{DataInterfaceName}_TipScale);
+}
+
+FHairCurve ReadCurveData_{DataInterfaceName}(uint CurveIndex)
+{
+	const uint MaxCurve = {DataInterfaceName}_CurveCount;
+	if (CurveIndex >= MaxCurve)
+	{
+		return (FHairCurve)0;
+	}
+
+	return UnpackHairCurve({DataInterfaceName}_CurveBuffer[CurveIndex]);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Interface
+
+uint ReadNumGuidePoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_PointCount;
+}
+
+uint ReadNumGuideCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_CurveCount;
+}
+
+float3 ReadPosition_{DataInterfaceName}(uint ControlPointIndex)
+{
+	return ReadControlPointData_{DataInterfaceName}(ControlPointIndex).Position;
+}
+
+float ReadCurveOffsetPoint_{DataInterfaceName}(uint CurveIndex)
+{
+	return ReadCurveData_{DataInterfaceName}(CurveIndex).PointIndex;
+}
+
+float ReadCurveNumPoint_{DataInterfaceName}(uint CurveIndex)
+{
+	return ReadCurveData_{DataInterfaceName}(CurveIndex).PointCount;
+}

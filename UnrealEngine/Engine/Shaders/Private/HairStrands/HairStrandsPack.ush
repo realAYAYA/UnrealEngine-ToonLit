@@ -1,0 +1,299 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/PackUnpack.ush"
+#include "/Engine/Shared/HairStrandsDefinitions.h"
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair control points
+
+struct FHairControlPoint
+{
+	float3 Position;
+	float  WorldRadius;
+	float  UCoord;
+	uint   Type;
+};
+
+uint4 PackHairControlPoint(
+	FHairControlPoint CP,
+	float3 InVF_PositionOffset,
+	float InVF_Radius)
+{
+	uint PackedAttribute =  (uint(clamp(CP.UCoord * 0xFFu, 0u, 0xFFu)) << 8) |
+							(uint(clamp((CP.WorldRadius / InVF_Radius) * 63u, 0u, 63u)) << 2u) |
+							(CP.Type & 0x3);
+	return uint4(f32tof16(CP.Position - InVF_PositionOffset), PackedAttribute);
+}
+
+FHairControlPoint UnpackHairControlPoint(
+	uint4 InPackedData,
+	float3 InVF_PositionOffset=0,
+	float InVF_Radius=1,
+	float InVF_RootScale=1,
+	float InVF_TipScale=1)
+{
+	const uint PackedAlpha	= asuint(InPackedData.a);
+
+	FHairControlPoint Out = (FHairControlPoint)0;
+	Out.Position	= f16tof32(InPackedData.xyz) + InVF_PositionOffset;
+	Out.UCoord		= ((PackedAlpha & 0xFF00) >> 8) / 255.f;
+	Out.WorldRadius	= ((PackedAlpha & 0x00FC) >> 2) / 63.f;
+	Out.Type		= PackedAlpha & 0x3;
+
+	Out.WorldRadius *= InVF_Radius * lerp(InVF_RootScale, InVF_TipScale, Out.UCoord);
+
+	return Out;	
+}
+
+float UnpackHairControlPointCoordU(uint4 InPackedData)
+{
+	const uint PackedAlpha = asuint(InPackedData.w);
+	return ((PackedAlpha & 0xFF00) >> 8) / 255.f;
+}
+
+float3 UnpackHairControlPointPosition(uint4 InPackedData, float3 InVF_PositionOffset=0)
+{
+	return f16tof32(InPackedData.xyz) + InVF_PositionOffset;
+}
+
+uint4 PackHairControlPointPosition(uint4 InPackedData, float3 InNewPosition, float3 InPositionOffset=0)
+{
+	return uint4(f32tof16(InNewPosition.xyz - InPositionOffset), InPackedData.w);
+}
+
+uint4 PackHairControlPointRadius(uint4 InPackedData, float InNewWorldRadius, float InVFRadius)
+{
+	const uint PackedNewRadius = uint(clamp(saturate(InNewWorldRadius / InVFRadius) * 63u, 0u, 63u)) << 2u;	
+	return uint4(InPackedData.xyz, (InPackedData.w & (~0xFC)) | PackedNewRadius);
+}
+
+bool IsValidHairStrandsSegment(const FHairControlPoint CP0, const FHairControlPoint CP1)
+{
+	return !(CP0.Type == HAIR_CONTROLPOINT_END && CP1.Type == HAIR_CONTROLPOINT_START);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair attributes
+
+uint PackHairRootUV(float2 In)
+{
+	In.y = 1.0f - In.y;
+
+	return	(min(uint(saturate(In.x) * 0x7FFu), 0x7FFu)      )|
+			(min(uint(saturate(In.y) * 0x7FFu), 0x7FFu) << 11);
+}
+
+float2 UnpackHairRootUV(uint In)
+{
+	float2 RootUV, RootIndex;
+	RootUV.x	= ((In) & 0x7FF) / 2047.f;			// Coord are encoded on 11 bits
+	RootUV.y	= ((In >> 11) & 0x7FF) / 2047.f;	// Coord are encoded on 11 bits 
+	RootIndex.x = ((In >> 22) & 0x1F);				// UDIM tile are encoded on 5bits
+	RootIndex.y = ((In >> 27) & 0x1F);				// UDIM tile are encoded on 5bits
+
+	// Invert V to compensate image origin flip. Similar to GetHairStrandsRootUV in HairCardsAttributeCommon.ush
+	RootUV.y = 1.0f - RootUV.y;
+
+	return RootUV + RootIndex;
+}
+
+float UnpackHairLength(uint In)
+{
+	return f16tof32(In & 0xFFFF);
+}
+
+uint PackHairSeed(float In)
+{
+	return PackR8(In);
+}
+
+float UnpackHairSeed(uint In)
+{
+	return UnpackR8(In);
+}
+
+uint PackHairClumpID(uint In)
+{
+	return min(In, 0xFFFFu);
+}
+
+uint3 UnpackHairClumpID(uint In)
+{
+	return (In & 0xFFFF).xxx;
+}
+
+uint3 UnpackHairClumpID(uint2 In)
+{
+	return uint3(In.x & 0xFFFF, (In.x>>16) & 0xFFFF, (In.x>>32) & 0xFFFF);
+}
+
+uint PackHairColor(float3 In)
+{
+	return	(min(uint(In.x * 0x7FFu), 0x7FFu)    )|
+			(min(uint(In.y * 0x7FFu), 0x7FFu)<<11)|
+			(min(uint(In.z * 0x3FFu), 0x3FFu)<<22);
+}
+
+float3 UnpackHairColor(uint In)
+{
+	float3 Out;
+	Out.x = (In       & 0x7FFu) / 2047.f;
+	Out.y = ((In>>11) & 0x7FFu) / 2047.f;
+	Out.z = ((In>>22) & 0x3FFu) / 1023.f;
+	return Out;
+}
+
+uint PackHairRoughness(float In)
+{
+	return PackR8(In);
+}
+
+float UnpackHairRoughness(uint In)
+{
+	return UnpackR8(In);
+}
+
+uint PackHairAO(float In)
+{
+	return PackR8(In);
+}
+
+float UnpackHairAO(uint In)
+{
+	return UnpackR8(In);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Guide
+
+struct FGuideData
+{
+	uint3  VertexIndices;
+	float3 VertexLerps;
+	float3 VertexWeights;
+};
+
+FGuideData UnpackGuideData(uint In)
+{
+	FGuideData Out = (FGuideData)0;
+	Out.VertexWeights		= float3(1, 0, 0);
+	Out.VertexIndices		= 0;
+	Out.VertexLerps			= 0;
+	Out.VertexIndices.x		= In & 0xFFFFFF;
+	Out.VertexLerps.x		= UnpackR8(In >> 24);
+	return Out;
+}
+
+FGuideData UnpackGuideData(uint4 In)
+{
+	FGuideData Out = (FGuideData)0;
+	Out.VertexIndices.x = (In.x & 0xFFFF) | (((In.z      ) & 0xFF) << 16);
+	Out.VertexIndices.y = (In.x >> 16   ) | (((In.z >> 8 ) & 0xFF) << 16);
+	Out.VertexIndices.z = (In.y & 0xFFFF) | (((In.z >> 16) & 0xFF) << 16);
+
+	Out.VertexWeights	= float3(UnpackR8(In.y>>16), UnpackR8(In.y>>24), 0);
+	Out.VertexWeights.z = saturate(1.0f - (Out.VertexWeights.x + Out.VertexWeights.y));
+
+	Out.VertexLerps.x	= UnpackR8(In.w);
+	Out.VertexLerps.y	= UnpackR8(In.w >> 8);
+	Out.VertexLerps.z	= UnpackR8(In.w >> 16);
+	return Out;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Curve
+
+struct FHairCurve
+{
+	uint PointIndex;
+	uint PointCount;
+};
+
+uint PackHairCurve(FHairCurve In)
+{
+	#if HAIR_MAX_NUM_POINT_PER_CURVE != 0xFF || HAIR_MAX_NUM_POINT_PER_GROUP != 0xFFFFFF
+	#error Update hair curve ENCODING_TYPE
+	#endif
+
+	return (In.PointIndex & HAIR_MAX_NUM_POINT_PER_GROUP) | (In.PointCount << 24);
+}
+
+FHairCurve UnpackHairCurve(uint In)
+{
+	#if HAIR_MAX_NUM_POINT_PER_CURVE != 0xFF || HAIR_MAX_NUM_POINT_PER_GROUP != 0xFFFFFF
+	#error Update hair curve ENCODING_TYPE
+	#endif
+
+	FHairCurve Out = (FHairCurve)0;
+	Out.PointIndex = In & HAIR_MAX_NUM_POINT_PER_GROUP;
+	Out.PointCount = In >> 24;
+	return Out;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// UVs
+
+uint PackUVs(float2 UV)
+{
+	return (f32tof16(UV.x) & 0xFFFF) | ((f32tof16(UV.y) & 0xFFFF) << 16);
+}
+
+float PackUVsToFloat(float2 UV)
+{
+	return asfloat(PackUVs(UV));
+}
+
+float2 UnPackUVs(uint InUV)
+{
+	float2 Out;
+	Out.x = f16tof32(InUV & 0xFFFF);
+	Out.y = f16tof32((InUV >> 16) & 0xFFFF);
+	return Out;
+}
+
+float2 UnPackUVs(float InUV)
+{
+	return UnPackUVs(asuint(InUV));
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Barycentrics
+
+uint PackBarycentrics(float2 B)
+{
+	return f32tof16(B.x) | (f32tof16(B.y) << 16);
+}
+
+float3 UnpackBarycentrics(uint E)
+{
+	float3 Out;
+	Out.x = f16tof32(E & 0xFFFF);
+	Out.y = f16tof32((E >> 16) & 0xFFFF);
+	Out.z = 1 - Out.x - Out.y;
+	return Out;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Triangle
+
+struct FHairTriangleIndex
+{
+	uint TriangleIndex;
+	uint SectionIndex;
+};
+
+uint PackTriangleIndex(uint TriangleIndex, uint SectionIndex)
+{
+	return ((SectionIndex & 0xFF)<<24) | (TriangleIndex & 0xFFFFFF);
+}
+
+FHairTriangleIndex UnpackTriangleIndex(uint Encoded)
+{
+	FHairTriangleIndex Out;
+	Out.SectionIndex = (Encoded>>24) & 0xFF;
+	Out.TriangleIndex = Encoded & 0xFFFFFF;
+	return Out;
+}

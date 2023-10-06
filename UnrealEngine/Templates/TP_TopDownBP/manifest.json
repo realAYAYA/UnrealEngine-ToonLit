@@ -1,0 +1,78 @@
+{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "Top Down"
+		},
+		{
+			"Language": "ko",
+			"Text": "탑다운"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "俯视角游戏"
+		},
+		{
+			"Language": "ja",
+			"Text": "トップダウン"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "The top down template features a playable character where the camera is positioned behind and above the avatar at greater distance than in third person perspective. The player is controlled by using the mouse, gamepad, or touchscreen and moves the character by clicking on a destination, or following the cursor if input is held. This perspective is often used in action role playing games."
+		},
+		{
+			"Language": "ko",
+			"Text": "탑다운 템플릿에는 플레이 가능한 캐릭터가 포함되어 있으며 카메라가 아바타 머리 위 약간 뒤쪽에서 삼인칭 시점보다 더 원거리에 위치합니다. 플레이어는 마우스, 게임패드나 터치스크린으로 제어되고, 목적지를 클릭하거나 입력을 유지하여 커서에 따라 캐릭터를 움직일 수 있습니다. 이 시점은 주로 액션 RPG에 활용됩니다."
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "俯视角游戏模板包含一个可操控的角色以及一台位于角色后上方的摄像机。摄像机的位置比第三人称视角模板中的要高很多。玩家可以通过点击鼠标、触控板或触摸屏来选择目的地并移动角色，或持续按下鼠标来移动角色。此视角常用于动作角色扮演类游戏。"
+		},
+		{
+			"Language": "ja",
+			"Text": "トップダウン テンプレートは、カメラがアバターの後ろと上に配置されている (サードパーソン視点よりも距離が遠い位置) プレイ可能なキャラクターを特徴としています。プレイヤーは、マウス、ゲームパッド、またはタッチ スクリーンの使用により制御され、目的地をクリックするか、入力が保持されている場合はカーソルをたどることでキャラクターを移動させます。この視点は、アクション ロールプレイ ゲームでよく使用されます。"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": "Animation Sequence, Skeletal Mesh, Animation Blueprint, Skeleton"
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": "RPG,Role Playing,Top Down"
+		}
+	],
+	"ClassTypes": "Character, PlayerController, CameraComponent, SpringArmComponent, GameMode",
+	"Category": "BlueprintFeature",
+	"FocusAsset": "/Game/TopDown/Blueprints/BP_TopDownCharacter.BP_TopDownCharacter",
+	"Thumbnail": "TP_TopDownBP.png",
+	"Screenshots": [
+		"TP_TopDownBP_Preview.png"
+	],
+	"AdditionalFeaturePacks": [
+		{
+			"MountName": "LevelPrototyping",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "Cursor",
+			"DetailLevels": [
+				"Standard"
+			]
+		},
+		{
+			"MountName": "Characters",
+			"DetailLevels": [
+				"High"
+			]
+		}
+	]
+}

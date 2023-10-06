@@ -1,0 +1,31 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+float3											{ParameterName}_SystemLWCTile;
+/** Niagara ray tracing uses shared buffers between dispatches so each buffer has a buffer + and offset into that buffer for the current dispatch. */
+uint											{ParameterName}_MaxRayTraceCount;
+RWStructuredBuffer<FNiagaraAsyncGpuTrace>		{ParameterName}_RWRayRequests;
+uint											{ParameterName}_RayRequestsOffset;
+StructuredBuffer<FNiagaraAsyncGpuTraceResult>	{ParameterName}_IntersectionResults;
+uint											{ParameterName}_IntersectionResultsOffset;
+RWBuffer<uint>									{ParameterName}_RWRayTraceCounts;
+uint											{ParameterName}_RayTraceCountsOffset;
+
+void IssueAsyncRayTraceGpu_{ParameterName}_UEImpureCall(int In_QueryID, float3 In_TraceStart, float3 In_TraceEnd, int In_CollisionGroup, out bool Out_IsQueryValid)
+{
+	NDIAsyncGpuTrace_IssueAsyncRayTrace({ParameterName}_MaxRayTraceCount, {ParameterName}_RWRayRequests, {ParameterName}_RayRequestsOffset, {ParameterName}_RWRayTraceCounts, {ParameterName}_RayTraceCountsOffset, {ParameterName}_SystemLWCTile, In_QueryID, In_TraceStart, In_TraceEnd, In_CollisionGroup, Out_IsQueryValid);
+}
+
+void ReserveAsyncRayTraceGpu_{ParameterName}_UEImpureCall(int In_TraceCount, out int Out_StartQueryID, out bool Out_IndicesValid)
+{
+	NDIAsyncGpuTrace_ReserveRayTraceIndex({ParameterName}_MaxRayTraceCount, {ParameterName}_RWRayTraceCounts, {ParameterName}_RayTraceCountsOffset, In_TraceCount, Out_StartQueryID, Out_IndicesValid);
+}
+
+void CreateAsyncRayTraceGpu_{ParameterName}_UEImpureCall(float3 In_TraceStart, float3 In_TraceEnd, int In_CollisionGroup, out int Out_QueryID, out bool Out_IsQueryValid)
+{
+	NDIAsyncGpuTrace_CreateAsyncRayTrace({ParameterName}_MaxRayTraceCount, {ParameterName}_RWRayRequests, {ParameterName}_RayRequestsOffset, {ParameterName}_RWRayTraceCounts, {ParameterName}_RayTraceCountsOffset, {ParameterName}_SystemLWCTile, In_TraceStart, In_TraceEnd, In_CollisionGroup, Out_QueryID, Out_IsQueryValid);
+}
+
+void ReadAsyncRayTraceGpu_{ParameterName}(int In_PreviousFrameQueryID, out bool Out_CollisionValid, out float Out_CollisionDistance, out float3 Out_CollisionPosWorld, out float3 Out_CollisionNormal)
+{
+	NDIAsyncGpuTrace_ReadAsyncRayTrace({ParameterName}_MaxRayTraceCount, {ParameterName}_IntersectionResults, {ParameterName}_IntersectionResultsOffset, {ParameterName}_SystemLWCTile, In_PreviousFrameQueryID, Out_CollisionValid, Out_CollisionDistance, Out_CollisionPosWorld, Out_CollisionNormal);
+}

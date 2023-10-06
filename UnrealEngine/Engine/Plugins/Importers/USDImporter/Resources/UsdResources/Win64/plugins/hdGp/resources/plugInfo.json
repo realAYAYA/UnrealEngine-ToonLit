@@ -1,0 +1,24 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HdGpSceneIndexPlugin": {
+                        "bases": [
+                            "HdSceneIndexPlugin"
+                        ], 
+                        "displayName":
+                            "HdGpGenerativeProceduralResolvingSceneIndex",
+                        "loadWithRenderer": "",
+                        "priority": 0
+                    }
+                }
+            }, 
+            "LibraryPath": "../../../../../../../../Binaries/Win64/usd_hdGp.dll", 
+            "Name": "hdGp", 
+            "ResourcePath": "resources", 
+            "Root": "..", 
+            "Type": "library"
+        }
+    ]
+}

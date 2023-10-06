@@ -1,0 +1,221 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../../Build/Graph/Schema.xsd" >
+	<EnvVar Name="UE_HORDE_JOBID"/>
+
+	<Property Name="TestNames" Value=""/>
+
+	<Property Name="AllTestablePlatforms" Value="Win64;Mac;Linux;Android;IOS"/>
+	<Property Name="MobilePlatforms" Value="Android;IOS"/>
+	<Property Name="BuildPlatforms" Value="Win64;Mac;Linux"/>
+	<Property Name="PlatformsBuiltFromWin64" Value="Win64;Android"/>
+	<Property Name="PlatformsBuiltFromMac" Value="Mac;IOS"/>
+	<Property Name="PlatformsBuiltFromLinux" Value="Linux"/>
+
+	<Property Name="AlternateDevicePoolPlatformsProperty" Value=""/>
+
+	<!-- Platform specific macros -->
+	<Macro Name="Catch2BuildAppendExtraCMakeArgsPlatform" Arguments="Platform"/>
+	<Macro Name="Catch2BuildAppendExtraCMakeArgs" Arguments="ExtraArgValue">
+		<Property Name="ExtraCMakeArgs" Value="-CMakeAdditionalArguments=&quot;$(CommonExtraCmakeArgs)$(ExtraArgValue)&quot;"/>
+	</Macro>
+	<Macro Name="SelectAgentType" Arguments="Platform;BuildPlatform"/>
+
+	<Macro Name="SetupPlatformProperties" Arguments="Platform;BuildPlatform" OptionalArguments="AlternateDevicePool">
+		<Property Name="AllTestablePlatforms" Value="$(AllTestablePlatforms);$(Platform)"/>
+		<Do If="'$(BuildPlatform)' == 'Win64'">
+			<Property Name="PlatformsBuiltFromWin64" Value="$(PlatformsBuiltFromWin64);$(Platform)"/>
+		</Do>
+		<Do If="'$(BuildPlatform)' == 'Mac'">
+			<Property Name="PlatformsBuiltFromMac" Value="$(PlatformsBuiltFromMac);$(Platform)"/>
+		</Do>
+		<Do If="'$(BuildPlatform)' == 'Linux'">
+			<Property Name="PlatformsBuiltFromLinux" Value="$(PlatformsBuiltFromLinux);$(Platform)"/>
+		</Do>
+		<Do If="'$(AlternateDevicePool)' != ''">
+			<Property Name="AlternateDevicePoolPlatformsProperty" Value="$(AlternateDevicePoolPlatformsProperty);$(AlternateDevicePool)"/>
+		</Do>
+	</Macro>
+	<Macro Name="SetupAllPlatformProperties"/>
+
+	<!-- All test metadata scripts along with platform specific versions for both public and internal paths -->
+	<Include Script="LowLevelTests/*.xml"/>
+	<Include Script="../Platforms/*/Build/LowLevelTests/*.xml"/>
+	<Include Script="../Restricted/NotForLicensees/Build/LowLevelTests/*.xml"/>
+	<Include Script="../Restricted/NotForLicensees/Platforms/*/Build/LowLevelTests/*.xml"/>
+
+	<Expand Name="SetupAllPlatformProperties"/>
+
+	<Option Name="BuildCatch2Libs" DefaultValue="false" Description="True if building Catch2 static libraries"/>
+	<Option Name="TestCatch2Libs" DefaultValue="false" Description="True if additionally building Catch2 with extras and tests"/>
+	<Option Name="Catch2LibVariation" DefaultValue="VS2019" Description="Catch2 library variation, e.g. VS2022"/>
+	<Option Name="SubmitBuiltCatch2Libs" DefaultValue="false" Description="True if submitting the built Catch2 static libraries"/>
+	<Property Name="Catch2LatestVersion" Value="v3.0.1"/>
+
+	<!-- Check if this is a release branch -->
+	<Option Name="IsReleaseBranch" DefaultValue="false" Description="True if release branch, false otherwise"/>
+	<Option Name="PreflightChange" DefaultValue="" Description="Preflight CL number if preflight, empty otherwise"/>
+
+	<!-- Test Options -->
+	<Option Name="RunAllTests" DefaultValue="true" Description="Run All Available Tests (except Foundation)"/>
+	
+	<!-- If we set one of the Run*Tests option we don't want to run all the tests, just the selected ones. -->
+	<Property Name="RunsAllTests" Value="$(RunAllTests)"/>
+	<ForEach Name="TestName" Values="$(TestNames)">
+		<!-- Don't turn of all tests if only Foundation is in the list. -->
+		<Do If="'$(TestName)' != 'Foundation'">
+			<Property Name="RunsAllTests" Value="false" If="$(Run$(TestName)Tests)"/>
+		</Do>
+	</ForEach>
+
+	<!-- Platform Options -->
+	<Option Name="TestAllSupportedPlatforms" DefaultValue="true" Description="Test All Supported Platforms"/>
+	<Option Name="TestPlatformWin64" DefaultValue="false" Description="Test Platform Win64"/>
+	<Option Name="TestPlatformLinux" DefaultValue="false" Description="Test Platform Linux"/>
+	<Option Name="TestPlatformMac" DefaultValue="false" Description="Test Platform Mac"/>
+	<Option Name="TestPlatformAndroid" DefaultValue="false" Description="Test Platform Android"/>
+	<Option Name="TestPlatformIOS" DefaultValue="false" Description="Test Platform IOS"/>
+	
+	<!-- If we set one of the TestPlatform* option we don't want to run on all the platforms, just the selected ones. -->
+	<Property Name="TestsAllSupportedPlatforms" Value="$(TestAllSupportedPlatforms)"/>
+	<ForEach Name="Platform" Values="$(AllTestablePlatforms)">
+		<Property Name="TestsAllSupportedPlatforms" Value="false" If="$(TestPlatform$(Platform))"/>
+	</ForEach>
+	
+	<Property Name="GauntletDeviceService" Value="https://horde.devtools.epicgames.com" />
+	<Option Name="TestArgs" DefaultValue="" Description="Extra test arguments."/>
+
+	<Option Name="GauntletDevicePool" DefaultValue="UE4" Description="Gauntlet Device Pool to use to run target platform tests"/>
+	<Option Name="AlternateGauntletDevicePool" DefaultValue="UE5" Description="Alternate Gauntlet Device Pool to use to run target platform tests"/>
+	<Option Name="AlternateDevicePoolPlatforms" DefaultValue="$(AlternateDevicePoolPlatformsProperty)" Description="Platforms that need to use the Alternate Gauntlet Device Pool"/>
+	<Option Name="Device" DefaultValue="" Description="Device address to run tests on"/>
+	<Option Name="Configuration" DefaultValue="Development" Description="Configuration type: development, debug, test, shipping etc."/>
+	<Option Name="AttachToDebugger" DefaultValue="false" Description="Wait for debugger to attach."/>
+
+	<Property Name="TestNodes" Value=""/>
+	<Property Name="AfterTestNodes" Value=""/>
+	<Property Name="Catch2BuildNodes" Value=""/>
+	
+	<!-- Override build tags -->
+	<Option Name="OverrideTags" DefaultValue="" Description="Override default tags for all tests, used for special types of tests"/>
+	
+	<!-- Special test configs -->
+	<Option Name="PerTestTimeout" DefaultValue="0" Description="Individual test timeout (not for entire test run). 0 means no timeout is captured."/>
+	
+	<!-- After Steps -->
+	<Macro Name="ExpandAfterSteps" Arguments="Platform;TestName">
+		<Node Name="$(TestName) AfterStep $(Platform)">
+			<Expand Name="$(TestName)AfterSteps" Platform="$(Platform)" />	
+		</Node>
+		<Label Category="After" Name="$($(TestName)Short) After $(Platform)" Requires="$(TestName) AfterStep $(Platform)"/>
+		<Property Name="AfterTestNodes" Value="$(AfterTestNodes);$(TestName) AfterStep $(Platform)" If="$(RunAllTests) Or $(Run$(TestName)Tests)"/>
+	</Macro>
+
+	<Macro Name="DeployAndTest" Arguments="TestName;Platform">
+		<Property Name="DevicePool" Value="$(GauntletDevicePool)" />
+		<Property Name="DevicePool" Value="$(AlternateGauntletDevicePool)" If="ContainsItem('$(AlternateDevicePoolPlatforms)', '$(Platform)', ';')" />
+		<Property Name="TestArgsExt" Value="$(TestArgs) $($(TestName)InitialExtraArgs) -deviceurl=$(GauntletDeviceService) -devicepool=$(DevicePool)"/>
+		<Property Name="TestModeSuffix" Value=""/>
+		<Property Name="TestTags" Value=""/>
+		<Property Name="TestTags" Value="$($(Platform)$(TestName)Tags)" If="'$($(Platform)$(TestName)Tags)' != ''"/>
+		<Property Name="TestTags" Value="$(OverrideTags)" If="'$(OverrideTags)' != ''"/>
+		<Property Name="TestArgsExt" Value="$(TestArgsExt) -tags=&quot;$(TestTags)&quot;"/>
+		<Property Name="TestArgsExt" Value="$(TestArgsExt) --buildmachine" If="$(IsBuildMachine)"/>
+		<Property Name="TestArgsExt" Value="$(TestArgsExt) -timeout=$(PerTestTimeout)"/>
+		<Property Name="TestArgsExt" Value="$(TestArgsExt) $($(Platform)ExtraArgs)"/>
+		<Do If="'$(Device)' != ''">
+			<Property Name="TestArgsExt" Value="$(TestArgsExt) -device=$(Device) "/>
+		</Do>
+		<Do If="'$(AttachToDebugger)' != 'false'">
+			<Property Name="TestArgsExt" Value="$(TestArgsExt) -AttachToDebugger "/>
+		</Do>
+		<Do If="'$($(TestName)ReportType)' != ''">
+			<Property Name="TestArgsExt" Value="$(TestArgsExt) -ReportType=$($(TestName)ReportType)"/>
+		</Do>
+		<Do If="'$($(TestName)UsesCatch2)' != 'True'">
+			<Property Name="TestArgsExt" Value=""/>
+		</Do>
+		<Command Name="RunLowLevelTests"
+				Arguments="-test=LowLevelTests -testapp=$($(TestName)Target)$(TestModeSuffix) -platform=$(Platform) -configuration=$(Configuration) $(TestArgsExt) -build=&quot;$($(TestName)BinariesRelative)\$(Platform)\$($(TestName)Target)$(TestModeSuffix)&quot; -VeryVerbose"/>
+	</Macro>
+
+	<ForEach Name="BuildPlatform" Values="$(BuildPlatforms)">
+		<ForEach Name="Platform" Values="$(PlatformsBuiltFrom$(BuildPlatform))">
+			<Property Name="AgentType" Value="$(BuildPlatform)"/>
+			<Expand Name="SelectAgentType" Platform="$(Platform)" BuildPlatform="$(BuildPlatform)" />
+			<Property Name="BuildAgentType" Value="$(AgentType)"/>
+			<Do If="'$(Platform)' == 'Linux'">
+				<Property Name="BuildAgentType" Value="Win64"/>
+			</Do>
+			<Agent Name="Catch2 Build $(Platform)" Type="$(BuildAgentType)">
+				<Node Name="Catch2 Build Library $(Platform)">
+					<Property Name="Generator" Value="Makefile"/>
+					<Property Name="TargetConfigs" Value="debug+release"/>
+					<Property Name="ExtraCMakeArgs" Value=""/>
+					<Property Name="TargetPlatform" Value="$(Platform)"/>
+					<Property Name="CommonExtraCmakeArgs" Value=""/>
+					<Property Name="CommonExtraCmakeArgs" Value="$(CommonExtraCmakeArgs) -DCATCH_DEVELOPMENT_BUILD=ON -DBUILD_TESTING=ON -DCATCH_BUILD_EXTRA_TESTS=ON -DCATCH_ENABLE_CONFIGURE_TESTS=ON " If="$(TestCatch2Libs)"/>
+					<Do If="'$(Platform)' == 'Android'">
+						<Property Name="ExtraCMakeArgs" Value="-TargetArchitecture=arm64"/>
+					</Do>
+					<Do If="'$(Platform)' == 'Linux'">
+						<Property Name="ExtraCMakeArgs" Value="-TargetArchitecture=x86_64-unknown-linux-gnu -CMakeAdditionalArguments=&quot;$(CommonExtraCmakeArgs)-DBUILD_WITH_LIBCXX=ON&quot;"/>
+					</Do>
+					<Do If="'$(Platform)' == 'Win64'">
+						<Property Name="Generator" Value="VS2019"/>
+						<Do If="'$(Catch2LibVariation)' == 'VS2022'">
+							<Property Name="Generator" Value="VS2022"/>
+						</Do>
+						<Property Name="ExtraCMakeArgs" Value="-TargetArchitecture=x64 -CMakeAdditionalArguments=&quot;$(CommonExtraCmakeArgs)-DSET_CONFIG_NO_COLOUR_WIN32=OFF&quot;"/>
+					</Do>
+					<Expand Name="Catch2BuildAppendExtraCMakeArgsPlatform" Platform="$(Platform)"/>
+					<Do If="'$(BuildPlatform)' == 'Mac'">
+						<Property Name="Generator" Value="Xcode"/>
+						<Property Name="TargetConfigs" Value="Debug+Release"/>
+						<Property Name="ExtraCMakeArgs" Value="-CmakeAdditionalArguments=&quot;$(CommonExtraCmakeArgs)-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64&quot;"/>
+					</Do>
+					<Command Name="BuildCMakeLib"
+							 Arguments="-CMakeGenerator=$(Generator) -MakeTarget=Catch2 -TargetLib=Catch2 -TargetLibVersion=$(Catch2LatestVersion) -BinOutputPath=Binaries -LibOutputPath=lib -TargetPlatform=$(TargetPlatform) -TargetConfigs=$(TargetConfigs) -SkipCreateChangelist $(ExtraCMakeArgs)"/>
+				</Node>
+				<Property Name="Catch2BuildNodes" Value="$(Catch2BuildNodes);Catch2 Build Library $(Platform)"/>
+			</Agent>
+			<Agent Name="Low Level Tests $(Platform)" Type="$(AgentType)">
+				<ForEach Name="TestName" Values="$(TestNames)">
+					<Property Name="TestSupportedOnPlatform" Value="false"/>
+					<Property Name="TestRunsOnPlatform" Value="false"/>
+					<Property Name="RunsTestOnPlatform" Value="false"/>
+					
+					<Property Name="TestSupportedOnPlatform" Value="true" If="Contains('$($(TestName)SupportedPlatforms)', '$(Platform)')"/>
+					<Property Name="TestRunsOnPlatform" Value="true" If="($(TestSupportedOnPlatform) And $(TestsAllSupportedPlatforms)) Or $(TestPlatform$(Platform))"/>
+					<Property Name="RunsTestOnPlatform" Value="true" If="!$($(TestName)Disabled) And $(TestRunsOnPlatform) And ($(Run$(TestName)Tests) Or $(RunsAllTests))"/>
+
+					<Do If="$(RunsTestOnPlatform)">
+						<Do If="!$(TestSupportedOnPlatform)">
+							<Warning Message="Low level test $(TestName) not yet tested for support on platform $(Platform)."/>
+						</Do>
+
+						<Property Name="TestRequirements" Value=""/>
+						<Do If="$(BuildCatch2Libs)">
+							<Property Name="TestRequirements" Value="$(TestRequirements);Catch2 Build Library $(Platform)"/>
+						</Do>
+						
+						<Node Name="$($(TestName)Short) Tests $(Platform)" Requires="$(TestRequirements)">
+							<Compile Target="$($(TestName)Target)" Configuration="$(Configuration)" Platform="$(Platform)" AllowXGE="false" Arguments="$($(Platform)$(TestName)ExtraCompilationArgs)"/>
+							<Do If="'$($(Platform)$(TestName)RunSupported)' == 'True'">
+								<Expand Name="DeployAndTest" TestName="$(TestName)" Platform="$(Platform)"/>
+							</Do>
+						</Node>
+						<Label Category="Test" Name="$($(TestName)Short) $(Platform)" Requires="$($(TestName)Short) Tests $(Platform)"/>
+						<Property Name="TestNodes" Value="$(TestNodes);$($(TestName)Short) Tests $(Platform)" If="$(RunAllTests) Or $(Run$(TestName)Tests)"/>
+						
+						<Do If="'$($(TestName)HasAfterSteps)' == 'True'">
+							<Expand Name="ExpandAfterSteps" TestName="$(TestName)" Platform="$(Platform)" />
+						</Do>
+					</Do>
+				</ForEach>
+			</Agent>
+		</ForEach>
+	</ForEach>
+	
+	<Aggregate Name="Run Low Level Tests" Requires="$(TestNodes);$(AfterTestNodes)"/>
+	<Aggregate Name="Build Catch2 Libraries" Requires="$(Catch2BuildNodes)"/>
+</BuildGraph>

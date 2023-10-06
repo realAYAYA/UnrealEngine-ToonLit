@@ -1,0 +1,14 @@
+INTSourceChangelist:3151861
+Availability:NoPublish
+Title:AGameState
+Crumbs:
+Description:GameState类的概述
+
+[EXCERPT:AGameState]
+
+GameState负责在客户端上监测游戏的状态。
+
+[VAR:ToolTipFullLink]
+Gameplay/Framework/GameMode#gamestate
+[/VAR]
+[/EXCERPT:AGameState]

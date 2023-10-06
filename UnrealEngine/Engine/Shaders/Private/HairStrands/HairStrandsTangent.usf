@@ -1,0 +1,85 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../MonteCarlo.ush"
+#include "HairStrandsPack.ush"
+#include "HairStrandsClusterCommon.ush"
+
+#if SHADER_TANGENT
+uint PointCount;
+
+Buffer<uint4>  	 PositionBuffer;
+RWBuffer<float4> OutputTangentBuffer;
+
+uint			HairStrandsVF_bCullingEnable;
+
+#if PERMUTATION_CULLING == 1
+Buffer<uint>	HairStrandsVF_CullingIndirectBuffer;
+Buffer<uint>	HairStrandsVF_CullingIndexBuffer;
+Buffer<uint>	IndirectBufferArgs;
+#endif
+
+float4 PackNormal(float3 V, uint A)
+{
+	return float4(clamp(V,float(-1).xxx,float(1).xxx), 1.0f);
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	const int MaxPointCount = int(PointCount);
+	int IndexCurr = DispatchThreadId;
+	int IndexPrev = clamp(IndexCurr-1, 0, MaxPointCount-1);
+	int IndexNext = clamp(IndexCurr+1, 0, MaxPointCount-1);
+	bool bValid = IndexCurr < MaxPointCount;
+#if PERMUTATION_CULLING
+	if (HairStrandsVF_bCullingEnable)
+	{
+		const int FetchIndex = DispatchThreadId;
+		const int PointCountAfterCulling = clamp((int)HairStrandsVF_CullingIndirectBuffer[3], 0, MaxPointCount);
+		bValid = false;
+		if (FetchIndex < PointCountAfterCulling)
+		{
+			const int FetchIndexPrev = clamp(FetchIndex-1, 0, PointCountAfterCulling-1);
+			const int FetchIndexCurr = clamp(FetchIndex  , 0, PointCountAfterCulling-1);
+			const int FetchIndexNext = clamp(FetchIndex+1, 0, PointCountAfterCulling-1);
+
+			IndexPrev = HairStrandsVF_CullingIndexBuffer[FetchIndexPrev];
+			IndexCurr = HairStrandsVF_CullingIndexBuffer[FetchIndexCurr];
+			IndexNext = HairStrandsVF_CullingIndexBuffer[FetchIndexNext];
+
+			bValid = true;
+		}
+	}
+#endif
+
+	if (IndexCurr < MaxPointCount)
+	{
+		const FHairControlPoint CPCurr = UnpackHairControlPoint(PositionBuffer[IndexCurr]);
+		const FHairControlPoint CPPrev = UnpackHairControlPoint(PositionBuffer[IndexPrev]);
+		const FHairControlPoint CPNext = UnpackHairControlPoint(PositionBuffer[IndexNext]);
+
+		float3 T0 = 0;
+		const bool bIsPrevValid = CPPrev.Type == HAIR_CONTROLPOINT_INSIDE || CPPrev.Type == HAIR_CONTROLPOINT_START;
+		if (bIsPrevValid)
+		{
+			T0 = normalize(CPCurr.Position - CPPrev.Position);
+		}
+
+		float3 T1 = 0;
+		const bool bIsNextValid = CPNext.Type == HAIR_CONTROLPOINT_INSIDE || CPNext.Type == HAIR_CONTROLPOINT_END;
+		if (bIsNextValid)
+		{
+			T1 = normalize(CPNext.Position - CPCurr.Position);
+		}
+
+		const float3 T = normalize(T0 + T1);
+
+		// TODO: switch to rotation minimizing frames to avoid the discontinuity
+		float3x3 Basis = GetTangentBasis(T);
+
+		OutputTangentBuffer[IndexCurr*2]   = PackNormal(Basis[0], 0);
+		OutputTangentBuffer[IndexCurr*2+1] = PackNormal(Basis[2], 127);
+	}
+}
+#endif // SHADER_TANGENT

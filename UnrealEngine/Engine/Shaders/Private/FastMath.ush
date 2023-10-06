@@ -1,0 +1,24 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	FastMath.ush: Fast/approximated math functions
+=============================================================================*/
+  
+#pragma once
+
+#include "FastMathThirdParty.ush"
+
+// Reference: http://www.humus.name/Articles/Persson_LowLevelThinking.pdf p.27
+#define FastExp_N(T) T FastExp(T x) { return exp2(1.442695f * x); }
+FastExp_N(float)
+FastExp_N(float2)
+FastExp_N(float3)
+FastExp_N(float4)
+
+// Reference: http://www.humus.name/Articles/Persson_LowLevelThinking.pdf p.27
+// Warning: This is a coarse approximation
+#define FastLog_N(T) T FastLog(T x) { return log2(0.693147f * x); }
+FastLog_N(float)
+FastLog_N(float2)
+FastLog_N(float3)
+FastLog_N(float4)

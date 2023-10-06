@@ -1,0 +1,173 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "VRSShadingRateCommon.ush"
+#include "../Common.ush"
+#include "../ColorSpace.ush"
+
+float4 ViewRect;
+float EdgeThreshold;
+float ConservativeEdgeThreshold;
+
+Texture2D<float> LuminanceTexture;
+RWTexture2D<uint> VariableRateShadingTexture;
+
+#define USE_WAVE_OP COMPILER_SUPPORTS_WAVE_BIT_ORAND
+
+// Per the D3D spec: https://microsoft.github.io/DirectX-Specs/d3d/VariableRateShading.htm
+// coarse rate shading is guaranteed to always stay within VRS tile boundaries so no
+// need to check edges on tile borders 
+#define SKIP_EDGE_DETECTION_ON_BORDERS 1
+
+#if COMPUTE_SHADER
+
+#if !USE_WAVE_OP
+groupshared uint GroupShadingRate;
+#endif 
+
+groupshared half LumaMatrix[THREADGROUP_SIZEX][THREADGROUP_SIZEY];
+
+#endif /* COMPUTE_SHADER */
+
+#define SOBEL_DIMENSION 3
+
+#if COMPUTE_SHADER
+void CalculateShadingRateImageInner(
+	uint2 DispatchThreadId,
+	uint2 SwizzledGroupThreadId,
+	uint2 GroupThreadId,
+	uint2 GroupId,
+	uint GroupIndex,
+	float LuminanceValue)
+{
+	float2 Dimensions = ViewRect.zw - ViewRect.xy;
+
+	uint VRSBitMask = D3D12_SHADING_RATE_2X2 | (D3D12_SHADING_RATE_2X2 << CONSERVATIVE_SHADING_RATE_SHIFT);
+#if !USE_WAVE_OP
+	if (GroupThreadId.x == 1 && GroupThreadId.y == 1)
+	{
+		GroupShadingRate = VRSBitMask;
+	}
+#endif
+
+	LumaMatrix[SwizzledGroupThreadId.y][SwizzledGroupThreadId.x] = LuminanceValue;
+
+	GroupMemoryBarrierWithGroupSync();
+	uint UnsupportedShadingRate = 0;
+
+	// Don't bother doing edge detection on anything on the texture borders
+	bool InvalidThread = 
+		((float)DispatchThreadId.x >= Dimensions.x - 1 ||
+		(float)DispatchThreadId.y >= Dimensions.y - 1 ||
+#if SKIP_EDGE_DETECTION_ON_BORDERS
+		GroupThreadId.x == THREADGROUP_SIZEX - 1 ||
+		GroupThreadId.y == THREADGROUP_SIZEY - 1 ||
+		GroupThreadId.x == 0 ||
+		GroupThreadId.y == 0);
+#else
+		DispatchThreadId.x == 0 ||
+		DispatchThreadId.y == 0);
+#endif
+
+	int SobelWidth = SOBEL_DIMENSION / 2;
+
+	{
+		float SobelXSum = 0.0;
+		float SobelX[SOBEL_DIMENSION][SOBEL_DIMENSION] =
+		{
+			{-1.0, 0.0, 1.0},
+			{-2.0, 0.0, 2.0},
+			{-1.0, 0.0, 1.0}
+		};
+		for (int x = 0; x < SOBEL_DIMENSION; x++)
+		{
+			for (int y = 0; y < SOBEL_DIMENSION; y++)
+			{
+				int2 LumaCoord = GroupThreadId + int2(x - SobelWidth, y - SobelWidth);
+				SobelXSum += SobelX[y][x] * LumaMatrix[LumaCoord.y][LumaCoord.x];
+			}
+		}
+		if (abs(SobelXSum) > EdgeThreshold)
+		{
+			UnsupportedShadingRate |= D3D12_SHADING_RATE_2X1;
+		}
+
+		if (abs(SobelXSum) > ConservativeEdgeThreshold)
+		{
+			UnsupportedShadingRate |= (D3D12_SHADING_RATE_2X1 << CONSERVATIVE_SHADING_RATE_SHIFT);
+		}
+	}
+
+	{
+		float SobelYSum = 0.0;
+		float SobelY[SOBEL_DIMENSION][SOBEL_DIMENSION] =
+		{
+			{-1.0, -2.0, -1.0},
+			{ 0.0,  0.0,  0.0},
+			{ 1.0,  2.0,  1.0}
+		};
+		for (int x = 0; x < SOBEL_DIMENSION; x++)
+		{
+			for (int y = 0; y < SOBEL_DIMENSION; y++)
+			{
+				int2 LumaCoord = GroupThreadId + int2(x - SobelWidth, y - SobelWidth);
+				SobelYSum += SobelY[y][x] * LumaMatrix[LumaCoord.y][LumaCoord.x];
+			}
+		}
+		if (abs(SobelYSum) > EdgeThreshold)
+		{
+			UnsupportedShadingRate |= D3D12_SHADING_RATE_1X2;
+		}
+		
+		if (abs(SobelYSum) > ConservativeEdgeThreshold)
+		{
+			UnsupportedShadingRate |= (D3D12_SHADING_RATE_1X2 << CONSERVATIVE_SHADING_RATE_SHIFT);
+		}
+	}
+
+	const float2 VRSTileSize = float2(THREADGROUP_SIZEX, THREADGROUP_SIZEY);
+	uint2 GroupOffset = ceil(ViewRect.xy / VRSTileSize);
+#if USE_WAVE_OP
+	if (InvalidThread)
+	{
+		UnsupportedShadingRate = 0;
+	}
+
+	int WaveSupportedShadingRate = WaveActiveBitAnd(~UnsupportedShadingRate);
+	if (GroupThreadId.x == 1 && GroupThreadId.y == 1)
+	{
+		VariableRateShadingTexture[GroupId.xy + GroupOffset] = VRSBitMask & WaveSupportedShadingRate;
+	}
+#else
+	uint unused;
+	if(!InvalidThread)
+	{
+		InterlockedAnd(GroupShadingRate, ~UnsupportedShadingRate, unused);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+	if (GroupThreadId.x == 1 && GroupThreadId.y == 1)
+	{
+		VariableRateShadingTexture[GroupId.xy + GroupOffset] = GroupShadingRate;
+	}
+#endif
+}
+
+[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, 1)]
+void CalculateShadingRateImage(
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 GroupId : SV_GroupID,
+	uint GroupIndex : SV_GroupIndex)
+{
+	int2 TextureCoord = int2(int(ViewRect.x + DispatchThreadId.x), int(ViewRect.y + DispatchThreadId.y));
+
+	CalculateShadingRateImageInner(
+		DispatchThreadId.xy, 
+		GroupThreadId.xy, 
+		GroupThreadId.xy, 
+		GroupId, 
+		GroupIndex,
+		LuminanceTexture[TextureCoord]);
+}
+
+#endif /* COMPUTE_SHADER */

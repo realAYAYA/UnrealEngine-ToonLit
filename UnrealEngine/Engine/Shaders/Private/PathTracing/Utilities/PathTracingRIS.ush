@@ -1,0 +1,53 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Implementation of the core logic of Weighted Resampled Importance Sampling
+// The idea is to simulate sampling a discrete pdf built of individually weighted samples
+
+// This implementation uses the sample-stretching trick presented in:
+//  Shinji Ogaki - "Vectorized Reservoir Sampling"
+//  Siggraph Asia 2021 Technical Communications
+
+struct FRISContext
+{
+	float WeightSum;
+	float RandSample;
+
+	bool Accept(float Weight)
+	{
+		WeightSum += Weight;
+		if (Weight > 0)
+		{
+			const float OneMinusEpsilon = 0.99999994; // 32-bit float just before 1.0
+			RandSample *= WeightSum;
+			if (RandSample < Weight)
+			{
+				RandSample = min(RandSample / Weight, OneMinusEpsilon);
+				return true;
+			}
+			else
+			{
+				RandSample = min((RandSample - Weight) / (WeightSum - Weight), OneMinusEpsilon);
+			}
+		}
+		return false;
+	}
+
+	bool HasSample()
+	{
+		return WeightSum > 0;
+	}
+
+	float GetNormalization()
+	{
+		return WeightSum;
+	}
+};
+
+FRISContext InitRISContext(float RandSample)
+{
+	FRISContext Context = (FRISContext)0;
+	Context.RandSample = RandSample;
+	return Context;
+}

@@ -1,0 +1,24 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+uint {DataInterfaceName}_NumVertices;
+uint {DataInterfaceName}_InputStreamStart;
+uint {DataInterfaceName}_bIsValid;
+Buffer<float> {DataInterfaceName}_ValueBuffer;
+
+uint ReadNumVertices_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumVertices;
+}
+
+float ReadValue_{DataInterfaceName}(uint VertexIndex)
+{
+	if ({DataInterfaceName}_bIsValid)
+	{
+		uint BufferIndex = ({DataInterfaceName}_InputStreamStart + VertexIndex);
+		return {DataInterfaceName}_ValueBuffer[BufferIndex];
+	}
+	else
+	{
+		return 0.0f;
+	}
+}

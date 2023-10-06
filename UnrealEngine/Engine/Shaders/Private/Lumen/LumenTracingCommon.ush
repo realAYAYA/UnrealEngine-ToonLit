@@ -1,0 +1,107 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../ReflectionEnvironmentShared.ush"
+#include "../HeightFogCommon.ush"
+#include "SurfaceCache/LumenSurfaceCacheSampling.ush"
+
+#ifndef ENABLE_DYNAMIC_SKY_LIGHT
+	#define ENABLE_DYNAMIC_SKY_LIGHT 1
+#endif
+
+struct FConeTraceResult
+{
+	float3 Lighting;
+	float Transparency;
+	float NumSteps;
+	float NumOverlaps;
+	float OpaqueHitDistance;
+	float ExpandSurfaceAmount;
+	float3 Debug;
+	float3 GeometryWorldNormal;
+	float3 WorldVelocity;
+};
+
+float TanConeAngleToRoughness(float TanConeAngle)
+{
+	//@todo DynamicGI - derive roughness from cone angle
+	return sqrt(saturate(TanConeAngle / (.5f * PI)));
+}
+
+float3 EvaluateSkyRadiance(float3 Direction)
+{
+	float3 SkyRadiance = 0.0f;
+
+#if ENABLE_DYNAMIC_SKY_LIGHT
+	if (ReflectionStruct.SkyLightParameters.y > 0)
+	{
+		float SkyAverageBrightness = 1.0f;
+		float TanConeAngle = 0.0f;
+		float Roughness = TanConeAngleToRoughness(TanConeAngle);
+
+		SkyRadiance = GetSkyLightReflection(Direction, Roughness, SkyAverageBrightness);
+	}
+#endif
+
+	return SkyRadiance;
+}
+
+void ApplySkylightToTraceResult(float3 ConeDirection, inout FConeTraceResult TraceResult)
+{ 
+#if ENABLE_DYNAMIC_SKY_LIGHT
+	if (ReflectionStruct.SkyLightParameters.y > 0)
+	{
+		float SkyAverageBrightness = 1.0f;
+		float TanConeAngle = 0.0f;
+		float Roughness = TanConeAngleToRoughness(TanConeAngle);
+
+		TraceResult.Lighting += GetSkyLightReflection(ConeDirection, Roughness, SkyAverageBrightness) * TraceResult.Transparency;
+		TraceResult.Transparency = 0;
+	}
+#endif
+}
+
+float SkylightLeaking;
+float SkylightLeakingRoughness;
+float InvFullSkylightLeakingDistance;
+uint  SampleHeightFog;
+
+float CalculateSkylightLeakingAmount(float HitDistance)
+{
+	return SkylightLeaking * saturate(HitDistance * InvFullSkylightLeakingDistance);
+}
+
+float3 GetSkylightLeaking(float3 ConeDirection, float HitDistance)
+{
+	float3 Lighting = 0;
+
+	if (ReflectionStruct.SkyLightParameters.y > 0 && SkylightLeaking > 0.0f)
+	{
+		float SkyAverageBrightness = 1.0f;
+		Lighting = GetSkyLightReflection(ConeDirection, SkylightLeakingRoughness, SkyAverageBrightness) * CalculateSkylightLeakingAmount(HitDistance);
+	}
+
+	return Lighting;
+}
+
+float3 ClampMaxRayIntensity(float3 Radiance, float MaxRayIntensity)
+{
+	float MaxLighting = max3(Radiance.x, Radiance.y, Radiance.z);
+	if (MaxLighting > MaxRayIntensity * View.OneOverPreExposure)
+	{
+		Radiance *= MaxRayIntensity * View.OneOverPreExposure / MaxLighting;
+	}
+	return Radiance;
+}
+
+float3 GetFogOnLuminance(in float3 SurfaceLuminance, in float SurfaceCoverage, in float3 OriginToCollider)
+{
+	// LUMEN_TODO Going a very simple way for now using OriginToCollider only, and not ray origin but camera position.
+	// This works already great and we can fix later in main (parameterers needs to be upated)
+	const float ExcludeDistance = 0.0f;
+	float4 HeightFogInscatteringAndTransmittance = GetExponentialHeightFog(OriginToCollider, ExcludeDistance);
+	HeightFogInscatteringAndTransmittance.rgb *= View.PreExposure;
+
+	return SurfaceLuminance * HeightFogInscatteringAndTransmittance.a + HeightFogInscatteringAndTransmittance.rgb * SurfaceCoverage;
+}

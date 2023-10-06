@@ -1,0 +1,6 @@
+repositories $(ANDROID_HOME)/extras
+repositories $(ENGINEDIR)/Source/ThirdParty/Android/extras
+com.google.android.gms,play-services-auth,18.1.0
+com.google.android.gms,play-services-nearby,18.1.0
+com.google.android.gms,play-services-games,18.0.1
+com.google.android.gms,play-services-plus,17.0.0

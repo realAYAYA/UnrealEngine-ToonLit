@@ -1,0 +1,39 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteStreaming.ush"
+
+RWStructuredBuffer<FStreamingRequest>	OutStreamingRequests;
+
+[numthreads(1, 1, 1)]
+void ClearStreamingRequestCount()
+{
+	OutStreamingRequests[0].RuntimeResourceID_Magic = 0;	// First entry holds count
+}
+
+uint NumClusterUpdates;
+StructuredBuffer<uint>	PackedClusterUpdates;
+RWByteAddressBuffer		ClusterPageBuffer;
+
+[numthreads(64, 1, 1)]
+void UpdateClusterLeafFlags(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId >= NumClusterUpdates)
+	{
+		return;
+	}
+
+	const uint PackedValue	= PackedClusterUpdates[DispatchThreadId];
+	const bool bLeaf		= (PackedValue & 1u) != 0;
+	const uint Offset		= PackedValue >> 1;
+
+	if (bLeaf)
+	{
+		ClusterPageBuffer.InterlockedOr(Offset, NANITE_CLUSTER_FLAG_STREAMING_LEAF);
+	}
+	else
+	{
+		ClusterPageBuffer.InterlockedAnd(Offset, ~NANITE_CLUSTER_FLAG_STREAMING_LEAF);
+	}
+}

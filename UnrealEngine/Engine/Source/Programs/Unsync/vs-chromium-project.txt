@@ -1,0 +1,6 @@
+[SearchableFiles.include]
+*
+
+[SourceExplorer.ignore]
+.git/
+build

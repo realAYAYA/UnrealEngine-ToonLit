@@ -1,0 +1,47 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#ifdef OVERRIDE_LUMENHARDWARERAYTRACINGPLATFORMCOMMON_USH
+#include "/Platform/Private/LumenHardwareRayTracingPlatformCommon.ush"
+#else
+
+#define TraceLumenRay(TLAS, RayFlags, InstanceInclusionMask, ShaderSlot, NumShaderSlots, MissIndex, Ray, InOutPayload, OutBookmark){\
+	TraceRay(TLAS, RayFlags, InstanceInclusionMask, ShaderSlot, NumShaderSlots, MissIndex, Ray, InOutPayload);\
+}
+
+void TraceLumenShadingRay(
+	RaytracingAccelerationStructure AccelerationStructure,
+	uint RayFlags,
+	uint InstanceInclusionMask,
+	uint RayContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint MissShaderIndex,
+	RayDesc Ray,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+	TraceRay(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload);
+}
+
+void TraceLumenShadingRay(
+	RaytracingAccelerationStructure AccelerationStructure,
+	uint RayFlags,
+	uint InstanceInclusionMask,
+	uint RayContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint MissShaderIndex,
+	RayDesc Ray,
+	inout FLumenRayHitBookmark Bookmark,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+	TraceRay(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload);
+}
+
+#ifndef LUMEN_HARDWARE_RAYTRACING
+float3 ComputeWorldNormal(uint PrimitiveIndex)
+{
+	return GetGeometryNormalFromTriangleBaseAttributes(PrimitiveIndex);
+}
+#endif // LUMEN_HARDWARE_RAYTRACING
+
+#endif

@@ -1,0 +1,187 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "../../SceneTexturesCommon.ush"
+#include "../../HashTable.ush"
+#include "../../WaveOpUtil.ush"
+#include "Voxel.ush"
+#include "Brick.ush"
+
+StructuredBuffer< uint >		IndexBuffer;
+RWStructuredBuffer< uint >		RWIndexBuffer;
+
+RWByteAddressBuffer				RWBlockBuffer;
+
+int4 DepthToVoxel( uint2 PixelPos )
+{
+	float DeviceZ = SceneTexturesStruct.SceneDepthTexture.Load( int3( PixelPos, 0 ) ).r;
+	DeviceZ = max( DeviceZ, 1e-4 );
+	float3 TranslatedWorldPosition = SvPositionToTranslatedWorld( float4( PixelPos + 0.5, DeviceZ, 1 ) );
+	
+	float3 VoxelPos = TranslatedWorldPosition / VoxelSize;
+	float Distance = length( TranslatedWorldPosition - View.TranslatedWorldCameraOrigin );
+	//float Distance = max3( TranslatedWorldPosition.x, TranslatedWorldPosition.y, TranslatedWorldPosition.z );
+
+	// TODO output resolution instead of render
+	float PixelsPerVoxel = 0.5;
+	float DistanceFactor = 2.0 * PixelsPerVoxel / ( VoxelSize * View.ViewToClip[1][1] * View.ViewSizeAndInvSize.y );
+	float Level = log2( Distance * DistanceFactor );
+	Level = floor( max( Level, 0 ) );
+
+	VoxelPos = floor( VoxelPos * exp2( -Level ) );
+
+	return int4( VoxelPos, Level );
+}
+
+void AddVoxelToBlock( uint BlockOffset, uint3 Voxel )
+{
+	uint VoxelIndex = Voxel.x + Voxel.y * 4 + Voxel.z * 16;
+	uint HighInt = VoxelIndex >= 32;
+	uint VoxelMask = 1 << ( VoxelIndex - HighInt * 32 );
+	RWBlockBuffer.InterlockedOr( 8 * BlockOffset + 4 * HighInt, VoxelMask );
+}
+
+[numthreads(8, 8, 1)]
+void VisibleBricksHash(
+	uint2	PixelPos	: SV_DispatchThreadID,
+	uint	GroupIndex	: SV_GroupIndex ) 
+{
+	bool bInsideViewport = all( PixelPos < View.ViewSizeAndInvSize.xy );
+	
+	BRANCH
+	if( bInsideViewport )
+	{
+		int4 Voxel = DepthToVoxel( PixelPos );
+		uint3 BrickKey = EncodeBrickKey( Voxel.xyz >> uint( BrickSizeLog2 ), Voxel.w );
+		
+		//uint3 Hash = Rand3DPCG32( BrickKey );
+		uint4 Hash = Rand4DPCG32( int4( Voxel.xyz >> uint( BrickSizeLog2 ), Voxel.w ) );
+		uint HashKey	= Hash.x;
+		uint HashIndex	= Hash.y;
+
+		bool bAdded = HashTableAdd( HashKey, HashIndex );
+
+		FBrick Brick;
+		Brick.Key = BrickKey;
+		Brick.BlockOffset = HashIndex;
+
+		uint BrickIndex = HashIndex;
+		if( bAdded )
+		{
+			//if( all( PixelPos == 0 ) )
+			if(1)
+			{
+				// Add to count
+				WaveInterlockedAddScalar_( RWDispatchIndirectArgs[3], 1, BrickIndex );
+				//WaveInterlockedAddScalar( RWDispatchIndirectArgs[0], 1 );
+				//WaveInterlockedAddScalarInGroups( RWDispatchIndirectArgs[3], RWDispatchIndirectArgs[0], 64, 1, BrickIndex );
+			}
+			else
+			{
+				BrickIndex = RWBrickBuffer.IncrementCounter();
+			}
+
+			RWIndexBuffer[ HashIndex ] = BrickIndex;
+			RWBrickBuffer[ BrickIndex ] = Brick;
+		}
+
+		Voxel.xyz &= uint( BrickSize - 1 );
+		//Voxel.xyz &= (int)BrickSize - 1;
+		AddVoxelToBlock( Brick.BlockOffset, Voxel.xyz / ( BrickSize / 4 ) );
+	}
+}
+
+[numthreads(32, 1, 1)]
+void FillArgs( uint GroupIndex : SV_GroupIndex ) 
+{
+	if( GroupIndex == 0 )
+	{
+#if 1
+		//uint NumBricks = RWBrickBuffer.IncrementCounter();
+		uint NumBricks = RWDispatchIndirectArgs[3];
+
+		RWDispatchIndirectArgs[0] = ( NumBricks + 63 ) / 64;
+		RWDispatchIndirectArgs[1] = 1;
+		RWDispatchIndirectArgs[2] = 1;
+		RWDispatchIndirectArgs[3] = NumBricks;
+#else
+		uint NumBricks = RWDispatchIndirectArgs[3];
+
+		RWDispatchIndirectArgs[0] = NumBricks;
+		RWDispatchIndirectArgs[1] = 1;
+		RWDispatchIndirectArgs[2] = 1;
+		RWDispatchIndirectArgs[3] = NumBricks;
+#endif
+
+		SetDrawIndirectArgs( NumBricks );
+	}
+}
+
+
+[numthreads(64, 1, 1)]
+void AllocBlocks(
+	uint BrickIndex : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex ) 
+{
+	uint NumBricks = GetNumBricks();
+
+	uint BlockOffset = 0;
+	uint NumBlocks = 0;
+	uint2 Block = 0;
+
+	if( BrickIndex < NumBricks )
+	{
+		BlockOffset = RWBrickBuffer[ BrickIndex ].BlockOffset;
+
+		Block = BlockBuffer.Load2( 8 * BlockOffset );
+
+		NumBlocks = 1 + countbits( Block.x ) + countbits( Block.y );
+
+		// Alloc space for all blocks
+		WaveInterlockedAdd_( RWDrawIndirectArgs[5], NumBlocks, BlockOffset );
+
+		RWBrickBuffer[ BrickIndex ].BlockOffset = BlockOffset;
+		RWBlockBuffer.Store2( 8 * BlockOffset, Block );
+	}
+
+	if( BrickIndex == 0 )
+	{
+		SetDrawIndirectArgs( NumBricks );
+	}
+}
+
+
+[numthreads(8, 8, 1)]
+void FillBlocks( uint2 PixelPos : SV_DispatchThreadID ) 
+{
+	bool bInsideViewport = all( PixelPos < View.ViewSizeAndInvSize.xy );
+	
+	BRANCH
+	if( bInsideViewport )
+	{
+		int4 Voxel = DepthToVoxel( PixelPos );
+
+		uint3 BrickKey = EncodeBrickKey( Voxel.xyz >> uint( BrickSizeLog2 ), Voxel.w );
+
+		uint4 Hash = Rand4DPCG32( int4( Voxel.xyz >> uint( BrickSizeLog2 ), Voxel.w ) );
+		//uint3 Hash = Rand3DPCG32( BrickKey );
+		uint HashKey	= Hash.x;
+		uint HashIndex	= Hash.y;
+
+		HashTableFind( HashKey, HashIndex );
+
+		uint BrickIndex = IndexBuffer[ HashIndex ];
+
+		FBrick Brick = BrickBuffer[ BrickIndex ];
+
+		uint3 Block = ( Voxel.xyz >> 2 ) & 3;
+		uint VoxelIndex = Block.x + Block.y * 4 + Block.z * 16;
+		uint VoxelMask = 1 << ( VoxelIndex & 31 );
+
+		uint2 RootBlock = RWBlockBuffer.Load2( 8 * Brick.BlockOffset );
+
+		uint BlockOffset = PrefixSum64( RootBlock, VoxelIndex, VoxelMask );
+
+		AddVoxelToBlock( Brick.BlockOffset + 1 + BlockOffset, Voxel.xyz & 3 );
+	}
+}

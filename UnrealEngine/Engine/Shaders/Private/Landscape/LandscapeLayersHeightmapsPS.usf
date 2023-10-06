@@ -1,0 +1,514 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "LandscapeCommon.ush"
+
+// ----------------------------------------------------------------------------------
+
+#if defined (__INTELLISENSE__)
+// Uncomment the appropriate define for enabling syntax highlighting with HLSL Tools for Visual Studio : 
+//#define MERGE_EDIT_LAYERS 1
+//#define STITCH_HEIGHTMAP 1
+//#define FINALIZE_HEIGHTMAP 1
+//#define GENERATE_MIPS 1
+#endif // defined (__INTELLISENSE__)
+
+#define INDEX_NONE -1
+
+// ----------------------------------------------------------------------------------
+
+// All shaders inputs/outputs
+uint InNumSubsections; // Number of sub-sections for this landscape (1 or 2)
+
+#if MERGE_EDIT_LAYERS
+// MergeEditLayers inputs/outputs :
+
+/** EEditLayerHeightmapBlendMode enum */
+#define EEDITLAYERHEIGHTMAPBLENDMODE_ADDITIVE 0
+#define EEDITLAYERHEIGHTMAPBLENDMODE_ALPHABLEND 1
+
+// Contains the information related to a given edit layers and how it should merge into the final heightmap
+struct FEditLayerHeightmapMergeInfo
+{
+	int4 TextureSubregion; // Subregion of the source (edit layer) texture to use
+	
+	uint BlendMode; // See EEditLayerHeightmapBlendMode
+	float Alpha; // Alpha value to be used in the blend
+	float Padding0; // Align to next float4
+	float Padding1;
+};
+
+uint InNumEditLayers; // Number of layers to merge into the destination texture
+Texture2DArray<float4> InEditLayersTextures; // Source texture for each individual edit layer (effective size == InNumEditLayers)
+
+StructuredBuffer<FEditLayerHeightmapMergeInfo> InEditLayersMergeInfos; // Describes how to merge each individual edit layer (effective size == InNumEditLayers)
+#endif // MERGE_EDIT_LAYERS
+
+#if STITCH_HEIGHTMAP || FINALIZE_HEIGHTMAP
+// StitchHeightmap/FinalizeHeightmaps shared inputs/outputs :
+
+uint2 InSourceTextureSize; // Texture size we read from (XY texture size of InSourceHeightmaps)
+
+// Texture array containing all the source heightmaps that can participate to the stitching operation (i.e. the component's heightmap, its 8 neighbors and potentially many other component 
+//  that are needed for this batch). 
+Texture2DArray<float2> InSourceHeightmaps;
+
+// The index of the input heightmap to process and its 8 neighbors arranged in a 3x3 array (linear : starting from the top-left neighbor [index 0] and ending with the bottom-right [index 8])
+//   (index relative to InSourceHeightmaps)
+DECLARE_SCALAR_ARRAY(uint, InNeighborHeightmapIndices, 9);
+#endif // STITCH_HEIGHTMAP || FINALIZE_HEIGHTMAP
+
+#if FINALIZE_HEIGHTMAP
+// FinalizeHeightmap inputs/outputs :
+
+uint4 InDestinationTextureSubregion; // Subregion of the destination texture to write to
+float3 InLandscapeGridScale; // x == LS Actor DrawScale.X, y == LS Actor DrawScale.y, z == LS Actor DrawScale.z / 128.0f (ZSCALE)
+#endif // FINALIZE_HEIGHTMAP
+
+
+#if GENERATE_MIPS
+// GenerateMips inputs/outputs :
+uint2 InCurrentMipSubregionSize; // Size of the the texture subregion that corresponds to a single landscape component (texture sharing)
+
+Texture2D<float4> InSourceHeightmap;
+#endif // GENERATE_MIPS
+
+
+// ----------------------------------------------------------------------------------
+// Util functions : 
+
+float ExtractAlpha(float2 InPackedAlpha)
+{
+	int AlphaWithFlags = ((int) round(InPackedAlpha.r * 255.0f) << 8) | (int) round(InPackedAlpha.g * 255.0f);
+	int Alpha = AlphaWithFlags & 0xFFFC; // Last 2 bits are used to store lower/raise flags
+	return float(Alpha) / 65532.0f; // 0xFFFC in float
+}
+
+#if MERGE_EDIT_LAYERS
+float4 SampleEditLayerHeightmap(uint2 InRelativeTextureCoordinates, uint InIndex)
+{
+	FEditLayerHeightmapMergeInfo LayerMergeInfo = InEditLayersMergeInfos[InIndex];
+	int4 LoadCoordinates = int4(InRelativeTextureCoordinates, InIndex, 0); // xy = relative coordinates, z = index in texture array, w = mip level
+	LoadCoordinates.xy += LayerMergeInfo.TextureSubregion.xy;
+	return InEditLayersTextures.Load(LoadCoordinates);
+}
+#endif // #if MERGE_EDIT_LAYERS
+
+#if STITCH_HEIGHTMAP || FINALIZE_HEIGHTMAP
+// InOffset between (-1,-1) and (1,1) : output between 0 (TL) and 8 (BR) :
+uint NeighborOffsetToNeighborLinearIndex(int2 InOffset)
+{
+	int2 PositiveOffset = InOffset + 1;
+	return PositiveOffset.y * 3 + PositiveOffset.x;
+}
+
+// InLinearIndex between 0 (TL) and 8 (BR) : output between between (-1,-1) and (1,1) :
+int2 NeighborLinearIndexToOffset(uint InLinearIndex)
+{
+	int2 NeighborOffsets[9] = { int2(-1, -1), int2(+0, -1), int2(+1, -1), int2(-1, +0), int2(+0, +0), int2(+1, +0), int2(-1, +1), int2(+0, +1), int2(+1, +1) };
+	return NeighborOffsets[InLinearIndex];
+}
+
+// Load the appropriate heightmap at the given location and returns the position and packed height:
+//  (handles the edge cases when we need to sample from neighboring heightmaps) :
+//  bSkipDuplicateRowColumn allows to skip the first/last row/column on the borders, since they're duplicates of the center texture :
+//  Returns the unpacked height (.x) and whether the sample is valid or not (.y = 1 if valid, 0 otherwise)
+float2 LoadNeighborHeightmapUnpackedHeight(bool2 bInIsMinComponentBorder, bool2 bInIsMaxComponentBorder, uint2 InRelativeTextureCoordinates, int2 InNeighborOffset, bool bSkipDuplicateRowColumn)
+{
+	// Which of the 9 input textures should be sampled (as a texture index offset between (-1, -1) and (1, 1)):
+	// In the default case (not on a texture border), we sample only the center texture so no texture offset needed:
+	int2 TextureIndexOffset = InNeighborOffset;
+	TextureIndexOffset.x *= (!bInIsMinComponentBorder.x && (TextureIndexOffset.x == -1)) ? 0 : 1;
+	TextureIndexOffset.y *= (!bInIsMinComponentBorder.y && (TextureIndexOffset.y == -1)) ? 0 : 1;
+	TextureIndexOffset.x *= (!bInIsMaxComponentBorder.x && (TextureIndexOffset.x == +1)) ? 0 : 1;
+	TextureIndexOffset.y *= (!bInIsMaxComponentBorder.y && (TextureIndexOffset.y == +1)) ? 0 : 1;
+
+	// Retrieve the linear index between 0 (TL) and 8 (BR) that corresponds to this neighbor:
+	uint NeighborLinearIndex = NeighborOffsetToNeighborLinearIndex(TextureIndexOffset);
+	uint NeighborHeightmapIndex = GET_SCALAR_ARRAY_ELEMENT(InNeighborHeightmapIndices, NeighborLinearIndex);
+	bool bIsValidNeighbor = (NeighborHeightmapIndex != INDEX_NONE);
+	float Height = 0.0f;
+	if (bIsValidNeighbor)
+	{
+		int2 SampleCoordinates = InRelativeTextureCoordinates + InNeighborOffset;
+		if (TextureIndexOffset.x == -1)
+		{
+			// If we use the textures from the left, we need to skip the rightmost column as it's a duplicate of our the center texture's leftmost column :
+			SampleCoordinates.x = InSourceTextureSize.x - 1 - (bSkipDuplicateRowColumn ? 1 : 0);
+		}
+		if (TextureIndexOffset.x == +1)
+		{
+			// If we use the textures from the right, we need to skip the leftmost column as it's a duplicate of our the center texture's rightmost column :
+			SampleCoordinates.x = bSkipDuplicateRowColumn ? +1 : 0;
+		}
+		if (TextureIndexOffset.y == -1)
+		{
+			// If we use the textures from the top, we need to skip the downmost row as it's a duplicate of our the center texture's upmost row :
+			SampleCoordinates.y = InSourceTextureSize.y - 1 - (bSkipDuplicateRowColumn ? 1 : 0);
+		}
+		if (TextureIndexOffset.y == +1)
+		{
+			// If we use the textures from the bottom, we need to skip the upmost row as it's a duplicate of our the center texture's downmost row :
+			SampleCoordinates.y = bSkipDuplicateRowColumn ? +1 : 0;
+		}
+
+		// Handle the sub-section case, where there's a duplicate row/column of vertices in the middle : 
+		if (InNumSubsections == 2)
+		{
+			uint2 SubSectionSize = InSourceTextureSize / 2;
+			// If we need the neighbor on the right and we're on the left (duplicate) column of the subsection, skip a column to the right :
+			if ((InRelativeTextureCoordinates.x == SubSectionSize.x - 1) && (InNeighborOffset.x > 0))
+			{
+				SampleCoordinates.x += 1;
+			}
+			// If we need the neighbor on the left and we're on the right (duplicate) column of the subsection, skip a column to the left :
+			else if ((InRelativeTextureCoordinates.x == SubSectionSize.x) && (InNeighborOffset.x < 0))
+			{
+				SampleCoordinates.x -= 1;
+			}
+			// If we need the neighbor on the bottom and we're on the top (duplicate) row of the subsection, skip a row to the bottom :
+			if ((InRelativeTextureCoordinates.y == SubSectionSize.y - 1) && (InNeighborOffset.y > 0))
+			{
+				SampleCoordinates.y += 1;
+			}
+			// If we need the neighbor on the top and we're on the bottom (duplicate) row of the subsection, skip a row to the top :
+			else if ((InRelativeTextureCoordinates.y == SubSectionSize.y) && (InNeighborOffset.y < 0))
+			{
+				SampleCoordinates.y -= 1;
+			}
+		}
+
+		int4 LoadCoordinates = int4(SampleCoordinates, NeighborHeightmapIndex, 0); // xy = relative coordinates, z = index in texture array, w = mip level
+		float2 PackedHeight = InSourceHeightmaps.Load(LoadCoordinates);
+		Height = UnpackHeight(PackedHeight);
+	}
+	return float2(Height, bIsValidNeighbor ? 1.0f : 0.0f);
+}
+
+// Load from the main heightmap and returns the unpacked height (.x) and whether the sample is valid or not (.y = 1 since the main heightmap is always valid):
+float2 LoadHeightmapUnpackedHeight(uint2 InRelativeTextureCoordinates)
+{
+	// Load from the main input/output heightmap (linear neighbor index 4 == CC == center point) :
+	uint HeightmapIndex = GET_SCALAR_ARRAY_ELEMENT(InNeighborHeightmapIndices, 4);
+	int4 LoadCoordinates = int4(InRelativeTextureCoordinates, HeightmapIndex, 0); // xy = relative coordinates, z = index in texture array, w = mip level
+	float2 PackedHeight = InSourceHeightmaps.Load(LoadCoordinates);
+	return float2(UnpackHeight(PackedHeight), 1.0f);
+}
+#endif // STITCH_HEIGHTMAP || FINALIZE_HEIGHTMAP
+
+#if FINALIZE_HEIGHTMAP
+float ScaleHeight(float InHeight)
+{
+	return (InHeight - 32768.0f) * InLandscapeGridScale.z * TERRAIN_ZSCALE;
+}
+
+float UnscaleHeight(float InScaledHeight)
+{
+	return (InScaledHeight / InLandscapeGridScale.z / TERRAIN_ZSCALE) + 32768.0f;
+}
+
+// Load from the main heightmap and returns the position (.xyz) and whether the sample is valid or not (.w = 1 because the main heightmap is always valid)
+float4 LoadHeightmapScaledPosition(uint2 InRelativeTextureCoordinates)
+{
+	float Height = LoadHeightmapUnpackedHeight(InRelativeTextureCoordinates);
+	return float4(InRelativeTextureCoordinates * InLandscapeGridScale.xy, ScaleHeight(Height), 1.0f);
+}
+
+//  Returns the position (.xyz) and whether the sample is valid or not (.w = 1 if valid, 0 otherwise)
+float4 LoadNeighborHeightmapScaledPosition(bool2 bInIsMinComponentBorder, bool2 bInIsMaxComponentBorder, uint2 InRelativeTextureCoordinates, int2 InNeighborOffset, bool bSkipDuplicateRowColumn)
+{
+	float2 NeighborHeight = LoadNeighborHeightmapUnpackedHeight(bInIsMinComponentBorder, bInIsMaxComponentBorder, InRelativeTextureCoordinates, InNeighborOffset, bSkipDuplicateRowColumn);
+	return float4(((int2) InRelativeTextureCoordinates + InNeighborOffset) * InLandscapeGridScale.xy, ScaleHeight(NeighborHeight.x), NeighborHeight.y);
+}
+#endif // FINALIZE_HEIGHTMAP
+
+
+// ----------------------------------------------------------------------------------
+// Pixel shaders : 
+
+#if MERGE_EDIT_LAYERS
+// Take all source edit layers heightmap regions and merge them all into a (almost) final heightmap
+//  Note : reads from a potentially shared heightmaps (i.e. from subregions of the heightmaps) and writes to R8G8 non-shared scratch texture
+void MergeEditLayers(in float4 SVPos : SV_POSITION, out float2 OutColor : SV_Target0)
+{
+	uint2 RelativeTextureCoordinates = floor(SVPos.xy);
+		
+	// Take the base height straight from the first layer : 
+	float4 EditLayerSample = SampleEditLayerHeightmap(RelativeTextureCoordinates, 0);
+	float Height = UnpackHeight(EditLayerSample.xy) - 32768.0f;
+		
+	// Then merge the subsequent layers according to their merge info : 
+	LOOP
+	for (uint i = 1; i < InNumEditLayers; ++i)
+	{
+		FEditLayerHeightmapMergeInfo LayerMergeInfo = InEditLayersMergeInfos[i];
+		EditLayerSample = SampleEditLayerHeightmap(RelativeTextureCoordinates, i);
+		float LayerHeight = UnpackHeight(EditLayerSample.xy) - 32768.0f;
+		LayerHeight *= LayerMergeInfo.Alpha;
+			
+		if (LayerMergeInfo.BlendMode == EEDITLAYERHEIGHTMAPBLENDMODE_ADDITIVE)
+		{
+			Height += LayerHeight;
+		}
+		else if (LayerMergeInfo.BlendMode == EEDITLAYERHEIGHTMAPBLENDMODE_ALPHABLEND)
+		{
+			float LayerHeightAlphaBlend = ExtractAlpha(EditLayerSample.ba);
+			float NewHeight = LayerHeight + (LayerHeightAlphaBlend * Height);
+			uint RaiseLower = floor(EditLayerSample.a * 255.f + 0.5f);
+			bool bLowerTerrain = (RaiseLower & 1);
+			bool bRaiseTerrain = (RaiseLower & 2);
+			if ((bRaiseTerrain && NewHeight > Height) || (bLowerTerrain && NewHeight < Height))
+			{
+				Height = NewHeight;
+			}
+			else
+			{
+				Height = Height;
+			}
+		}
+	}
+		
+	Height = clamp(Height, -32768.0, 32767.0);
+	Height += 32768.0f;
+	OutColor = PackHeight(Height);
+}
+#endif // MERGE_EDIT_LAYERS
+
+
+// ----------------------------------------------------------------------------------
+
+#if STITCH_HEIGHTMAP
+
+void StitchHeightmap(in float4 SVPos : SV_POSITION, out float2 OutColor : SV_Target0)
+{
+	uint2 RelativeTextureCoordinates = floor(SVPos.xy);
+
+	bool2 bIsMinComponentBorder = (RelativeTextureCoordinates == 0);
+	bool2 bIsMaxComponentBorder = (RelativeTextureCoordinates == (InSourceTextureSize - 1));
+
+	// On borders, average the neighbors' unpacked height so that in order to repair potential discrepancies between 2 neighboring rows/columns from different textures (effectively stitching them together) :
+	//  They should mostly be identical, but because it's possible that one neighbor component is not loaded while one is being recomputed, we might end up with different values there :
+	float2 TL = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(-1, -1), /*bSkipDuplicateRowColumn = */false);
+	float2 TT = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+0, -1), /*bSkipDuplicateRowColumn = */false);
+	float2 TR = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+1, -1), /*bSkipDuplicateRowColumn = */false);
+	float2 LL = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(-1, +0), /*bSkipDuplicateRowColumn = */false);
+	float2 CC = LoadHeightmapUnpackedHeight(RelativeTextureCoordinates);
+	float2 RR = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+1, +0), /*bSkipDuplicateRowColumn = */false);
+	float2 BL = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(-1, +1), /*bSkipDuplicateRowColumn = */false);
+	float2 BB = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+0, +1), /*bSkipDuplicateRowColumn = */false);
+	float2 BR = LoadNeighborHeightmapUnpackedHeight(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+1, +1), /*bSkipDuplicateRowColumn = */false);
+	
+	// .x = scaled height, .y = whether the sample is valid or not :
+	float2 ValidScaledHeights[9] = { TL, TT, TR, LL, CC, RR, BL, BB, BR };
+
+	// 9 possible cases : only pixels on the border (A..H) need stitching
+	//    bIsMinComponentBorder.x = true
+	//   |                bIsMaxComponentBorder.x = true
+	//   |               |
+	//   v               v
+	// +---+   +---+   +---+
+	// | A |...| B |...| C | <-- bIsMinComponentBorder.y = true
+	// +---+   +---+   +---+
+	//  ...     ...     ...
+	// +---+   +---+   +---+
+	// | H |...| I |...| D | 
+	// +---+   +---+   +---+
+	//  ...     ...     ...
+	// +---+   +---+   +---+
+	// | G |...| F |...| E | <-- bIsMaxComponentBorder.y = true
+	// +---+   +---+   +---+
+
+	// Truth table (x == True) that indicates which neigbor sample (TL, TT, ...) is needed for each of the 9 possible cases (whether the pixel is on a border or not) : 
+	//                         | A | B | C | D | E | F | G | H | I |
+	//                         +---+---+---+---+---+---+---+---+---+
+	//                      TL | x |   |   |   |   |   |   |   |   |
+	//                      TT | x | x | x |   |   |   |   |   |   |
+	//                      TR |   |   | x |   |   |   |   |   |   |
+	//                      LL | x |   |   |   |   |   | x | x |   |
+	//                      CC | x | x | x | x | x | x | x | x | x |
+	//                      RR |   |   | x | x | x |   |   |   |   |
+	//                      BL |   |   |   |   |   |   | x |   |   |
+	//                      BB |   |   |   |   | x | x | x |   |   |
+	//                      BR |   |   |   |   | x |   |   |   |   |
+	//                         +---+---+---+---+---+---+---+---+---+
+	// bIsMinComponentBorder.x | x |   |   |   |   |   | x | x |   |
+	// bIsMinComponentBorder.y | x | x | x |   |   |   |   |   |   |
+	// bIsMaxComponentBorder.x |   |   | x | x | x |   |   |   |   |
+	// bIsMaxComponentBorder.y |   |   |   |   | x | x | x |   |   |
+	//                         +---+---+---+---+---+---+---+---+---+
+
+	bool bA = bIsMinComponentBorder.x && bIsMinComponentBorder.y;
+	bool bB = bIsMinComponentBorder.y && !bIsMinComponentBorder.x && !bIsMaxComponentBorder.x;
+	bool bC = bIsMaxComponentBorder.x && bIsMinComponentBorder.y;
+	bool bD = bIsMaxComponentBorder.x && !bIsMinComponentBorder.y && !bIsMaxComponentBorder.y;
+	bool bE = bIsMaxComponentBorder.x && bIsMaxComponentBorder.y;
+	bool bF = bIsMaxComponentBorder.y && !bIsMinComponentBorder.x && !bIsMaxComponentBorder.x;
+	bool bG = bIsMinComponentBorder.x && bIsMaxComponentBorder.y;
+	bool bH = bIsMinComponentBorder.x && !bIsMinComponentBorder.y && !bIsMaxComponentBorder.y;
+
+	// Describes whether to consider each neighbor sample depending on whether we're a pixel on the border or not :
+	bool bValidHeights[9] =
+	{
+		/* TL = */bA,
+		/* TT = */bA || bB || bC,
+		/* TR = */bC,
+		/* LL = */bA || bG || bH,
+		/* CC = */true, 
+		/* RR = */bC || bD || bE, 
+		/* BL = */bG,
+		/* BB = */bE || bF || bG,
+		/* BR = */bE, 
+	};
+	
+	float FinalHeight = 0.0;
+	float WeightSum = 0.0f;
+	UNROLL
+	for (int Index = 0; Index < 9; ++Index)
+	{
+		float Height = ValidScaledHeights[Index].x;
+		float Weight = bValidHeights[Index] ? 1.0f : 0.0f;
+		Weight *= ValidScaledHeights[Index].y; // .y of ValidScaledHeights indicates whether the sample is valid or not (i.e. whether there's a neighboring heighmap or not)
+		FinalHeight += Height * Weight;
+		WeightSum += Weight;
+	}
+	FinalHeight /= WeightSum;
+
+	OutColor = PackHeight(FinalHeight);
+}
+
+#endif // STITCH_HEIGHTMAP
+
+// ----------------------------------------------------------------------------------
+
+#if FINALIZE_HEIGHTMAP
+
+void FinalizeHeightmap(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	uint2 DestinationTextureSize = InDestinationTextureSubregion.zw - InDestinationTextureSubregion.xy;
+	uint2 RelativeTextureCoordinates = floor(SVPos.xy) - InDestinationTextureSubregion.xy;
+
+	bool2 bIsMinComponentBorder = (RelativeTextureCoordinates == 0);
+	bool2 bIsMaxComponentBorder = (RelativeTextureCoordinates == (DestinationTextureSize - 1));
+		
+	// The triangle topology is the following (where C = center, T = top, B = bottom, L = left, R = right and Nx the normals we need to interpolate):
+	// TL ------ TT
+	// | \       | \
+	// |  \      |  \
+	// |   \     |   \
+	// | N0 \ N1 | N3 \
+	// |     \   |     \
+	// |      \  |      \
+	// |       \ |       \
+	// LL ------ CC ------ RR
+	//   \       | \       |
+	//    \      |  \      |
+	//     \     |   \     |
+	//      \ N2 | N4 \ N5 |
+	//       \   |     \   |
+	//        \  |      \  |
+	//         \ |       \ |
+	//           BB ------ BR
+
+	float4 CC = LoadHeightmapScaledPosition(RelativeTextureCoordinates);
+	float4 TL = LoadNeighborHeightmapScaledPosition(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(-1, -1), /*bSkipDuplicateRowColumn = */true);
+	float4 TT = LoadNeighborHeightmapScaledPosition(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+0, -1), /*bSkipDuplicateRowColumn = */true);
+	float4 LL = LoadNeighborHeightmapScaledPosition(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(-1, +0), /*bSkipDuplicateRowColumn = */true);
+	float4 RR = LoadNeighborHeightmapScaledPosition(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+1, +0), /*bSkipDuplicateRowColumn = */true);
+	float4 BR = LoadNeighborHeightmapScaledPosition(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+1, +1), /*bSkipDuplicateRowColumn = */true);
+	float4 BB = LoadNeighborHeightmapScaledPosition(bIsMinComponentBorder, bIsMaxComponentBorder, RelativeTextureCoordinates, /*NeighborOffset = */int2(+0, +1), /*bSkipDuplicateRowColumn = */true);
+
+	float3 N0 = ComputeNullableTriangleNormal(CC, LL, TL);
+	float3 N1 = ComputeNullableTriangleNormal(TL, TT, CC);
+	float3 N2 = ComputeNullableTriangleNormal(LL, CC, BB);
+	float3 N3 = ComputeNullableTriangleNormal(RR, CC, TT);
+	float3 N4 = ComputeNullableTriangleNormal(BR, BB, CC);
+	float3 N5 = ComputeNullableTriangleNormal(CC, RR, BR);
+	
+	float3 Normal = normalize(N0 + N1 + N2 + N3 + N4 + N5);
+	// Scale back to be 0-1 normal
+	Normal = 0.5f * Normal + 0.5f;
+	
+	float FinalHeight = UnscaleHeight(CC.z);
+	OutColor = float4(PackHeight(FinalHeight), Normal.xy);
+}
+#endif // FINALIZE_HEIGHTMAP
+
+
+// ----------------------------------------------------------------------------------
+#if GENERATE_MIPS
+void GenerateMips(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	uint2 TextureCoordinates = floor(SVPos.xy);
+	
+	float4 SourceSamples[4] =
+	{
+		InSourceHeightmap.Load(int3(2 * TextureCoordinates + int2(+0, +0), 0)),
+		InSourceHeightmap.Load(int3(2 * TextureCoordinates + int2(+1, +0), 0)),
+		InSourceHeightmap.Load(int3(2 * TextureCoordinates + int2(+0, +1), 0)),
+		InSourceHeightmap.Load(int3(2 * TextureCoordinates + int2(+1, +1), 0)),
+	};
+		
+	// Because the borders of each landscape components are shared between neighbors, we must ensure that the parent mip's inner row/column of pixels don't contribute : 
+	// 9 possible cases (only the samples marked with a * must be kept): 
+	//      bIsMinBorder.x = true
+	//     |                        bIsMaxBorder.x = true
+	//     |                       |
+	//     v                       v
+	// +-------+   +-------+   +-------+
+	// | * :   |   | * : * |   |   : * |
+	// | - + - |...| - + - |...| - + - | <-- bIsMinBorder.y = true
+	// |   :   |   |   :   |   |   :   |
+	// +-------+   +-------+   +-------+
+	//    ...         ...	      ...
+	// +-------+   +-------+   +-------+
+	// | * :   |   | * : * |   |   : * |
+	// | - + - |...| - + - |...| - + - |
+	// | * :   |   | * : * |   |   : * |
+	// +-------+   +-------+   +-------+
+	//    ...         ...	      ...
+	// +-------+   +-------+   +-------+
+	// |   :   |   |   :   |   |   :   |
+	// | - + - |...| - + - |...| - + - | <-- bIsMaxBorder.y = true
+	// | * :   |   | * : * |   |   : * | 
+	// +-------+   +-------+   +-------+
+
+	bool bIsLastMip = all(InCurrentMipSubregionSize == 1);
+	
+	uint2 RelativeTextureCoordinates = TextureCoordinates % InCurrentMipSubregionSize;
+	bool2 bIsMinBorder = (RelativeTextureCoordinates == 0);
+	bool2 bIsMaxBorder = (RelativeTextureCoordinates == (InCurrentMipSubregionSize - 1));
+
+	// If we use subsections, we'll have an additional column/row of min border and another of max border next to them
+	if (InNumSubsections == 2)
+	{
+		uint2 SubsectionSize = InCurrentMipSubregionSize / 2;
+		bIsMinBorder = or(bIsMinBorder, RelativeTextureCoordinates == SubsectionSize);
+		bIsMaxBorder = or(bIsMaxBorder, RelativeTextureCoordinates == SubsectionSize - 1);
+	}
+		
+	float SampleWeights[4] =
+	{ 
+		// On the last mip, it's ok to keep all 4 samples : all neighbors components share them : 
+		((bIsMaxBorder.x || bIsMaxBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+		((bIsMinBorder.x || bIsMaxBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+		((bIsMaxBorder.x || bIsMinBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+		((bIsMinBorder.x || bIsMinBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+	};
+	
+	float TotalSampleWeight = 0.0f;
+	OutColor = 0.0f;
+	
+	float3 HeightAndNormal = 0.0f;
+	
+	UNROLL
+	for (int i = 0; i < 4; ++i)
+	{
+		HeightAndNormal += float3(UnpackHeight(SourceSamples[i].xy), SourceSamples[i].zw) * SampleWeights[i];
+		TotalSampleWeight += SampleWeights[i];
+	}
+	HeightAndNormal /= TotalSampleWeight;
+	
+	OutColor.xy = PackHeight(HeightAndNormal.x);
+	OutColor.zw = HeightAndNormal.yz;
+}
+#endif // GENERATE_MIPS

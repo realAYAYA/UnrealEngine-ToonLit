@@ -1,0 +1,454 @@
+                                NVIDIA RIVERMAX SOFTWARE LICENSE AGREEMENT
+
+This SOFTWARE LICENSE AGREEMENT (the "Agreement") is by and between MELLANOX TECHNOLOGIES, LTD.
+("NVIDIA Mellanox" and “Licensor”) and you (“Licensee,” “you” or “your”). This Agreement sets forth the terms and
+conditions by which you are permitted to access and use the “Software” and any “Documentation” that are provided to
+you pursuant to the terms of this Agreement.
+
+BY INSTALLING AND EXECUTING THE MELLANOX SOFTWARE, BY USING OR RECEIVING THE
+DOCUMENTATION OR BY SIGNING THIS AGREEMENT YOU AGREE THAT THESE TERMS AND CONDITIONS
+APPLY TO YOU. IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF A COMPANY OR OTHER
+LEGAL ENTITY, YOU REPRESENT THAT YOU HAVE THE LEGAL AUTHORITY TO BIND THE ENTITY TO THIS
+AGREEMENT, IN WHICH CASE “YOU” WILL MEAN THE ENTITY YOU REPRESENT. IF YOU DO NOT AGREE TO
+THESE TERMS, YOU ARE NOT LICENSED OR PERMITTED TO USE THE SOFTWARE OR THE DOCUMENTATION.
+
+ 1. DEFINITIONS.
+ 1.1. "Confidential Information" means all information and materials furnished by either party which: (a) if in written
+    format is marked as confidential, or (b) if disclosed verbally is noted as confidential at time of disclosure, or (c) in
+    the absence of either (a) or (b) is information which a reasonable party would deem to be non-public information
+    and confidential. Confidential Information shall include, but not be limited to the Software, including the Software API
+    and API description, and features, any NVIDIA Mellanox reference designs, the Documentation, and the existence
+    and contents of this Agreement, whether such is transmitted in writing, orally, visually, (e.g. video terminal display),
+    electronically, or on magnetic media, and shall include all proprietary information, customer and prospect lists,
+    trade secrets, or proposed trade names, know-how, ideas, concepts, designs, drawings, flow charts, diagrams
+    and other intellectual property relating to the subject matter of this Agreement.
+  1.2. “Documentation” means any and all written or electronic information provided by NVIDIA Mellanox to Licensee that
+       describes or depicts the form, fit or function of the Software.
+
+  1.3. "Intellectual Property Rights" means all patent rights, copyright rights, moral rights, trade secret rights, rights to
+       trademarks and service marks, know-how, mask works and all other intellectual and industrial property rights,
+       whether or not registered or perfected, anywhere in the world, and all registrations, initial applications, renewals,
+       extensions, continuations, divisions or reissues for any of the foregoing.
+
+  1.4. “Licensee Product(s)” means any present or future licensee product that incorporates, integrates one or more
+       NVIDIA Mellanox Products.
+
+  1.5. "NVIDIA Mellanox Product(s)” means NVIDIA Mellanox managed devices, NVIDIA Mellanox-proprietary
+       InfiniBand adapter and switch families of products, such as NVIDIA Mellanox ConnectX-5, ConnectX-6 DX,
+       BlueField-2 or any other supported NVIDIA Mellanox Network Adapter product (individually and collectively hereafter
+       “NICs”).
+
+  1.6. " Software" means the NVIDIA Mellanox proprietary RIVERMAX tools and software module software code in binary
+       form that is delivered to Licensee by NVIDIA Mellanox and all Intellectual Property Rights therein or thereto. In
+       the event of a conflict or an inconsistency between what is defined herein and what is delivered to Licensee, the
+       Software shall be deemed to be that Confidential Information that NVIDIA Mellanox, its employees or agents
+       delivers to Licensee.
+
+ 2. LICENSE.
+ 2.1. RIVERMAX License. Subject to the terms and conditions of this Agreement, upon payment of the applicable
+    license fee, NVIDIA Mellanox hereby grants Licensee a non-exclusive, royalty-free, non- transferable,
+    perpetual and non-terminable (subject to the termination rights specified herein) license to use, copy and modify the
+    Software in conjunction with the specific NIC or NICs licensed. No right is granted to Licensee, either directly or
+    indirectly, to commercially exploit, distribute, or otherwise use the Software for any purpose other than that
+    expressed herein.
+
+  2.2. Distribution. Subject to the terms and conditions of this Agreement NVIDIA Mellanox hereby grants Licensee a non-
+    exclusive, worldwide, royalty-free and non-transferable license to use, reproduce, distribute and redistribute
+    through multiple channels of distribution, the Software (including the licensed modifications works per Section
+    2.1) in binary form solely as integrated with Licensee Products that incorporate or are intended for use with NVIDIA
+    Mellanox’ Products as licensed or purchased from NVIDIA Mellanox or an authorized NVIDIA Mellanox distributor.
+NVIDIA Rivermax License Agreement                         1 of 7
+    Licensee must log with every Licensee Product the NIC Serial Number for future reference.
+
+  2.3 Restrictions. Except as expressly authorized herein, you are prohibited from and shall not cause or permit any: (1)
+     modification of the Software or documentation; (2) removal or modification of any notice of any patent, copyright,
+     trademark or other proprietary rights that appear on or in the Software; (3) reverse engineering, decompilation,
+     translation, disassembly or discovery of the source code of all or any portion of the Software provided in binary form;
+     (4) disclose the results of any evaluation tests including, without limitation, performance benchmark, feature
+     evaluation, or code quality of the Software to any third party without NVIDIA Mellanox’s prior written approval; or (5)
+     distribute, republish, or otherwise exploit the Software in any form or by any means for any purpose without the prior
+     written permission of NVIDIA Mellanox.
+
+     Notwithstanding the foregoing, you may modify the Software to eliminate bugs, facilitate porting of the software
+     to a given platform, or to achieve any other purpose approved in writing by NVIDIA Mellanox. You agree to provide
+     NVIDIA Mellanox with any such modifications, including improvements, within thirty (30) days of NVIDIA Mellanox’s
+     request for such modifications and improvements. You hereby grant to NVIDIA Mellanox a non-exclusive, fully
+     paid-up, royalty-free, worldwide perpetual, irrevocable license to use and distribute any such modifications and
+     improvements without restrictions. Except as expressly set forth in this Agreement, Licensee acquires no rights
+     to any NVIDIA Mellanox Confidential Information, Software, including any derivatives thereof, or any source code
+     in any of the foregoing.
+
+2.4. Third Party Components. The Software may include third-party components with separate legal notices or terms as
+     may be described in proprietary notices accompanying the Software or as accessible from the links provided in an
+     exhibit attached to this license. If and to the extent there is a conflict between the terms in this license and the third-
+     party license terms, the third-party terms control only to the extent necessary to resolve the conflict.
+
+ 3. TITLE; TRADEMARKS; OWNERSHIP
+ 3.1. Except as specifically permitted herein, no portion of the Software, including but not limited to object code and
+    source code and the printed materials accompanying the Software, may be reproduced, modified, distributed,
+    republished or otherwise exploited in any form or by any means for any purpose without the prior written permission
+    of NVIDIA Mellanox.
+
+3.2. Subject to section 3.5 below, all rights and title in and to the Software, and any change, enhancement, addition,
+     correction, modification and/or derivative work of the Software made by NVIDIA Mellanox are owned exclusively
+     by NVIDIA Mellanox. The Software is protected by copyright laws and international treaty provisions.
+
+3.3. NVIDIA, Mellanox, RIVERMAX, and all other trademarks, service marks, trade names, and logos are trademarks
+     and/or registered trademarks of Mellanox Technologies, Ltd. and/or NVIDIA Corporation in the U.S. and in other
+     countries and may not be used in connection with any product or service that is not NVIDIA Mellanox’s without the
+     prior written consent of Mellanox or NVIDA respectively. All other trademarks, service marks, trade names, or
+     logos cited herein are the property of their respective owners.
+
+3.4. Property Rights. All copies of the Mellanox Software shall contain all copyright and other proprietary notices or
+     legends of NVIDIA and Mellanox's that are on or in the Software and Licensee shall take no action that would alter,
+     remove, or obscure such notices.
+
+3.5. Ownership. Licensee acknowledges that any and all Intellectual Property Rights in the Software is and shall
+     remain the property of NVIDIA Mellanox. All software is licensed not sold by NVIDIA Mellanox. Third-party suppliers
+     are intended beneficiaries under this Agreement and independently may protect their rights in the Open Source
+     Software in the event of any infringement. This Agreement pertains solely to the NVIDIA Mellanox’ s proprietary
+     RIVERMAX Tools software and module as generally available and delivered to NVIDIA Mellanox customers. All
+     other information, code, documentation, or other information furnished licensee pursuant to this Agreement shall be
+     NVIDIA Mellanox Confidential Information and is for Licensee’s internal use only pursuant to the terms of Section 2
+     herein. All rights not expressly granted under this Agreement are reserved by NVIDIA Mellanox or its suppliers.
+
+ 4. WARRANTY DISCLAIMER; NO SUPPORT.
+ 4.1. THE SOFTWARE AND DOCUMENTATION ARE PROVIDED "AS IS," WITHOUT ANY WARRANTY OF ANY
+    KIND. WITHOUT LIMITING THE FOREGOING, AND TO THE MAXIMUM EXTENT PERMITTED BY
+    APPLICABLE LAW, NVIDIA MELLANOX EXPRESSLY DISCLAIMS ALL WARRANTIES AND CONDITIONS
+    REGARDING THIS AGREEMENT OR THE SOFTWARE OR THE DOCUMENTATION, WHETHER EXPRESS,
+    IMPLIED OR STATUTORY, AND INCLUDING BUT NOT LIMITED TO ALL IMPLIED OR STATUTORY
+    WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND
+NVIDIA Rivermax License Agreement                          2 of 7
+     NON- INFRINGEMENT OF THIRD-PARTY RIGHTS. LICENSEE UNDERSTANDS AND AGREES THAT THE
+     DISCLAIMER OF WARRANTIES IN THIS AGREEMENT IS A FUNDAMENTAL PART OF THIS AGREEMENT AND
+     THAT NVIDIA MELLANOX WOULD NOT AGREE TO ENTER INTO THIS AGREEMENT WITHOUT SUCH
+     DISCLAIMERS.
+
+4.2. Open Source Software. NOTWITHSTANDING ANYTHING TO THE CONTRARY IN THIS AGREEMENT
+     INCLUDING THIS Section 4.2. AND SECTION 6 BELOW, ALL OPEN SOURCE SOFTWARE IS PROVIDED
+     “AS IS” WITHOUT WARRANTY OF ANY KIND. NVIDIA MELLANOX AND ITS SUPPLIERS MAKE NO
+     WARRANTY EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO TITLE, NON-INFRINGEMENT AND
+     THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+     RELATING TO THE USE OF SUCH OPEN SOURCE SOFTWARE. IN NO EVENT SHALL NVIDIA MELLANOX
+     OR ITS SUPPLIERS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+     CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+     OR SERVICES; LOSS OF USE; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+     ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+     NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY IN CONNECTION WITH THE OPEN SOURCE
+     SOFTWARE OR THE USE OF SUCH OPEN SOURCE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+     SUCH DAMAGE.
+4.3. No Support. NVIDIA MELLANOX is under no obligation to provide any support, patches, fixes, subsequent
+    versions, or upgrades (collectively “Support”) for the Software or Documentation, unless Licensee purchased the
+    support package from NVIDIA Mellanox.
+
+ 5. CONFIDENTIALITY.
+ 5.1. Use. Each party understands that the other party has or may disclose Confidential Information in the course of
+    exercising its rights or performing its obligations under this Agreement. As between the parties, the Confidential
+    Information of each party will remain its sole property. Confidential Information will be used by the recipient party
+    only for purposes of, or as otherwise authorized by, this Agreement. Except as expressly provided herein, each party
+    will hold the Confidential Information of the other party in strict confidence and protect such Confidential Information
+    from disclosure using the same care it uses to protect its own confidential information of like importance, but not
+    less than reasonable care. Except as expressly provided herein, no Confidential Information will be disclosed by the
+    receiving party without the prior written consent of the disclosing party. The party employing or engaging such
+    persons is responsible and liable for their compliance with such confidentiality obligations.
+5.2. Treatment. The parties recognize and agree that the use or disclosure of any Confidential Information of a party in a
+    manner inconsistent with the provisions of this Agreement may cause the disclosing party irrevocable damage for which
+    adequate remedy at law may not be available. Accordingly, each party shall be entitled to seek temporary and/or
+    permanent injunctive relief against such breach or violation from any court of competent jurisdiction immediately upon
+    request, without the need to obtain a bond or other security. The right of each party to seek injunctive relief shall
+    not limit in any manner that party's right to seek other and/or additional remedies at law or in equity. If Confidential
+    Information is required to be disclosed by law or a governmental authority, including pursuant to a subpoena or
+    court order, such Confidential Information may be disclosed, provided that the party required to disclose the
+    Confidential Information: (i) promptly notifies the disclosing party of the disclosure requirement; (ii) cooperates
+    with the disclosing party's reasonable efforts to resist or narrow the disclosure and to obtain an order or other
+    reliable assurance that confidential treatment will be accorded the disclosing party's Confidential Information;
+    and (iii) furnishes only Confidential Information that the party is legally compelled to disclose according to advice
+    of its legal counsel. Upon written request, or at the expiration or termination of this Agreement, all documented
+    Confidential Information (and all copies thereof) owned by the requesting party will be returned or destroyed by the
+    receiving party, with written certification thereof delivered to the other party.
+  6. LIMITATION OF LIABILITY.
+  6.1. TO THE MAXIMUM EXTENT PERMITTED BY LAW, NVIDIA MELLANOX AND ITS AFFILIATES SHALL
+     NOT BE LIABLE FOR ANY DIRECT, SPECIAL, INCIDENTAL, PUNITIVE OR CONSEQUENTIAL
+     DAMAGES OF ANY KIND RELATING TO THE USE OF THE SOFTWARE REGARDLESS OF WHETHER
+     LIABILITY IS BASED ON BREACH OF A CONTRACTUAL, STATUTORY OR COMMON LAW DUTY OF
+     ANY KIND. IN NO EVENT SHALL NVIDIA MELLANOX AND ITS AFFILIATES BE LIABLE FOR ANY LOSS
+     OF GOODWILL, LOSS OF PROFITS OR REVENUES, LOSS OF USE, INTERRUPTION OF BUSINESS, OR
+     DESTRUCTION OR LOSS OF DATA RESULTING FROM USE OF THE SOFTWARE EVEN IF NVIDIA
+     MELLANOX AND ITS AFFILIATES HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+     EXCEPT FOR CLAIMS BASED ON LICENSEE’S BREACH OF ANY LICENSE GRANT OR
+     CONFIDENTIALITY OBLIGATION, IN THE EVENT THAT ANY LIABILITY IS IMPOSED ON EITHER PARTY FOR
+     ANY REASON WHATSOEVER HEREUNDER, THE AGGREGATE AMOUNTS PAYABLE BY EITHER PARTY
+NVIDIA Rivermax License Agreement                        3 of 7
+     TO THE OTHER BY REASON THEREOF SHALL NOT EXCEED ONE HUNDRED DOLLARS ($100.00). These
+     exclusions and limitations of liability shall apply regardless if NVIDIA Mellanox or its affiliates have been advised of
+     the possibility of such damages, and regardless of whether a remedy fails its essential purpose. Licensee
+     acknowledges that the foregoing limitations are an essential element of the Agreement between the parties
+     and that in the absence of such limitations the terms and conditions set forth in this Agreement would be
+     substantially different.
+
+  7. TERM AND TERMINATION.
+  7.1. Term. This Agreement shall commence as of the date the Licensee first downloads or installs the Software and
+     continue in full force and effect unless and until terminated pursuant to Section 7.2 or 7.3 herein.
+  7.2. Termination for Cause. Except for breaches of the license grant herein, in the event that either party has
+     committed a material breach of this Agreement, the other party shall have the right to terminate this Agreement
+     by giving thirty (30) days written notice of termination to become effective at the end of said period unless during
+     said period all material breaches specified above have been remedied or waived.
+  7.3. Termination for Convenience. NVIDIA Mellanox may terminate this Agreement for convenience upon sixty
+     (60) days' prior written notice.
+  7.4. Consequences of Termination. Upon any termination of this Agreement, the licenses granted herein shall
+     terminate and Licensee shall immediately cease all use and distribution of the Software, Documentation,
+     NVIDIA Mellanox Confidential Information and shall, within thirty (30) days after termination of this Agreement,
+     return to NVIDIA Mellanox all copies of the Software in its possession and any Documentation and documents
+     containing any NVIDIA Mellanox Confidential Information. Notwithstanding the foregoing, Licensee may
+     continue to use the Software to support customers under existing contractual requirements for Licensee’s
+     Products (and NVIDIA Mellanox Products and Software that have been incorporated therein) that have been
+     delivered as of the date of termination.
+  7.5. Survival. Notwithstanding any termination or expiration of this Agreement, the provisions of Sections 1, 2.2– 2.4,
+     3, 4.2, 5, 6, 7.4, and 8 shall survive any expiration or termination of this Agreement.
+
+  8. GENERAL
+  8.1. Audit. NVIDIA Mellanox has the right to review whether the usage of Licensed Software is within the scope of
+     this Agreement. Upon a written notice to Licensee, NVIDIA Mellanox shall be entitled to conduct an audit to ensure
+     that there is no abuse or misuse of the License.
+  8.2. Assignment. This Agreement shall not be assigned by Licensee whether voluntarily or involuntarily or by
+     operation of law, in whole or in part, to any party without the prior written consent of NVIDIA Mellanox. No such
+     assignment by Licensee howsoever occurring shall relieve Licensee of its obligations hereunder. Any assignment
+     in violation of this Section 8.2 shall be null and void from the beginning and shall be deemed a material breach of
+     this Agreement.
+  8.3. Waiver. Failure or neglect by either party to enforce at any time any of the provisions hereof shall not be
+     construed nor shall be deemed to be a waiver of such party's rights hereunder nor in any way affect the validity of
+     the whole or any part of this Agreement nor prejudice such party's rights to take subsequent action.
+  8.4. Notices. All notices shall be sent by e-mail to the other party's mailbox where practicable, and shall also be given
+     in writing, and shall be deemed to have been duly given when delivered by hand, posted by registered first class mail
+     (airmail if international) or sent via recognized overnight couriers (e.g., Federal Express, DHL) or sent by fax to the
+     party to which such notice is required to be given at the business address and/or fax number stated in this
+     Agreement or to such other address or fax number as such party may have specified to the other in writing.
+     Notices shall be deemed received on the earlier of the following: (i) notices delivered by hand or sent by fax shall
+     be deemed received the first business day following such delivery or sending; (ii) notices which have been posted
+     or sent via overnight courier shall be deemed received on the second business day following posting (third if
+     international), and (iii) notices delivered by e-mail shall be deemed received when sent. Email notices to NVIDIA
+     Mellanox shall be delivered to NBU-Legal_Notices@exchange.nvidia.com .
+  8.5. Headings; Construction. The headings to the clauses, sub-clauses and parts of this Agreement are inserted for
+     convenience of reference only and are not intended to be part of or to affect the meaning or interpretation of this
+     Agreement. Any ambiguity in this Agreement shall be interpreted equitably without regard to which party drafted
+     the Agreement or any provision thereof. The terms "this Agreement," "hereof," "hereunder" and any similar
+     expressions refer to this Agreement and not to any particular Section or other portion hereof. The parties hereto
+     agree that any rule of construction to the effect that ambiguities are to be resolved against the drafting party will
+     not be applied in the construction or interpretation of this Agreement. As used in this Agreement, the words "include"
+NVIDIA Rivermax License Agreement                          4 of 7
+      and "including," and variations thereof, will be deemed to be followed by the words "without limitation" and
+      "discretion" means sole discretion.
+   8.6. Amendment. Unless otherwise provided herein, this Agreement may not be changed, waived, discharged,
+      or terminated orally, but only by a written document signed by duly authorized officers of each of the parties
+      hereto.
+   8.7. Relationship of Parties. Nothing herein contained shall be deemed to create an agency, joint venture or partnership
+      relation between the parties hereto. It is understood and agreed that Licensee is not, by reason of this Agreement
+      or anything herein contained, constituted or appointed the agent or representative of NVIDIA Mellanox for any
+      purpose whatsoever, nor shall anything herein contained be deemed or construed as granting to Licensee
+      any right or authority to assume or to create any obligation or responsibility, express or implied, for, on behalf
+      of, or in the name of NVIDIA Mellanox, or to bind NVIDIA Mellanox in any way or manner whatsoever. All financial
+      and other obligations associated with Licensee's business are the sole responsibility of Licensee.
+   8.8. Governing Law. This Agreement shall be construed and governed in accordance with the laws of the State of
+      Israel, regardless of its conflict of laws rules, and the competent courts of Yokneam, Israel shall have sole and
+      exclusive jurisdiction over any dispute under this Agreement or otherwise related to the Software.
+   8.9. Export. Licensee understands and agrees that it has no right to transfer the Software, technology or technical
+      information provided under this Agreement. If NVIDIA Mellanox grants you such a right under Section 2.2, to
+      the extent Licensee exports, re-exports, or imports the Software, technology, or technical data licensed or provided
+      hereunder, Licensee assumes sole responsibility for complying with applicable laws and regulations and for
+      obtaining required export and import authorizations. NVIDIA Mellanox may terminate this Agreement if you are
+      in violation of any applicable laws or regulations. You agree that NVIDIA Mellanox may audit your compliance with
+      this Agreement. Any such audit would be at NVIDIA Mellanox’ expense, require reasonable notice, and would be
+      performed during normal business hours.
+   8.10. Severability. Whenever possible, each provision of the Agreement will be interpreted in such manner as
+      to be effective and valid under applicable law, but if any provision of the Agreement is held to be prohibited by or
+      invalid under applicable law, such provision will be ineffective only to the extent of such prohibition or invalidity,
+      without invalidating the remainder of the Agreement.
+   8.11 Entire Agreement. This Agreement supersedes any arrangements, understandings, promises, or agreements
+      made or existing between the parties hereto prior to or simultaneously with this Agreement, and this
+      Agreement constitutes the entire understanding between the parties hereto.
+
+                                                                   EXHIBIT A
+                                 NVIDIA RIVERMAX Software: Third Party Free Software Rights Notice
+    The Software product includes the following open source/ freeware that are subject to specific license conditions listed in the
+    table below, which may be updated from time to time by NVIDIA Mellanox or the Open Source provider. The below table is current
+    as of Nov 2021. To obtain source code for software provided under licenses that require redistribution of source code or for update
+    inquiries, contact Mellanox at http://www.mellanox.com/page/gnu_code_request . This offer is valid for a period of three (3) years
+    from the date of the distribution of this product by Mellanox.
+
+
+
+          File                   Version                                   License Link                                       License
+                            spdlog:v1.             https://github.com/gabime/spdlog/blob/v1.x/LICENSE                           MIT
+android_sink.h
+                            2.0                                                                                               License
+                                                   https://github.com/gabime/spdlog/blob/v1.x/LICENSE                           MIT
+ansicolor_sink.h            spdlog:v1.2.0
+                                                                                                                              License
+                                                   https://github.com/gabime/spdlog/blob/v1.x/LICENSE                           MIT
+async.h                     spdlog:v1.1.0
+                                                                                                                              License
+                                                   https://github.com/gabime/spdlog/blob/v1.x/LICENSE                           MIT
+async_logger.h              spdlog:v1.2.0
+                                                                                                                              License
+                                                   https://github.com/cameron314/readerwriterqueue/blob/master/LICE           Apache
+                            release-dashing-
+atomicops.h                                        NSE.md                                                                     License
+                            20190531
+                                                                                                                                 2.0
+                                                   https://github.com/gabime/spdlog/blob/v1.x/LICENSE                           MIT
+base_sink.h                 spdlog:v1.2.0
+                                                                                                                              License
+                                                   https://github.com/gabime/spdlog/blob/v1.x/LICENSE                           MIT
+basic_file_sink.h           spdlog:v1.2.0
+                                                                                                                              License
+ NVIDIA Rivermax License Agreement                              5 of 7
+                                                                                                                              BSD 3-
+                                                                                                                               clause
+                           cli11/1.9.1-
+CLI                                            https://github.com/CLIUtils/CLI11/blob/master/LICENSE                         "New" or
+                           3.fc33/armv7hl
+                                                                                                                            "Revised"
+                                                                                                                              License
+                                               https://github.com/gabime/spdlog/blob/v1.x/LICENSE                               MIT
+common.h                   spdlog:v1.2.1
+                                                                                                                              License
+                                               https://github.com/gabime/spdlog/blob/v1.x/LICENSE                               MIT
+daily_file_sink.h          spdlog:v1.2.0
+                                                                                                                              License
+                                               https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/C       FSF
+delta_timer.cpp            libvma:6.4.11       OPYING                                                                       Unlimited
+                                                                                                                              License
+                                               https://github.com/gabime/spdlog/blob/v1.x/LICENSE                               MIT
+dist_sink.h                spdlog:v1.2.1
+                                                                                                                              License
+                                               https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/C       FSF
+event_handler_manager.
+                           libvma:6.6.4        OPYING                                                                       Unlimited
+cpp
+                                                                                                                              License
+                                                                                                                              BSD 3-
+                                                                                                                               clause
+exception.h                cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                    "New" or
+                                                                                                                            "Revised"
+                                                                                                                              License
+                                               https://github.com/gabime/spdlog/blob/v1.x/LICENSE                               MIT
+formatter.h                spdlog:v1.0.0
+                                                                                                                              License
+                                                                                                                              BSD 3-
+                                                                                                                               clause
+helper_cuda.h              cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                    "New" or
+                                                                                                                            "Revised"
+                                                                                                                              License
+                                                                                                                            BSD 3-
+                                                                                                                            clause
+helper_cuda_gl.h           cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                   "New" or
+                                                                                                                            "Revised"
+                                                                                                                            License
+                                                                                                                            BSD 3-
+                                                                                                                            clause
+helper_image.h             cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                   "New" or
+                                                                                                                            "Revised"
+                                                                                                                            License
+                                                                                                                            BSD 3-
+                                                                                                                            clause
+helper_math.h              cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                   "New" or
+                                                                                                                            "Revised"
+                                                                                                                            License
+                                                                                                                            BSD 3-
+                                                                                                                            clause
+helper_string.h            cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                   "New" or
+                                                                                                                            "Revised"
+                                                                                                                            License
+                                                                                                                              BSD 3-
+                                                                                                                               clause
+helper_timer.h             cuda-samples/10.1   https://github.com/NVIDIA/cuda-samples/blob/master/LICENSE                    "New" or
+                                                                                                                            "Revised"
+                                                                                                                              License
+                           FreeBSD9.0-         https://github.com/trueos/trueos                                                 MIT
+list.h
+                           BETA1                                                                                              License
+                                               https://github.com/gabime/spdlog/blob/v1.x/LICENSE                               MIT
+logger.h                   spdlog:v1.2.0
+                                                                                                                              License
+                                               https://github.com/gabime/spdlog/blob/v1.x/LICENSE                               MIT
+msvc_sink.h                spdlog:v1.0.0
+                                                                                                                              License
+                                               http://www.tinkercell.com/downloads-2/license-1                                BSD 3-
+                                                                                                                               clause
+                           tinkercell2010-
+mt19937_64.h                                                                                                                 "New" or
+                           04-28
+                                                                                                                            "Revised"
+                                                                                                                              License
+
+ NVIDIA Rivermax License Agreement                          6 of 7
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+null_sink.h                spdlog:v1.0.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+ostream_sink.h             spdlog:v1.2.0
+                                                                                                                    License
+                                                https://github.com/cameron314/readerwriterqueue/blob/master/LICE    Apache
+                           release-dashing-
+readerwriterqueue.h                             NSE.m                                                               License
+                           20190531
+                                                                                                                       2.0
+                                                                                                                    BSD 2-
+                                                                                                                     clause
+                                                                                                                   "Simplifie
+                                                                                                                       d"
+rivermax_list.h            libvma:8.3.6         https://github.com/Mellanox/libvma/blob/master/LICENSE
+                                                                                                                    License
+                                                                                                                   AND FSF
+                                                                                                                   Unlimited
+                                                                                                                    License
+                                                                                                                    BSD 2-
+                                                                                                                     clause
+                           Mellanox/libvma:8.
+rivermax_list.h                                 https://github.com/Mellanox/libvma/blob/master/LICENSE             "Simplifie
+                           4.2
+                                                                                                                       d"
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+rotating_file_sink.h       spdlog:v1.2.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+sink.h                     spdlog:v1.2.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+spdlog.h                   spdlog:v1.1.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+stdout_color_sinks.h       spdlog:v1.0.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+stdout_sinks.h             spdlog:v1.2.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+syslog_sink.h              spdlog:v1.1.0
+                                                                                                                    License
+                                                https://github.com/Mellanox/libvma/blob/master/LICENSE                FSF
+timers_group.h             libvma:6.5.9                                                                            Unlimited
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+tweakme.h                  spdlog:v0.10.0
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+version.h                  spdlog:v1.2.0
+                                                                                                                    License
+                                                                                                                      FSF
+vma-redirect.cpp           libvma:6.4.11        https://github.com/Mellanox/libvma                                 Unlimited
+                                                                                                                    License
+                                                                                                                      FSF
+vma-redirect.h             libvma:6.4.11        https://github.com/Mellanox/libvma                                 Unlimited
+                                                                                                                    License
+                                                https://github.com/gabime/spdlog/blob/v1.x/LICENSE                    MIT
+wincolor_sink.h            spdlog:v1.2.0
+                                                                                                                    License
+
+
+
+
+ NVIDIA Rivermax License Agreement                          7 of 7
+

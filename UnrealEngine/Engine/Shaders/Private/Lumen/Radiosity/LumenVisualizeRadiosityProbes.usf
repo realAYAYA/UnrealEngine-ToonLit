@@ -1,0 +1,175 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "../../MonteCarlo.ush"
+#include "../../ComputeShaderUtils.ush"
+#include "../../SHCommon.ush"
+#include "../LumenCardCommon.ush"
+#include "../LumenTracingCommon.ush"
+#include "../LumenCardTile.ush"
+#include "LumenRadiosity.ush"
+
+#ifndef THREADGROUP_SIZE
+	#define THREADGROUP_SIZE 1
+#endif
+
+float VisualizeProbeRadius;
+uint ProbesPerPhysicalPage;
+uint ProbeTileSize;
+uint MaxVisualizeProbes;
+
+RWStructuredBuffer<uint> RWVisualizeProbeAllocator;
+RWStructuredBuffer<float4> RWVisualizeProbeData;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void BuildVisualizeProbesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadIndex : SV_GroupThreadID)
+{
+	uint DispatchThreadId = GetUnWrappedDispatchThreadId(GroupId, GroupThreadIndex.x, THREADGROUP_SIZE);
+
+	uint CardPageIndex = DispatchThreadId.x / (ProbesPerPhysicalPage * ProbesPerPhysicalPage);
+	uint LocalTileIndex = DispatchThreadId.x % (ProbesPerPhysicalPage * ProbesPerPhysicalPage);
+	uint2 LocalTileCoord;
+	LocalTileCoord.x = LocalTileIndex % ProbesPerPhysicalPage;
+	LocalTileCoord.y = LocalTileIndex / ProbesPerPhysicalPage;
+
+	if (CardPageIndex < LumenCardScene.NumCardPages)
+	{
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardPageIndex);
+
+		uint2 CoordInCardTile = LocalTileCoord * ProbeTileSize;
+		uint2 LowerRadiosityTexelCoord = CoordInCardTile + (ProbeTileSize - 1) / 2;
+		FRadiosityTexel RadiosityTexel00 = GetRadiosityTexel(CardPage, LowerRadiosityTexelCoord + uint2(0, 0));
+		FRadiosityTexel RadiosityTexel01 = GetRadiosityTexel(CardPage, LowerRadiosityTexelCoord + uint2(0, 1));
+		FRadiosityTexel RadiosityTexel10 = GetRadiosityTexel(CardPage, LowerRadiosityTexelCoord + uint2(1, 0));
+		FRadiosityTexel RadiosityTexel11 = GetRadiosityTexel(CardPage, LowerRadiosityTexelCoord + uint2(1, 1));
+
+		const uint NumValidTexels = RadiosityTexel00.bValid + RadiosityTexel01.bValid + RadiosityTexel10.bValid + RadiosityTexel11.bValid;
+		const float TexelWeight = 1.0f / NumValidTexels;
+
+		float3 ProbeTranslatedWorldPositon = float3(0, 0, 0);
+
+		if (RadiosityTexel00.bValid)
+		{
+			ProbeTranslatedWorldPositon += (RadiosityTexel00.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+		}
+		if (RadiosityTexel01.bValid)
+		{
+			ProbeTranslatedWorldPositon += (RadiosityTexel01.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+		}
+		if (RadiosityTexel10.bValid)
+		{
+			ProbeTranslatedWorldPositon += (RadiosityTexel10.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+		}
+		if (RadiosityTexel11.bValid)
+		{
+			ProbeTranslatedWorldPositon += (RadiosityTexel11.WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation)) * TexelWeight; // LUMEN_LWC_TODO
+		}
+
+		if (NumValidTexels > 0)
+		{
+			uint ProbeIndex = 0;
+			InterlockedAdd(RWVisualizeProbeAllocator[0], 1, ProbeIndex);
+
+			if (ProbeIndex < MaxVisualizeProbes)
+			{
+				uint2 ProbeAtlasCoord = (CardPage.PhysicalAtlasCoord + CoordInCardTile) / ProbeTileSize;
+				uint PackedProbeAtlasCoord = ProbeAtlasCoord.x | (ProbeAtlasCoord.y << 16);
+				RWVisualizeProbeData[ProbeIndex] = float4(ProbeTranslatedWorldPositon, asfloat(PackedProbeAtlasCoord));
+			}
+		}
+	}
+}
+
+struct FVisualizeRadianceCacheVSToPS
+{
+	nointerpolation float4 CellTranslatedSphere : TEXCOORD0;
+	nointerpolation uint2 ProbeAtlasCoord : TEXCOORD1;
+	float3 PositionTWS : TEXCOORD2;
+};
+
+StructuredBuffer<uint> VisualizeProbeAllocator;
+StructuredBuffer<float4> VisualizeProbeData;
+
+void VisualizeRadiosityProbesVS(
+	uint VertexId : SV_VertexID,
+	uint InstanceId : SV_InstanceID,
+	out FVisualizeRadianceCacheVSToPS Output,
+	out float4 OutPosition : SV_POSITION
+)
+{
+	Output = (FVisualizeRadianceCacheVSToPS)0;
+	OutPosition = 0;
+	bool bValidProbe = false;
+
+	uint ProbeIndex = InstanceId;
+	if (ProbeIndex < MaxVisualizeProbes && ProbeIndex < VisualizeProbeAllocator[0])
+	{
+		bValidProbe = true;
+
+		float3 LocalPosition;
+		LocalPosition.x = VertexId & 0x1 ? 1.0f : -1.0f;
+		LocalPosition.y = VertexId & 0x2 ? 1.0f : -1.0f;
+		LocalPosition.z = VertexId & 0x4 ? 1.0f : -1.0f;
+		LocalPosition *= VisualizeProbeRadius;
+
+		float3 ProbeTranslatedWorldPositon = VisualizeProbeData[ProbeIndex].xyz;
+		uint PackedProbeAtlasCoord = asuint(VisualizeProbeData[ProbeIndex].w);
+		uint2 ProbeAtlasCoord = uint2(PackedProbeAtlasCoord & 0xFFFF, (PackedProbeAtlasCoord >> 16) & 0xFFFF);
+
+		Output.ProbeAtlasCoord = ProbeAtlasCoord;
+		Output.CellTranslatedSphere.xyz = ProbeTranslatedWorldPositon;
+		Output.CellTranslatedSphere.w = VisualizeProbeRadius;
+		Output.PositionTWS = LocalPosition + ProbeTranslatedWorldPositon;
+		OutPosition = mul(float4(Output.PositionTWS, 1.0f), PrimaryView.TranslatedWorldToClip);
+	}
+
+	if (!bValidProbe)
+	{
+		OutPosition = 0;
+	}
+}
+
+Texture2D<float4> RadiosityProbeSHRedAtlas;
+Texture2D<float4> RadiosityProbeSHGreenAtlas;
+Texture2D<float4> RadiosityProbeSHBlueAtlas;
+
+FTwoBandSHVectorRGB GetRadiosityProbeSH(uint2 RadiosityProbeAtlasCoord)
+{
+	float4 SHRed = RadiosityProbeSHRedAtlas.Load(int3(RadiosityProbeAtlasCoord, 0));
+	float4 SHGreen = RadiosityProbeSHGreenAtlas.Load(int3(RadiosityProbeAtlasCoord, 0));
+	float4 SHBlue = RadiosityProbeSHBlueAtlas.Load(int3(RadiosityProbeAtlasCoord, 0));
+
+	FTwoBandSHVectorRGB IrradianceSH;
+	IrradianceSH.R.V = SHRed;
+	IrradianceSH.G.V = SHGreen;
+	IrradianceSH.B.V = SHBlue;
+
+	return IrradianceSH;
+}
+
+void VisualizeRadiosityProbesPS(
+	FVisualizeRadianceCacheVSToPS Input,
+	out float4 OutColor : SV_Target0
+)
+{
+	const float3 TranslatedWorldViewOrigin = LWCToFloat(LWCAdd(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation));
+
+	float3 RayDirection = normalize(Input.PositionTWS - TranslatedWorldViewOrigin);
+	float2 SphereIntersections = RayIntersectSphere(TranslatedWorldViewOrigin, RayDirection, Input.CellTranslatedSphere);
+	float3 IntersectionPosition = TranslatedWorldViewOrigin + SphereIntersections.x * RayDirection;
+	clip(SphereIntersections.x);
+
+	float3 SphereNormal = normalize(IntersectionPosition - Input.CellTranslatedSphere.xyz);
+
+	FTwoBandSHVectorRGB IrradianceSH = GetRadiosityProbeSH(Input.ProbeAtlasCoord);
+
+	float3 WorldNormal = normalize(IntersectionPosition - Input.CellTranslatedSphere.xyz);
+	FTwoBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH(WorldNormal, 1);
+	float3 SphereLighting = max(float3(0, 0, 0), DotSH(IrradianceSH, DiffuseTransferSH)) / PI;
+
+	SphereLighting *= View.PreExposure;
+
+	OutColor = float4(SphereLighting, 1.0f);
+}

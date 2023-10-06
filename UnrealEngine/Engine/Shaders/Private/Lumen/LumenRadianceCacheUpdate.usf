@@ -1,0 +1,348 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenRadianceCacheUpdate.usf
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenRadianceCacheMarkCommon.ush"
+#include "LumenRadianceCacheUpdate.ush"
+
+float FirstClipmapWorldExtentRcp;
+uint FrameNumber;
+RWStructuredBuffer<uint> RWPriorityHistogram;
+StructuredBuffer<uint> PriorityHistogram;
+RWStructuredBuffer<uint> RWMaxUpdateBucket;
+StructuredBuffer<uint> MaxUpdateBucket;
+RWStructuredBuffer<uint> RWMaxTracesFromMaxUpdateBucket;
+StructuredBuffer<uint> MaxTracesFromMaxUpdateBucket;
+RWStructuredBuffer<uint> RWProbesToUpdateTraceCost;
+StructuredBuffer<uint> ProbesToUpdateTraceCost;
+
+RWStructuredBuffer<uint> RWProbeLastTracedFrame;
+RWBuffer<uint> RWProbeLastUsedFrame;
+Buffer<uint> ProbeLastUsedFrame;
+
+uint MaxNumProbes;
+RWStructuredBuffer<float4> RWProbeWorldOffset;
+RWBuffer<int> RWProbeFreeListAllocator;
+RWBuffer<uint> RWProbeFreeList;
+RWBuffer<uint> RWProbeAllocator;
+Buffer<uint> ProbeFreeList;
+
+RWBuffer<uint> RWProbeTraceAllocator;
+Buffer<uint> ProbeTraceAllocator;
+RWBuffer<float4> RWProbeTraceData;
+
+/**
+ * Batch clear all resources required for the subsequent radiance cache probe update pass
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void ClearRadianceCacheUpdateResourcesCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint ElementIndex = DispatchThreadId.x;
+
+	if (ElementIndex < 1)
+	{
+		RWProbeTraceAllocator[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < 1)
+	{
+		RWMaxUpdateBucket[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < 1)
+	{
+		RWMaxTracesFromMaxUpdateBucket[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < PROBES_TO_UPDATE_TRACE_COST_STRIDE)
+	{
+		RWProbesToUpdateTraceCost[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < PRIORITY_HISTOGRAM_SIZE)
+	{
+		RWPriorityHistogram[ElementIndex] = 0;
+	}
+}
+
+uint GetPriorityBucketIndex(uint LastTracedFrameIndex, uint LastUsedFrameIndex, uint ClipmapIndex)
+{
+	uint BucketIndex = 0;
+
+	if (LastTracedFrameIndex == PROBE_FRAME_INDEX_NEVER_TRACED)
+	{
+		// Special case for probes which were created this frame. Places those in the most important bucket 0.
+		BucketIndex = 0;
+	}
+	else
+	{
+		// [1;N]
+		uint FramesBetweenTracedAndUsed = LastUsedFrameIndex > LastTracedFrameIndex ? LastUsedFrameIndex - LastTracedFrameIndex : 1;
+		float UpdateImportance = FramesBetweenTracedAndUsed / (ClipmapIndex + 1.0f);
+
+		// Remap from [1;N] to log2 histogram buckets, but don't write anything to special bucket 0 used for new probes without any data
+		BucketIndex = PRIORITY_HISTOGRAM_SIZE - 1 - clamp(log2(UpdateImportance), 0, PRIORITY_HISTOGRAM_SIZE - 2);
+	}
+
+	return BucketIndex;
+}
+
+/** 
+ * Allocate used probes and build their update priority histogram
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
+void AllocateUsedProbesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ClipmapIndex = DispatchThreadId.x / RadianceProbeClipmapResolution;
+	uint3 ProbeCoord = uint3(DispatchThreadId.x - ClipmapIndex * RadianceProbeClipmapResolution, DispatchThreadId.y, DispatchThreadId.z);
+
+	if (ClipmapIndex < NumRadianceProbeClipmaps && all(ProbeCoord < RadianceProbeClipmapResolution))
+	{
+		uint ProbeUsedMarker = RWRadianceProbeIndirectionTexture[DispatchThreadId];
+		float3 ProbeWorldPosition = ProbeCoord * GetRadianceProbeCoordToWorldPositionScale(ClipmapIndex) + GetRadianceProbeCoordToWorldPositionBias(ClipmapIndex);
+
+		if (ProbeUsedMarker != INVALID_PROBE_INDEX)
+		{
+			uint ProbeIndex = INVALID_PROBE_INDEX;
+			uint LastTracedFrameIndex = 0;
+			uint LastUsedFrameIndex = 0;
+
+			if (ProbeUsedMarker == USED_PROBE_INDEX)
+			{
+				// Allocate new probe
+				#if PERSISTENT_CACHE
+					int NumFree;
+					InterlockedAdd(RWProbeFreeListAllocator[0], -1, NumFree);
+
+					if (NumFree > 0)
+					{
+						ProbeIndex = ProbeFreeList[NumFree - 1];
+					}
+					else
+					{
+						InterlockedAdd(RWProbeAllocator[0], 1, ProbeIndex);
+					}
+				#else
+					InterlockedAdd(RWProbeAllocator[0], 1, ProbeIndex);
+				#endif
+
+				if (ProbeIndex < MaxNumProbes)
+				{
+					RWProbeLastTracedFrame[ProbeIndex] = PROBE_FRAME_INDEX_NEVER_TRACED;
+					RWProbeLastUsedFrame[ProbeIndex] = FrameNumber;
+
+					LastTracedFrameIndex = PROBE_FRAME_INDEX_NEVER_TRACED;
+					LastUsedFrameIndex = FrameNumber;
+				}
+			}
+			else
+			{
+				// Re-trace existing probe
+				ProbeIndex = ProbeUsedMarker;
+				LastTracedFrameIndex = RWProbeLastTracedFrame[ProbeIndex];
+				LastUsedFrameIndex = RWProbeLastUsedFrame[ProbeIndex];
+			}
+
+			if (ProbeIndex < MaxNumProbes)
+			{
+				// Update histogram
+				const uint PriorityBucketIndex = GetPriorityBucketIndex(LastTracedFrameIndex, LastUsedFrameIndex, ClipmapIndex);
+				uint ProbeTraceCost = GetProbeTraceCost(ProbeWorldPosition);
+				InterlockedAdd(RWPriorityHistogram[PriorityBucketIndex], ProbeTraceCost);
+
+				RWRadianceProbeIndirectionTexture[DispatchThreadId] = ProbeIndex;
+			}
+			else
+			{
+				RWRadianceProbeIndirectionTexture[DispatchThreadId] = INVALID_PROBE_INDEX;
+			}
+		}
+	}
+}
+
+/** 
+ * Compute max bucket histogram to update and how many tiles should be updated in that last bucket 
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void SelectMaxPriorityBucketCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (all(DispatchThreadId == 0))
+	{
+		uint NumTracesBudget = NumProbesToTraceBudget * 4;
+		uint TraceSum = 0;
+		uint PriorityBucketIndex = 0;
+		uint NumTracesFromPriorityBucket = NumTracesBudget;
+
+		for (; PriorityBucketIndex < PRIORITY_HISTOGRAM_SIZE; ++PriorityBucketIndex)
+		{
+			uint TilesPerBucket = PriorityHistogram[PriorityBucketIndex];
+
+			if (TraceSum + TilesPerBucket >= NumTracesBudget)
+			{
+				NumTracesFromPriorityBucket = NumTracesBudget - TraceSum;
+				break;
+			}
+
+			TraceSum += TilesPerBucket;
+		}
+
+		RWMaxUpdateBucket[0] = PriorityBucketIndex;
+		RWMaxTracesFromMaxUpdateBucket[0] = NumTracesFromPriorityBucket;
+	}
+}
+
+/**
+ * Iterate again over all probes and update them based on the histogram priority max update bucket
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
+void AllocateProbeTracesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ClipmapIndex = DispatchThreadId.x / RadianceProbeClipmapResolution;
+	uint3 ProbeCoord = uint3(DispatchThreadId.x - ClipmapIndex * RadianceProbeClipmapResolution, DispatchThreadId.y, DispatchThreadId.z);
+
+	if (ClipmapIndex < NumRadianceProbeClipmaps && all(ProbeCoord < RadianceProbeClipmapResolution))
+	{
+		const uint ProbeIndex = RadianceProbeIndirectionTexture[DispatchThreadId];
+		float3 ProbeWorldPosition = ProbeCoord * GetRadianceProbeCoordToWorldPositionScale(ClipmapIndex) + GetRadianceProbeCoordToWorldPositionBias(ClipmapIndex);
+
+		if (ProbeIndex < MaxNumProbes)
+		{
+			const uint MaxUpdateBucketIndex = MaxUpdateBucket[0];
+			const uint LocalMaxTracesFromMaxUpdateBucket = MaxTracesFromMaxUpdateBucket[0];
+
+			const uint ProbeTraceCost = GetProbeTraceCost(ProbeWorldPosition);
+			const uint LastTracedFrameIndex = RWProbeLastTracedFrame[ProbeIndex];
+			const uint LastUsedFrameIndex = ProbeLastUsedFrame[ProbeIndex];
+
+			// Update everything up to the max selected priority bucket
+			const uint PriorityBucketIndex = GetPriorityBucketIndex(LastTracedFrameIndex, LastUsedFrameIndex, ClipmapIndex);
+
+			bool bTraceProbe = PriorityBucketIndex <= MaxUpdateBucketIndex;
+
+			// Can't trace more than MaxTracesFromMaxUpdateBucket from the last bucket
+			// Make an exception for the first bucket, as it contains probes without valid data
+			if (bTraceProbe && PriorityBucketIndex == MaxUpdateBucketIndex && MaxUpdateBucketIndex > 0)
+			{
+				// Accumulate allocated probe trace cost for the last bucket
+				uint ProbeTraceAllocatedFromMaxUpdateBucket = 0;
+				InterlockedAdd(RWProbesToUpdateTraceCost[1], ProbeTraceCost, ProbeTraceAllocatedFromMaxUpdateBucket);
+
+				if (ProbeTraceAllocatedFromMaxUpdateBucket + ProbeTraceCost > LocalMaxTracesFromMaxUpdateBucket)
+				{
+					bTraceProbe = false;
+				}
+			}
+
+			if (bTraceProbe)
+			{
+				InterlockedAdd(RWProbesToUpdateTraceCost[0], ProbeTraceCost);
+
+				uint TraceIndex;
+				InterlockedAdd(RWProbeTraceAllocator[0], 1, TraceIndex);
+
+				RWProbeTraceData[TraceIndex] = float4(ProbeWorldPosition, asfloat((ClipmapIndex << 24) | ProbeIndex));
+				RWProbeLastTracedFrame[ProbeIndex] = FrameNumber;
+			}
+		}
+	}
+}
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void ClearProbeFreeListCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ThreadIndex = DispatchThreadId.x;
+
+	if (ThreadIndex == 0)
+	{
+		RWProbeFreeListAllocator[0] = 0;
+	}
+
+	if (ThreadIndex < MaxNumProbes)
+	{
+		RWProbeFreeList[ThreadIndex] = 0;
+		RWProbeLastUsedFrame[ThreadIndex] = 0;
+		RWProbeWorldOffset[ThreadIndex] = 0;
+	}
+}
+
+Buffer<uint> ProbeAllocator;
+Texture3D<uint> LastFrameRadianceProbeIndirectionTexture;
+float4 PackedLastFrameRadianceProbeCoordToWorldPosition[RADIANCE_PROBE_MAX_CLIPMAPS];
+uint NumFramesToKeepCachedProbes;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
+void UpdateCacheForUsedProbesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ClipmapIndex = DispatchThreadId.x / RadianceProbeClipmapResolution;
+	uint3 LastFrameProbeCoord = uint3(DispatchThreadId.x - ClipmapIndex * RadianceProbeClipmapResolution, DispatchThreadId.yz);
+
+	if (ClipmapIndex < NumRadianceProbeClipmaps && all(LastFrameProbeCoord < RadianceProbeClipmapResolution))
+	{
+		uint3 LastFrameProbeIndirectionTextureCoord = uint3(LastFrameProbeCoord.x + ClipmapIndex * RadianceProbeClipmapResolution, LastFrameProbeCoord.yz);
+		uint LastFrameProbeIndex = LastFrameRadianceProbeIndirectionTexture.Load(uint4(LastFrameProbeIndirectionTextureCoord, 0));
+
+		if (LastFrameProbeIndex != INVALID_PROBE_INDEX)
+		{
+			float3 ProbeWorldPosition = LastFrameProbeCoord * PackedLastFrameRadianceProbeCoordToWorldPosition[ClipmapIndex].w + PackedLastFrameRadianceProbeCoordToWorldPosition[ClipmapIndex].xyz;
+			int3 ProbeCoord = GetRadianceProbeCoord(ProbeWorldPosition, ClipmapIndex);
+
+			bool bReused = false;
+
+			if (all(ProbeCoord >= 0) && all(ProbeCoord < (int3)RadianceProbeClipmapResolution))
+			{
+				uint3 ProbeIndirectionTextureCoord = uint3(ProbeCoord.x + ClipmapIndex * RadianceProbeClipmapResolution, ProbeCoord.yz);
+				uint ProbeUsedMarker = RWRadianceProbeIndirectionTexture[ProbeIndirectionTextureCoord];
+				uint LastUsedFrameNumber = RWProbeLastUsedFrame[LastFrameProbeIndex];
+
+				uint NumFramesToKeepCachedProbesHeuristic = NumFramesToKeepCachedProbes;
+
+				// Make sure that it's possible to allocate at least NumProbesToTraceBudget probes this frame
+				const uint NumFreeProbes = MaxNumProbes - ProbeAllocator[0] + RWProbeFreeListAllocator[0];
+				if (NumFreeProbes < NumProbesToTraceBudget)
+				{
+					NumFramesToKeepCachedProbesHeuristic = min(2, NumFramesToKeepCachedProbes);
+				}
+
+				if (ProbeUsedMarker == USED_PROBE_INDEX
+					|| FrameNumber - LastUsedFrameNumber < NumFramesToKeepCachedProbes)
+				{
+					bReused = true;
+
+					if (ProbeUsedMarker == USED_PROBE_INDEX)
+					{
+						RWProbeLastUsedFrame[LastFrameProbeIndex] = FrameNumber;
+					}
+					RWRadianceProbeIndirectionTexture[ProbeIndirectionTextureCoord] = LastFrameProbeIndex;
+				}
+			}
+
+			if (!bReused)
+			{
+				int FreeIndex;
+				InterlockedAdd(RWProbeFreeListAllocator[0], 1, FreeIndex);
+				RWProbeFreeList[FreeIndex] = LastFrameProbeIndex;
+			}
+		}
+	}
+}

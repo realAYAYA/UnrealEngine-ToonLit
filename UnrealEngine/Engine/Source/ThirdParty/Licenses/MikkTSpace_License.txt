@@ -1,0 +1,49 @@
+/**
+ *  Copyright (C) 2011 by Morten S. Mikkelsen
+ *
+ *  This software is provided 'as-is', without any express or implied
+ *  warranty.  In no event will the authors be held liable for any damages
+ *  arising from the use of this software.
+ *
+ *  Permission is granted to anyone to use this software for any purpose,
+ *  including commercial applications, and to alter it and redistribute it
+ *  freely, subject to the following restrictions:
+ *
+ *  1. The origin of this software must not be misrepresented; you must not
+ *     claim that you wrote the original software. If you use this software
+ *     in a product, an acknowledgment in the product documentation would be
+ *     appreciated but is not required.
+ *  2. Altered source versions must be plainly marked as such, and must not be
+ *     misrepresented as being the original software.
+ *  3. This notice may not be removed or altered from any source distribution.
+ */
+ 
+/* Author: Morten S. Mikkelsen
+ * Version: 1.0
+ *
+ * The files mikktspace.h and mikktspace.c are designed to be
+ * stand-alone files and it is important that they are kept this way.
+ * Not having dependencies on structures/classes/libraries specific
+ * to the program, in which they are used, allows them to be copied
+ * and used as is into any tool, program or plugin.
+ * The code is designed to consistently generate the same
+ * tangent spaces, for a given mesh, in any tool in which it is used.
+ * This is done by performing an internal welding step and subsequently an order-independent evaluation
+ * of tangent space for meshes consisting of triangles and quads.
+ * This means faces can be received in any order and the same is true for
+ * the order of vertices of each face. The generated result will not be affected
+ * by such reordering. Additionally, whether degenerate (vertices or texture coordinates)
+ * primitives are present or not will not affect the generated results either.
+ * Once tangent space calculation is done the vertices of degenerate primitives will simply
+ * inherit tangent space from neighboring non degenerate primitives.
+ * The analysis behind this implementation can be found in my master's thesis
+ * which is available for download --> http://image.diku.dk/projects/media/morten.mikkelsen.08.pdf
+ * Note that though the tangent spaces at the vertices are generated in an order-independent way,
+ * by this implementation, the interpolated tangent space is still affected by which diagonal is
+ * chosen to split each quad. A sensible solution is to have your tools pipeline always
+ * split quads by the shortest diagonal. This choice is order-independent and works with mirroring.
+ * If these have the same length then compare the diagonals defined by the texture coordinates.
+ * XNormal which is a tool for baking normal maps allows you to write your own tangent space plugin
+ * and also quad triangulator plugin.
+ */
+ 

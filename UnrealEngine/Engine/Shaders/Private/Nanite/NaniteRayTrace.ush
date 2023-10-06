@@ -1,0 +1,243 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "/Engine/Shared/ThirdParty/RayTriangleIntersection.h"
+
+#include "../RayTracing/RayTracingCommon.ush"
+#include "NaniteDataDecode.ush"
+
+#define INTERSECT_NANITE_TYPE_NAIVE (0)
+#define INTERSECT_NANITE_TYPE INTERSECT_NANITE_TYPE_NAIVE
+
+#define INTERSECT_TRIANGLE_TYPE_MOLLER_TRUMBORE (0)
+#define INTERSECT_TRIANGLE_TYPE_WATERTIGHT (1)
+#define INTERSECT_TRIANGLE_TYPE INTERSECT_TRIANGLE_TYPE_WATERTIGHT
+
+#define BACKFACE_CULLING (0) // TODO
+#define INTERSECTION_LOCAL_SPACE (1)
+#define LOCAL_SPACE_WITHOUT_MATRIX_MUL (1)
+
+#define TEST_BBOX (1 && INTERSECTION_LOCAL_SPACE)
+
+struct FNaniteIntersectionResult
+{
+	float2 Barycentrics;
+	uint PageIndex;
+	uint ClusterIndex;
+	uint TriIndex;
+
+	uint NodeIntersectionCount;
+	uint ClusterIntersectionCount;
+	uint TriangleIntersectionCount;
+};
+
+#define STACK_SIZE 32
+struct FSimpleStack
+{
+	void Init()
+	{
+		DataOffset = 0;
+	}
+
+	void Push(uint Value)
+	{
+		Data[DataOffset++] = Value;
+	}
+
+	uint Pop()
+	{
+		return Data[--DataOffset];
+	}
+
+	bool Empty() 
+	{
+		return DataOffset == 0;
+	}
+
+	uint Data[STACK_SIZE];
+	uint DataOffset;
+};
+
+bool RayTriangleIntersection(float3 RayOrigin, float3 RayDirection, float3 Vertex0, float3 Vertex1, float3 Vertex2, out float IntersectionT, out float2 Barycentrics)
+{
+#if INTERSECT_TRIANGLE_TYPE == INTERSECT_TRIANGLE_TYPE_WATERTIGHT
+	return RayTriangleIntersectionWatertight(RayOrigin, RayDirection, Vertex0, Vertex1, Vertex2, IntersectionT, Barycentrics);
+#elif INTERSECT_TRIANGLE_TYPE == INTERSECT_TRIANGLE_TYPE_MOLLER_TRUMBORE
+	return RayTriangleIntersectionMollerTrumbore(RayOrigin, RayDirection, Vertex0, Vertex1, Vertex2, IntersectionT, Barycentrics);
+#else
+#error Unknown INTERSECTION_TRIANGLE_TYPE
+#endif
+}
+
+bool RayAABBIntersection(float3 RayOrigin, float3 RayDirection, float3 BoxCenter, float3 BoxExtent, float TMin, float RayTCurrent)
+{
+	const float3 BoxMin = BoxCenter - BoxExtent;
+	const float3 BoxMax = BoxCenter + BoxExtent;
+	const float3 InvRayDirection = rcp(RayDirection);
+
+	const float3 FirstPlaneIntersections = (BoxMin - RayOrigin) * InvRayDirection;
+	const float3 SecondPlaneIntersections = (BoxMax - RayOrigin) * InvRayDirection;
+	const float3 ClosestPlaneIntersections = min(FirstPlaneIntersections, SecondPlaneIntersections);
+	const float3 FurthestPlaneIntersections = max(FirstPlaneIntersections, SecondPlaneIntersections);
+	const float ClosestDistance = max3(ClosestPlaneIntersections.x, ClosestPlaneIntersections.y, ClosestPlaneIntersections.z);
+	const float FurthestDistance = min3(FurthestPlaneIntersections.x, FurthestPlaneIntersections.y, FurthestPlaneIntersections.z);
+	if (ClosestDistance > FurthestDistance || TMin > FurthestDistance || RayTCurrent < ClosestDistance)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool NaniteClustersIntersection(
+	uint PageIndex, uint BaseClusterIndex, uint NumClusters, float CutError,
+	float3 Origin, float3 Direction, float4x4 LocalToTranslatedWorld, float3 InvScale, float3 BoundsCenter, float MaxWPOExtent,
+	float TMin, inout float RayTCurrent, inout FNaniteIntersectionResult NaniteIntersectionResult)
+{
+	bool bIntersection = false;
+	for (int ClusterIndex = 0; ClusterIndex < NumClusters; ++ClusterIndex)
+	{
+		FCluster Cluster = GetCluster(PageIndex, BaseClusterIndex + ClusterIndex);
+
+		bool bSmallEnoughToDraw = CutError > Cluster.LODError;
+
+#if TEST_BBOX
+		// TODO: Take AbsMaxMaterialDisplacement + MaxWPOExtent when RT supports displacement
+		float3 BoxBoundsCenter = (Cluster.BoxBoundsCenter - BoundsCenter) * InvScale;
+		float3 BoxBoundsExtent = (Cluster.BoxBoundsExtent + MaxWPOExtent) * InvScale;
+
+		const bool bBoxIntersection = RayAABBIntersection(Origin, Direction, BoxBoundsCenter, BoxBoundsExtent, TMin, RayTCurrent);
+#else
+		const bool bBoxIntersection = true;
+#endif
+
+		++NaniteIntersectionResult.ClusterIntersectionCount;
+
+		if ((!bSmallEnoughToDraw && !(Cluster.Flags & NANITE_CLUSTER_FLAG_STREAMING_LEAF)) || !bBoxIntersection)
+			continue;
+
+		NaniteIntersectionResult.TriangleIntersectionCount += Cluster.NumTris;
+
+		for (int TriIndex = 0; TriIndex < Cluster.NumTris; ++TriIndex)
+		{
+			const uint3 TriIndices = DecodeTriangleIndices(Cluster, TriIndex);
+
+			float3 PointLocal0 = DecodePosition(TriIndices.x, Cluster);
+			float3 PointLocal1 = DecodePosition(TriIndices.y, Cluster);
+			float3 PointLocal2 = DecodePosition(TriIndices.z, Cluster);
+
+			float IntersectionT = RayTCurrent;
+			float2 Barycentrics = 0.0;
+#if INTERSECTION_LOCAL_SPACE
+			PointLocal0 -= BoundsCenter;
+			PointLocal1 -= BoundsCenter;
+			PointLocal2 -= BoundsCenter;
+
+			PointLocal0 *= InvScale;
+			PointLocal1 *= InvScale;
+			PointLocal2 *= InvScale;
+
+			bool bHit = RayTriangleIntersection(Origin, Direction, PointLocal0, PointLocal1, PointLocal2, IntersectionT, Barycentrics);
+#else
+			const float3 PointWorld0 = mul(float4(PointLocal0, 1), LocalToTranslatedWorld).xyz;
+			const float3 PointWorld1 = mul(float4(PointLocal1, 1), LocalToTranslatedWorld).xyz;
+			const float3 PointWorld2 = mul(float4(PointLocal2, 1), LocalToTranslatedWorld).xyz;
+
+			bool bHit = RayTriangleIntersection(Origin, Direction, PointWorld0, PointWorld1, PointWorld2, IntersectionT, Barycentrics);
+#endif
+			
+			if (bHit && IntersectionT >= TMin && IntersectionT <= RayTCurrent)
+			{
+				NaniteIntersectionResult.Barycentrics = Barycentrics;
+				NaniteIntersectionResult.TriIndex = TriIndex;
+				NaniteIntersectionResult.PageIndex = PageIndex;
+				NaniteIntersectionResult.ClusterIndex = BaseClusterIndex + ClusterIndex;
+
+				bIntersection = true;
+				RayTCurrent = IntersectionT;
+			}
+		}
+	}
+
+	return bIntersection;
+}
+
+bool NaniteIntersection(float3 Origin, float3 Direction, FInstanceSceneData InstanceData, FPrimitiveSceneData PrimitiveData, float CutError, float TMin, inout float RayTCurrent, out FNaniteIntersectionResult NaniteIntersectionResult)
+{
+	float4x4 LocalToTranslatedWorld = LWCHackToFloat(InstanceData.LocalToWorld);
+	float4x4 TranslatedWorldToLocal = LWCHackToFloat(InstanceData.WorldToLocal);
+
+#if LOCAL_SPACE_WITHOUT_MATRIX_MUL
+	const float3 InvScale = 0.5f / PrimitiveData.InstanceLocalBoundsExtent;
+	const float3 BoundsCenter = PrimitiveData.InstanceLocalBoundsCenter;
+#else
+	const float3 InvScale = 1.0f;
+	const float3 BoundsCenter = 0.0f;
+#endif
+
+#if INTERSECTION_LOCAL_SPACE && !LOCAL_SPACE_WITHOUT_MATRIX_MUL
+	Origin = mul(float4(Origin, 1), TranslatedWorldToLocal).xyz;
+	Direction = mul(float4(Direction, 0), TranslatedWorldToLocal).xyz;
+#endif
+
+	const int HierarchyOffset = InstanceData.NaniteHierarchyOffset;
+	const uint RuntimeResourceID = InstanceData.NaniteRuntimeResourceID;
+
+	bool bIntersection = false;
+
+	NaniteIntersectionResult.NodeIntersectionCount = 0;
+	NaniteIntersectionResult.ClusterIntersectionCount = 0;
+	NaniteIntersectionResult.TriangleIntersectionCount = 0;
+
+	FSimpleStack Stack;
+	Stack.Init();
+	Stack.Push(0);
+
+	while (!Stack.Empty())
+	{		
+		const uint NodeIndex = Stack.Pop();
+
+		for (uint ChildIndex = 0; ChildIndex < NANITE_MAX_BVH_NODE_FANOUT; ++ChildIndex)
+		{
+			const FHierarchyNodeSlice HierarchyNodeSlice = GetHierarchyNodeSlice(HierarchyOffset + NodeIndex, ChildIndex);
+
+#if TEST_BBOX
+			// TODO: Take AbsMaxMaterialDisplacement + MaxWPOExtent when RT supports displacement
+			float3 BoxBoundsCenter = (HierarchyNodeSlice.BoxBoundsCenter - BoundsCenter) * InvScale;
+			float3 BoxBoundsExtent = (HierarchyNodeSlice.BoxBoundsExtent + PrimitiveData.MaxWPOExtent) * InvScale;
+
+			bool bBoxIntersection = RayAABBIntersection(Origin, Direction, BoxBoundsCenter, BoxBoundsExtent, TMin, RayTCurrent);
+#else
+			const bool bBoxIntersection = true;
+#endif
+
+			++NaniteIntersectionResult.NodeIntersectionCount;
+
+			bool bVisible = HierarchyNodeSlice.bEnabled;
+			bool bLoaded = HierarchyNodeSlice.bLoaded;
+			bool bShouldVisitChild = CutError < HierarchyNodeSlice.MaxParentLODError;
+
+			if (!bVisible || !bLoaded || !bShouldVisitChild || !bBoxIntersection)
+				continue;
+
+			if (HierarchyNodeSlice.bLeaf)
+			{
+				uint NumClusters = HierarchyNodeSlice.NumChildren;
+				const uint PageIndex = HierarchyNodeSlice.ChildStartReference >> NANITE_MAX_CLUSTERS_PER_PAGE_BITS;
+				const uint BaseClusterIndex = HierarchyNodeSlice.ChildStartReference & NANITE_MAX_CLUSTERS_PER_PAGE_MASK;
+
+				// TODO: Take AbsMaxMaterialDisplacement + MaxWPOExtent when RT supports displacement
+				if (NaniteClustersIntersection(PageIndex, BaseClusterIndex, NumClusters, CutError, Origin, Direction, LocalToTranslatedWorld, InvScale, BoundsCenter, PrimitiveData.MaxWPOExtent, TMin, RayTCurrent, NaniteIntersectionResult))
+				{
+					bIntersection = true;
+				}
+			}
+			else
+			{
+				Stack.Push(HierarchyNodeSlice.ChildStartReference);
+			}
+		}
+	}
+	return bIntersection;
+}

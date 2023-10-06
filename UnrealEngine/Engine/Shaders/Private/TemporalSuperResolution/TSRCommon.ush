@@ -1,0 +1,1151 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../Random.ush"
+#include "../TextureSampling.ush"
+#include "../FastMath.ush"
+#include "../MonteCarlo.ush"
+#include "../ScreenPass.ush"
+#include "/Engine/Public/DualPixelVectorization.ush"
+#include "/Engine/Public/WaveBroadcastIntrinsics.ush"
+
+
+//------------------------------------------------------- RECOMPILE HASH
+// 2A42D2EF-728A-4AC9-825F-2DC009BE04B0
+
+
+//------------------------------------------------------- COMPILER CONFIG
+
+// Generate vector truncation warnings to errors.
+#pragma warning(error: 3206)
+
+
+//------------------------------------------------------- CONFIG
+
+#define DEBUG_OUTPUT 0
+
+#if defined(DIM_16BIT_VALU)
+	#define CONFIG_COMPILE_FP16 DIM_16BIT_VALU
+#elif PLATFORM_SUPPORTS_REAL_TYPES
+	#define CONFIG_COMPILE_FP16 1
+#else
+	#define CONFIG_COMPILE_FP16 0
+#endif
+
+#if PLATFORM_SUPPORTS_WAVE_BROADCAST && 1
+	#define CONFIG_BUTTERFLY_KERNEL 1
+#else
+	#define CONFIG_BUTTERFLY_KERNEL 0
+#endif
+
+#define CONFIG_SCENE_COLOR_OVERFLOW 1
+
+#if POST_PROCESS_ALPHA
+	#define CONFIG_SCENE_COLOR_ALPHA 1
+#else
+	#define CONFIG_SCENE_COLOR_ALPHA 0
+#endif
+
+#define CONFIG_ENABLE_STOCASTIC_QUANTIZATION (!CONFIG_SCENE_COLOR_ALPHA)
+
+//------------------------------------------------------- CONSTANTS
+
+/* Maximum number of sample. */
+#define MAX_SAMPLE_COUNT 8
+
+#define MAX_FALLBACK_SAMPLE_COUNT 20
+
+// Spatial anti-aliasing encoding settings.
+#define SPATIAL_ANTI_ALIASING_OFFSET_RANGE 0.5
+#define SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL 4
+
+#define COMPRESS_PREV_USE_COUNT 1
+#if COMPRESS_PREV_USE_COUNT
+	// COMPRESS_PREV_USE_COUNT compress the use count in 8bit, so need to sum of a 2x2 to not overflow these 8bits
+	#define PREV_USE_COUNT_QUANTIZATION 63
+#else
+	#define PREV_USE_COUNT_QUANTIZATION 255
+#endif
+
+#define PARALLAX_REJECTION_MASK_THRESHOLD 0.5
+
+#define MAX_PARALLAX_FACTOR 8.0
+
+// Size and payload size of the subpixel grid in the history
+#define SUB_PIXEL_GRID_SIZE 2
+#define SUB_PIXEL_COUNT (SUB_PIXEL_GRID_SIZE * SUB_PIXEL_GRID_SIZE)
+
+#define SUB_PIXEL_BIT_COUNT 4
+#define SUB_PIXEL_BIT_MASK ((1 << SUB_PIXEL_BIT_COUNT) - 1)
+
+#define SUB_PIXEL_PARALLAX_FACTOR_BIT_COUNT 4
+#define SUB_PIXEL_PARALLAX_FACTOR_BIT_OFFSET 0
+#define SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK ((1 << SUB_PIXEL_PARALLAX_FACTOR_BIT_COUNT) - 1)
+
+// Minimum number of sample of each texel when reprojecting the high frequency history.
+// Value too low causes area of low sample count to have pixel dominating too much in reprojection causing input res aliasing on texture details
+#define MIN_REPROJECTION_SAMPLE_COUNT 2.0
+
+// Minimum weight of a pixel in history.
+#define MIN_IMPLICIT_HISTORY_WEIGHT ceil(tsr_half(255.0) * rcp(tsr_half(MAX_SAMPLE_COUNT)) * tsr_half(MIN_REPROJECTION_SAMPLE_COUNT)) * rcp(tsr_half(255.0))
+
+
+// K = Center of the nearest input pixel.
+// O = Center of the output pixel.
+//
+//          |           |
+//    0     |     1     |     2
+//          |           |
+//          |           |
+//  --------+-----------+--------
+//          |           |
+//          | O         |
+//    3     |     K     |     5
+//          |           |
+//          |           |
+//  --------+-----------+--------
+//          |           |
+//          |           |
+//    6     |     7     |     8
+//          |           |
+//
+static const int2 kOffsets3x3[9] =
+{
+	int2(-1, -1),
+	int2(0, -1),
+	int2(1, -1),
+	int2(-1,  0),
+	int2(0,  0), // K
+	int2(1,  0),
+	int2(-1,  1),
+	int2(0,  1),
+	int2(1,  1),
+};
+
+// T = Center of the nearest top left pixel input pixel.
+// O = Center of the output pixel.
+//
+//          | 
+//    T     |     .
+//          | 
+//       O  | 
+//  --------+--------
+//          | 
+//          | 
+//    .     |     .
+//          | 
+static const int2 Offsets2x2[4] =
+{
+	int2( 0,  0), // T
+	int2( 1,  0),
+	int2( 0,  1),
+	int2( 1,  1),
+};
+
+// Indexes of the 3x3 square.
+static const uint kSquareIndexes3x3[9] = { 4, 0, 1, 2, 3, 8, 7, 6, 5 };
+
+// Indexes of the offsets to have plus + shape.
+static const uint kPlusIndexes3x3[5] = { 4, 1, 3, 7, 5 };
+
+
+#if CONFIG_COMPILE_FP16
+	#define tsr_half  half
+	#define tsr_half2 half2
+	#define tsr_half3 half3
+	#define tsr_half4 half4
+
+	#define tsr_short  int16_t
+	#define tsr_short2 int16_t2
+	#define tsr_short3 int16_t3
+	#define tsr_short4 int16_t4
+
+	#define tsr_ushort  uint16_t
+	#define tsr_ushort2 uint16_t2
+	#define tsr_ushort3 uint16_t3
+	#define tsr_ushort4 uint16_t4
+
+	#define tsr_half2x2 half2x2
+	#define tsr_half3x2 half3x2
+	#define tsr_half4x2 half4x2
+
+	#define tsr_short2x2 int16_t2x2
+	#define tsr_short3x2 int16_t3x2
+	#define tsr_short4x2 int16_t4x2
+
+	#define tsr_ushort2x2 uint16_t2x2
+	#define tsr_ushort3x2 uint16_t3x2
+	#define tsr_ushort4x2 uint16_t4x2
+
+#else
+	#define tsr_half  float
+	#define tsr_half2 float2
+	#define tsr_half3 float3
+	#define tsr_half4 float4
+
+	#define tsr_short  int
+	#define tsr_short2 int2
+	#define tsr_short3 int3
+	#define tsr_short4 int4
+
+	#define tsr_ushort  uint
+	#define tsr_ushort2 uint2
+	#define tsr_ushort3 uint3
+	#define tsr_ushort4 uint4
+
+	#define tsr_half2x2 float2x2
+	#define tsr_half3x2 float3x2
+	#define tsr_half4x2 float4x2
+
+	#define tsr_short2x2 int2x2
+	#define tsr_short3x2 int3x2
+	#define tsr_short4x2 int4x2
+
+	#define tsr_ushort2x2 uint2x2
+	#define tsr_ushort3x2 uint3x2
+	#define tsr_ushort4x2 uint4x2
+
+#endif
+
+#if CONFIG_SCENE_COLOR_ALPHA
+	#define tsr_halfC tsr_half4
+	#define tsr_halfCx2 tsr_half4x2
+	#define CONFIG_CHANNEL_COUNT 4
+
+#else
+	#define tsr_halfC tsr_half3
+	#define tsr_halfCx2 tsr_half3x2
+	#define CONFIG_CHANNEL_COUNT 3
+
+#endif
+
+
+// Largest encodable normal number in a half used on console.
+static const tsr_half LargestNormalNumber = tsr_half(65504.0);
+
+// Largest encodable scene color value to not overflaw in YCoCg with halfs on console
+static const tsr_half3 LargestSceneColorRGB = (LargestNormalNumber * tsr_half(0.25)).xxx;
+static const tsr_half4 LargestSceneColorRGBA = (LargestNormalNumber * tsr_half(0.25)).xxxx;
+static const tsr_half3 LargestSceneColorYCoCg = LargestNormalNumber.xxx;
+static const tsr_half4 LargestSceneColorYCoCgA = LargestNormalNumber.xxxx;
+
+// Weight of each channel for the computation of luminance.
+static const tsr_half kMoireLumaToChannel = tsr_half(3.0);
+static const tsr_half3 kMoireLumaWeights = rcp(kMoireLumaToChannel).xxx;
+
+
+//------------------------------------------------------- PARAMETERS
+
+
+float2 InputInfo_Extent;
+float2 InputInfo_ExtentInverse;
+float2 InputInfo_ScreenPosToViewportScale;
+float2 InputInfo_ScreenPosToViewportBias;
+uint2  InputInfo_ViewportMin;
+uint2  InputInfo_ViewportMax;
+float2 InputInfo_ViewportSize;
+float2 InputInfo_ViewportSizeInverse;
+float2 InputInfo_UVViewportMin;
+float2 InputInfo_UVViewportMax;
+float2 InputInfo_UVViewportSize;
+float2 InputInfo_UVViewportSizeInverse;
+float2 InputInfo_UVViewportBilinearMin;
+float2 InputInfo_UVViewportBilinearMax;
+float2 InputJitter;
+int2   InputPixelPosMin;
+int2   InputPixelPosMax;
+FScreenTransform InputPixelPosToScreenPos;
+float2 ScreenVelocityToInputPixelVelocity;
+float2 InputPixelVelocityToScreenVelocity;
+
+float2 HistoryInfo_Extent;
+float2 HistoryInfo_ExtentInverse;
+uint2  HistoryInfo_ViewportMin;
+uint2  HistoryInfo_ViewportMax;
+float2 HistoryInfo_ViewportSize;
+float2 HistoryInfo_ViewportSizeInverse;
+float2 HistoryInfo_UVViewportBilinearMin;
+float2 HistoryInfo_UVViewportBilinearMax;
+
+// FTSRPrevHistoryParameters
+float2 PrevHistoryInfo_Extent;
+float2 PrevHistoryInfo_ExtentInverse;
+float2 PrevHistoryInfo_ScreenPosToViewportScale;
+float2 PrevHistoryInfo_ScreenPosToViewportBias;
+uint2  PrevHistoryInfo_ViewportMin;
+uint2  PrevHistoryInfo_ViewportMax;
+float2 PrevHistoryInfo_ViewportSize;
+float2 PrevHistoryInfo_ViewportSizeInverse;
+float2 PrevHistoryInfo_UVViewportMin;
+float2 PrevHistoryInfo_UVViewportMax;
+float2 PrevHistoryInfo_UVViewportSize;
+float2 PrevHistoryInfo_UVViewportSizeInverse;
+float2 PrevHistoryInfo_UVViewportBilinearMin;
+float2 PrevHistoryInfo_UVViewportBilinearMax;
+FScreenTransform ScreenPosToPrevHistoryBufferUV;
+float HistoryPreExposureCorrection;
+
+uint bCameraCut;
+
+#if DEBUG_OUTPUT
+	RWTexture2DArray<float4> DebugOutput;
+#endif
+
+
+//------------------------------------------------------- FUNCTIONS
+	
+CALL_SITE_DEBUGLOC 
+float2x2 ApplyScreenTransform(float2x2 PInA, FScreenTransform AToB)
+{
+	return dpv_add(dpv_mul(PInA, AToB.xy), AToB.zw);
+}
+
+#if PLATFORM_SUPPORTS_REAL_TYPES
+
+CALL_SITE_DEBUGLOC 
+half2x2 ApplyScreenTransform(half2x2 PInA, FScreenTransform AToB)
+{
+	return dpv_add(dpv_mul(PInA, half2(AToB.xy)), half2(AToB.zw));
+}
+
+#endif
+
+
+/** Compute the group wave index into SGRP to then recompue the GroupThreadIndex latter */
+CALL_SITE_DEBUGLOC 
+uint GetGroupWaveIndex(uint GroupThreadIndex, uint GroupSize)
+#if COMPILER_SUPPORTS_WAVE_ONCE
+{
+	uint LaneCountPerWave = WaveGetLaneCount();
+
+	if (LaneCountPerWave >= GroupSize)
+	{
+		return 0;
+	}
+
+	return WaveReadLaneFirst(GroupThreadIndex / LaneCountPerWave);
+}
+#else
+{
+	return 0;
+}
+#endif
+
+/** Force compute the group GroupThreadIndex through lane index and wave index if possible to reduce VGPR pressure. */
+CALL_SITE_DEBUGLOC 
+uint GetGroupThreadIndex(uint GroupThreadIndex, uint GroupWaveIndex)
+#if COMPILER_SUPPORTS_WAVE_ONCE
+{
+	// shares GroupWaveOffset to save SALU
+	uint GroupWaveOffset = WaveGetLaneCount() * GroupWaveIndex;
+
+	// Do not share
+	uint ComputedGroupThreadIndex;
+	ISOLATE
+	{
+		ComputedGroupThreadIndex = GroupWaveOffset + WaveGetLaneIndex();
+	}
+
+	return ComputedGroupThreadIndex;
+}
+#else
+{
+	return GroupThreadIndex;
+}
+#endif
+
+// Clamp the offset to be shared across multiple samples
+CALL_SITE_DEBUGLOC
+tsr_short2x2 ClampPixelOffset(
+	tsr_short2x2 KernelCenterPixelPos,
+	tsr_short2x2 Offset,
+	const tsr_short2 OffsetDirection,
+	int2 MinPixelPos, int2 MaxPixelPos)
+{
+	tsr_short2x2 Min = dpv_sub(tsr_short2(MinPixelPos), KernelCenterPixelPos);
+	tsr_short2x2 Max = dpv_sub(tsr_short2(MaxPixelPos), KernelCenterPixelPos);
+
+	// Only do clamp based on the compile time known direction of the offset.
+	// This turns only 1 v_pk_max_i16 and v_pk_min_i16 for a 3x3 kernel.
+	tsr_short2x2 ClampedOffset = 0;
+
+	if (OffsetDirection.x > 0)
+	{
+		ClampedOffset[0] = min(Offset[0], Max[0]);
+	}
+	else if (OffsetDirection.x < 0)
+	{
+		ClampedOffset[0] = max(Offset[0], Min[0]);
+	}
+		
+	if (OffsetDirection.y > 0)
+	{
+		ClampedOffset[1] = min(Offset[1], Max[1]);
+	}
+	else if (OffsetDirection.y < 0)
+	{
+		ClampedOffset[1] = max(Offset[1], Min[1]);
+	}
+
+	return ClampedOffset;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2 ClampPixelOffset(
+	tsr_short2 KernelCenterPixelPos,
+	tsr_short2 Offset,
+	const tsr_short2 OffsetDirection,
+	int2 MinPixelPos, int2 MaxPixelPos)
+{
+	tsr_short2 Min = tsr_short2(MinPixelPos) - KernelCenterPixelPos;
+	tsr_short2 Max = tsr_short2(MaxPixelPos) - KernelCenterPixelPos;
+
+	// Only do clamp based on the compile time known direction of the offset.
+	// This turns only 1 v_pk_max_i16 and v_pk_min_i16 for a 3x3 kernel.
+	tsr_short2 ClampedOffset = 0;
+
+	if (OffsetDirection.x > 0)
+		ClampedOffset.x = min(Offset.x, Max.x);
+	else if (OffsetDirection.x < 0)
+		ClampedOffset.x = max(Offset.x, Min.x);
+		
+	if (OffsetDirection.y > 0)
+		ClampedOffset.y = min(Offset.y, Max.y);
+	else if (OffsetDirection.y < 0)
+		ClampedOffset.y = max(Offset.y, Min.y);
+
+	return ClampedOffset;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2x2 ClampPixelOffset(
+	tsr_short2x2 SamplePixelPos,
+	int2 MinPixelPos, int2 MaxPixelPos)
+{
+	SamplePixelPos[0] = fastClamp(SamplePixelPos[0], tsr_short2(MinPixelPos.xx), tsr_short2(MaxPixelPos.xx));
+	SamplePixelPos[1] = fastClamp(SamplePixelPos[1], tsr_short2(MinPixelPos.yy), tsr_short2(MaxPixelPos.yy));
+	return SamplePixelPos;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2 ClampPixelOffset(
+	tsr_short2 SamplePixelPos,
+	int2 MinPixelPos, int2 MaxPixelPos)
+{
+	return fastClamp(SamplePixelPos, tsr_short2(MinPixelPos), tsr_short2(MaxPixelPos));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2x2 AddAndClampPixelOffset(
+	tsr_short2x2 KernelCenterPixelPos,
+	tsr_short2x2 Offset,
+	const tsr_short2 OffsetDirection,
+	int2 MinPixelPos, int2 MaxPixelPos)
+{
+	tsr_short2x2 SamplePixelPos = KernelCenterPixelPos + Offset;
+	
+	tsr_short2 SamplePixelPos0 = dpv_lo(SamplePixelPos);
+	tsr_short2 SamplePixelPos1 = dpv_hi(SamplePixelPos);
+
+	// Only do clamp based on the compile time known direction of the offset.
+	// This turns only 1 v_pk_max_i16 and v_pk_min_i16 for a 3x3 kernel.
+	if (OffsetDirection.x > 0)
+		SamplePixelPos0.x = min(SamplePixelPos0.x, tsr_short(MaxPixelPos.x));
+	else if (OffsetDirection.x < 0)
+		SamplePixelPos0.x = max(SamplePixelPos0.x, tsr_short(MinPixelPos.x));
+		
+	if (OffsetDirection.y > 0)
+		SamplePixelPos0.y = min(SamplePixelPos0.y, tsr_short(MaxPixelPos.y));
+	else if (OffsetDirection.y < 0)
+		SamplePixelPos0.y = max(SamplePixelPos0.y, tsr_short(MinPixelPos.y));
+	
+	if (OffsetDirection.x > 0)
+		SamplePixelPos1.x = min(SamplePixelPos1.x, tsr_short(MaxPixelPos.x));
+	else if (OffsetDirection.x < 0)
+		SamplePixelPos1.x = max(SamplePixelPos1.x, tsr_short(MinPixelPos.x));
+		
+	if (OffsetDirection.y > 0)
+		SamplePixelPos1.y = min(SamplePixelPos1.y, tsr_short(MaxPixelPos.y));
+	else if (OffsetDirection.y < 0)
+		SamplePixelPos1.y = max(SamplePixelPos1.y, tsr_short(MinPixelPos.y));
+	
+	return dpv_interleave_registers(SamplePixelPos0, SamplePixelPos1);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2 AddAndClampPixelOffset(
+	tsr_short2 KernelCenterPixelPos,
+	tsr_short2 Offset,
+	const tsr_short2 OffsetDirection,
+	int2 MinPixelPos, int2 MaxPixelPos)
+{
+	tsr_short2 SamplePixelPos = KernelCenterPixelPos + Offset;
+
+	// Only do clamp based on the compile time known direction of the offset.
+	// This turns only 1 v_pk_max_i16 and v_pk_min_i16 for a 3x3 kernel.
+	if (OffsetDirection.x > 0)
+		SamplePixelPos.x = min(SamplePixelPos.x, tsr_short(MaxPixelPos.x));
+	else if (OffsetDirection.x < 0)
+		SamplePixelPos.x = max(SamplePixelPos.x, tsr_short(MinPixelPos.x));
+		
+	if (OffsetDirection.y > 0)
+		SamplePixelPos.y = min(SamplePixelPos.y, tsr_short(MaxPixelPos.y));
+	else if (OffsetDirection.y < 0)
+		SamplePixelPos.y = max(SamplePixelPos.y, tsr_short(MinPixelPos.y));
+
+	return SamplePixelPos;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2x2 InvalidateOutputPixelPos(tsr_short2x2 PixelPos, uint2 ViewportMax)
+#if 1
+{
+	tsr_short2x2 Subtract = dpv_sub(tsr_short2(ViewportMax - 1), PixelPos);
+	tsr_ushort2 Override = tsr_ushort2(Subtract[0] | Subtract[1]);
+
+	#if CONFIG_COMPILE_FP16
+		PixelPos[0] |= -tsr_short2((Override & uint16_t(0x8000)) >> 15);
+	#else
+		PixelPos[0] |= -tsr_short2((Override & uint(0x80000000)) >> 31);
+	#endif
+
+	return PixelPos;
+}
+#else
+{
+	bool bIsValidPixel = all(PixelPos < ViewportMax);
+	PixelPos.x = bIsValidPixel ? PixelPos.x : ~tsr_short(0);
+	return PixelPos;
+}
+#endif
+
+CALL_SITE_DEBUGLOC
+tsr_short2 InvalidateOutputPixelPos(tsr_short2 PixelPos, uint2 ViewportMax)
+#if 1
+{
+	tsr_short2 Subtract = tsr_short2(ViewportMax - 1) - PixelPos;
+	tsr_ushort Override = tsr_ushort(Subtract.x | Subtract.y);
+
+	#if CONFIG_COMPILE_FP16
+		PixelPos.x |= -tsr_short((Override & uint16_t(0x8000)) >> 15);
+	#else
+		PixelPos.x |= -tsr_short((Override & uint(0x80000000)) >> 31);
+	#endif
+
+	return PixelPos;
+}
+#else
+{
+	bool bIsValidPixel = all(PixelPos < ViewportMax);
+	PixelPos.x = bIsValidPixel ? PixelPos.x : ~tsr_short(0);
+	return PixelPos;
+}
+#endif
+
+CALL_SITE_DEBUGLOC
+tsr_ushort2 Map8x8Tile2x2Lane(uint GroupThreadIndex)
+{
+	tsr_ushort2 T = tsr_ushort(GroupThreadIndex).xx;
+	tsr_ushort2 GroupId = (T >> tsr_ushort2(0, 1) & tsr_ushort2(0x01, 0x01)) | ((T >> tsr_ushort2(2 - 1, 4 - 1)) & tsr_ushort2(0x03 << 1, 0x03 << 1));
+	return GroupId;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_ushort2 Map16x16Tile2x2Lane(uint GroupThreadIndex)
+{
+	tsr_ushort T = tsr_ushort(GroupThreadIndex);
+
+	tsr_ushort2 GroupId;
+	GroupId.x = ((T >> tsr_ushort(0)) & tsr_ushort(0x01)) | ((T >> tsr_ushort(2 - 1)) & tsr_ushort(0x07 << 1));
+	GroupId.y = ((T >> tsr_ushort(1)) & tsr_ushort(0x01)) | ((T >> tsr_ushort(5 - 1)) & tsr_ushort(0x07 << 1));
+	
+	return GroupId;
+}
+
+CALL_SITE_DEBUGLOC
+float SafeRcp(float x)
+{
+	return x > 0.0 ? rcp(x) : 0.0;
+}
+
+CALL_SITE_DEBUGLOC
+float2 SafeRcp(float2 x)
+{
+	return float2(SafeRcp(x.x), SafeRcp(x.y));
+}
+
+#if CONFIG_COMPILE_FP16
+
+CALL_SITE_DEBUGLOC
+half SafeRcp(half x)
+#if PLATFORM_GPU_ARCH >= PLATFORM_GPU_ARCH_AMD_RDNA_2 && PLATFORM_GPU_ARCH <= PLATFORM_GPU_ARCH_AMD_LATTEST
+{
+	// If x=0.0, then MaxHalfFloat * 0.0 = 0.0
+	return min(rcp(x), half(MaxHalfFloat)) * saturate(x * asfloat16(uint16_t(0x7C00)));
+}
+#else
+{
+	return select(x > half(0.0), min(rcp(x), half(MaxHalfFloat)), half(0.0));
+}
+#endif
+
+CALL_SITE_DEBUGLOC
+half2 SafeRcp(half2 x)
+#if PLATFORM_GPU_ARCH >= PLATFORM_GPU_ARCH_AMD_RDNA_2 && PLATFORM_GPU_ARCH <= PLATFORM_GPU_ARCH_AMD_LATTEST
+{
+	// If x=0.0, then MaxHalfFloat * 0.0 = 0.0
+	return min(rcp(x), half(MaxHalfFloat)) * saturate(x * asfloat16(uint16_t(0x7C00)));
+}
+#else
+{
+	return select(x > half(0.0), min(rcp(x), half(MaxHalfFloat)), half(0.0));
+}
+#endif
+
+#endif
+
+CALL_SITE_DEBUGLOC
+tsr_half2 ComputeLowFrequencyContribution(tsr_half2 HistoryValidity)
+{
+	return saturate((HistoryValidity - tsr_half(1.0 * rcp(MAX_SAMPLE_COUNT))) * tsr_half(6.0));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half ComputeLowFrequencyContribution(tsr_half HistoryValidity)
+{
+	return dpv_lo(ComputeLowFrequencyContribution(dpv_interleave_mono_registers(HistoryValidity)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3x2 RGBToYCoCg(tsr_half3x2 RGB)
+{
+    tsr_half2 R = RGB[0];
+    tsr_half2 G = RGB[1];
+    tsr_half2 B = RGB[2];       
+
+    tsr_half2 RplusB = R + B;
+    tsr_half2 Y = 2.0 * G + RplusB;
+    tsr_half2 Cg = 2.0 * G - RplusB;
+    tsr_half2 Co = 2.0 * (R - B);
+    tsr_half3x2 YCoCg = tsr_half3x2(Y, Co, Cg);
+
+    return YCoCg;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3x2 YCoCgToRGB(tsr_half3x2 YCoCg)
+{
+	tsr_half2 Y =  YCoCg[0] * tsr_half(0.25);
+	tsr_half2 Co = YCoCg[1] * tsr_half(0.25);
+	tsr_half2 Cg = YCoCg[2] * tsr_half(0.25);
+
+	tsr_half2 R = Y + Co - Cg;
+	tsr_half2 G = Y + Cg;
+	tsr_half2 B = Y - Co - Cg;
+
+	tsr_half3x2 RGB = tsr_half3x2(R, G, B);
+	return RGB;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half4x2 RGBToYCoCg(tsr_half4x2 RGBA)
+{
+	return tsr_half4x2(RGBToYCoCg(tsr_half3x2(RGBA[0], RGBA[1], RGBA[2])), RGBA[3]);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half4x2 YCoCgToRGB(tsr_half4x2 YCoCgA)
+{
+	return tsr_half4x2(YCoCgToRGB(tsr_half3x2(YCoCgA[0], YCoCgA[1], YCoCgA[2])), YCoCgA[3]);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3 RGBToYCoCg(tsr_half3 RGB)
+{
+	return dpv_lo(RGBToYCoCg(dpv_interleave_mono_registers(RGB)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3 YCoCgToRGB(tsr_half3 YCoCg)
+{
+	return dpv_lo(YCoCgToRGB(dpv_interleave_mono_registers(YCoCg)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half4 RGBToYCoCg(tsr_half4 RGBA)
+{
+	return dpv_lo(RGBToYCoCg(dpv_interleave_mono_registers(RGBA)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half4 YCoCgToRGB(tsr_half4 YCoCgA)
+{
+	return dpv_lo(YCoCgToRGB(dpv_interleave_mono_registers(YCoCgA)));
+}
+
+
+// Some bright pixel can cause HdrWeight to get nullified under fp16 representation. So clamping this to a value close to the minimum float float positive value (0.000061).
+#define HDR_WEIGHT_SAFE_MIN_VALUE 0.0001
+
+// Faster but less accurate luma computation. 
+// Luma includes a scaling by 4.
+CALL_SITE_DEBUGLOC
+tsr_half2 Luma4(tsr_half3x2 Color)
+{
+	return (Color[1] * tsr_half(2.0)) + (Color[0] + Color[2]);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2 Luma4(tsr_half4x2 Color)
+{
+	return Luma4(tsr_half3x2(Color[0], Color[1], Color[2]));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half Luma4(tsr_half3 Color)
+{
+	return dpv_lo(Luma4(dpv_interleave_mono_registers(Color)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half Luma4(tsr_half4 Color)
+{
+	return Luma4(Color.rgb);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2 HdrWeightY(tsr_half2 Luma)
+{
+	tsr_half Exposure = tsr_half(1.0);
+
+	return max(tsr_half(HDR_WEIGHT_SAFE_MIN_VALUE), rcp(Luma * Exposure + tsr_half(4.0)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half HdrWeightY(tsr_half Luma)
+{
+	return dpv_lo(HdrWeightY(dpv_interleave_mono_registers(Luma)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2 HdrWeightInvY(tsr_half2 LDRLuma) 
+{
+	return tsr_half(4.0) * rcp(tsr_half(1.0) - LDRLuma);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half HdrWeightInvY(tsr_half LDRLuma) 
+{
+	return dpv_lo(HdrWeightInvY(dpv_interleave_mono_registers(LDRLuma)));
+}
+
+// Optimized HDR weighting function.
+CALL_SITE_DEBUGLOC
+tsr_half2 HdrWeight4(tsr_half3x2 Color)
+{
+	return HdrWeightY(Luma4(Color));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2 HdrWeight4(tsr_half4x2 Color)
+{
+	return HdrWeightY(Luma4(Color));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half HdrWeight4(tsr_half3 Color)
+{
+	return HdrWeightY(Luma4(Color));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half HdrWeight4(tsr_half4 Color)
+{
+	return HdrWeightY(Luma4(Color));
+}
+
+
+// Returns the weight of a pixels at a coordinate <PixelDelta> from the PDF highest point.
+CALL_SITE_DEBUGLOC
+tsr_half2 ComputeSampleWeigth(tsr_half2 UpscaleFactor, tsr_half2x2 PixelDelta, const float MinimalContribution)
+{
+	tsr_half2 u2 = UpscaleFactor * UpscaleFactor;
+
+	// 1 - 1.9 * x^2 + 0.9 * x^4
+	tsr_half2 x2 = saturate(u2 * dpv_length2(PixelDelta));
+	//return tsr_half(((float(0.9) + MinimalContribution) * x2 - float(1.9)) * x2 + float(1.0));
+	return saturate((tsr_half(0.9) * x2 - tsr_half(1.9)) * x2 + tsr_half(1.0 + MinimalContribution));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half ComputeSampleWeigth(tsr_half UpscaleFactor, tsr_half2 PixelDelta, const float MinimalContribution)
+{
+	return dpv_lo(ComputeSampleWeigth(
+		dpv_interleave_mono_registers(UpscaleFactor),
+		dpv_interleave_mono_registers(PixelDelta),
+		MinimalContribution));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2x2 WeightedLerpFactors(tsr_half2 WeightA, tsr_half2 WeightB, tsr_half2 Blend)
+{
+	tsr_half2 BlendA = (tsr_half(1.0) - Blend) * WeightA;
+	tsr_half2 BlendB = Blend * WeightB;
+	tsr_half2 RcpBlend = SafeRcp(BlendA + BlendB);
+	BlendA *= RcpBlend;
+	BlendB *= RcpBlend;
+	return tsr_half2x2(BlendA, BlendB);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2 WeightedLerpFactors(tsr_half WeightA, tsr_half WeightB, tsr_half Blend)
+{
+	return dpv_lo(WeightedLerpFactors(
+		dpv_interleave_mono_registers(WeightA),
+		dpv_interleave_mono_registers(WeightB),
+		dpv_interleave_mono_registers(Blend)));
+}
+
+CALL_SITE_DEBUGLOC
+bool TakeOnlyOneSamplePair(float2 Offset)
+{
+	return Offset.y > 0.0 || (Offset.x > 0.0 && Offset.y == 0.0);
+}
+
+float3 ComputeStaticVelocity(float2 ScreenPos, float DeviceZ)
+{
+	float3 PosN = float3(ScreenPos, DeviceZ);
+
+	float4 ThisClip = float4(PosN, 1);
+	float4 PrevClip = mul( ThisClip, View.ClipToPrevClip );
+	float3 PrevScreen = PrevClip.xyz / PrevClip.w;
+	return PosN - PrevScreen;
+}
+
+tsr_half ComputePredictionCompleteness(tsr_half SampleHistoryValidity)
+{
+	return saturate(SampleHistoryValidity * tsr_half(MAX_SAMPLE_COUNT) - tsr_half(0.2));
+}
+
+CALL_SITE_DEBUGLOC
+bool IsOffScreen(uint bCameraCut, float2 ScreenPos, tsr_half ParallaxRejectionMask)
+{
+	bool bIsCameraCut = bCameraCut != 0;
+	bool bIsOutOfBounds = max(abs(ScreenPos.x), abs(ScreenPos.y)) >= 1.0;
+	bool bIsParallaxRejected = ParallaxRejectionMask < tsr_half(PARALLAX_REJECTION_MASK_THRESHOLD);
+
+	return (bIsCameraCut || bIsOutOfBounds || bIsParallaxRejected);
+}
+
+CALL_SITE_DEBUGLOC
+void IsOffScreenOrDisoccluded(uint bCameraCut, float2x2 ScreenPos, tsr_half2 ParallaxRejectionMask, out bool2 bIsOffScreen, out bool2 bIsDisoccluded)
+{
+	bool bIsCameraCut = bCameraCut != 0;
+	bool2 bIsOutOfBounds = max(abs(ScreenPos[0]), abs(ScreenPos[1])) >= 1.0;
+	bool2 bIsParallaxRejected = ParallaxRejectionMask < tsr_half(PARALLAX_REJECTION_MASK_THRESHOLD);
+
+	bIsOffScreen = or(bIsCameraCut, bIsOutOfBounds);
+	bIsDisoccluded = and(!bIsOffScreen, bIsParallaxRejected);
+}
+
+tsr_half MeasureBackbufferLDRQuantizationError()
+{
+	// Assume the backbuffer is 10bit per channels
+	return tsr_half(0.5 / 1024.0);
+}
+
+tsr_half2 MeasureBackbufferLDRQuantizationErrorFromHDRLuma(tsr_half2 Luma)
+{
+	tsr_half2 Tonemap = Luma * HdrWeightY(Luma) + MeasureBackbufferLDRQuantizationError().xx;
+	tsr_half2 PixelColorQuantizationError = abs(Tonemap * HdrWeightInvY(Tonemap) - Luma);
+
+	return PixelColorQuantizationError;
+}
+
+tsr_half MeasureBackbufferLDRQuantizationErrorFromHDRLuma(tsr_half Luma)
+{
+	return dpv_lo(MeasureBackbufferLDRQuantizationErrorFromHDRLuma(dpv_interleave_mono_registers(Luma)));
+}
+
+tsr_half2 MeasureRejectionFactor(
+	tsr_halfCx2 PrevYCoCg,
+	tsr_halfCx2 ClampedPrevYCoCg,
+	tsr_halfCx2 InputCenterYCoCg,
+	tsr_halfCx2 InputMinYCoCg, tsr_halfCx2 InputMaxYCoCg,
+	tsr_half2 BackbufferQuantizationError)
+{
+	const tsr_halfC Null = tsr_half(0.0);
+	
+	#if CONFIG_SCENE_COLOR_ALPHA
+		tsr_halfCx2 BackbufferQuantizationErrorVector = tsr_half4x2(BackbufferQuantizationError, BackbufferQuantizationError, BackbufferQuantizationError, BackbufferQuantizationError);
+	#else
+		tsr_halfCx2 BackbufferQuantizationErrorVector = tsr_half3x2(BackbufferQuantizationError, BackbufferQuantizationError, BackbufferQuantizationError);
+	#endif
+
+	tsr_halfCx2 BoxSize = InputMaxYCoCg - InputMinYCoCg;
+
+	tsr_halfCx2 ClampedEnergy = abs(ClampedPrevYCoCg - PrevYCoCg);
+	tsr_halfCx2 Delta = abs(InputCenterYCoCg - PrevYCoCg);
+
+	tsr_halfCx2 ClampError = max(
+		BoxSize * tsr_half(0.25),
+		BackbufferQuantizationErrorVector);
+
+	tsr_halfCx2 Factor = tsr_half(1.0) - saturate(max(ClampedEnergy - ClampError, dpv_interleave_mono_registers(Null)) * rcp(max(Delta, BoxSize)));
+
+	tsr_half2 Rejection = min3(Factor[0], Factor[1], Factor[2]);
+	
+	#if CONFIG_SCENE_COLOR_ALPHA
+		Rejection = min(Rejection, Factor[3]);
+	#endif
+
+	return Rejection;
+}
+
+tsr_half MeasureRejectionFactor(
+	tsr_halfC PrevYCoCg,
+	tsr_halfC ClampedPrevYCoCg,
+	tsr_halfC InputCenterYCoCg,
+	tsr_halfC InputMinYCoCg, tsr_halfC InputMaxYCoCg,
+	tsr_half BackbufferQuantizationError)
+{
+	return dpv_lo(MeasureRejectionFactor(
+		dpv_interleave_mono_registers(PrevYCoCg), 
+		dpv_interleave_mono_registers(ClampedPrevYCoCg), 
+		dpv_interleave_mono_registers(InputCenterYCoCg), 
+		dpv_interleave_mono_registers(InputMinYCoCg), 
+		dpv_interleave_mono_registers(InputMaxYCoCg), 
+		dpv_interleave_mono_registers(BackbufferQuantizationError)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3x2 QuantizeForUNormRenderTarget(tsr_half3x2 Color, tsr_half E, const float3 QuantizationError)
+{
+	return Color + dpv_interleave_mono_registers(tsr_half3(QuantizationError)) * (E - tsr_half(0.5));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3 QuantizeForUNormRenderTarget(tsr_half3 Color, tsr_half E, const float3 QuantizationError)
+{
+	return dpv_lo(QuantizeForUNormRenderTarget(dpv_interleave_mono_registers(Color), E, QuantizationError));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3x2 QuantizeForFloatRenderTarget(tsr_half3x2 Color, tsr_half E, const float3 QuantizationError)
+{
+	tsr_half3x2 Error = dpv_mul(Color, tsr_half3(QuantizationError));
+
+	#if 0
+		// NOP
+	#elif CONFIG_COMPILE_FP16
+	{
+		Error[0] = asfloat16(asint16(Error[0]) & uint16_t(~0x03FF));
+		Error[1] = asfloat16(asint16(Error[1]) & uint16_t(~0x03FF));
+		Error[2] = asfloat16(asint16(Error[2]) & uint16_t(~0x03FF));
+	}
+	#else
+	{
+		Error[0] = asfloat(asuint(Error[0]) & ~0x007FFFFF);
+		Error[1] = asfloat(asuint(Error[1]) & ~0x007FFFFF);
+		Error[2] = asfloat(asuint(Error[2]) & ~0x007FFFFF);
+	}
+	#endif
+	
+	return Color + Error * E;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half3 QuantizeForFloatRenderTarget(tsr_half3 Color, tsr_half E, const float3 QuantizationError)
+{
+	return dpv_lo(QuantizeForFloatRenderTarget(dpv_interleave_mono_registers(Color), E, QuantizationError));
+}
+
+
+#if COMPRESS_PREV_USE_COUNT
+
+// encode 4 use count that are 8bits shifted in the PF_R32_UINT
+void ComputeCompressedUseCountPixelCoordinates(uint2 PixelPos, out uint2 CompressedUseCountPixelPos, out uint Shift)
+{
+	// Overlap 2x2 consecutive blocks of 8x8 pixel to reduce atomic contention in the scattering pass
+	const uint kTileSize = 8;
+
+	uint2 PixelPosOffset = PixelPos - InputInfo_ViewportMin;
+
+	CompressedUseCountPixelPos = ((PixelPosOffset % kTileSize) | ((PixelPosOffset >> 1) & ~(kTileSize - 1))) + InputInfo_ViewportMin;
+	Shift = ((PixelPosOffset.x / kTileSize) % 2) | (((PixelPosOffset.y / kTileSize) % 2) << 1);
+}
+	
+#endif
+
+CALL_SITE_DEBUGLOC
+uint2 EncodeSpatialAntiAliasingOffset(tsr_half2x2 TexelOffset)
+{
+	const uint Mask = (1 << SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL) - 1;
+	const uint Zero = Mask / 2;
+
+	tsr_half Multiply = tsr_half(float(Zero) / SPATIAL_ANTI_ALIASING_OFFSET_RANGE);
+
+	uint2 EncodedTexelOffset = 0;
+	EncodedTexelOffset |= fastClamp(uint2(int2(round(TexelOffset[0] * Multiply)) + int(1 + Zero)), uint(1), Mask) << 0;
+	EncodedTexelOffset |= fastClamp(uint2(int2(round(TexelOffset[1] * Multiply)) + int(1 + Zero)), uint(1), Mask) << SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL;
+	return EncodedTexelOffset;
+}
+
+CALL_SITE_DEBUGLOC
+uint EncodeSpatialAntiAliasingOffset(tsr_half2 TexelOffset)
+{
+	return dpv_lo(EncodeSpatialAntiAliasingOffset(dpv_interleave_mono_registers(TexelOffset)));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2x2 DecodeSpatialAntiAliasingOffset(tsr_ushort2 EncodedInputTexelOffset)
+{
+	const tsr_ushort Mask = tsr_ushort(1 << SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL) - tsr_ushort(1);
+	const tsr_ushort Zero = Mask / tsr_ushort(2);
+	
+	tsr_half Multiply = tsr_half(SPATIAL_ANTI_ALIASING_OFFSET_RANGE / float(Zero));
+
+	tsr_half2x2 TexelOffset;
+	TexelOffset[0] = tsr_half2((EncodedInputTexelOffset >> tsr_ushort(0                                                )) & Mask) * Multiply - (tsr_half(1 + Zero) * Multiply);
+	TexelOffset[1] = tsr_half2((EncodedInputTexelOffset >> tsr_ushort(SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL)) & Mask) * Multiply - (tsr_half(1 + Zero) * Multiply);
+
+	return TexelOffset;
+}
+
+CALL_SITE_DEBUGLOC
+tsr_half2 DecodeSpatialAntiAliasingOffset(tsr_ushort EncodedInputTexelOffset)
+{
+	return dpv_lo(DecodeSpatialAntiAliasingOffset(dpv_interleave_mono_registers(EncodedInputTexelOffset)));
+}
+
+
+#define VELOCITY_HOLE_FILLING_BITS 18
+#define VELOCITY_HOLE_FILLING_LENGTH_BITS 13
+#define VELOCITY_HOLE_FILLING_ANGLE_BITS (VELOCITY_HOLE_FILLING_BITS - VELOCITY_HOLE_FILLING_LENGTH_BITS)
+#define VELOCITY_HOLE_FILLING_LENGTH_PRECISION (pow(2.0, 5))
+
+CALL_SITE_DEBUGLOC
+uint EncodeHoleFillingVelocity(float2 PixelVelocity)
+{
+	const uint AngleBitDepth = 1 << VELOCITY_HOLE_FILLING_ANGLE_BITS;
+	const uint LengthBitDepth = 1 << VELOCITY_HOLE_FILLING_LENGTH_BITS;
+	const float LengthPixelPrecision = VELOCITY_HOLE_FILLING_LENGTH_PRECISION;
+
+	float EncodedAngle = atan2Fast(PixelVelocity.y, PixelVelocity.x) * (0.5 * AngleBitDepth / PI) + (0.5 * AngleBitDepth);
+	uint iEncodedAngle = uint(round(EncodedAngle)) & (AngleBitDepth - 1);
+
+	float EncodedLength = length(PixelVelocity) * LengthPixelPrecision;
+	uint iEncodedLength = fastClamp(uint(ceil(EncodedLength)), 0u, LengthBitDepth - 1u);
+
+	uint EncodedHoleFillingVelocity = iEncodedAngle * LengthBitDepth + iEncodedLength;
+	return EncodedHoleFillingVelocity;
+}
+
+CALL_SITE_DEBUGLOC
+void DecodeHoleFillingVelocity(uint EncodedHoleFillingVelocity, out float2 PixelVelocity, out float OutOfRangeFactor)
+{
+	const uint AngleBitDepth = 1 << VELOCITY_HOLE_FILLING_ANGLE_BITS;
+	const uint LengthBitDepth = 1 << VELOCITY_HOLE_FILLING_LENGTH_BITS;
+	const float LengthPixelPrecision = VELOCITY_HOLE_FILLING_LENGTH_PRECISION;
+	const float LengthRange = float(LengthBitDepth) / LengthPixelPrecision;
+
+	uint iEncodedLength = EncodedHoleFillingVelocity % LengthBitDepth;
+	uint iEncodedAngle = (EncodedHoleFillingVelocity >> VELOCITY_HOLE_FILLING_LENGTH_BITS) % AngleBitDepth;
+
+	float EncodedLength = float(iEncodedLength);
+	float Length = EncodedLength * rcp(LengthPixelPrecision);
+
+	float EncodedAngle = float(iEncodedAngle);
+	float Angle = EncodedAngle * (PI * 2.0 / float(AngleBitDepth)) - PI;
+
+	sincos(Angle, /* out */ PixelVelocity.y, /* out */ PixelVelocity.x);
+	PixelVelocity *= Length;
+
+	OutOfRangeFactor = saturate(LengthRange - Length);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_short2 GetLaneOffsetSign()
+#if CONFIG_BUTTERFLY_KERNEL
+{
+	uint LaneIndex = WaveGetLaneIndex();
+
+	return tsr_short(-1) + tsr_short2(tsr_ushort2(tsr_ushort(LaneIndex) << tsr_ushort(1), LaneIndex) & tsr_ushort(0x2));
+}
+#else
+{
+	return tsr_short(1).xx;
+}
+#endif
+
+CALL_SITE_DEBUGLOC
+float ComputePixelVelocityBilateralWeight(float2 PixelVelocityDelta)
+{
+	return saturate(1.0 - length2(PixelVelocityDelta));
+}
+
+CALL_SITE_DEBUGLOC
+float ComputeScreenVelocityBilateralWeight(float2 ScreenVelocityDelta)
+{
+	return ComputePixelVelocityBilateralWeight(ScreenVelocityDelta * ScreenVelocityToInputPixelVelocity);
+}
+
+tsr_half2 ComputePrevWeightMultiplier(tsr_half2 BlendFactor)
+{
+	return (1.0 - BlendFactor) / BlendFactor;
+}
+
+tsr_half2 RejectionFactorToBlendFactor(tsr_half2 RejectionFactor)
+{
+	return tsr_half(1.0) - RejectionFactor;
+}
+
+/** Payload of a subpixel depth information in the history */
+struct FTSRSubpixelDepth
+{
+	/** Depth of the pixel. */
+	float DeviceZ;
+	
+	/** Offset of the depth from the center of pixel. */
+	float2 Offset;
+	
+	/** Number of reprojected frame remaining before this depth is to be discarded. */
+	uint RemainingLifetime;
+};
+
+uint CompressSubpixelDepth(FTSRSubpixelDepth SubpixelDepth)
+{
+	uint CompressedSubpixelDepth = 0u;
+	CompressedSubpixelDepth |= f32tof16(SubpixelDepth.DeviceZ) << 17u;
+	CompressedSubpixelDepth |= uint(fastClamp(int(round(SubpixelDepth.Offset.x * 16.00 + 16.0)), 0, 31)) << 12u;
+	CompressedSubpixelDepth |= uint(fastClamp(int(round(SubpixelDepth.Offset.y * 16.00 + 16.0)), 0, 31)) <<  7u;
+	CompressedSubpixelDepth |= (SubpixelDepth.RemainingLifetime) << 0u;
+	return CompressedSubpixelDepth;
+}
+
+FTSRSubpixelDepth UncompressSubpixelDepth(uint CompressedSubpixelDepth)
+{
+	FTSRSubpixelDepth SubpixelDepth;
+	SubpixelDepth.DeviceZ  = f16tof32(CompressedSubpixelDepth >> 17u);
+	SubpixelDepth.Offset.x = float((CompressedSubpixelDepth >> 12u) & 0x1Fu) * rcp(16.0) - 1.0;
+	SubpixelDepth.Offset.y = float((CompressedSubpixelDepth >>  7u) & 0x1Fu) * rcp(16.0) - 1.0;
+	SubpixelDepth.RemainingLifetime = CompressedSubpixelDepth & 0x7Fu;
+	return SubpixelDepth;
+}
+
+void ForwardReprojectStaticDepth(float2 PrevScreenPosition, float PrevDeviceZ, out float2 ScreenPos, out float SceneDepth)
+{
+	float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+ 
+	// Compute position of the history in world space.
+	float PrevSceneDepth = ConvertFromDeviceZ(PrevDeviceZ);
+	float3 TranslatedWorldPosition = mul(float4(PrevScreenPosition * PrevSceneDepth, PrevSceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
+	
+	// Reproject the world position into new viewport.
+	float4 ClipPos = mul(float4(TranslatedWorldPosition, 1.0), View.TranslatedWorldToClip);
+	
+	ScreenPos = ClipPos.xy / ClipPos.w;
+	SceneDepth = ClipPos.w;
+}

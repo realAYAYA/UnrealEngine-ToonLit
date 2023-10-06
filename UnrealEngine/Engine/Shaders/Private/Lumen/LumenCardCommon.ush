@@ -1,0 +1,339 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../OctahedralCommon.ush"
+
+struct FLumenCardData
+{
+	// OBB in MeshCards space
+	float3x3 MeshCardsToLocalRotation;
+	float3 MeshCardsOrigin;
+	float3 MeshCardsExtent;
+
+	// OBB in world space
+	float3x3 WorldToLocalRotation;
+	float3 Origin;
+	float3 LocalExtent;
+
+	uint2 SizeInPages;
+	uint PageTableOffset;
+
+	uint2 HiResSizeInPages;
+	uint HiResPageTableOffset;
+
+	// Convert Card's uint ResLevel (card's resolution) to uint2 ResLevelXY (each side's resolution)
+	uint2 ResLevelToResLevelXYBias;
+
+	bool bVisible;
+	bool bHeightfield;
+	uint AxisAlignedDirection;
+	uint LightingChannelMask;
+
+	// Average world space texel size of always resident pages
+	float TexelSize;
+};
+
+#if USE_LUMEN_CARD_DATA_BUFFER
+	StructuredBuffer<float4> LumenCardDataBuffer;	
+#else
+	#define LumenCardDataBuffer LumenCardScene.CardData
+#endif
+
+// Stride of a single cards's data in float4's, must match C++
+#define LUMEN_CARD_DATA_STRIDE 10
+#define LUMEN_CARD_PAGE_DATA_STRIDE 5
+
+// Heightfields are a special case and they always have only one card
+#define LUMEN_HEIGHTFIELD_LOCAL_CARD_INDEX 0
+
+// Fetch from scene card buffer
+// Note: layout must match FLumenCardData in C++
+FLumenCardData GetLumenCardData(uint CardId)
+{
+	FLumenCardData CardData = (FLumenCardData)0;
+
+	uint BaseOffset = CardId * LUMEN_CARD_DATA_STRIDE;
+	float4 Vector0 = LumenCardDataBuffer[BaseOffset + 0];
+	float4 Vector1 = LumenCardDataBuffer[BaseOffset + 1];
+	float4 Vector2 = LumenCardDataBuffer[BaseOffset + 2];
+	float4 Vector3 = LumenCardDataBuffer[BaseOffset + 3];
+	float4 Vector4 = LumenCardDataBuffer[BaseOffset + 4];
+	float4 Vector5 = LumenCardDataBuffer[BaseOffset + 5];
+	float4 Vector6 = LumenCardDataBuffer[BaseOffset + 6];
+	float4 Vector7 = LumenCardDataBuffer[BaseOffset + 7];
+	float4 Vector8 = LumenCardDataBuffer[BaseOffset + 8];
+	float4 Vector9 = LumenCardDataBuffer[BaseOffset + 9];
+
+	float3 TilePosition = Vector0.xyz;
+	float3 RelativeWorldPosition = float3(Vector1.w, Vector2.w, Vector3.w);
+
+	CardData.WorldToLocalRotation[0] = Vector1.xyz;
+	CardData.WorldToLocalRotation[1] = Vector2.xyz;
+	CardData.WorldToLocalRotation[2] = Vector3.xyz;
+	CardData.Origin = LWCHackToFloat(MakeLWCVector3(TilePosition, RelativeWorldPosition)); // LUMEN_LWC_TODO
+
+	CardData.LocalExtent = abs(Vector4.xyz);
+
+	uint Packed4W = asuint(Vector4.w);
+	CardData.ResLevelToResLevelXYBias.x = (Packed4W >> 0) & 0xFF;
+	CardData.ResLevelToResLevelXYBias.y = (Packed4W >> 8) & 0xFF;
+	CardData.AxisAlignedDirection = (Packed4W >> 16) & 0xF;
+	CardData.LightingChannelMask = (Packed4W >> 20) & 0xF;
+	CardData.bVisible = (Packed4W >> 24) & 1;
+	CardData.bHeightfield = (Packed4W >> 25) & 1;
+	 
+	CardData.SizeInPages.x = (asuint(Vector5.x) >> 0) & 0xFFFF;
+	CardData.SizeInPages.y = (asuint(Vector5.x) >> 16) & 0xFFFF;
+	CardData.PageTableOffset = asuint(Vector5.y);
+	CardData.HiResSizeInPages.x = (asuint(Vector5.z) >> 0) & 0xFFFF;
+	CardData.HiResSizeInPages.y = (asuint(Vector5.z) >> 16) & 0xFFFF;
+	CardData.HiResPageTableOffset = asuint(Vector5.w);
+
+	CardData.MeshCardsToLocalRotation[0] = Vector6.xyz;
+	CardData.MeshCardsToLocalRotation[1] = Vector7.xyz;
+	CardData.MeshCardsToLocalRotation[2] = Vector8.xyz;
+	CardData.MeshCardsOrigin = float3(Vector6.w, Vector7.w, Vector8.w);
+	CardData.MeshCardsExtent = Vector9.xyz;
+	CardData.TexelSize = Vector9.w;
+
+	return CardData;
+}
+
+struct FLumenCardPageData
+{
+	uint CardIndex;
+	bool bMapped;
+
+	uint ResLevelPageTableOffset;
+	uint2 ResLevelSizeInTiles;
+
+	float2 SizeInTexels;
+	float2 PhysicalAtlasCoord;
+
+	float4 CardUVRect;
+	float4 PhysicalAtlasUVRect;
+	float2 CardUVTexelScale;
+	float2 PhysicalAtlasUVTexelScale;
+
+	uint LastDirectLightingUpdateFrameIndex;
+	uint LastIndirectLightingUpdateFrameIndex;
+
+	// Increments each time the page has Radiosity updated, needs to be consecutive for the sample pattern
+	uint IndirectLightingTemporalIndex;
+};
+
+RWStructuredBuffer<float4> RWLumenCardPageDataBuffer;
+#if USE_RW_LUMEN_CARD_PAGE_DATA_BUFFER
+	#define LumenCardPageDataBuffer RWLumenCardPageDataBuffer
+#else
+	#define LumenCardPageDataBuffer LumenCardScene.CardPageData
+#endif
+
+// Note: layout must match FLumenCardPageData in C++
+FLumenCardPageData GetLumenCardPageData(uint CardPageId)
+{
+	FLumenCardPageData CardPageData = (FLumenCardPageData) 0;
+
+	uint BaseOffset = CardPageId * LUMEN_CARD_PAGE_DATA_STRIDE;
+	float4 Vector0 = LumenCardPageDataBuffer[BaseOffset + 0];
+	float4 Vector1 = LumenCardPageDataBuffer[BaseOffset + 1];
+	float4 Vector2 = LumenCardPageDataBuffer[BaseOffset + 2];
+	float4 Vector3 = LumenCardPageDataBuffer[BaseOffset + 3];
+	float4 Vector4 = LumenCardPageDataBuffer[BaseOffset + 4];
+
+	CardPageData.CardIndex = asuint(Vector0.x);
+	CardPageData.ResLevelPageTableOffset = asuint(Vector0.y);
+	CardPageData.SizeInTexels = Vector0.zw;
+	CardPageData.CardUVRect = Vector1;
+	CardPageData.PhysicalAtlasUVRect = Vector2;
+	CardPageData.CardUVTexelScale = Vector3.xy;
+	CardPageData.ResLevelSizeInTiles = asuint(Vector3.zw);
+
+	CardPageData.LastDirectLightingUpdateFrameIndex = asuint(Vector4.x);
+	CardPageData.LastIndirectLightingUpdateFrameIndex = asuint(Vector4.y);
+	CardPageData.IndirectLightingTemporalIndex = asuint(Vector4.z);
+
+	// Derived properties
+	CardPageData.bMapped = CardPageData.SizeInTexels.x > 0;
+	CardPageData.PhysicalAtlasCoord = CardPageData.PhysicalAtlasUVRect.xy * LumenCardScene.PhysicalAtlasSize;
+	CardPageData.PhysicalAtlasUVTexelScale = LumenCardScene.InvPhysicalAtlasSize;
+
+	return CardPageData;
+}
+
+// Store only card page update data
+void SetCardPageUpdateData(uint CardPageId, FLumenCardPageData CardPageData)
+{
+	// Note: layout must match FLumenCardPageData in C++
+
+	uint4 Vector4;
+	Vector4.x = CardPageData.LastDirectLightingUpdateFrameIndex;
+	Vector4.y = CardPageData.LastIndirectLightingUpdateFrameIndex;
+	Vector4.z = CardPageData.IndirectLightingTemporalIndex;
+	Vector4.w = 0;
+
+	uint BaseOffset = CardPageId * LUMEN_CARD_PAGE_DATA_STRIDE;
+	RWLumenCardPageDataBuffer[BaseOffset + 4] = asfloat(Vector4);
+}
+
+struct FCardVSToPS
+{
+	float2 AtlasUV : ATTRIBUTE0;
+	float2 IndirectLightingAtlasUV : ATTRIBUTE1;
+	float2 CardUV : ATTRIBUTE2;
+	nointerpolation uint CardTileIndex : CARD_TILE_INDEX;
+	nointerpolation uint CardPageIndex : CARD_PAGE_INDEX;
+};
+
+// Stride of mesh cards data, must match C++
+#define LUMEN_MESH_CARDS_DATA_STRIDE 6
+#define LUMEN_INVALID_CARD_INDEX 0xFFFFFFFF
+#define LUMEN_INVALID_HEIGHTFIELD_OBJECT_INDEX 0xFFFFFFFF
+#define LUMEN_INVALID_MESH_CARDS_INDEX 0xFFFFFFFF
+
+struct FLumenMeshCardsData
+{
+	float3 WorldOrigin;
+	float3x3 WorldToLocalRotation;
+
+	uint NumCards;
+	uint CardOffset;
+
+	bool bHeightfield;
+	bool bMostlyTwoSided;
+
+	uint CardLookup[6];
+};
+
+// Note: layout must match FLumenMeshCardsData in C++
+FLumenMeshCardsData GetLumenMeshCardsData(uint MeshCardsId)
+{
+	uint BaseOffset = MeshCardsId * LUMEN_MESH_CARDS_DATA_STRIDE;
+
+	FLumenMeshCardsData MeshCardsData;
+
+	float4 V0 = LumenCardScene.MeshCardsData[BaseOffset + 0];
+	float4 V1 = LumenCardScene.MeshCardsData[BaseOffset + 1];
+	float4 V2 = LumenCardScene.MeshCardsData[BaseOffset + 2];
+	float4 V3 = LumenCardScene.MeshCardsData[BaseOffset + 3];
+
+	float3 TilePosition = V0.xyz;
+	float3 RelativeWorldPosition = float3(V1.w, V2.w, V3.w);
+
+	MeshCardsData.WorldToLocalRotation[0] = V1.xyz;
+	MeshCardsData.WorldToLocalRotation[1] = V2.xyz;
+	MeshCardsData.WorldToLocalRotation[2] = V3.xyz;
+	MeshCardsData.WorldOrigin = LWCHackToFloat(MakeLWCVector3(TilePosition, RelativeWorldPosition)); // LUMEN_LWC_TODO
+
+	uint4 V4 = asuint(LumenCardScene.MeshCardsData[BaseOffset + 4]);
+	uint4 V5 = asuint(LumenCardScene.MeshCardsData[BaseOffset + 5]);
+
+	MeshCardsData.CardOffset = V4.x;
+	MeshCardsData.NumCards = V4.y & 0xFFFF;
+	MeshCardsData.bHeightfield = V4.y & 0x10000 ? true : false;
+	MeshCardsData.bMostlyTwoSided = V4.y & 0x20000 ? true : false;
+	MeshCardsData.CardLookup[0] = V4.z;
+	MeshCardsData.CardLookup[1] = V4.w;
+	MeshCardsData.CardLookup[2] = V5.x;
+	MeshCardsData.CardLookup[3] = V5.y;
+	MeshCardsData.CardLookup[4] = V5.z;
+	MeshCardsData.CardLookup[5] = V5.w;
+
+	return MeshCardsData;
+}
+
+// Stride of mesh cards data, must match C++
+#define LUMEN_HEIGHTFIELD_DATA_STRIDE 3
+
+struct FLumenHeightfieldData
+{
+	FLWCVector3 BoundsCenter;	// World space AABB center
+	float3 BoundsExtent;		// World space AABB extent
+	uint MeshCardsIndex;
+	bool bValid;
+};
+
+// Note: layout must match FLumenHeightfieldData in C++
+FLumenHeightfieldData GetLumenHeightfieldData(uint HeightfieldId)
+{
+	uint BaseOffset = HeightfieldId * LUMEN_HEIGHTFIELD_DATA_STRIDE;
+
+	FLumenHeightfieldData LumenHeightfield;
+
+	float4 V0 = LumenCardScene.HeightfieldData[BaseOffset + 0];
+	float4 V1 = LumenCardScene.HeightfieldData[BaseOffset + 1];
+	float4 V2 = LumenCardScene.HeightfieldData[BaseOffset + 2];
+
+	LumenHeightfield.BoundsCenter = MakeLWCVector3(V0.xyz, V1.xyz);
+	LumenHeightfield.BoundsExtent = V2.xyz;
+
+	LumenHeightfield.MeshCardsIndex = asuint(V0.w);
+	LumenHeightfield.bValid = LumenHeightfield.MeshCardsIndex < LumenCardScene.NumMeshCards;
+
+	return LumenHeightfield;
+}
+
+float3 GetCardLocalPosition(float3 CardLocalExtent, float2 CardUV, float Depth)
+{
+	CardUV.x = 1.0f - CardUV.x;
+
+	float3 LocalPosition;
+	LocalPosition.xy = CardLocalExtent.xy * (1.0f - 2.0f * CardUV);
+	LocalPosition.z = -(2.0f * Depth - 1.0f) * CardLocalExtent.z;
+
+	return LocalPosition;
+}
+
+void GetCardLocalBBox(FLumenCardPageData CardPage, FLumenCardData Card, float2 UVMin, float2 UVMax, out float3 CardPageLocalCenter, out float3 CardPageLocalExtent)
+{
+	float2 CardUVMin = lerp(CardPage.CardUVRect.xw, CardPage.CardUVRect.zy, UVMin);
+	float2 CardUVMax = lerp(CardPage.CardUVRect.xw, CardPage.CardUVRect.zy, UVMax);
+	float3 CardPageLocalBoxMin = GetCardLocalPosition(Card.LocalExtent, CardUVMin, 1.0f);
+	float3 CardPageLocalBoxMax = GetCardLocalPosition(Card.LocalExtent, CardUVMax, 0.0f);
+
+	CardPageLocalCenter = 0.5f * (CardPageLocalBoxMax + CardPageLocalBoxMin);
+	CardPageLocalExtent = 0.5f * (CardPageLocalBoxMax - CardPageLocalBoxMin);
+}
+
+void GetCardPageLocalBBox(FLumenCardPageData CardPage, FLumenCardData Card, out float3 CardPageLocalCenter, out float3 CardPageLocalExtent)
+{
+	GetCardLocalBBox(CardPage, Card, 0, 1, CardPageLocalCenter, CardPageLocalExtent);
+}
+
+float3 GetCardWorldPosition(FLumenCardData Card, float2 CardUV, float Depth)
+{
+	float3 LocalPosition = GetCardLocalPosition(Card.LocalExtent, CardUV, Depth);
+	float3 WorldPosition = mul(Card.WorldToLocalRotation, LocalPosition) + Card.Origin;
+	return WorldPosition;
+}
+
+uint2 GetCardPageSizeInTexels(FLumenCardPageData CardPage, uint2 AtlasSize)
+{
+	float2 AtlasSizeInUV = CardPage.PhysicalAtlasUVRect.zw - CardPage.PhysicalAtlasUVRect.xy;
+	return uint2(AtlasSizeInUV * AtlasSize);
+}
+
+float2 CardPageUVToCardUV(FLumenCardPageData CardPage, float2 CardPageUV)
+{
+	float2 CardUV = lerp(CardPage.CardUVRect.xy, CardPage.CardUVRect.zw, CardPageUV);
+	return CardUV;
+}
+
+float2 CardPageUVToAtlasUV(FLumenCardPageData CardPage, float2 CardPageUV)
+{
+	float2 AtlasUV = lerp(CardPage.PhysicalAtlasUVRect.xy, CardPage.PhysicalAtlasUVRect.zw, CardPageUV);
+	return AtlasUV;
+}
+
+float2 SamplePositonToCardUV(FLumenCardData Card, float2 LocalSamplePosition)
+{
+	float2 CardUV = saturate(float2(+0.5f, -0.5f) * (LocalSamplePosition / Card.LocalExtent.xy) + 0.5f);
+	return CardUV;
+}
+
+uint GetMeshCardsIndexFromSceneInstanceIndex(uint SceneInstanceIndex)
+{
+	const uint MeshCardsIndex = LumenCardScene.SceneInstanceIndexToMeshCardsIndexBuffer.Load(4 * SceneInstanceIndex);
+	return MeshCardsIndex;
+}

@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+  <Property Name="TestNames" Value="$(TestNames);NetworkPredictionPlugin" />
+  <Property Name="NetworkPredictionPluginUsesCatch2" Value="True" />
+  <Property Name="NetworkPredictionPluginDisabled" Value="False" />
+  <Property Name="NetworkPredictionPluginShort" Value="Net Prediction" />
+  <Property Name="NetworkPredictionPluginStagesWithProjectFile" Value="False" />
+  <Property Name="NetworkPredictionPluginTarget" Value="NetworkPredictionTests" />
+  <Property Name="NetworkPredictionPluginBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="NetworkPredictionPluginReportType" Value="console" />
+  <Property Name="NetworkPredictionPluginInitialExtraArgs" />
+  <Property Name="NetworkPredictionPluginHasAfterSteps" Value="False" />
+  <Property Name="NetworkPredictionPluginUsesCatch2" Value="True" />
+  <Option Name="RunNetworkPredictionPluginTests" DefaultValue="False" Description="Run Net Prediction Tests" />
+  <Property Name="NetworkPredictionPluginSupportedPlatforms" Value="Win64;Linux" />
+  <Property Name="Win64NetworkPredictionPluginTags" Value="" />
+  <Property Name="MacNetworkPredictionPluginTags" Value="" />
+  <Property Name="IOSNetworkPredictionPluginTags" Value="" />
+  <Property Name="AndroidNetworkPredictionPluginTags" Value="" />
+  <Property Name="LinuxNetworkPredictionPluginTags" Value="" />
+  <Property Name="LinuxArm64NetworkPredictionPluginTags" Value="" />
+  <Property Name="TVOSNetworkPredictionPluginTags" Value="" />
+  <Property Name="Win64NetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="MacNetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="IOSNetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="AndroidNetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="LinuxNetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="LinuxArm64NetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="TVOSNetworkPredictionPluginExtraCompilationArgs" Value="" />
+  <Property Name="Win64NetworkPredictionPluginRunSupported" Value="True" />
+  <Property Name="MacNetworkPredictionPluginRunSupported" Value="True" />
+  <Property Name="IOSNetworkPredictionPluginRunSupported" Value="False" />
+  <Property Name="AndroidNetworkPredictionPluginRunSupported" Value="False" />
+  <Property Name="LinuxNetworkPredictionPluginRunSupported" Value="True" />
+  <Property Name="LinuxArm64NetworkPredictionPluginRunSupported" Value="True" />
+  <Property Name="TVOSNetworkPredictionPluginRunSupported" Value="True" />
+</BuildGraph>

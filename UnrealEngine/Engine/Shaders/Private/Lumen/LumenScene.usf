@@ -1,0 +1,193 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+
+#define MAX_LUMEN_VIEWS 2
+#define LUMEN_INVALID_MESH_CARDS_INDEX 0xFFFFFFFF
+#define FLOAT_32_MAX float(+3.402823466e+38f)
+
+struct FLumenPrimitiveGroupData
+{
+	float3 WorldSpaceBoundingBoxCenter;
+	float3 WorldSpaceBoundingBoxExtent;
+
+	uint MeshCardsIndex;
+
+	bool bValid;
+	bool bValidMeshCards;
+	bool bFarField;
+	bool bHeightfield;
+	bool bEmissiveLightSource;
+};
+
+// Stride of a single PrimitiveGroup in float4's, must match C++
+#define LUMEN_PRIMITIVE_GROUP_DATA_STRIDE 2
+
+// Layout must match FLumenPrimitiveGroup in C++
+FLumenPrimitiveGroupData GetLumenPrimitiveGroupData(uint PrimitiveGroupId)
+{
+	FLumenPrimitiveGroupData PrimitiveGroup = (FLumenPrimitiveGroupData)0;
+
+	const uint BaseOffset = PrimitiveGroupId * LUMEN_PRIMITIVE_GROUP_DATA_STRIDE;
+
+	const float4 V0 = LumenCardScene.PrimitiveGroupData[BaseOffset + 0];
+	const float4 V1 = LumenCardScene.PrimitiveGroupData[BaseOffset + 1];
+
+	PrimitiveGroup.WorldSpaceBoundingBoxCenter = V0.xyz;
+	PrimitiveGroup.WorldSpaceBoundingBoxExtent = V1.xyz;
+
+	PrimitiveGroup.MeshCardsIndex = asuint(V0.w);
+
+	const uint Flags = asuint(V1.w);
+	PrimitiveGroup.bValid = all(PrimitiveGroup.WorldSpaceBoundingBoxExtent > 0.0f);
+	PrimitiveGroup.bValidMeshCards		= Flags & 0x01 ? true : false;
+	PrimitiveGroup.bFarField			= Flags & 0x02 ? true : false;
+	PrimitiveGroup.bHeightfield			= Flags & 0x04 ? true : false;
+	PrimitiveGroup.bEmissiveLightSource = Flags & 0x08 ? true : false;
+
+	return PrimitiveGroup;
+}
+
+RWStructuredBuffer<uint2> RWSceneAddOps;
+uint MaxSceneAddOps;
+
+RWStructuredBuffer<uint> RWSceneRemoveOps;
+uint MaxSceneRemoveOps;
+
+float4 WorldCameraOrigins[MAX_LUMEN_VIEWS];
+uint NumCameraOrigins;
+
+float CardMaxDistanceSq;
+float CardTexelDensity;
+float FarFieldCardMaxDistanceSq;
+float FarFieldCardTexelDensity;
+float MinCardResolution;
+
+/** 
+ * Loop over all Lumen Primitive Groups in order to find which ones should be visible and spawn mesh cards.
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void LumenSceneUpdateCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint PrimitiveGroupIndex = DispatchThreadId.x;
+	if (PrimitiveGroupIndex < LumenCardScene.NumPrimitiveGroups)
+	{
+		FLumenPrimitiveGroupData PrimitiveGroup = GetLumenPrimitiveGroupData(PrimitiveGroupIndex);
+
+		if (PrimitiveGroup.bValid)
+		{
+			float DistanceSquared = FLOAT_32_MAX;
+
+			for (uint ViewIndex = 0; ViewIndex < NumCameraOrigins; ++ViewIndex)
+			{
+				DistanceSquared = ComputeSquaredDistanceFromBoxToPoint(PrimitiveGroup.WorldSpaceBoundingBoxCenter, PrimitiveGroup.WorldSpaceBoundingBoxExtent, WorldCameraOrigins[ViewIndex].xyz);
+			}
+
+			float PrimitiveGroupMaxCardExtent = max3(PrimitiveGroup.WorldSpaceBoundingBoxExtent.x, PrimitiveGroup.WorldSpaceBoundingBoxExtent.y, PrimitiveGroup.WorldSpaceBoundingBoxExtent.z);
+			float PrimitiveGroupMaxCardResolution = (CardTexelDensity * PrimitiveGroupMaxCardExtent) / sqrt(max(DistanceSquared, 1.0f)) + 0.01f;
+			float PrimitiveGroupMaxCardDistanceSq = CardMaxDistanceSq;
+
+			// Far field cards have constant resolution over entire range
+			if (PrimitiveGroup.bFarField)
+			{
+				PrimitiveGroupMaxCardDistanceSq = FarFieldCardMaxDistanceSq;
+				PrimitiveGroupMaxCardResolution = PrimitiveGroupMaxCardExtent * FarFieldCardTexelDensity;
+			}
+
+			if (DistanceSquared <= PrimitiveGroupMaxCardDistanceSq && PrimitiveGroupMaxCardResolution >= (PrimitiveGroup.bEmissiveLightSource ? 1.0f : MinCardResolution))
+			{	
+				if (PrimitiveGroup.MeshCardsIndex == LUMEN_INVALID_MESH_CARDS_INDEX && PrimitiveGroup.bValidMeshCards)
+				{
+					uint ElementIndex = 0;
+					InterlockedAdd(RWSceneAddOps[0].x, 1, ElementIndex);
+					if (ElementIndex + 1 < MaxSceneAddOps)
+					{
+						RWSceneAddOps[ElementIndex + 1] = uint2(PrimitiveGroupIndex, asuint(DistanceSquared));
+					}
+				}
+			}
+			else if (PrimitiveGroup.MeshCardsIndex != LUMEN_INVALID_MESH_CARDS_INDEX)
+			{
+				uint ElementIndex = 0;
+				InterlockedAdd(RWSceneRemoveOps[0], 1, ElementIndex);
+				if (ElementIndex + 1 < MaxSceneRemoveOps)
+				{
+					RWSceneRemoveOps[ElementIndex + 1] = PrimitiveGroupIndex;
+				}				
+			}
+		}
+	}
+}
+
+/** 
+ * Visualize GPU side primitive groups data
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void VisualizePrimitiveGroupsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.1, 0.1));
+
+	const uint PrimitiveGroupIndex = DispatchThreadId.x;
+	if (PrimitiveGroupIndex < LumenCardScene.NumPrimitiveGroups)
+	{
+		FLumenPrimitiveGroupData PrimitiveGroup = GetLumenPrimitiveGroupData(PrimitiveGroupIndex);
+
+		if (PrimitiveGroup.bValid && PrimitiveGroup.MeshCardsIndex != LUMEN_INVALID_MESH_CARDS_INDEX)
+		{
+			float3 BoxMin = PrimitiveGroup.WorldSpaceBoundingBoxCenter - PrimitiveGroup.WorldSpaceBoundingBoxExtent;
+			float3 BoxMax = PrimitiveGroup.WorldSpaceBoundingBoxCenter + PrimitiveGroup.WorldSpaceBoundingBoxExtent;
+			float4 BoxColor = float4(1, 1, 1, 1);
+			AddAABB(Context, BoxMin, BoxMax, BoxColor);
+		}
+	}
+}
+
+StructuredBuffer<uint2> SceneAddOps;
+StructuredBuffer<uint> SceneRemoveOps;
+
+/** 
+ * Debug stats for debugging Lumen Scene and its GPU driven updates
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void LumenSceneStatsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.1, 0.1));
+
+	if (all(DispatchThreadId == 0))
+	{
+		Print(Context, TEXT("NumPrimitiveGroups "));
+		Print(Context, LumenCardScene.NumPrimitiveGroups);
+		Newline(Context);
+
+		Print(Context, TEXT("NumMeshCards "));
+		Print(Context, LumenCardScene.NumMeshCards);
+		Newline(Context);
+
+		Print(Context, TEXT("NumCards "));
+		Print(Context, LumenCardScene.NumCards);
+		Newline(Context);
+
+		Print(Context, TEXT("AddOps    "));
+		for (uint Index = 0; Index < 8; ++Index)
+		{
+			Print(Context, SceneAddOps[Index].x);
+		}
+		Newline(Context);
+
+		Print(Context, TEXT("RemoveOps "));
+		for (uint Index = 0; Index < 8; ++Index)
+		{
+			Print(Context, SceneRemoveOps[Index].x);
+		}
+	}
+}

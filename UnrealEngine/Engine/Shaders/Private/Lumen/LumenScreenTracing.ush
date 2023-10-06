@@ -1,0 +1,444 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenScreenTracing.ush
+=============================================================================*/
+
+#pragma once
+
+#include "../Common.ush"
+#include "LumenMaterial.ush"
+#include "../FastMath.ush"
+#include "../SceneTextureParameters.ush"
+
+// HZB mip 0 is half res scene depth. To do accurate traces we need to traverse all the way down to full res scene depth, but this adds an incoherent branch on the inner tracing loop.
+#ifndef HZB_TRACE_INCLUDE_FULL_RES_DEPTH
+#define HZB_TRACE_INCLUDE_FULL_RES_DEPTH 0
+#endif
+
+#ifndef TERMINATE_ON_LOW_OCCUPANCY
+#define TERMINATE_ON_LOW_OCCUPANCY 0
+#endif
+
+/**
+ * Accurate but slow screen trace by traversing the HZB.
+ * RayTranslatedWorldOrigin must be a position on-screen
+ * RayWorldDirection must be unit length
+ * OutScreenUV gives either the hit screen UV or the screen UV of the furthest unoccluded position along the ray, which can be plugged into ComputeRayHitSqrDistance.  
+ * OutLastVisibleScreenUV gives the screen UV of the furthest unoccluded position along the ray, which can be plugged into ComputeRayHitSqrDistance. 
+ * MaxIterations has a large impact on performance
+ * RelativeDepthThickness is how thick to treat each pixel as.  Larger values cause artifacts as the color value of the pixel gets stretched.
+ */
+void InternalTraceScreen(
+	Texture2D InSceneDepthTexture,
+	Texture2D InClosestHZBTexture,
+	float2 InHZBBaseTexelSize,
+	float4 InHZBUVToScreenUVScaleBias,
+	float3 RayTranslatedWorldOrigin, 
+	float3 RayWorldDirection,
+	float MaxWorldTraceDistance,
+	float4 HZBUvFactorAndInvFactor,
+	float MaxIterations,
+	float RelativeDepthThickness,
+	float NumThicknessStepsToDetermineCertainty,
+	uint MinimumTracingThreadOccupancy,
+	inout bool bHit,
+	inout bool bUncertain,
+	inout float3 OutScreenUV,
+	inout float3 OutLastVisibleScreenUV,
+	inout float OutHitTileZ)
+{
+	float3 RayStartScreenUV;
+	{
+		float4 RayStartClip = mul(float4(RayTranslatedWorldOrigin, 1.0f), View.TranslatedWorldToClip);
+		float3 RayStartScreenPosition = RayStartClip.xyz / max(RayStartClip.w, 1.0f);
+		RayStartScreenUV = float3((RayStartScreenPosition.xy * float2(0.5f, -0.5f) + 0.5f) * HZBUvFactorAndInvFactor.xy, RayStartScreenPosition.z);
+	}
+	
+	float3 RayEndScreenUV;
+	{
+		float3 ViewRayDirection = mul(float4(RayWorldDirection, 0.0), View.TranslatedWorldToView).xyz;
+		float SceneDepth = mul(float4(RayTranslatedWorldOrigin, 1.0f), View.TranslatedWorldToView).z;
+		// Clamps the ray to end at the Z == 0 plane so the end point will be valid in NDC space for clipping
+		float RayEndWorldDistance = ViewRayDirection.z < 0.0 ? min(-0.99f * SceneDepth / ViewRayDirection.z, MaxWorldTraceDistance) : MaxWorldTraceDistance;
+
+		float3 RayWorldEnd = RayTranslatedWorldOrigin + RayWorldDirection * RayEndWorldDistance;
+		float4 RayEndClip = mul(float4(RayWorldEnd, 1.0f), View.TranslatedWorldToClip);
+		float3 RayEndScreenPosition = RayEndClip.xyz / RayEndClip.w;
+		RayEndScreenUV = float3((RayEndScreenPosition.xy * float2(0.5f, -0.5f) + 0.5f) * HZBUvFactorAndInvFactor.xy, RayEndScreenPosition.z);
+
+		float2 ScreenEdgeIntersections = LineBoxIntersect(RayStartScreenUV, RayEndScreenUV, float3(0, 0, 0), float3(HZBUvFactorAndInvFactor.xy, 1));
+
+		// Recalculate end point where it leaves the screen
+		RayEndScreenUV = RayStartScreenUV + (RayEndScreenUV - RayStartScreenUV) * ScreenEdgeIntersections.y;
+	}
+
+	float BaseMipLevel = HZB_TRACE_INCLUDE_FULL_RES_DEPTH ? -1 : 0;
+	float MipLevel = BaseMipLevel;
+
+	float3 RayDirectionScreenUV = RayEndScreenUV - RayStartScreenUV;
+	float CurrentIntersectionTime = 0;
+
+    // Offset to pick which XY boundary planes to intersect
+    float2 FloorOffset = select(RayDirectionScreenUV.xy < 0, 0.0, 1.0);
+
+	float3 RayScreenUV = RayStartScreenUV;
+
+	// Step out of current tile without hit test to avoid self-intersection
+	bool bStepOutOfCurrentTile = true;
+
+	if (bStepOutOfCurrentTile)
+	{
+		float MipLevelForStepOut = MipLevel;
+		float2 CurrentMipTexelSize = exp2(MipLevelForStepOut) * InHZBBaseTexelSize;
+		float2 CurrentMipResolution = 1.0f / CurrentMipTexelSize;
+
+		float2 UVOffset = .005f * CurrentMipTexelSize;
+		UVOffset = select(RayDirectionScreenUV.xy < 0, -UVOffset, UVOffset);
+
+		float2 XYPlane = floor(RayScreenUV.xy * CurrentMipResolution) + FloorOffset;
+		XYPlane = XYPlane * CurrentMipTexelSize + UVOffset;
+		
+		float2 PlaneIntersectionTimes = (XYPlane - RayStartScreenUV.xy) / RayDirectionScreenUV.xy;
+		float IntersectionTime = min(PlaneIntersectionTimes.x, PlaneIntersectionTimes.y);
+		CurrentIntersectionTime = IntersectionTime;
+		RayScreenUV = RayStartScreenUV + CurrentIntersectionTime * RayDirectionScreenUV;
+	}
+
+	float NumIterations = 0;
+	bHit = false;
+	bUncertain = false;
+	OutHitTileZ = 0;
+	float LastAboveSurfaceTime = CurrentIntersectionTime;
+
+	// Stackless HZB traversal
+	while (MipLevel >= BaseMipLevel 
+		&& NumIterations < MaxIterations 
+		&& CurrentIntersectionTime < 1.0f
+#if TERMINATE_ON_LOW_OCCUPANCY
+		&& WaveActiveCountBits(true) > MinimumTracingThreadOccupancy
+#endif
+		)
+	{
+		float2 CurrentMipTexelSize = exp2(MipLevel) * InHZBBaseTexelSize;
+		float2 CurrentMipResolution = 1.0f / CurrentMipTexelSize;
+
+		float2 UVOffset = .005f * CurrentMipTexelSize;
+		UVOffset = select(RayDirectionScreenUV.xy < 0, -UVOffset, UVOffset);
+
+		float2 XYPlane = floor(RayScreenUV.xy * CurrentMipResolution) + FloorOffset;
+		XYPlane = XYPlane * CurrentMipTexelSize + UVOffset;
+
+		float TileZ;
+
+#if HZB_TRACE_INCLUDE_FULL_RES_DEPTH
+		if (MipLevel < 0)
+		{
+			TileZ = InSceneDepthTexture.SampleLevel(GlobalPointClampedSampler, RayScreenUV.xy * InHZBUVToScreenUVScaleBias.xy + InHZBUVToScreenUVScaleBias.zw, 0).r;
+		}
+		else
+#endif
+		{
+			TileZ = InClosestHZBTexture.SampleLevel(GlobalPointClampedSampler, RayScreenUV.xy, MipLevel).x;
+#if !HZB_TRACE_INCLUDE_FULL_RES_DEPTH
+			TileZ *= lerp(.99f, 1.0f, saturate(CurrentIntersectionTime * 10.0f));
+#endif
+		}
+
+		float3 BoundaryPlanes = float3(XYPlane, TileZ);
+
+		float3 PlaneIntersectionTimes = (BoundaryPlanes - RayStartScreenUV) / RayDirectionScreenUV;
+		PlaneIntersectionTimes.z = RayDirectionScreenUV.z < 0 ? PlaneIntersectionTimes.z : 1.0f;
+		float IntersectionTime = min3(PlaneIntersectionTimes.x, PlaneIntersectionTimes.y, PlaneIntersectionTimes.z);
+
+		bool bAboveSurface = RayScreenUV.z > TileZ;
+		bool bSkippedTile = IntersectionTime != PlaneIntersectionTimes.z && bAboveSurface;
+
+		if (bSkippedTile)
+		{
+			LastAboveSurfaceTime = IntersectionTime;
+		}
+		
+		CurrentIntersectionTime = bAboveSurface ? IntersectionTime : CurrentIntersectionTime;
+		RayScreenUV = RayStartScreenUV + min(CurrentIntersectionTime, 1.0f) * RayDirectionScreenUV;
+		MipLevel += bSkippedTile ? 1 : -1;
+
+		NumIterations++;
+	}
+
+	if (MipLevel < BaseMipLevel)
+	{
+		float TileZ;
+
+#if HZB_TRACE_INCLUDE_FULL_RES_DEPTH
+		TileZ = InSceneDepthTexture.SampleLevel(GlobalPointClampedSampler, RayScreenUV.xy * InHZBUVToScreenUVScaleBias.xy + InHZBUVToScreenUVScaleBias.zw, 0).r;
+#else
+		TileZ = InClosestHZBTexture.SampleLevel(GlobalPointClampedSampler, RayScreenUV.xy, 0).x;
+#endif
+
+		OutHitTileZ = TileZ;
+
+		float HitSceneDepth = ConvertFromDeviceZ(TileZ);
+		float RaySceneDepth = ConvertFromDeviceZ(RayScreenUV.z);
+
+		bHit = (RaySceneDepth - HitSceneDepth) < RelativeDepthThickness * max(HitSceneDepth, .00001f);
+
+		if (!bHit)
+		{
+			// We went below the surface and couldn't count it as a hit, rewind to the last time we were above
+			RayScreenUV = RayStartScreenUV + LastAboveSurfaceTime * RayDirectionScreenUV;
+		}
+	}
+
+	// Linear steps to determine feature thickness along the ray, to reject hits behind very thin surfaces (grass / hair / foliage)
+	if (bHit && !bUncertain && NumThicknessStepsToDetermineCertainty > 0)
+	{
+		float ThicknessSearchMipLevel = 0.0f;
+		float MipNumTexels = exp2(ThicknessSearchMipLevel);
+		float2 HZBTileSize = MipNumTexels * InHZBBaseTexelSize;
+		float NumSteps = NumThicknessStepsToDetermineCertainty / MipNumTexels;
+		float ThicknessSearchEndTime = min(length(RayDirectionScreenUV.xy * HZBTileSize * NumSteps) / length(RayEndScreenUV.xy - RayScreenUV.xy), 1.0f);
+
+		for (float I = 0; I < NumSteps; I++)
+		{
+			float3 SampleUV = RayScreenUV + (I / NumSteps) * ThicknessSearchEndTime * (RayEndScreenUV - RayScreenUV);
+
+			if (all(and(SampleUV.xy > 0, SampleUV.xy < HZBUvFactorAndInvFactor.xy)))
+			{
+				float SampleTileZ = InClosestHZBTexture.SampleLevel(GlobalPointClampedSampler, SampleUV.xy, ThicknessSearchMipLevel).x;
+
+				if (SampleUV.z > SampleTileZ)
+				{
+					bUncertain = true;
+				}
+			}
+		}
+	}
+
+	// Debug - visualize clipped endpoints
+	//RayScreenUV = RayEndScreenUV;
+	//bHit = bUncertain;
+
+	// Output in GBuffer SceneUV space for xy
+	OutScreenUV.xy = RayScreenUV.xy * InHZBUVToScreenUVScaleBias.xy + InHZBUVToScreenUVScaleBias.zw;
+	OutScreenUV.z = RayScreenUV.z;
+
+	float3 LastVisibleScreenUV = RayStartScreenUV + LastAboveSurfaceTime * RayDirectionScreenUV;
+	OutLastVisibleScreenUV.xy = LastVisibleScreenUV.xy * InHZBUVToScreenUVScaleBias.xy + InHZBUVToScreenUVScaleBias.zw;
+	OutLastVisibleScreenUV.z = LastVisibleScreenUV.z;
+}
+
+Texture2D ClosestHZBTexture;
+float2 HZBBaseTexelSize;
+float4 HZBUVToScreenUVScaleBias;
+
+void TraceScreen(
+	float3 RayTranslatedWorldOrigin,
+	float3 RayWorldDirection,
+	float MaxWorldTraceDistance,
+	float4 HZBUvFactorAndInvFactor,
+	float MaxIterations,
+	float RelativeDepthThickness,
+	float NumThicknessStepsToDetermineCertainty,
+	uint MinimumTracingThreadOccupancy,
+	inout bool bHit,
+	inout bool bUncertain,
+	inout float3 OutScreenUV,
+	inout float3 OutLastVisibleScreenUV,
+	inout float OutHitTileZ)
+{
+	InternalTraceScreen(
+		SceneDepthTexture,
+		ClosestHZBTexture,
+		HZBBaseTexelSize,
+		HZBUVToScreenUVScaleBias,
+		RayTranslatedWorldOrigin,
+		RayWorldDirection,
+		MaxWorldTraceDistance,
+		HZBUvFactorAndInvFactor,
+		MaxIterations,
+		RelativeDepthThickness,
+		NumThicknessStepsToDetermineCertainty,
+		MinimumTracingThreadOccupancy,
+		bHit,
+		bUncertain,
+		OutScreenUV,
+		OutLastVisibleScreenUV,
+		OutHitTileZ);
+} 
+
+float3 GetPrevScreenPosition(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
+{
+	float3 HistoryScreenPosition = float3(ScreenPosition, DeviceZ);
+	bool bIsDynamicPixel = false;
+
+	{
+		float4 ThisClip = float4(HistoryScreenPosition, 1);
+		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); //<=== doesn't contain AA offsets
+		
+		float3 PrevScreen = PrevClip.xyz / PrevClip.w;
+		float3 Velocity = HistoryScreenPosition - PrevScreen;
+		float4 EncodedVelocity = GBufferVelocityTexture.SampleLevel(GlobalPointClampedSampler, ScreenUV, 0);
+		bIsDynamicPixel = EncodedVelocity.x > 0.0;
+
+		if (bIsDynamicPixel)
+		{
+			// Warning: overwriting velocity, this only works if DeviceZ matches what's in the depth buffer
+			Velocity = DecodeVelocityFromTexture(EncodedVelocity);
+		}
+
+		HistoryScreenPosition -= Velocity;
+	}
+
+	return HistoryScreenPosition;
+}
+
+#include "../SSRT/SSRTRayCast.ush"
+
+Texture2D PrevSceneColorTexture;
+Texture2D HistorySceneDepth;
+float2 PrevSceneColorBilinearUVMin;
+float2 PrevSceneColorBilinearUVMax;
+float4 PrevScreenPositionScaleBias;
+float4 PrevScreenPositionScaleBiasForDepth;
+float PrevSceneColorPreExposureCorrection;
+
+float SampleSceneColorNormalTreshold;
+
+/**
+ * Try to sample scene color at hit and return whether it was successfull
+ */
+bool SampleSceneColorAtHit(float3 HitTranslatedWorldPosition, float3 HitGeometryWorldNormal, uint2 SvPosition, float RelativeDepthThickness, inout float3 Lighting)
+{
+	float4 HitClipPosition = mul(float4(HitTranslatedWorldPosition, 1.0f), View.TranslatedWorldToClip);
+
+	if (HitClipPosition.w > 0)
+	{
+		float2 HitScreenPosition = HitClipPosition.xy / HitClipPosition.w;
+
+		if (all(abs(HitScreenPosition) < float2(1, 1)))
+		{
+			float2 HitScreenUV = HitScreenPosition * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
+			float HitDeviceZ = SceneDepthTexture.SampleLevel(GlobalPointClampedSampler, HitScreenUV, 0).r;
+			float HitSceneDepth = ConvertFromDeviceZ(HitDeviceZ);
+			float RayHitSceneDepth = HitClipPosition.w;
+
+			float3 PixelToCameraDirection = normalize(View.TranslatedWorldCameraOrigin - HitTranslatedWorldPosition);
+
+			// Discard screen points which are either too far or face the other direction
+			// Also discard screen points at steep angle or facing backwards
+			if (abs(RayHitSceneDepth - HitSceneDepth) < RelativeDepthThickness * max(HitSceneDepth, .00001f)
+				&& dot(PixelToCameraDirection, HitGeometryWorldNormal) >= SampleSceneColorNormalTreshold)
+			{
+				float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+
+				float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
+				float Noise = InterleavedGradientNoise(SvPosition + 0.5f, View.StateFrameIndexMod8);
+
+				bool bSampleSceneColor = true;
+
+				// Skip reporting a hit if near the edge of the screen
+				if (Vignette < Noise)
+				{
+					bSampleSceneColor = false;
+				}
+
+				if (bSampleSceneColor)
+				{
+					// Calculate the expected depth of the pixel last frame
+					float PrevDeviceZ = HitHistoryScreenPosition.z;
+
+					// Lookup the actual depth at the same screen position last frame
+					float2 HitHistoryScreenUVForDepth = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBiasForDepth.xy + PrevScreenPositionScaleBiasForDepth.zw;
+					float HistoryDeviceZ = Texture2DSampleLevel(HistorySceneDepth, GlobalPointClampedSampler, HitHistoryScreenUVForDepth, 0).x;
+
+					bSampleSceneColor = abs(HistoryDeviceZ - PrevDeviceZ) < RelativeDepthThickness * lerp(.5f, 2.0f, Noise);
+				}
+
+				if (bSampleSceneColor)
+				{
+					float2 HitHistoryScreenUV = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBias.xy + PrevScreenPositionScaleBias.zw;
+					HitHistoryScreenUV = clamp(HitHistoryScreenUV, PrevSceneColorBilinearUVMin, PrevSceneColorBilinearUVMax);
+					Lighting = SampleScreenColor(PrevSceneColorTexture, GlobalPointClampedSampler, HitHistoryScreenUV).xyz * PrevSceneColorPreExposureCorrection * View.OneOverPreExposure;
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+float DistantScreenTraceSlopeCompareTolerance;
+float DistantScreenTraceMaxTraceDistance;
+Texture2D DistantScreenTraceFurthestHZBTexture;
+
+void DistantScreenTrace(
+	float2 NoiseCoord,
+	float4 HZBUvFactorAndInvFactor,
+	float3 TranslatedRayOrigin,
+	float3 RayDirection,
+	float TraceDistance,
+	float SceneDepth,
+	inout bool bHit,
+	inout float3 TraceRadiance)
+{
+	uint NumSteps = 16;
+	float StartMipLevel = 0.0f;
+	float RayRoughness = 0.0f;
+	float Noise = InterleavedGradientNoise(NoiseCoord, View.StateFrameIndexMod8);
+	float StepOffset = Noise - .5f;
+
+	FSSRTCastingSettings CastSettings = CreateDefaultCastSettings();
+
+	float Level;
+	float3 HitUVz;
+	bool bRayWasClipped;
+
+	FSSRTRay Ray = InitScreenSpaceRayFromWorldSpace(
+		TranslatedRayOrigin, RayDirection,
+		/* WorldTMax = */ TraceDistance,
+		/* SceneDepth = */ SceneDepth,
+		/* SlopeCompareToleranceScale */ DistantScreenTraceSlopeCompareTolerance,
+		/* bExtendRayToScreenBorder = */ false,
+		/* out */ bRayWasClipped);
+
+	bool bUncertain;
+	float3 DebugOutput;
+
+	CastScreenSpaceRay(
+		DistantScreenTraceFurthestHZBTexture, GlobalPointClampedSampler,
+		StartMipLevel,
+		CastSettings,
+		Ray, RayRoughness, NumSteps, StepOffset,
+		HZBUvFactorAndInvFactor, false,
+		/* out */ DebugOutput,
+		/* out */ HitUVz,
+		/* out */ Level,
+		/* out */ bHit,
+		/* out */ bUncertain);
+
+	if (bHit)
+	{
+		float2 HitScreenUV = HitUVz.xy;
+		float2 HitScreenPosition = (HitUVz.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		float HitDeviceZ = HitUVz.z;
+
+		float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+
+		float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
+
+		// Skip reporting a hit if near the edge of the screen
+		if (Vignette < Noise)
+		{
+			bHit = false;
+		}
+
+		if (bHit)
+		{
+			float2 HitHistoryScreenUV = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBias.xy + PrevScreenPositionScaleBias.zw;
+			HitHistoryScreenUV = clamp(HitHistoryScreenUV, PrevSceneColorBilinearUVMin, PrevSceneColorBilinearUVMax);
+			TraceRadiance = SampleScreenColor(PrevSceneColorTexture, GlobalPointClampedSampler, HitHistoryScreenUV).xyz * (PrevSceneColorPreExposureCorrection * View.OneOverPreExposure);
+		}
+	}
+}

@@ -1,0 +1,13 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../Hash.ush"
+
+#include "RayTracingCommon.ush"
+#include "RayTracingDebugUtils.ush"
+#include "RayTracingHitGroupCommon.ush"
+
+RAY_TRACING_ENTRY_MISS(RayTracingDebugMS, FRayTracingDebugPayload, Payload)
+{
+	Payload.SetMiss();
+}

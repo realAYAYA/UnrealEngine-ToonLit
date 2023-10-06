@@ -1,0 +1,20 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "UsdShadersDiscoveryPlugin" : {
+                        "bases": ["NdrDiscoveryPlugin"],
+                        "displayName": "USD-based shader definition discovery plugin."
+                    }
+                },
+                "ShaderResources": "shaders"
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/usdShaders.dylib",
+            "Name": "usdShaders",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

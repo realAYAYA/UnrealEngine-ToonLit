@@ -1,0 +1,284 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "VirtualShadowMapPageAccessCommon.ush"
+#include "VirtualShadowMapStats.ush"
+#include "../Nanite/NaniteDataDecode.ush"
+#include "../GPUMessaging.ush"
+
+StructuredBuffer<uint>	InStatsBuffer;
+// Rectangles bounding (allocated) pages for each mip level
+StructuredBuffer<uint4> PageRectBounds;
+
+// From cvar, used to determine which stats are shown
+// 1 = all
+// 2 = only physical pages
+// 3 = only non-nanite-instances
+int ShowStatsValue;
+
+void PrintLeftAlign(inout FShaderPrintContext Context, uint Value)
+{
+	int Len = 9;
+	
+	uint Tmp = Value;
+	while (Tmp >= 10)
+	{
+		Tmp /= 10;
+		Len--;
+	}
+
+	while (Len > 0)
+	{
+		PrintSymbol(Context, _SPC_);
+		Len--;
+	}
+	
+	Print(Context, Value);
+}
+
+
+void PrintUnits(inout FShaderPrintContext Context, uint Value)
+{
+	if (Value >= 1024U * 1024U)
+	{
+		Print(Context, float((Value * 100U) / (1024U * 1024U)) / 100.0f);
+		PrintSymbol(Context, _M_);
+	}
+	else if (Value >= 1024U)
+	{
+		Print(Context, float((Value * 100U) / (1024U)) / 100.0f);
+		Print(Context, TEXT("k"), FontWhite);
+	}
+	else
+	{
+		Print(Context, Value);
+	}
+}
+uint StatsMessageId;
+uint StatsMessageTimestampHigh;
+uint StatsMessageTimestampLow;
+
+StructuredBuffer<FNaniteStats> NaniteStats;
+
+void SendStatsMessage()
+{
+	FGPUMessageWriter Mw = GPUMessageBegin(StatsMessageId, 3U + (MAX_PAGE_AREA_DIAGNOSTIC_SLOTS * 2U));
+
+	// Culling stats
+	GPUMessageWriteItem(Mw, NaniteStats[0].NumTris);
+	GPUMessageWriteItem(Mw, NaniteStats[0].NumMainInstancesPostCull);
+	GPUMessageWriteItem(Mw, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_DRAWN]);
+
+	// Large page area instances
+	for (uint Index = 0; Index < MAX_PAGE_AREA_DIAGNOSTIC_SLOTS * 2U; ++Index)
+	{
+		GPUMessageWriteItem(Mw, InStatsBuffer[VSM_NUM_STATS + Index]);
+	}
+}
+
+[numthreads(1, 1, 1)]
+void LogVirtualSmStatsCS()
+{
+	if (StatsMessageId != INDEX_NONE)
+	{
+		SendStatsMessage();
+	}
+
+	if (ShowStatsValue == 0U)
+	{
+		return;
+	}
+
+	const bool bShowAll                = ShowStatsValue == 1;
+	// Work around potential compiler bug...
+	const bool bShowPhysicalPages      = (ShowStatsValue == 1) || ShowStatsValue == 2;
+	const bool bShowNonNaniteInstances = (ShowStatsValue == 1) || ShowStatsValue == 3;
+
+	float TopMargin = 0.05f;
+	float HeadlineX = 0.47f;
+	float ItemX = 0.48f;
+	float ValueX = 0.58f;
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(HeadlineX, TopMargin));
+
+	if (bShowPhysicalPages)
+	{
+		Context.Pos.x = HeadlineX;
+		Print(Context, TEXT("Physical Pages"), FontWhite);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, VirtualShadowMap.MaxPhysicalPages);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Requested"), FontWhite);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_REQUESTED_THIS_FRAME_PAGES]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Empty"), FontWhite);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_EMPTY_PAGES]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Allocated New"), FontWhite);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_ALLOCATED_NEW]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Cleared"), FontWhite);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NUM_PAGES_TO_CLEAR]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("HZB Built"), FontWhite);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NUM_HZB_PAGES_BUILT]);
+		Newline(Context);
+
+		if (VirtualShadowMapShouldCacheStaticSeparately())
+		{
+			Context.Pos.x = HeadlineX;
+			Print(Context, TEXT("Static Cached"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_STATIC_CACHED_PAGES]);
+			Newline(Context);
+
+			Context.Pos.x = ItemX;
+			Print(Context, TEXT("Invalidated"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_STATIC_INVALIDATED_PAGES]);
+			Newline(Context);
+
+			Context.Pos.x = HeadlineX;
+			Print(Context, TEXT("Dynamic Cached"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_DYNAMIC_CACHED_PAGES]);
+			Newline(Context);
+
+			Context.Pos.x = ItemX;
+			Print(Context, TEXT("Invalidated"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_DYNAMIC_INVALIDATED_PAGES]);
+			Newline(Context);
+
+			Context.Pos.x = ItemX;
+			Print(Context, TEXT("Merged"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NUM_PAGES_TO_MERGE]);
+			Newline(Context);
+		}
+		else
+		{
+			Context.Pos.x = HeadlineX;
+			Print(Context, TEXT("Cached"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_STATIC_CACHED_PAGES]);
+			Newline(Context);
+
+			Context.Pos.x = ItemX;
+			Print(Context, TEXT("Invalidated"), FontWhite);
+			Context.Pos.x = ValueX;
+			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_STATIC_INVALIDATED_PAGES]);
+			Newline(Context);
+		}
+	}
+
+	if (bShowNonNaniteInstances)
+	{
+		Context.Pos.x = HeadlineX;
+		Print(Context, TEXT("Non-Nanite Instances"), FontCyan);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Total"), FontCyan);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_TOTAL]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Drawn"), FontCyan);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_DRAWN]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("HZB Culled"), FontCyan);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_HZB_CULLED]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Page Mask Culled"), FontCyan);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_PAGE_MASK_CULLED]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Empty Rect Culled"), FontCyan);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_EMPTY_RECT_CULLED]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Frustum Culled"), FontCyan);
+		Context.Pos.x = ValueX;
+		PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_NON_NANITE_INSTANCES_FRUSTUM_CULLED]);
+		Newline(Context);
+	}
+}
+
+
+uint ShadowMapIdRangeStart;
+uint ShadowMapIdRangeEnd;
+
+[numthreads(1, 1, 1)]
+void PrintClipmapStats()
+{
+	float TopMargin = 0.35f;
+	float HeadlineX = 0.07f;
+	float ItemX = 0.08f;
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(HeadlineX, TopMargin));
+
+	// Main Pass
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Page Rects"));
+	Newline(Context);
+	uint TotalArea = 0U;
+	{
+		for (uint SmId = ShadowMapIdRangeStart; SmId < ShadowMapIdRangeEnd; ++SmId)
+		{
+			uint4 Rect = PageRectBounds[SmId * VSM_MAX_MIP_LEVELS];
+			Context.Pos.x = ItemX;
+			Print(Context, Rect.x);//ShaderPrintLeftAlign(ScreenPos, Rect.x);
+			PrintSymbol(Context, _SPC_);
+			Print(Context, Rect.y);//ShaderPrintLeftAlign(ScreenPos, Rect.y);
+			PrintSymbol(Context, _SPC_);
+			Print(Context, Rect.z);//ShaderPrintLeftAlign(ScreenPos, Rect.z);
+			PrintSymbol(Context, _SPC_);
+			Print(Context, Rect.w);//ShaderPrintLeftAlign(ScreenPos, Rect.w);
+			if (Rect.x <= Rect.z && Rect.y <= Rect.w)
+			{
+				PrintSymbol(Context, _SPC_);
+				Print(Context, Rect.z - Rect.x + 1);//ShaderPrintLeftAlign(ScreenPos, Rect.z);
+				PrintSymbol(Context, _SPC_);
+				Print(Context, Rect.w - Rect.y + 1);//ShaderPrintLeftAlign(ScreenPos, Rect.w);
+
+				uint Area = (Rect.z - Rect.x + 1) * (Rect.w - Rect.y + 1);
+				PrintSymbol(Context, _SPC_);
+				Print(Context, Area);//ShaderPrintLeftAlign(ScreenPos, Rect.w);
+
+				TotalArea += Area;
+			}
+			Newline(Context);
+		}
+	}
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Total Area "));
+	Print(Context, TotalArea);//ShaderPrintLeftAlign(ScreenPos, Rect.x);
+	Newline(Context);
+}

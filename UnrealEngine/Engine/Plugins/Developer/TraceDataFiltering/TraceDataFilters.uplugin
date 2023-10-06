@@ -1,0 +1,28 @@
+{
+	"FileVersion": 1,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Trace Data Filtering",
+	"Description": "Allows for turning on/off individual or sets of Trace Channels.",
+	"Category": "Insights",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"SupportedPrograms": [ "UnrealInsights" ],
+	"Modules": [
+		{
+			"Name": "TraceDataFiltering",
+			"Type": "EditorAndProgram",
+			"LoadingPhase": "PreDefault",
+			"ProgramAllowList": [
+				"UnrealInsights"
+			]
+		}
+	]
+}

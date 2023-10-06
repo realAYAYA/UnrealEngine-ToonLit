@@ -1,0 +1,896 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../ReflectionEnvironmentShared.ush"
+#include "../BRDF.ush"
+#include "../FastMath.ush"
+#define DISTANCE_FIELD_IN_VIEW_UB 1
+#include "../DistanceField/GlobalDistanceFieldShared.ush"
+#include "../DistanceField/GlobalDistanceFieldUtils.ush"
+#include "../DistanceField/GlobalDistanceFieldObjectGrid.ush"
+#include "../DistanceFieldLightingShared.ush"
+#include "../SceneData.ush"
+
+#ifndef SDF_TRACING_TRAVERSE_MIPS
+	#define SDF_TRACING_TRAVERSE_MIPS 0
+#endif
+
+#ifndef SCENE_TRACE_MESH_SDFS
+	#define SCENE_TRACE_MESH_SDFS 1
+#endif
+
+#ifndef SCENE_TRACE_HEIGHTFIELDS
+	#define SCENE_TRACE_HEIGHTFIELDS 0
+#endif
+
+struct FConeTraceInput
+{
+	float3 ConeOrigin;
+	float3 ConeTranslatedOrigin;
+	float3 ConeDirection;
+	
+	float ConeAngle; // View.EyeToPixelSpreadAngle or RayCone.Spread in HWRT world
+	float TanConeAngle;
+
+	float ConeStartRadius;
+	float MinSampleRadius;
+	float MinTraceDistance;
+	float MaxTraceDistance;
+
+	float StepFactor;
+	float VoxelTraceStartDistance;
+	float SDFStepFactor;
+	float MinSDFStepFactor;
+	bool bExpandSurfaceUsingRayTimeInsteadOfMaxDistance;
+	float InitialMaxDistance;
+
+	bool bDitheredTransparency;
+	uint2 DitherScreenCoord;
+
+	// Whether to use epsilon trace (skip back face hits over initial short distance) for heightfield tracing
+	bool bUseEpsilonTraceForHeightfields;
+
+	// Whether to sample high res surface cache data or low res always resident pages
+	bool bHiResSurface;
+
+	bool bZeroRadianceIfRayStartsInsideGeometry;
+	bool bCalculateHitVelocity;
+
+	// Mesh SDF traces
+	uint NumMeshSDFs;
+	uint MeshSDFStartOffset;
+	uint MeshSDFBitmaskStartOffset;
+	float CardInterpolateInfluenceRadius;
+
+	// Heightfield traces
+	uint NumHeightfields;
+	uint HeightfieldStartOffset;
+
+	void Setup(
+		float3 InConeOrigin,
+		float3 InConeTranslatedOrigin,
+		float3 InConeDirection,
+		float InConeAngle,
+		float InMinSampleRadius,
+		float InMinTraceDistance,
+		float InMaxTraceDistance,
+		float InStepFactor)
+	{
+		ConeOrigin = InConeOrigin;
+		ConeTranslatedOrigin = InConeTranslatedOrigin;
+		ConeDirection = InConeDirection;
+		ConeAngle = InConeAngle;
+		TanConeAngle = tan(ConeAngle);
+		ConeStartRadius = 0;
+		MinSampleRadius = InMinSampleRadius;
+		MinTraceDistance = InMinTraceDistance;
+		MaxTraceDistance = InMaxTraceDistance;
+		StepFactor = InStepFactor;
+		VoxelTraceStartDistance = InMaxTraceDistance;
+
+		SDFStepFactor = 1.0f;
+		MinSDFStepFactor = 1.0f;
+
+		// The global SDF often overestimates due to the way distances outside of an object SDF are calculated, can be corrected by stepping slower, but increases trace cost
+		bExpandSurfaceUsingRayTimeInsteadOfMaxDistance = true;
+		InitialMaxDistance = 0;
+
+		bDitheredTransparency = false;
+		DitherScreenCoord = uint2(0, 0);
+		bHiResSurface = false;
+		bCalculateHitVelocity = false;
+
+		bUseEpsilonTraceForHeightfields = true;
+		bZeroRadianceIfRayStartsInsideGeometry = false;
+	}
+};
+
+// Mesh SDF cull grid
+Buffer<uint> NumGridCulledMeshSDFObjects;
+Buffer<uint> GridCulledMeshSDFObjectStartOffsetArray;
+Buffer<uint> GridCulledMeshSDFObjectIndicesArray;
+
+struct FTraceMeshSDFResult
+{
+	float HitDistance;
+	uint HitObject;
+};
+
+float MeshSDFNotCoveredExpandSurfaceScale;
+float MeshSDFNotCoveredMinStepScale;
+float MeshSDFDitheredTransparencyStepThreshold;
+
+void RayTraceSingleMeshSDF(
+	float3 WorldRayStart, 
+	float3 WorldRayDirection, 
+	float TanConeHalfAngle,
+	float MinTraceDistance,
+	float MaxTraceDistance, 
+	uint ObjectIndex,
+	// The SDF surface is expanded to reduce leaking through thin surfaces, especially foliage meshes with bGenerateDistanceFieldAsIfTwoSided
+	// Expanding as RayTime increases errors on the side of over-occlusion, especially at grazing angles, which can be desirable for diffuse GI.
+	// Expanding as MaxDistance increases has less incorrect self-intersection which is desirable for reflections rays.
+	bool bExpandSurfaceUsingRayTimeInsteadOfMaxDistance,
+	float InitialMaxDistance,
+	bool bDitheredTransparency,
+	float2 DitherScreenCoord,
+	inout FTraceMeshSDFResult TraceResult)
+{
+	FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
+	float4x4 WorldToVolume = LWCHackToFloat(DFObjectData.WorldToVolume);
+
+	if (!bDitheredTransparency || !DFObjectData.bMostlyTwoSided)
+	{
+		// Trace up to the current hit point
+		MaxTraceDistance = min(MaxTraceDistance, TraceResult.HitDistance + DFObjectData.VolumeSurfaceBias);
+	}
+
+	float3 WorldRayEnd = WorldRayStart + WorldRayDirection * MaxTraceDistance;
+	float3 VolumeRayStart = mul(float4(WorldRayStart, 1), WorldToVolume).xyz;
+	float3 VolumeRayEnd = mul(float4(WorldRayEnd, 1), WorldToVolume).xyz;
+	float3 VolumeRayDirection = VolumeRayEnd - VolumeRayStart;
+
+	float VolumeMaxTraceDistance = length(VolumeRayDirection);
+	float VolumeMinTraceDistance = VolumeMaxTraceDistance * (MinTraceDistance / MaxTraceDistance);
+	VolumeRayDirection /= VolumeMaxTraceDistance;
+
+	float2 VolumeSpaceIntersectionTimes = LineBoxIntersect(VolumeRayStart, VolumeRayEnd, -DFObjectData.VolumePositionExtent, DFObjectData.VolumePositionExtent);
+
+	VolumeSpaceIntersectionTimes *= VolumeMaxTraceDistance;
+	VolumeSpaceIntersectionTimes.x = max(VolumeSpaceIntersectionTimes.x, VolumeMinTraceDistance);
+
+	BRANCH
+	if (VolumeSpaceIntersectionTimes.x < VolumeSpaceIntersectionTimes.y)
+	{
+		uint MaxMipIndex = LoadDFAssetData(DFObjectData.AssetIndex, 0).NumMips - 1;
+		// Start tracing at the highest resolution mip
+		uint ReversedMipIndex = MaxMipIndex;
+		FDFAssetData DFAssetMipData = LoadDFAssetData(DFObjectData.AssetIndex, ReversedMipIndex);
+
+		#if !SDF_TRACING_TRAVERSE_MIPS
+			ReversedMipIndex = MaxMipIndex;
+			DFAssetMipData = LoadDFAssetData(DFObjectData.AssetIndex, ReversedMipIndex);
+		#endif
+
+		float Coverage = DFObjectData.bMostlyTwoSided && bDitheredTransparency ? 0.0f : 1.0f;
+		float ExpandSurfaceScale = lerp(MeshSDFNotCoveredExpandSurfaceScale, 1.0f, Coverage);
+
+		float SampleRayTime = VolumeSpaceIntersectionTimes.x;
+
+		uint MaxSteps = 64;
+		float MinStepSize = 1.0f / (16.0f * MaxSteps);
+		uint StepIndex = 0;
+		bool bHit = false;
+		float MaxDistance = InitialMaxDistance;
+
+		LOOP
+		for (; StepIndex < MaxSteps; StepIndex++)
+		{
+			float3 SampleVolumePosition = VolumeRayStart + VolumeRayDirection * SampleRayTime;
+			float DistanceField = SampleSparseMeshSignedDistanceField(SampleVolumePosition, DFAssetMipData);
+
+			MaxDistance = max(DistanceField, MaxDistance);
+			float ExpandSurfaceTime = bExpandSurfaceUsingRayTimeInsteadOfMaxDistance ? SampleRayTime : MaxDistance;
+
+			// Expand the surface to find thin features, but only away from the start of the trace where it won't introduce incorrect self-occlusion
+			// This still causes incorrect self-occlusion at grazing angles
+			float ExpandSurfaceDistance = DFObjectData.VolumeSurfaceBias;
+			const float ExpandSurfaceFalloff = 2.0f * ExpandSurfaceDistance;
+			const float ExpandSurfaceAmount = ExpandSurfaceDistance * saturate(ExpandSurfaceTime / ExpandSurfaceFalloff) * ExpandSurfaceScale;
+
+			float StepNoise = InterleavedGradientNoise(DitherScreenCoord.xy, View.StateFrameIndexMod8 * MaxSteps + StepIndex);
+
+#if SDF_TRACING_TRAVERSE_MIPS
+
+			float MaxEncodedDistance = DFAssetMipData.DistanceFieldToVolumeScaleBias.x + DFAssetMipData.DistanceFieldToVolumeScaleBias.y;
+
+			// We reached the maximum distance of this mip's narrow band, use a lower resolution mip for next iteration
+			if (abs(DistanceField) > MaxEncodedDistance && ReversedMipIndex > 0)
+			{
+				ReversedMipIndex--;
+				DFAssetMipData = LoadDFAssetData(DFObjectData.AssetIndex, ReversedMipIndex);
+			}
+			// We are close to the surface, step back to safety and use a higher resolution mip for next iteration
+			else if (abs(DistanceField) < .25f * MaxEncodedDistance && ReversedMipIndex < MaxMipIndex)
+			{
+				DistanceField -= 6.0f * DFObjectData.VolumeSurfaceBias;
+				ReversedMipIndex++;
+				DFAssetMipData = LoadDFAssetData(DFObjectData.AssetIndex, ReversedMipIndex);
+			}
+			else 
+#endif
+			if (DistanceField < ExpandSurfaceAmount 
+				&& ReversedMipIndex == MaxMipIndex
+				&& (!bDitheredTransparency || StepNoise * (1 - Coverage) <= MeshSDFDitheredTransparencyStepThreshold))
+			{
+				// One more step to the surface
+				// Pull back by ExpandSurfaceAmount to improve the gradient computed off of the hit point
+				SampleRayTime = clamp(SampleRayTime + DistanceField - ExpandSurfaceAmount, VolumeSpaceIntersectionTimes.x, VolumeSpaceIntersectionTimes.y);
+				bHit = true;
+				break;
+			}
+
+			float LocalMinStepSize = MinStepSize * lerp(MeshSDFNotCoveredMinStepScale, 1.0f, Coverage);
+			float StepDistance = max(DistanceField, LocalMinStepSize);
+			SampleRayTime += StepDistance;		
+
+			if (SampleRayTime > VolumeSpaceIntersectionTimes.y + ExpandSurfaceAmount)
+			{
+				break;
+			}
+		}
+
+		if (StepIndex == MaxSteps)
+		{
+			bHit = true;
+		}
+
+		if (bHit)
+		{
+			float NewHitDistance = length(VolumeRayDirection * SampleRayTime * DFObjectData.VolumeToWorldScale);
+
+			if (NewHitDistance < TraceResult.HitDistance)
+			{
+				TraceResult.HitObject = ObjectIndex;
+				TraceResult.HitDistance = NewHitDistance;
+			}
+		}
+	}
+}
+
+float3 GetPrevWorldPositionFromGPUSceneInstanceIndex(float3 WorldPosition, uint GPUSceneInstanceIndex)
+{
+	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(GPUSceneInstanceIndex, Scene.GPUScene.InstanceDataSOAStride);
+	float4 LocalPosition = mul(float4(WorldPosition, 1), LWCHackToFloat(InstanceSceneData.WorldToLocal));
+	float3 PrevWorldPosition = mul(LocalPosition, LWCHackToFloat(InstanceSceneData.PrevLocalToWorld)).xyz;
+	return PrevWorldPosition;
+}
+
+struct FTraceMeshSDFDerivedData
+{
+	float3 HitNormal;
+	uint SceneInstanceIndex;
+	uint MeshCardsIndex;
+	float3 WorldVelocity;
+};
+
+FTraceMeshSDFDerivedData CalculateMeshSDFDerivedData(
+	float3 WorldRayStart, 
+	float3 WorldRayDirection, 
+	float TraceDistance,
+	bool bCalculateHitVelocity,
+	FTraceMeshSDFResult TraceMeshSDFResult)
+{
+	FTraceMeshSDFDerivedData TraceSDFData;
+
+	uint DFObjectIndex = TraceMeshSDFResult.HitObject;
+	FDFObjectData DFObjectData = LoadDFObjectData(DFObjectIndex);
+	float4x4 WorldToVolume = LWCHackToFloat(DFObjectData.WorldToVolume);
+
+	float3 HitPosition = WorldRayStart + WorldRayDirection * TraceMeshSDFResult.HitDistance;
+	float3 SampleVolumePosition = mul(float4(HitPosition, 1), WorldToVolume).xyz;
+
+	// Clamp hit point to a valid volume
+	SampleVolumePosition = clamp(SampleVolumePosition, -DFObjectData.VolumePositionExtent, DFObjectData.VolumePositionExtent);
+
+	FDFAssetData DFAssetData = LoadDFAssetDataHighestResolution(DFObjectData.AssetIndex);
+	float3 VolumeGradient = CalculateMeshSDFGradient(SampleVolumePosition, DFAssetData);
+	float VolumeGradientLength = length(VolumeGradient);
+	float3 VolumeNormal = VolumeGradientLength > 0.0f ? VolumeGradient / VolumeGradientLength : 0;
+	// Transform by transposed inverse to handle non-uniform scaling
+	float3 WorldGradient = mul(VolumeNormal, transpose((float3x3)DFObjectData.WorldToVolume.M));
+	float WorldGradientLength = length(WorldGradient);
+	TraceSDFData.HitNormal = WorldGradientLength > 0.0f ? WorldGradient / WorldGradientLength : 0;
+
+	if (bCalculateHitVelocity)
+	{
+		TraceSDFData.WorldVelocity = HitPosition - GetPrevWorldPositionFromGPUSceneInstanceIndex(HitPosition, DFObjectData.GPUSceneInstanceIndex);
+	}
+
+	TraceSDFData.SceneInstanceIndex = DFObjectData.GPUSceneInstanceIndex;
+	TraceSDFData.MeshCardsIndex = GetMeshCardsIndexFromSceneInstanceIndex(TraceSDFData.SceneInstanceIndex);
+
+	return TraceSDFData;
+}
+
+Buffer<uint> NumCulledHeightfieldObjects;
+Buffer<uint> CulledHeightfieldObjectIndexBuffer;
+
+Buffer<uint> NumGridCulledHeightfieldObjects;
+Buffer<uint> GridCulledHeightfieldObjectStartOffsetArray;
+Buffer<uint> GridCulledHeightfieldObjectIndicesArray;
+
+struct FConeTraceHeightfieldSimpleResult
+{
+	bool bIsHit;
+	bool bHitFrontFace;
+	float HitDistance;
+};
+
+struct FHeightfieldRayStep
+{
+	float tValue;
+	float3 LocalSamplePosition;
+	float LocalHeightfieldDepth;
+	bool bAboveHeightfield;
+};
+
+FHeightfieldRayStep HeightfieldRayStep(FLumenCardData LumenCardData, uint LocalCardIndex, FConeTraceInput TraceInput, float3 LocalConeOrigin, float3 LocalConeDirection, float tValue)
+{
+	float SampleRadius = max(TraceInput.ConeStartRadius + TraceInput.TanConeAngle * tValue, TraceInput.MinSampleRadius);
+	float3 LocalSamplePosition = LocalConeOrigin + LocalConeDirection * tValue;
+	bool bHiResSurface = false;
+
+	FLumenCardSample CardSample = ComputeSurfaceCacheSample(LumenCardData, LocalCardIndex, LocalSamplePosition.xy, SampleRadius, bHiResSurface);
+
+	float NormalizedDepth = Texture2DSampleLevel(LumenCardScene.DepthAtlas, GlobalBilinearClampedSampler, CardSample.PhysicalAtlasUV, 0).x;
+
+	FHeightfieldRayStep RayStep;
+	RayStep.tValue = tValue;
+	RayStep.LocalSamplePosition = LocalSamplePosition;
+	RayStep.LocalHeightfieldDepth = -(2.0f * NormalizedDepth - 1.0f) * LumenCardData.LocalExtent.z;
+	RayStep.bAboveHeightfield = RayStep.LocalSamplePosition.z > RayStep.LocalHeightfieldDepth;
+	return RayStep;
+}
+
+float GetHeightfieldAlpha(FLumenCardData LumenCardData, uint LocalCardIndex, FConeTraceInput TraceInput, float3 LocalConeOrigin, float3 LocalConeDirection, float tValue)
+{
+	float SampleRadius = max(TraceInput.ConeStartRadius + TraceInput.TanConeAngle * tValue, TraceInput.MinSampleRadius);
+	float3 LocalSamplePosition = LocalConeOrigin + LocalConeDirection * tValue;
+	bool bHiResSurface = false;
+
+	FLumenCardSample CardSample = ComputeSurfaceCacheSample(LumenCardData, LocalCardIndex, LocalSamplePosition.xy, SampleRadius, bHiResSurface);
+
+	return Texture2DSampleLevel(LumenCardScene.OpacityAtlas, GlobalBilinearClampedSampler, CardSample.PhysicalAtlasUV, 0).x;
+}
+
+bool EvaluateHeightfieldHit(
+	FLumenCardData LumenCardData, 
+	uint LocalCardIndex, 
+	FConeTraceInput TraceInput,
+	float3 LocalConeOrigin,
+	float3 LocalConeDirection,
+	FHeightfieldRayStep PrevStep,
+	FHeightfieldRayStep Step,
+	float StepSize, 
+	float tMinValue,
+	float tMaxValue,
+	inout FConeTraceHeightfieldSimpleResult Result)
+{
+	// Hit-point is approximated as the intersection between the ray and a line connecting the previous two evaluation points
+	// (1 - t) * PrevPosition.z + t * LocalSamplePosition.z = (1 - t) * PrevHeightfieldDepth + t * LocalHeightfieldDepth
+	float DeltaT = (PrevStep.LocalSamplePosition.z - PrevStep.LocalHeightfieldDepth) / (PrevStep.LocalSamplePosition.z - Step.LocalSamplePosition.z - PrevStep.LocalHeightfieldDepth + Step.LocalHeightfieldDepth);
+	float HitDistance = clamp(PrevStep.tValue + DeltaT * StepSize, tMinValue, tMaxValue);
+
+	float HeightfieldAlpha = GetHeightfieldAlpha(LumenCardData, LocalCardIndex, TraceInput, LocalConeOrigin, LocalConeDirection, HitDistance);
+	if (HeightfieldAlpha > 0.5f)
+	{
+		Result.HitDistance = HitDistance;
+		Result.bIsHit = true;
+		Result.bHitFrontFace = !Step.bAboveHeightfield;
+	}
+
+	return Result.bIsHit;
+}
+
+int HeightfieldMaxTracingSteps;
+
+FConeTraceHeightfieldSimpleResult ConeTraceHeightfieldSimple(
+	FConeTraceInput TraceInput,
+	uint HeightfieldIndex
+)
+{
+	FConeTraceHeightfieldSimpleResult Result;
+	Result.bIsHit = false;
+	Result.bHitFrontFace = false;
+	Result.HitDistance = TraceInput.MaxTraceDistance;
+
+	FLumenHeightfieldData LumenHeightfield = GetLumenHeightfieldData(HeightfieldIndex);
+	FLumenMeshCardsData MeshCardsData = GetLumenMeshCardsData(LumenHeightfield.MeshCardsIndex);
+
+	// Fetch card
+	int LocalCardIndex = LUMEN_HEIGHTFIELD_LOCAL_CARD_INDEX;
+	FLumenCardData LumenCardData = GetLumenCardData(MeshCardsData.CardOffset + LocalCardIndex);
+
+	// Convert ray to local space
+	float3 LocalConeOrigin = mul(TraceInput.ConeOrigin - LumenCardData.Origin, LumenCardData.WorldToLocalRotation);
+	float3 LocalConeDirection = mul(TraceInput.ConeDirection, LumenCardData.WorldToLocalRotation);
+	float3 LocalConeEndPoint = LocalConeOrigin + LocalConeDirection * TraceInput.MaxTraceDistance;
+
+	// Intersect ray and clip to heightfield bounds
+	float2 HitT = LineBoxIntersect(LocalConeOrigin, LocalConeEndPoint, -LumenCardData.LocalExtent, LumenCardData.LocalExtent);
+	HitT *= length(LocalConeEndPoint - LocalConeOrigin);
+
+	// Clip marching space to intersection window
+	float tMinValue = max(HitT.x, TraceInput.MinTraceDistance);
+	float tMaxValue = min(HitT.y, TraceInput.MaxTraceDistance);
+
+	// Ray-march at some nominal step size, evaluating heightfield data along the way
+	if (tMinValue < tMaxValue && LumenCardData.bVisible)
+	{
+		// Calculate initial entry depth
+		FHeightfieldRayStep PrevStep = HeightfieldRayStep(LumenCardData, LocalCardIndex, TraceInput, LocalConeOrigin, LocalConeDirection, tMinValue);
+
+		// Skip back face hits between [0; EpsilonTraceLength]
+		float EpsilonTraceLength = LumenCardData.TexelSize;
+		if (TraceInput.bUseEpsilonTraceForHeightfields && tMinValue < EpsilonTraceLength)
+		{
+			FHeightfieldRayStep Step = HeightfieldRayStep(LumenCardData, LocalCardIndex, TraceInput, LocalConeOrigin, LocalConeDirection, EpsilonTraceLength);
+
+			// Hit only front faces
+			if (PrevStep.bAboveHeightfield && !Step.bAboveHeightfield)
+			{
+				EvaluateHeightfieldHit(
+					LumenCardData,
+					LocalCardIndex,
+					TraceInput,
+					LocalConeOrigin,
+					LocalConeDirection,
+					PrevStep,
+					Step,
+					/*StepSize*/ EpsilonTraceLength,
+					tMinValue,
+					tMaxValue,
+					Result);
+			}
+
+			PrevStep = Step;
+			tMinValue = EpsilonTraceLength;
+		}
+
+		if (!Result.bIsHit)
+		{
+			const int MaxSteps = HeightfieldMaxTracingSteps;
+			float MinStepSize = (tMaxValue - tMinValue) / MaxSteps;
+			float StepSize = max(LumenCardData.TexelSize * TraceInput.StepFactor, MinStepSize);
+
+			float tValue = tMinValue;
+			for (int StepIndex = 0; StepIndex < MaxSteps; ++StepIndex)
+			{
+				tValue = min(tValue + StepSize, tMaxValue);
+
+				FHeightfieldRayStep Step = HeightfieldRayStep(LumenCardData, LocalCardIndex, TraceInput, LocalConeOrigin, LocalConeDirection, tValue);
+
+				// Encountered zero-crossing
+				if (PrevStep.bAboveHeightfield != Step.bAboveHeightfield)
+				{
+					EvaluateHeightfieldHit(
+						LumenCardData,
+						LocalCardIndex,
+						TraceInput,
+						LocalConeOrigin,
+						LocalConeDirection,
+						PrevStep,
+						Step,
+						/*StepSize*/ StepSize,
+						tMinValue,
+						tMaxValue,
+						Result);
+				}
+
+				PrevStep = Step;
+
+				// Make sure we do one step at tMaxValue order to guarantee a hit
+				if (Result.bIsHit || tValue >= tMaxValue)
+				{
+					break;
+				}
+			}
+		}
+	}
+
+	return Result;
+}
+
+struct FTraceMeshHeightfieldResult
+{
+	FLumenCardData LumenCardData;
+	int LocalCardIndex;
+	float HitDistance;
+	int TotalStepCount;
+	uint HeightfieldObjectIndex;
+};
+
+struct FTraceMeshHeightfieldShadedResult
+{
+	float3 Lighting;
+	float Opacity;
+};
+
+FTraceMeshHeightfieldResult ConeTraceHeightfield(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult
+)
+{
+	OutResult = (FConeTraceResult)0;
+	FTraceMeshHeightfieldResult TraceMeshHeightfieldResult = (FTraceMeshHeightfieldResult)0;
+	TraceMeshHeightfieldResult.HitDistance = TraceInput.MaxTraceDistance;
+
+	bool bHitFrontFace = false;
+#if USE_HEIGHTFIELD_VIEW_CULLING_ONLY
+	uint NumHeightfields = NumCulledHeightfieldObjects[0];
+#else // Use froxel-based culling
+	uint NumHeightfields = TraceInput.NumHeightfields;
+#endif
+
+#if SCENE_TRACE_HEIGHTFIELDS
+	for (uint Index = 0; Index < NumHeightfields; Index++)
+	{
+#if USE_HEIGHTFIELD_VIEW_CULLING_ONLY
+		uint HeightfieldObjectIndex = CulledHeightfieldObjectIndexBuffer[Index];
+#else // Use froxel-based culling
+		uint HeightfieldObjectIndex = GridCulledHeightfieldObjectIndicesArray[TraceInput.HeightfieldStartOffset + Index];
+#endif
+		FConeTraceHeightfieldSimpleResult SimpleResult = ConeTraceHeightfieldSimple(TraceInput, HeightfieldObjectIndex);
+
+		if (SimpleResult.bIsHit && (SimpleResult.HitDistance < TraceMeshHeightfieldResult.HitDistance))
+		{
+			TraceMeshHeightfieldResult.HitDistance = SimpleResult.HitDistance;
+			TraceMeshHeightfieldResult.HeightfieldObjectIndex = HeightfieldObjectIndex;
+			bHitFrontFace = SimpleResult.bHitFrontFace;
+		}
+	}
+
+	if (TraceMeshHeightfieldResult.HitDistance < TraceInput.MaxTraceDistance)
+	{
+		FLumenHeightfieldData LumenHeightfield = GetLumenHeightfieldData(TraceMeshHeightfieldResult.HeightfieldObjectIndex);
+		float3 SamplePosition = TraceInput.ConeOrigin + TraceInput.ConeDirection * TraceMeshHeightfieldResult.HitDistance;
+		float3 SampleNormal = float3(0, 0, 1);
+		float SampleRadius = max(TraceInput.ConeStartRadius + TraceInput.TanConeAngle * TraceMeshHeightfieldResult.HitDistance, TraceInput.MinSampleRadius);
+		float SurfaceCacheBias = 20.0f;
+
+		if (bHitFrontFace)
+		{
+			FSurfaceCacheSample SurfaceCacheSample = EvaluateRayHitFromSurfaceCache(
+				TraceInput.DitherScreenCoord,
+				LumenHeightfield.MeshCardsIndex,
+				SamplePosition,
+				SampleNormal,
+				SampleRadius,
+				SurfaceCacheBias,
+				TraceInput.bHiResSurface);
+
+			OutResult.Lighting = SurfaceCacheSample.Radiance;
+		}
+		else
+		{
+			OutResult.Lighting = 0;
+		}
+		OutResult.Transparency = 0;
+	}
+#endif
+	OutResult.NumOverlaps = NumHeightfields;
+	OutResult.OpaqueHitDistance = TraceMeshHeightfieldResult.HitDistance;
+	return TraceMeshHeightfieldResult;
+}
+
+void ConeTraceMeshSDFsAndInterpolateFromCards(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult)
+{
+	FTraceMeshSDFResult TraceMeshSDFResult;
+	TraceMeshSDFResult.HitDistance = TraceInput.MaxTraceDistance;
+	TraceMeshSDFResult.HitObject = 0;
+
+	for (uint GridCulledMeshSDFIndex = 0; GridCulledMeshSDFIndex < TraceInput.NumMeshSDFs; GridCulledMeshSDFIndex++)
+	{
+		uint ObjectIndex = GridCulledMeshSDFObjectIndicesArray[TraceInput.MeshSDFStartOffset + GridCulledMeshSDFIndex];
+
+		RayTraceSingleMeshSDF(
+			TraceInput.ConeOrigin, 
+			TraceInput.ConeDirection, 
+			TraceInput.TanConeAngle,
+			TraceInput.MinTraceDistance,
+			TraceInput.MaxTraceDistance, 
+			ObjectIndex, 
+			TraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance,
+			TraceInput.InitialMaxDistance,
+			TraceInput.bDitheredTransparency,
+			TraceInput.DitherScreenCoord,
+			TraceMeshSDFResult);
+	}
+
+	if (TraceMeshSDFResult.HitDistance < TraceInput.MaxTraceDistance)
+	{
+		FTraceMeshSDFDerivedData TraceSDFData = CalculateMeshSDFDerivedData(
+			TraceInput.ConeOrigin, 
+			TraceInput.ConeDirection, 
+			TraceInput.MaxTraceDistance, 
+			TraceInput.bCalculateHitVelocity,
+			TraceMeshSDFResult);
+
+		//OutResult.Lighting = frac(10 * TraceMeshSDFResult.HitDistance / TraceInput.MaxTraceDistance);
+		//OutResult.Lighting = NumGridCulledMeshSDFObjects[MeshSDFGridCellIndex] / 10.0f;
+		
+		float3 InterpolatePosition = TraceInput.ConeOrigin + TraceInput.ConeDirection * TraceMeshSDFResult.HitDistance;
+		float InterpolateRadius = TraceMeshSDFResult.HitDistance * TraceInput.TanConeAngle;
+
+		//OutResult.Lighting = TraceSDFData.HitNormal * .5f + .5f;
+		//OutResult.Lighting = frac(InterpolatePosition / 1000);
+
+		FSurfaceCacheSample SurfaceCacheSample = EvaluateRayHitFromSurfaceCache(
+			TraceInput.DitherScreenCoord,
+			TraceSDFData.MeshCardsIndex,
+			InterpolatePosition,
+			TraceSDFData.HitNormal,
+			InterpolateRadius,
+			/*SurfaceCacheBias*/ 20.0f,
+			TraceInput.bHiResSurface);
+
+		OutResult.Lighting = SurfaceCacheSample.Radiance;
+		OutResult.Transparency = 0.0f;
+		OutResult.WorldVelocity = TraceSDFData.WorldVelocity;
+	}
+
+	OutResult.OpaqueHitDistance = TraceMeshSDFResult.HitDistance;
+}
+
+void EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceResult SDFTraceResult, inout FConeTraceResult ConeTraceResult)
+{
+	const float3 SampleWorldPosition = TraceInput.ConeOrigin + TraceInput.ConeDirection * SDFTraceResult.HitTime;
+	const float3 SampleTranslatedWorldPosition = TraceInput.ConeTranslatedOrigin + TraceInput.ConeDirection * SDFTraceResult.HitTime;
+	const float3 SampleWorldNormal = ComputeGlobalDistanceFieldNormal(SampleTranslatedWorldPosition, SDFTraceResult.HitClipmapIndex, -TraceInput.ConeDirection);
+	const float ClipmapVoxelExtent = GlobalVolumeTranslatedCenterAndExtent[SDFTraceResult.HitClipmapIndex].w * GlobalVolumeTexelSize;
+
+	// Offset card grid cell from surface in order to minimize leaking
+	float3 GridSampleTranslatedWorldPosition = SampleTranslatedWorldPosition + SampleWorldNormal * ClipmapVoxelExtent;
+
+	// Move card hit point closer to the surface, as all hit points are biased by SDFTraceResult.ExpandSurfaceAmount in order to escape uncertain SDF region
+	float3 CardSampleWorldPosition = SampleWorldPosition + TraceInput.ConeDirection * 0.5f * SDFTraceResult.ExpandSurfaceAmount;
+
+	float3 Radiance = 0.0f;
+	float RadianceFactor = 1.0f;
+	if (TraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance)
+	{
+		// Surface cache has limited resolution. Make sure we don't self-intersect and cause leaking or GI feedback loop
+		RadianceFactor = smoothstep(1.5f * ClipmapVoxelExtent, 2.0f * ClipmapVoxelExtent, SDFTraceResult.HitTime);
+	}
+
+	if (TraceInput.bZeroRadianceIfRayStartsInsideGeometry && SDFTraceResult.HitTime <= TraceInput.MinTraceDistance)
+	{
+		RadianceFactor = 0.0f;
+	}
+
+	float3 ClipmapVolumeUV = ComputeGlobalUV(GridSampleTranslatedWorldPosition, SDFTraceResult.HitClipmapIndex);
+	FGlobalDistanceFieldPage Page = GetGlobalDistanceFieldPage(ClipmapVolumeUV, SDFTraceResult.HitClipmapIndex);
+	if (RadianceFactor > 0.0f && Page.bValid)
+	{
+		FCardSampleAccumulator CardSampleAccumulator;
+		InitCardSampleAccumulator(CardSampleAccumulator);
+
+		float3 PageTableCoord = saturate(ClipmapVolumeUV) * GlobalDistanceFieldClipmapSizeInPages;
+		uint3 CellCoordInPage = frac(frac(PageTableCoord)) * DISTANCE_FIELD_OBJECT_GRID_PAGE_RESOLUTION;
+		uint CellOffsetInPage = ZOrder3DEncode(CellCoordInPage, log2(DISTANCE_FIELD_OBJECT_GRID_PAGE_RESOLUTION));
+		uint4 DistanceFieldObjectGridCell = GlobalDistanceFieldPageObjectGridBuffer[DISTANCE_FIELD_OBJECT_GRID_PAGE_STRIDE * Page.PageIndex + CellOffsetInPage];
+
+		for (uint ObjectIndexInList = 0; ObjectIndexInList < DISTANCE_FIELD_OBJECT_GRID_CELL_SIZE; ++ObjectIndexInList)
+		{
+			FObjectGridCellIndex GridCellIndex = UnpackObjectGridCellIndex(DistanceFieldObjectGridCell[ObjectIndexInList]);
+			if (GridCellIndex.bValid)
+			{
+				uint MeshCardsIndex = GetMeshCardsIndexFromSceneInstanceIndex(GridCellIndex.GPUSceneInstanceIndex);
+				if (MeshCardsIndex < LumenCardScene.NumMeshCards)
+				{
+					float SurfaceCacheBias = DISTANCE_FIELD_OBJECT_GRID_CARD_INTERPOLATION_RANGE_IN_VOXELS * ClipmapVoxelExtent;
+					float SampleRadius = TraceInput.ConeStartRadius + TraceInput.TanConeAngle * SDFTraceResult.HitTime;
+
+					SampleLumenMeshCards(
+						MeshCardsIndex,
+						SampleWorldPosition,
+						SampleWorldNormal,
+						SampleRadius,
+						SurfaceCacheBias,
+						TraceInput.bHiResSurface,
+						CardSampleAccumulator
+					);
+
+					if (CardSampleAccumulator.SampleWeightSum >= 0.9f)
+					{
+						break;	
+					}
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		#define DEBUG_CELL_COUNTER 0
+		#if DEBUG_CELL_COUNTER
+		{
+			uint NumCells = 0;
+			for (uint ObjectIndexInList = 0; ObjectIndexInList < DISTANCE_FIELD_OBJECT_GRID_CELL_SIZE; ++ObjectIndexInList)
+			{
+				FObjectGridCellIndex GridCellIndex = UnpackObjectGridCellIndex(DistanceFieldObjectGridCell[ObjectIndexInList]);
+				if (GridCellIndex.bValid)
+				{
+					uint MeshCardsIndex = GetMeshCardsIndexFromSceneInstanceIndex(GridCellIndex.GPUSceneInstanceIndex);
+					if (MeshCardsIndex < LUMEN_INVALID_MESH_CARDS_INDEX)
+					{
+						++NumCells;
+					}
+				}
+			}
+			LightingSum = 0.0f;
+			if (NumCells == 1)
+			{
+				LightingSum = float3(1, 0, 0);
+			}
+			else if (NumCells == 2)
+			{
+				LightingSum = float3(0, 1, 0);
+			}
+			else if (NumCells == 3)
+			{
+				LightingSum = float3(0, 0, 1);
+			}
+			else
+			{
+				LightingSum = float3(1, 1, 1);
+			}
+			SampleWeightSum = 1.0f;
+		}
+		#endif
+
+		FSurfaceCacheSample SurfaceCacheSample = EvaluateRayHitFromCardSampleAccumulator(
+				TraceInput.DitherScreenCoord,
+				SampleWorldPosition,
+				SampleWorldNormal,
+				CardSampleAccumulator
+			);
+		Radiance = RadianceFactor * SurfaceCacheSample.Radiance;
+	}
+
+	ConeTraceResult.Lighting = Radiance;
+	ConeTraceResult.Transparency = 0.0f;
+	ConeTraceResult.OpaqueHitDistance = SDFTraceResult.HitTime;
+	ConeTraceResult.GeometryWorldNormal = SampleWorldNormal;
+}
+
+/**
+ * Ray trace the Global Distance Field, compute hit point and hit normal, and then evaluate radiance from surface cache
+ */
+void RayTraceGlobalDistanceField(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult)
+{
+	FGlobalSDFTraceResult SDFTraceResult;
+
+	// Trace SDF ray
+	{
+		FGlobalSDFTraceInput SDFTraceInput = SetupGlobalSDFTraceInput(TraceInput.ConeTranslatedOrigin, TraceInput.ConeDirection, TraceInput.MinTraceDistance, TraceInput.MaxTraceDistance, TraceInput.SDFStepFactor, TraceInput.MinSDFStepFactor);
+		SDFTraceInput.bDitheredTransparency = TraceInput.bDitheredTransparency;
+		SDFTraceInput.DitherScreenCoord = TraceInput.DitherScreenCoord;
+		SDFTraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance = TraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance;
+		SDFTraceInput.InitialMaxDistance = TraceInput.InitialMaxDistance;
+
+		SDFTraceResult = RayTraceGlobalDistanceField(SDFTraceInput);
+	}
+
+	OutResult = (FConeTraceResult)0;
+	OutResult.Lighting = float3(0.0f, 0.0f, 0.0f);
+	OutResult.Transparency = 1.0f;
+	OutResult.NumSteps = SDFTraceResult.TotalStepsTaken;
+	OutResult.OpaqueHitDistance = TraceInput.MaxTraceDistance;
+	OutResult.ExpandSurfaceAmount = SDFTraceResult.ExpandSurfaceAmount;
+
+	if (GlobalSDFTraceResultIsHit(SDFTraceResult))
+	{
+		EvaluateGlobalDistanceFieldHit(TraceInput, SDFTraceResult, OutResult);
+	}
+}
+
+float ComputeSquaredDistanceBetweenAABBs(float3 CenterA, float3 ExtentA, float3 CenterB, float3 ExtentB)
+{
+	float3 AxisDistances = max(abs(CenterB - CenterA) - (ExtentA + ExtentB), 0);
+	return dot(AxisDistances, AxisDistances);
+}
+
+float CalculateVoxelTraceStartDistance(float MinTraceDistance, float MaxTraceDistance, float MaxMeshSDFTraceDistance, bool bContinueCardTracing)
+{
+	float VoxelTraceStartDistance = MaxTraceDistance;
+
+	if (NumGlobalSDFClipmaps > 0)
+	{
+		VoxelTraceStartDistance = MinTraceDistance;
+
+		if (bContinueCardTracing)
+		{
+			VoxelTraceStartDistance = max(VoxelTraceStartDistance, MaxMeshSDFTraceDistance);
+		}
+	}
+
+	return VoxelTraceStartDistance;
+}
+
+void ConeTraceLumenSceneCards(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult)
+{
+	OutResult = (FConeTraceResult)0;
+	OutResult.Transparency = 1;
+	OutResult.OpaqueHitDistance = TraceInput.MaxTraceDistance;
+
+#if SCENE_TRACE_MESH_SDFS
+	if (TraceInput.VoxelTraceStartDistance > TraceInput.MinTraceDistance)
+	{
+		FConeTraceInput CardTraceInput = TraceInput;
+		CardTraceInput.MaxTraceDistance = TraceInput.VoxelTraceStartDistance;
+
+		ConeTraceMeshSDFsAndInterpolateFromCards(CardTraceInput, OutResult);
+	}
+#endif
+}
+
+void ConeTraceLumenSceneHeightfields(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult)
+{
+#if SCENE_TRACE_HEIGHTFIELDS
+	if (TraceInput.VoxelTraceStartDistance > TraceInput.MinTraceDistance)
+	{
+		FConeTraceInput CardTraceInput = TraceInput;
+		CardTraceInput.MaxTraceDistance = min(TraceInput.VoxelTraceStartDistance, OutResult.OpaqueHitDistance);
+
+		FConeTraceResult HeightfieldResult = OutResult;
+		ConeTraceHeightfield(CardTraceInput, HeightfieldResult);
+
+		if (HeightfieldResult.OpaqueHitDistance < CardTraceInput.MaxTraceDistance)
+		{
+			OutResult = HeightfieldResult;
+		}
+		OutResult.NumSteps += HeightfieldResult.NumSteps;
+	}
+#endif
+}
+
+void ConeTraceLumenSceneVoxels(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult)
+{
+	if (TraceInput.VoxelTraceStartDistance < TraceInput.MaxTraceDistance)
+	{
+		FConeTraceInput VoxelTraceInput = TraceInput;
+		VoxelTraceInput.MinTraceDistance = TraceInput.VoxelTraceStartDistance;
+		FConeTraceResult VoxelTraceResult;
+		RayTraceGlobalDistanceField(VoxelTraceInput, VoxelTraceResult);
+
+		OutResult.Lighting += VoxelTraceResult.Lighting * OutResult.Transparency;
+		OutResult.Transparency *= VoxelTraceResult.Transparency;
+		OutResult.NumSteps += VoxelTraceResult.NumSteps;
+		OutResult.OpaqueHitDistance = min(OutResult.OpaqueHitDistance, VoxelTraceResult.OpaqueHitDistance);
+		OutResult.GeometryWorldNormal = VoxelTraceResult.GeometryWorldNormal;
+		OutResult.WorldVelocity = VoxelTraceResult.WorldVelocity;
+	}
+}
+
+void ConeTraceLumenScene(
+	FConeTraceInput TraceInput,
+	inout FConeTraceResult OutResult)
+{
+	ConeTraceLumenSceneCards(TraceInput, OutResult);
+	ConeTraceLumenSceneHeightfields(TraceInput, OutResult);
+	ConeTraceLumenSceneVoxels(TraceInput, OutResult);
+}

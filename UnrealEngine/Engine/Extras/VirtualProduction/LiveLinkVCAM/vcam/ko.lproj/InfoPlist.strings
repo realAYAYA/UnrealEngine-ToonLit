@@ -1,0 +1,18 @@
+/* Bundle name */
+"CFBundleName" = "Live Link VCAM";
+
+/* Privacy - Bluetooth Always Usage Description */
+"NSBluetoothAlwaysUsageDescription" = "Tentacle Sync 연동에 블루투스가 필요합니다.";
+
+/* Privacy - Bluetooth Peripheral Usage Description */
+"NSBluetoothPeripheralUsageDescription" = "Tentacle Sync 연동에 블루투스가 필요합니다.";
+
+/* Privacy - Camera Usage Description */
+"NSCameraUsageDescription" = "Live Link VCAM은 AR 트래킹에 카메라를 사용합니다.";
+
+/* Copyright (human-readable) */
+"NSHumanReadableCopyright" = "© 2021 Epic Games, Inc. \nAll rights reserved.";
+
+/* Privacy - Local Network Usage Description */
+"NSLocalNetworkUsageDescription" = "Live Link VCAM은 언리얼 엔진에서 데이터를 송출하거나 수신합니다.";
+

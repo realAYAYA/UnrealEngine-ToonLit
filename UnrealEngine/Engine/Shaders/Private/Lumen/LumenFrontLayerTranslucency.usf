@@ -1,0 +1,141 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenFrontLayerTranslucency.usf
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+
+// Material pass reroutes
+#define SceneTexturesStruct LumenFrontLayerTranslucencyGBufferPass.SceneTextures
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+struct FLumenFrontLayerTranslucencyGBufferInterpolantsVSToPS
+{
+
+};
+
+struct FLumenFrontLayerTranslucencyGBufferVSToPS
+{
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+	FLumenFrontLayerTranslucencyGBufferInterpolantsVSToPS PassInterpolants;
+	float4 Position : SV_POSITION;
+};
+
+void MainVS(
+	FVertexFactoryInput Input,
+	out FLumenFrontLayerTranslucencyGBufferVSToPS Output
+	)
+{	
+	uint EyeIndex = 0;
+	ResolvedView = ResolveView();
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPositionExcludingWPO = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float4 WorldPosition = WorldPositionExcludingWPO;
+	float4 ClipSpacePosition;
+
+	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);	
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
+
+	ISOLATE
+	{
+		WorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
+		ClipSpacePosition = INVARIANT(mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip));
+		Output.Position = INVARIANT(ClipSpacePosition);
+	}
+
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+}
+
+void MainPS(
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FLumenFrontLayerTranslucencyGBufferInterpolantsVSToPS PassInterpolants,
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position		
+	OPTIONAL_IsFrontFace,
+	out float4 OutTarget0 : SV_Target0
+	OPTIONAL_OutDepthConservative)
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+	float3 WorldNormal = MaterialParameters.WorldNormal;
+	float Roughness = GetMaterialRoughness(PixelMaterialInputs);
+
+#if TEMPLATE_USES_STRATA
+	{
+		const float3 V = MaterialParameters.CameraVector;
+		const float3 L = MaterialParameters.WorldNormal;
+
+		// Initialise a Strata header with normal in registers
+		FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
+		FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+		StrataPixelHeader.IrradianceAO.MaterialAO = GetMaterialAmbientOcclusion(PixelMaterialInputs);
+
+		float TotalCoverage = 1.f;
+		if (StrataPixelHeader.StrataTree.BSDFCount > 0)
+		{
+			const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, true /*bRoughDiffuseEnabled*/, 0 /*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+			float3 TotalTransmittancePreCoverage = 0;
+			FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
+			StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, StrataData, V, Settings, TotalCoverage, TotalTransmittancePreCoverage);
+
+			// Clip pixels that will never receive any lumen front material reflections.
+			// We cannot generalise and use GetMaterialClippingVelocity for that because this function clips with a 1/255 threshold...that can result in NaN refelctions if some pixels are not genrated correctly.
+			clip(TotalCoverage <= 0.0f ? -1.0f : 1.0f);
+
+			// Extract averaged normal and roughness
+			WorldNormal = 0;
+			Roughness = 0;
+			float TopLayerTotalWeight = 0.0f;
+			STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
+			for (int BSDFIdx = 0; BSDFIdx < StrataPixelHeader.StrataTree.BSDFCount; ++BSDFIdx)
+			{
+				#define CurrentBSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
+				if (StrataIsBSDFVisible(CurrentBSDF))
+				{
+					FStrataBSDFContext StrataBSDFContext = StrataCreateBSDFContext(StrataPixelHeader, CurrentBSDF, NullStrataAddressing, V, L);
+					const float Weight = Luminance(CurrentBSDF.LuminanceWeightV);
+					WorldNormal += Weight * StrataBSDFContext.N;
+
+					TopLayerTotalWeight += CurrentBSDF.TopLayerDataWeight;
+					Roughness += CurrentBSDF.TopLayerDataWeight * StrataGetBSDFRoughness(CurrentBSDF);
+				}
+				#undef CurrentBSDF
+			}
+
+			if (any(WorldNormal != 0)) 
+			{
+				WorldNormal = normalize(WorldNormal);
+			}
+
+			Roughness = TopLayerTotalWeight > 0.0f ? Roughness / TopLayerTotalWeight : 0.0f;
+		}
+	}
+#else 
+	// Thin translucent materials are assumed to always have a coverage of 1.
+#if !MATERIAL_SHADINGMODEL_THIN_TRANSLUCENT
+	clip(PixelMaterialInputs.Opacity <= 0.0f ? -1.0f : 1.0f);
+#endif
+#endif // TEMPLATE_USES_STRATA
+
+	GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
+
+#if OUTPUT_PIXEL_DEPTH_OFFSET
+	ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, OutDepth);
+#endif
+
+	// We store 1.0+roughness to make sure w is always greater that 0 where we write which then signifies we need lumen high quality reflections.
+	// The render target is floating point and we will still get enough accuracy.
+	OutTarget0 = float4(EncodeNormal(WorldNormal), 1.0f + Roughness);
+}

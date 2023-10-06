@@ -1,0 +1,102 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShadingCommon.ush"
+#include "../ColorMap.ush"
+
+#if ENABLE_TRACE_RAY_INLINE_PROCEDURAL_PRIMITIVE
+#include "../Nanite/NaniteRayTrace.ush"
+#endif
+
+#include "RayTracingCommon.ush"
+#include "RayTracingDeferredMaterials.ush"
+
+#include "/Engine/Shared/RayTracingDebugDefinitions.h"
+
+#include "TraceRayInline.ush"
+
+RWTexture2D<float4> Output;
+RaytracingAccelerationStructure TLAS;
+
+uint VisualizationMode;
+float TraversalBoxScale;
+float TraversalClusterScale;
+float TraversalTriangleScale;
+
+struct FNaniteTraceRayInlineCallback : FDefaultTraceRayInlineCallback
+{
+	uint ClusterIntersectionCount;
+
+	bool OnProceduralPrimitive(float3 ObjectRayOrigin, float3 ObjectRayDirection, float RayTMin, inout float RayTCurrent, FTraceRayInlineProceduralIntersectionParameters ProceduralIntersectionParameters)
+	{
+#if ENABLE_TRACE_RAY_INLINE_PROCEDURAL_PRIMITIVE
+		uint PrimitiveID = ProceduralIntersectionParameters.InstanceID;
+		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(PrimitiveID);
+		uint PrimitiveInstanceIndex = 0; // TODO
+		uint InstanceId = PrimitiveData.InstanceSceneDataOffset + PrimitiveInstanceIndex;
+		FInstanceSceneData InstanceData = GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride);
+
+		if (InstanceData.ValidInstance && InstanceData.NaniteRuntimeResourceID != 0xFFFFFFFFu)
+		{
+			const float3 RayOrg = ObjectRayOrigin;
+			const float3 RayDir = ObjectRayDirection;
+			const float TMin = RayTMin;
+
+			const float NaniteCutError = 0.0f;
+
+			FNaniteIntersectionResult NaniteIntersectionResult;
+			if (NaniteIntersection(RayOrg, RayDir, InstanceData, PrimitiveData, NaniteCutError, TMin, RayTCurrent, NaniteIntersectionResult))
+			{
+				ClusterIntersectionCount = NaniteIntersectionResult.ClusterIntersectionCount;
+				return true;
+			}
+		}
+#endif
+		return false;
+	}
+};
+
+[numthreads(INLINE_RAY_TRACING_THREAD_GROUP_SIZE_X, INLINE_RAY_TRACING_THREAD_GROUP_SIZE_Y, 1)]
+void RayTracingDebugTraversalCS(uint3 DispatchThread : SV_DispatchThreadID)
+{
+	uint2 PixelCoord = DispatchThread.xy + View.ViewRectMin.xy;
+
+	float2 RenderTargetUV = (float2(PixelCoord) + .5f) * View.BufferSizeAndInvSize.zw;
+
+	FRayDesc Ray = CreatePrimaryRay(RenderTargetUV);
+
+	uint RayFlags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES | RAY_FLAG_FORCE_OPAQUE;
+
+	FNaniteTraceRayInlineCallback NaniteCallback = (FNaniteTraceRayInlineCallback)0;
+
+	FTraceRayInlineContext TraceRayInlineContext = CreateTraceRayInlineContext();
+	TraceRayInlineContext.bProcedural = ENABLE_TRACE_RAY_INLINE_PROCEDURAL_PRIMITIVE;
+
+	FTraceRayInlineResult TraceResult = TraceRayInlineWithCallback(TLAS, RayFlags, RAY_TRACING_MASK_ALL, Ray.GetNativeDesc(), TraceRayInlineContext, NaniteCallback);
+
+	float4 Result = 0;
+
+	const uint Intersections = TraceResult.TraversalStatistics.NodeIntersectionCount + NaniteCallback.ClusterIntersectionCount + TraceResult.TraversalStatistics.TriangleIntersectionCount;
+	switch (VisualizationMode)
+	{
+	default:
+	case RAY_TRACING_DEBUG_VIZ_TRAVERSAL_ALL:
+		Result.rgb = ColorMapTurbo(Intersections / (TraversalBoxScale + TraversalTriangleScale));
+		break;
+	case RAY_TRACING_DEBUG_VIZ_TRAVERSAL_CLUSTER:
+		Result.rgb = ColorMapTurbo(NaniteCallback.ClusterIntersectionCount / TraversalClusterScale);
+		break;
+	case RAY_TRACING_DEBUG_VIZ_TRAVERSAL_NODE:
+		Result.rgb = ColorMapTurbo(TraceResult.TraversalStatistics.NodeIntersectionCount / TraversalBoxScale);
+		break;
+	case RAY_TRACING_DEBUG_VIZ_TRAVERSAL_TRIANGLE:
+		Result.rgb = ColorMapTurbo(TraceResult.TraversalStatistics.TriangleIntersectionCount / TraversalTriangleScale);
+		break;
+	}
+
+#if PRINT_TRAVERSAL_STATISTICS
+	TraceRayInlineAccumulateStatistics();
+#endif
+
+	Output[PixelCoord] = Result;
+}

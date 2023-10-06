@@ -1,0 +1,286 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "PathTracingVolumeCommon.ush"
+#include "PathTracingAtmosphere.ush"
+#include "PathTracingFog.ush"
+#include "PathTracingHeterogeneousVolumes.ush"
+#include "PathTracingVolumeSampling.ush"
+
+uint UseAnalyticTransmittance;
+
+uint EnableAtmosphere;
+uint EnableFog;
+uint EnableHeterogeneousVolumes;
+int MaxRaymarchSteps;
+
+
+// Given an input ray, figure out where the provided volume intersects it
+FVolumeIntersectionList VolumeIntersect(float3 Origin, float3 Direction, float TMin, float TMax)
+{
+	FVolumeIntersectionList Result = CreateEmptyVolumeIntersectionList();
+	if (EnableAtmosphere)
+	{
+		Result.Add(VOLUMEID_ATMOSPHERE, AtmosphereIntersect(Origin, Direction, TMin, TMax));
+	}
+	if (EnableFog)
+	{
+		Result.Add(VOLUMEID_FOG, FogIntersect(Origin, Direction, TMin, TMax));
+	}
+	if (EnableHeterogeneousVolumes)
+	{
+		Result.Add(VOLUMEID_HETEROGENEOUS_VOLUMES, HeterogeneousVolumesIntersect(Origin, Direction, TMin, TMax));
+	}
+	return Result;
+}
+
+FPackedPathTracingPayload VolumeGetBlockerHit(uint VolumeID, float3 Origin, float3 Direction, float HitT)
+{
+	// NOTE: only atmosphere supports blockers, so if this gets called it is safe to assume its for the atmosphere volume
+	return AtmosphereGetBlockerHit(Origin, Direction, HitT);
+}
+
+// Given an input ray, figure out the bounds on density. The T interval may be smaller than the one returned by VolumeIntersect
+FVolumeDensityBounds VolumeGetDensityBounds(float3 Origin, float3 Direction, FVolumeIntersectionInterval Interval)
+{
+	FVolumeDensityBounds Result = CreateVolumeDensityBound(0, 0);
+	for (int Index = 0; Index < Interval.Num; Index++)
+	{
+		switch (Interval.VolumeID[Index])
+		{
+			case VOLUMEID_ATMOSPHERE:            MergeVolumeDensityBounds(Result, AtmosphereGetDensityBounds(Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax)); break;
+			case VOLUMEID_FOG:                   MergeVolumeDensityBounds(Result, FogGetDensityBounds(Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax)); break;
+			//case VOLUMEID_HETEROGENEOUS_VOLUMES: MergeVolumeDensityBounds(Result, HeterogeneousVolumesGetDensityBounds(Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax)); break;
+		}
+	}
+	return Result;
+}
+
+// Given a point in world space, return the amount of volume and its scattering properties
+FVolumeShadedResult VolumeGetDensity(float3 TranslatedWorldPos, FVolumeIntersectionInterval Interval)
+{
+	FVolumeShadedResult Result = (FVolumeShadedResult)0;
+	for (int Index = 0; Index < Interval.Num; Index++)
+	{
+		switch (Interval.VolumeID[Index])
+		{
+			case VOLUMEID_ATMOSPHERE:            MergeVolumeShadedResult(Result, AtmosphereGetDensity(TranslatedWorldPos)); break;
+			case VOLUMEID_FOG:                   MergeVolumeShadedResult(Result, FogGetDensity(TranslatedWorldPos)); break;
+			case VOLUMEID_HETEROGENEOUS_VOLUMES: MergeVolumeShadedResult(Result, HeterogeneousVolumesGetDensity(TranslatedWorldPos)); break;
+		}
+	}
+	return Result;
+}
+
+
+// Return the transmittance along a ray segment
+float3 VolumeGetTransmittanceAnalytical(float3 StartThroughput, float3 Origin, float3 Direction, FVolumeIntersectionInterval Interval, inout RandomSequence RandSequence)
+{
+	float3 Throughput = StartThroughput;
+	for (int Index = 0; Index < Interval.Num; Index++)
+	{
+		switch (Interval.VolumeID[Index])
+		{
+			case VOLUMEID_ATMOSPHERE:            Throughput *= AtmosphereGetTransmittance(Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax); break;
+			case VOLUMEID_FOG:                   Throughput *= FogGetTransmittance(Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax); break;
+			case VOLUMEID_HETEROGENEOUS_VOLUMES: Throughput = HeterogeneousVolumesGetTransmittance(Throughput, Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax, RandSequence); break;
+		}
+	}
+	return Throughput;
+}
+
+// Return the transmittance along a whole intersection list
+float3 VolumeGetTransmittanceAnalytical(float3 StartThroughput, float3 Origin, float3 Direction, FVolumeIntersectionList IntersectionList, inout RandomSequence RandSequence)
+{
+	float3 Throughput = StartThroughput;
+	for (int Index = 0; Index < IntersectionList.Num; Index++)
+	{
+		float TMin = IntersectionList.VolumeTMin[Index];
+		float TMax = IntersectionList.VolumeTMax[Index];
+		switch (IntersectionList.VolumeID[Index])
+		{
+			case VOLUMEID_ATMOSPHERE:            Throughput *= AtmosphereGetTransmittance(Origin, Direction, TMin, TMax); break;
+			case VOLUMEID_FOG:                   Throughput *= FogGetTransmittance(Origin, Direction, TMin, TMax); break;
+			case VOLUMEID_HETEROGENEOUS_VOLUMES: Throughput = HeterogeneousVolumesGetTransmittance(Throughput, Origin, Direction, TMin, TMax, RandSequence); break;
+		}
+	}
+	return Throughput;
+}
+
+
+// Reference implementation of transmittance that uses only GetDensity and GetDensityBounds
+// express the inner loop here as a macro so we can stamp down a separate copy per volume ID and avoid a nested loop during ray marching
+#define PATH_TRACER_REFERENCE_TRANSMITTANCE_LOOP(GetDensityBoundsFunc, GetDensityFunc)				\
+	/* Limit number of steps to prevent timeouts // FIXME: This biases the result! */				\
+	for (int Step = 0; Step < MaxRaymarchSteps; Step++)												\
+	{																								\
+		float3 SigmaBar = GetDensityBoundsFunc(Origin, Direction, TMin, TMax).SigmaMax;				\
+		/* take stochastic steps along the ray to estimate transmittance (null scattering) */		\
+		float3 ColorChannelPdf = Throughput;														\
+		/* Sample the distance to the next interaction */											\
+		float2 RandValue = RandomSequence_GenerateSample2D(RandSequence);							\
+		float DeltaT = SampleSpectralTransmittance(RandValue.x, SigmaBar, ColorChannelPdf);			\
+		if (DeltaT < 0.0)																			\
+		{																							\
+			/* no more energy left in the path */													\
+			break;																					\
+		}																							\
+		if (TMin + DeltaT < TMax)																	\
+		{																							\
+			TMin += DeltaT;																			\
+			/* our ray marching step stayed inside the atmo and is still in front of the next hit */\
+			/* Compute transmittance through the bounding homogeneous medium (both real and fictitious particles) */	\
+			Throughput *= EvaluateSpectralTransmittanceHit(DeltaT, SigmaBar, ColorChannelPdf).xyz;	\
+			float3 WorldPos = Origin + TMin * Direction;											\
+			/* clamp to make sure we never exceed the majorant (should not be the case, but need to avoid any possible numerical issues) */	\
+			float3 SigmaT = min(GetDensityFunc(WorldPos).SigmaT, SigmaBar);							\
+			float3 SigmaN = SigmaBar - SigmaT;														\
+			/* keep tracing through the volume */													\
+			Throughput *= SigmaN;																	\
+		}																							\
+		else                                                                                        \
+		{																							\
+			/* update the path throughput, knowing that we escaped the medium*/						\
+			Throughput *= EvaluateSpectralTransmittanceMiss(TMax - TMin, SigmaBar, ColorChannelPdf).xyz;	\
+			/* exit the ray marching loop */														\
+			break;																					\
+		}																							\
+	}																								\
+
+
+// The returned value factors in the initial throughput. This is used to avoid sampling too much if throughput reaches 0.
+float3 VolumeGetTransmittanceNullTracking(float3 StartThroughput, float3 Origin, float3 Direction, FVolumeIntersectionInterval Interval, inout RandomSequence RandSequence)
+{
+	float3 Throughput = StartThroughput;
+	for (int Index = 0; Index < Interval.Num; Index++)
+	{
+		float TMin = Interval.VolumeTMin;
+		float TMax = Interval.VolumeTMax;
+		switch (Interval.VolumeID[Index])
+		{
+			case VOLUMEID_ATMOSPHERE:
+			{
+				PATH_TRACER_REFERENCE_TRANSMITTANCE_LOOP(AtmosphereGetDensityBounds, AtmosphereGetDensity);
+				break;
+			}
+			case VOLUMEID_FOG:
+			{
+				PATH_TRACER_REFERENCE_TRANSMITTANCE_LOOP(FogGetDensityBounds, FogGetDensity);
+				break;
+			}
+			case VOLUMEID_HETEROGENEOUS_VOLUMES:
+			{
+				Throughput = HeterogeneousVolumesGetTransmittance(Throughput, Origin, Direction, TMin, TMax, RandSequence);
+				break;
+			}
+		}
+	}
+	return Throughput;
+
+}
+
+float3 VolumeGetTransmittanceNullTracking(float3 StartThroughput, float3 Origin, float3 Direction, FVolumeIntersectionList IntersectionList, inout RandomSequence RandSequence)
+{
+	float3 Throughput = StartThroughput;
+	for (int Index = 0; Index < IntersectionList.Num; Index++)
+	{
+		float TMin = IntersectionList.VolumeTMin[Index];
+		float TMax = IntersectionList.VolumeTMax[Index];
+		switch (IntersectionList.VolumeID[Index])
+		{
+			case VOLUMEID_ATMOSPHERE:
+			{
+				PATH_TRACER_REFERENCE_TRANSMITTANCE_LOOP(AtmosphereGetDensityBounds, AtmosphereGetDensity);
+				break;
+			}
+			case VOLUMEID_FOG:
+			{
+				PATH_TRACER_REFERENCE_TRANSMITTANCE_LOOP(FogGetDensityBounds, FogGetDensity);
+				break;
+			}
+			case VOLUMEID_HETEROGENEOUS_VOLUMES:
+			{
+				Throughput = HeterogeneousVolumesGetTransmittance(Throughput, Origin, Direction, TMin, TMax, RandSequence);
+				break;
+			}
+		}
+	}
+	return Throughput;
+
+#undef PATH_TRACER_REFERENCE_TRANSMITTANCE_LOOP
+}
+
+float3 VolumeGetTransmittance(float3 StartThroughput, float3 Origin, float3 Direction, FVolumeIntersectionInterval Interval, inout RandomSequence RandSequence)
+{
+	if (UseAnalyticTransmittance)
+	{
+		return VolumeGetTransmittanceAnalytical(StartThroughput, Origin, Direction, Interval, RandSequence);
+	}
+
+	return VolumeGetTransmittanceNullTracking(StartThroughput, Origin, Direction, Interval, RandSequence);
+}
+
+float3 VolumeGetTransmittance(float3 StartThroughput, float3 Origin, float3 Direction, FVolumeIntersectionList IntersectionList, inout RandomSequence RandSequence)
+{
+	if (UseAnalyticTransmittance)
+	{
+		return VolumeGetTransmittanceAnalytical(StartThroughput, Origin, Direction, IntersectionList, RandSequence);
+	}
+
+	return VolumeGetTransmittanceNullTracking(StartThroughput, Origin, Direction, IntersectionList, RandSequence);
+}
+
+FVolumeTrackingResult VolumeSampleDistance(float3 PathThroughput, float3 Origin, float3 Direction, FVolumeIntersectionInterval Interval, bool bIsCameraRay, inout RandomSequence RandSequence)
+{
+	FVolumeDensityBounds VolumeDensityBounds = VolumeGetDensityBounds(Origin, Direction, Interval);
+	float3 SigmaBar = VolumeDensityBounds.SigmaMax;
+	if (!UseAnalyticTransmittance)
+	{
+		// if we are not using analytical transmittance, a tight majorant could prevent us from "seeing" hits that match the density exactly
+		// leading to heavy noise on bright objects embedded in the volume
+		// however if we can track transmittance analytically, this workaround is not needed as we will re-compute a precise answer after ray marching
+		SigmaBar *= bIsCameraRay ? 2 : 1;
+	}
+
+	bool bIntervalHasHeterogeneousVolume = false;
+	for (int Index = 0; Index < Interval.Num; ++Index)
+	{
+		bIntervalHasHeterogeneousVolume |= (Interval.VolumeID[Index] == VOLUMEID_HETEROGENEOUS_VOLUMES);
+	}
+
+	FVolumeTrackingResult TrackingResult;
+	if (bIntervalHasHeterogeneousVolume)
+	{
+		FMajorantData OverlappingMajorant = CreateMajorantData(VolumeDensityBounds.SigmaMin, SigmaBar);
+		TrackingResult = HeterogeneousVolumesSampleDistance(PathThroughput, Origin, Direction, Interval.VolumeTMin, Interval.VolumeTMax, OverlappingMajorant, RandSequence);
+	}
+	else
+	{
+		float RandValue = RandomSequence_GenerateSample1D(RandSequence);
+		TrackingResult.Distance = SampleSpectralTransmittance(RandValue, SigmaBar, PathThroughput);
+		if (TrackingResult.Distance < 0.0)
+		{
+			return TrackingResult;
+		}
+
+		TrackingResult.SigmaBar = SigmaBar;
+		TrackingResult.Throughput = PathThroughput;
+		TrackingResult.bIsCollision = Interval.VolumeTMin + TrackingResult.Distance < Interval.VolumeTMax;
+		if (TrackingResult.bIsCollision)
+		{
+			float4 Evaluation = EvaluateSpectralTransmittanceHit(TrackingResult.Distance, SigmaBar, PathThroughput);
+			TrackingResult.Throughput *= Evaluation.xyz;
+			TrackingResult.Pdf = Evaluation.w;
+			TrackingResult.Distance += Interval.VolumeTMin;
+		}
+		else
+		{
+			float4 Evaluation = EvaluateSpectralTransmittanceMiss(Interval.VolumeTMax - Interval.VolumeTMin, SigmaBar, PathThroughput);
+			TrackingResult.Throughput *= Evaluation.xyz;
+			TrackingResult.Pdf = Evaluation.w;
+		}
+	}
+
+	return TrackingResult;
+}

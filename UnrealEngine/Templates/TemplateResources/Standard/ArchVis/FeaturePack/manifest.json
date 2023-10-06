@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "CollaborativeViewer Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for CollaborativeViewer"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "ArchVis.png",
+	"Screenshots":
+	[
+		"ArchVis_Preview.png"
+	],
+	"Ident": "ArchVisStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "ArchVis",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/ArchVis/Content/*.*"
+		]
+	}
+}
+

@@ -1,0 +1,24 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HdGpSceneIndexPlugin": {
+                        "bases": [
+                            "HdSceneIndexPlugin"
+                        ], 
+                        "displayName":
+                            "HdGpGenerativeProceduralResolvingSceneIndex",
+                        "loadWithRenderer": "",
+                        "priority": 0
+                    }
+                }
+            }, 
+            "LibraryPath": "../../../../../Source/ThirdParty/Linux/bin/x86_64-unknown-linux-gnu/libusd_hdGp.so", 
+            "Name": "hdGp", 
+            "ResourcePath": "resources", 
+            "Root": "..", 
+            "Type": "library"
+        }
+    ]
+}

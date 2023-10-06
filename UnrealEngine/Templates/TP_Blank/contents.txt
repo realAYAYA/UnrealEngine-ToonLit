@@ -1,0 +1,4 @@
+../../../Templates/TP_Blank/manifest.json
+../../../Templates/TP_Blank/Config/config.ini
+../../../Templates/TP_Blank/Media/TP_Blank.png
+../../../Templates/TP_Blank/Media/TP_Blank_Preview.png

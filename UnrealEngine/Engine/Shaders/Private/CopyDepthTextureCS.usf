@@ -1,0 +1,23 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	CopyDepthTextureCS.usf
+=============================================================================*/
+
+#include "Common.ush"
+
+#ifndef THREADGROUP_SIZE
+#error THREADGROUP_SIZE must be defined
+#endif
+
+Texture2D SceneDepthTexture;
+
+RWTexture2D<float> RWDepthTexture;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void CopyDepthCS(
+	uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	float DeviceZ = SceneDepthTexture[DispatchThreadId + View.ViewRectMinAndSize.xy].x;
+	RWDepthTexture[DispatchThreadId + View.ViewRectMinAndSize.xy] = DeviceZ;
+}

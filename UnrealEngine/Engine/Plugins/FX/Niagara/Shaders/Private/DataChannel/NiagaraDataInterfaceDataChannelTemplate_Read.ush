@@ -1,0 +1,30 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/**
+ * Template shader code for the Read function for the NiagaraDataInterfaceDataChannel.
+ * Contained in it's own shader file to allow reuse between different invocations with different params.
+ */
+
+void {FunctionSymbol}(int ElementIndex, out bool bOutSuccess, {FunctionParameters})
+{
+	if(ElementIndex >= 0 && ElementIndex < {ParameterName}_Num)
+	{
+		bOutSuccess = true;
+
+#if NIAGARA_DATACHANNEL_MULTIBUFFERS
+		//TODO: Allow reads from N fixed number of buffers.
+#elif NIAGARA_DATACHANNEL_BINDLESSBUFFERS
+		//TODO: Allow reading from any number of buffers when bindless buffers are supported.
+#else
+		//Reads from only a single buffer supported.
+		
+		//This is generated in the DI Cpp depending on the function parameters.
+{PerFunctionParameterShaderCode}
+#endif
+	}
+	//else
+	//{
+	//	//TODO: generate defaults hlsl.
+			//	bOutSuccess = true;
+	//}
+}

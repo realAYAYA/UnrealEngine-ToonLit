@@ -1,0 +1,157 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "Voxel.ush"
+
+#define VOXEL_NUM_LEVELS	2
+#define VOXEL_SCATTER		0
+
+static const float VoxelSize		= 0.125;	// World space size of smallest voxel
+static const float BrickSize		= VOXEL_NUM_LEVELS == 2 ? 16 : 4;	// Num voxels wide
+static const float BrickSizeLog2	= log2( BrickSize );
+
+struct FBrick
+{
+	uint3	Key;
+	uint	BlockOffset;
+};
+
+StructuredBuffer< FBrick >		BrickBuffer;
+RWStructuredBuffer< FBrick >	RWBrickBuffer;
+
+#if 0
+uint EncodeBrickKey( float3 BrickPos, float Level )
+{
+	BrickPos += 256;
+
+	uint3 Brick = uint3( BrickPos ) & 511;
+	uint uLevel = uint( Level ) & 31;
+
+	uint Key;
+	Key  = Brick.x	<<  0;
+	Key |= Brick.y	<<  9;
+	Key |= Brick.z	<< 18;
+	Key |= uLevel	<< 27;
+	return Key;
+}
+
+void DecodeBrickKey( uint BrickKey, out float3 BrickPos, out float CubeSize )
+{
+	float Level;
+	BrickPos.x = float( ( BrickKey >>  0 ) & 0x1ff );
+	BrickPos.y = float( ( BrickKey >>  9 ) & 0x1ff );
+	BrickPos.z = float( ( BrickKey >> 18 ) & 0x1ff );
+	Level      = float( ( BrickKey >> 27 ) & 0x1f );
+
+	BrickPos -= 256;
+
+	CubeSize = (VoxelSize * BrickSize) * exp2( Level );
+}
+#else
+uint3 EncodeBrickKey( float3 BrickPos, float Level )
+{
+	int3 Signed = int3( BrickPos ) + 0x1000000;
+	uint3 Brick = uint3( Signed ) & 0xfffffff;
+	uint uLevel = uint( Level ) & 15;
+
+	uint3 Key;
+	Key.x = Brick.x;
+	Key.y = Brick.y;
+	Key.z = Brick.z;
+	Key.z |= uLevel << 28;
+	return Key;
+}
+
+void DecodeBrickKey( uint3 BrickKey, out float3 BrickPos, out float CubeSize )
+{
+	int3 Signed;
+	Signed.x = BrickKey.x;
+	Signed.y = BrickKey.y;
+	Signed.z = BrickKey.z & 0xfffffff;
+	Signed -= 0x1000000;
+	BrickPos = float3( Signed );
+
+	float Level = float( ( BrickKey.z >> 28 ) & 0xf );
+
+	CubeSize = (VoxelSize * BrickSize) * exp2( Level );
+}
+#endif
+
+FRay GetViewRay( float2 SvPosition )
+{
+	FRay Ray;
+	Ray.Origin = View.TranslatedWorldCameraOrigin;
+	Ray.Time[0] = 0;
+	Ray.Time[1] = 1e24;
+
+	Ray.Direction = mul( float4( SvPosition, 0, 1 ), View.SVPositionToTranslatedWorld ).xyz;
+	//Ray.Direction = normalize( Ray.Direction );
+
+	const float Epsilon = 1e-4;
+	float3 Replacement = select( Ray.Direction > 0, Epsilon, -Epsilon );
+	Ray.Direction = select( abs( Ray.Direction ) < Epsilon, Replacement, Ray.Direction );
+
+	return Ray;
+}
+
+float3 VisualizeCount( uint Count )
+{
+	switch( Count )
+	{
+		case 0: return float3(0.1, 0.1, 0.1);
+		case 1: return float3(1, 0, 0);
+		case 2: return float3(0, 1, 0);
+		case 3: return float3(0, 0, 1);
+		case 4: return float3(1, 1, 0);
+		case 5: return float3(0, 1, 1);
+		case 6: return float3(1, 0, 1);
+		default: return float3(1, 1, 1);
+	}
+}
+
+
+#define DRAW_RECTS	1
+
+#if PLATFORM_SUPPORTS_RECT_LIST
+	static const uint VertsPerBrick = 3;
+	static const uint IndexesPerBrick = 3;
+	static const uint BricksPerInstance = 21;
+#elif DRAW_RECTS
+	static const uint VertsPerBrick = 4;
+	static const uint IndexesPerBrick = 6;
+	static const uint BricksPerInstance = 16;
+#else
+	static const uint VertsPerBrick = 8;
+	static const uint IndexesPerBrick = 36;
+	static const uint BricksPerInstance = 8;
+#endif
+
+Buffer< uint >		DrawIndirectArgs;
+RWBuffer< uint >	RWDrawIndirectArgs;
+
+Buffer< uint >		DispatchIndirectArgs;
+RWBuffer< uint >	RWDispatchIndirectArgs;
+
+uint GetNumBricks()
+{
+	return DispatchIndirectArgs[3];
+}
+
+uint GetNumBlocks()
+{
+	return DrawIndirectArgs[5];
+}
+
+void SetDrawIndirectArgs( uint NumBricks )
+{
+#if VOXEL_SCATTER	// Scatter
+	RWDrawIndirectArgs[0] = 3 * 64;		// NumIndexes
+	RWDrawIndirectArgs[1] = NumBricks;	// NumInstances
+#else
+	RWDrawIndirectArgs[0] = IndexesPerBrick * BricksPerInstance;						// NumIndexes
+	RWDrawIndirectArgs[1] = ( NumBricks + BricksPerInstance - 1 ) / BricksPerInstance;	// NumInstances
+	RWDrawIndirectArgs[2] = 0;	// IndexOffset
+	RWDrawIndirectArgs[3] = 0;	// VertexOffset
+	RWDrawIndirectArgs[4] = 0;	// InstanceOffset
+#endif
+}

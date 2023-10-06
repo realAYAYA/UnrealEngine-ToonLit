@@ -1,0 +1,345 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LightGridCommon.ush
+=============================================================================*/
+
+#pragma once 
+
+#include "LightData.ush"
+
+#if MOBILE_MULTI_VIEW
+	#define ForwardLightDataISR MobileBasePass.ForwardMMV
+#elif INSTANCED_STEREO
+	#if MATERIALBLENDING_ANY_TRANSLUCENT
+		#define ForwardLightDataISR TranslucentBasePass.Shared.ForwardISR
+	#else
+		#define ForwardLightDataISR OpaqueBasePass.Shared.ForwardISR
+	#endif
+#endif
+
+// If this is changed, the LightGridUses16BitBuffers function from LightGridInjection.cpp should also be updated.
+#define LIGHT_GRID_USES_16BIT_BUFFERS (PLATFORM_SUPPORTS_BUFFER_LOAD_TYPE_CONVERSION && !SHADING_PATH_MOBILE)
+
+// ForwardLightData.CulledLightDataGrid could be 32bit StructuredBuffer or 16bit Buffer, make sure to access it from this function
+uint GetCulledLightDataGrid(uint GridIndex)
+{
+#if LIGHT_GRID_USES_16BIT_BUFFERS
+	return ForwardLightData.CulledLightDataGrid16Bit[GridIndex];
+#else
+	return ForwardLightData.CulledLightDataGrid32Bit[GridIndex];
+#endif
+}
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+uint GetCulledLightDataGridISR(uint GridIndex)
+{
+#if LIGHT_GRID_USES_16BIT_BUFFERS
+	return ForwardLightDataISR.CulledLightDataGrid16Bit[GridIndex];
+#else
+	return ForwardLightDataISR.CulledLightDataGrid32Bit[GridIndex];
+#endif
+}
+#endif
+
+struct FLightGridData
+{
+	uint LightGridPixelSizeShift;
+	float3 LightGridZParams;
+	int3 CulledGridSize;
+};
+
+FLightGridData GetLightGridData(uint EyeIndex)
+{
+	FLightGridData Result;
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	BRANCH
+	if (EyeIndex == 0)
+	{
+#endif
+
+		Result.LightGridPixelSizeShift = ForwardLightData.LightGridPixelSizeShift;
+		Result.LightGridZParams = ForwardLightData.LightGridZParams;
+		Result.CulledGridSize = ForwardLightData.CulledGridSize;
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	}
+	else
+	{
+		Result.LightGridPixelSizeShift = ForwardLightDataISR.LightGridPixelSizeShift;
+		Result.LightGridZParams = ForwardLightDataISR.LightGridZParams;
+		Result.CulledGridSize = ForwardLightDataISR.CulledGridSize;
+	}
+#endif
+
+	return Result;
+}
+
+uint3 ComputeLightGridCellCoordinate(uint2 PixelPos, float SceneDepth, uint EyeIndex)
+{
+	const FLightGridData GridData = GetLightGridData(EyeIndex);
+	uint ZSlice = (uint)(max(0, log2(SceneDepth * GridData.LightGridZParams.x + GridData.LightGridZParams.y) * GridData.LightGridZParams.z));
+	ZSlice = min(ZSlice, (uint)(GridData.CulledGridSize.z - 1));
+	return uint3(PixelPos >> GridData.LightGridPixelSizeShift, ZSlice);
+}
+
+uint ComputeLightGridCellIndex(uint3 GridCoordinate, uint EyeIndex)
+{
+	const FLightGridData GridData = GetLightGridData(EyeIndex);
+	return (GridCoordinate.z * GridData.CulledGridSize.y + GridCoordinate.y) * GridData.CulledGridSize.x + GridCoordinate.x;
+}
+
+uint ComputeLightGridCellIndex(uint2 PixelPos, float SceneDepth, uint EyeIndex)
+{
+	return ComputeLightGridCellIndex(ComputeLightGridCellCoordinate(PixelPos, SceneDepth, EyeIndex), EyeIndex);
+}
+
+uint ComputeLightGridCellIndex(uint2 PixelPos, float SceneDepth)
+{
+	return ComputeLightGridCellIndex(PixelPos, SceneDepth, 0);
+}
+
+#ifndef NUM_CULLED_LIGHTS_GRID_STRIDE
+#define NUM_CULLED_LIGHTS_GRID_STRIDE 0
+#endif
+
+#ifndef LOCAL_LIGHT_DATA_STRIDE
+#define LOCAL_LIGHT_DATA_STRIDE 0
+#endif
+
+uint GetNumLocalLights(uint EyeIndex)
+{
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	return (EyeIndex == 0) ? ForwardLightData.NumLocalLights : ForwardLightDataISR.NumLocalLights;
+#else
+	return ForwardLightData.NumLocalLights;
+#endif
+}
+
+struct FCulledLightsGridData
+{
+	uint NumLocalLights;
+	uint DataStartIndex;
+};
+
+FCulledLightsGridData GetCulledLightsGrid(uint GridIndex, uint EyeIndex)
+{
+	FCulledLightsGridData Result;
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	BRANCH
+	if (EyeIndex == 0)
+	{
+#endif
+
+		Result.NumLocalLights = min(ForwardLightData.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 0], ForwardLightData.NumLocalLights);
+		Result.DataStartIndex = ForwardLightData.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 1];
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	}
+	else
+	{
+		Result.NumLocalLights = min(ForwardLightDataISR.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 0], ForwardLightDataISR.NumLocalLights);
+		Result.DataStartIndex = ForwardLightDataISR.NumCulledLightsGrid[GridIndex * NUM_CULLED_LIGHTS_GRID_STRIDE + 1];
+	}
+#endif
+
+	return Result;
+}
+
+struct FVirtualShadowMapSMRTSettings
+{
+	int   RayCount;
+	int   SamplesPerRay;
+	float RayLengthScale;
+	float ScreenRayLength;
+	float CotMaxRayAngleFromLight;
+	float TexelDitherScale;
+	float ExtrapolateSlope;
+	float MaxSlopeBias;
+	uint  AdaptiveRayCount;
+};
+
+FVirtualShadowMapSMRTSettings GetDirectionalLightSMRTSettings()
+{
+	FVirtualShadowMapSMRTSettings Out;
+	Out.ScreenRayLength			= ForwardLightData.DirectionalLightSMRTSettings.ScreenRayLength;
+	Out.RayCount 				= ForwardLightData.DirectionalLightSMRTSettings.SMRTRayCount;
+	Out.SamplesPerRay 			= ForwardLightData.DirectionalLightSMRTSettings.SMRTSamplesPerRay;
+	Out.RayLengthScale 			= ForwardLightData.DirectionalLightSMRTSettings.SMRTRayLengthScale;
+	Out.CotMaxRayAngleFromLight = ForwardLightData.DirectionalLightSMRTSettings.SMRTCotMaxRayAngleFromLight;
+	Out.TexelDitherScale 		= ForwardLightData.DirectionalLightSMRTSettings.SMRTTexelDitherScale;
+	Out.ExtrapolateSlope 		= ForwardLightData.DirectionalLightSMRTSettings.SMRTExtrapolateSlope;
+	Out.MaxSlopeBias 			= ForwardLightData.DirectionalLightSMRTSettings.SMRTMaxSlopeBias;
+	Out.AdaptiveRayCount 		= ForwardLightData.DirectionalLightSMRTSettings.SMRTAdaptiveRayCount;
+	return Out;
+}
+
+FDirectionalLightData GetDirectionalLightData(uint EyeIndex)
+{
+	FDirectionalLightData Result;
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	BRANCH
+	if (EyeIndex == 0)
+	{
+#endif
+	
+		Result.HasDirectionalLight					= ForwardLightData.HasDirectionalLight;
+		Result.DirectionalLightShadowMapChannelMask = ForwardLightData.DirectionalLightShadowMapChannelMask;
+		Result.DirectionalLightDistanceFadeMAD		= ForwardLightData.DirectionalLightDistanceFadeMAD;
+		Result.DirectionalLightColor				= ForwardLightData.DirectionalLightColor;
+		Result.DirectionalLightDirection			= ForwardLightData.DirectionalLightDirection;
+		Result.DirectionalLightSourceRadius			= ForwardLightData.DirectionalLightSourceRadius;
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	}
+	else
+	{
+		Result.HasDirectionalLight					= ForwardLightDataISR.HasDirectionalLight;
+		Result.DirectionalLightShadowMapChannelMask = ForwardLightDataISR.DirectionalLightShadowMapChannelMask;
+		Result.DirectionalLightDistanceFadeMAD		= ForwardLightDataISR.DirectionalLightDistanceFadeMAD;
+		Result.DirectionalLightColor				= ForwardLightDataISR.DirectionalLightColor;
+		Result.DirectionalLightDirection			= ForwardLightDataISR.DirectionalLightDirection;
+		Result.DirectionalLightSourceRadius			= ForwardLightDataISR.DirectionalLightSourceRadius;
+	}
+#endif
+
+	return Result;
+}
+
+FLocalLightData GetLocalLightData_Internal(
+	uint LocalLightIndex,
+	uint ClusteredDeferredSupportedEndIndex,
+	uint LumenSupportedStartIndex,
+	uint SimpleLightsEndIndex,
+	float4 InData0, float4 InData1, float4 InData2, float4 InData3, float4 InData4, float4 InData5)
+{
+	FLocalLightData Out = (FLocalLightData)0;
+
+	Out.bClusteredDeferredSupported				= LocalLightIndex <  ClusteredDeferredSupportedEndIndex;
+	Out.bLumenLightSupported					= LocalLightIndex >= LumenSupportedStartIndex;
+	Out.bIsSimpleLight							= LocalLightIndex <  SimpleLightsEndIndex;
+	Out.LightPositionAndInvRadius				= InData0;
+	Out.LightColorAndIdAndFalloffExponent		= InData1;
+	Out.LightDirectionAndShadowMask				= InData2;
+	Out.SpotAnglesAndSourceRadiusPacked			= InData3;
+	Out.LightTangentAndIESDataAndSpecularScale	= InData4;
+	Out.RectDataAndVirtualShadowMapId			= InData5;
+	Out.VirtualShadowMapId						= int(Out.RectDataAndVirtualShadowMapId.z);
+	Out.LightSceneId							= int(Out.LightColorAndIdAndFalloffExponent.z);
+
+	return Out;
+}
+
+FLocalLightData GetLocalLightDataNonStereo(uint LocalLightIndex)
+{
+	FLocalLightData Out;
+	uint LocalLightBaseIndex = LocalLightIndex * LOCAL_LIGHT_DATA_STRIDE;
+
+	Out = GetLocalLightData_Internal(
+		LocalLightIndex,
+		ForwardLightData.ClusteredDeferredSupportedEndIndex,
+		ForwardLightData.LumenSupportedStartIndex,
+		ForwardLightData.SimpleLightsEndIndex,
+		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 0],
+		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 1],
+		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 2],
+		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 3],
+		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 4],
+		ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 5]);
+	return Out;
+}
+
+FLocalLightData GetLocalLightData(uint GridIndex, uint EyeIndex)
+{
+	FLocalLightData Out;
+
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	BRANCH
+	if (EyeIndex == 0)
+	{
+#endif
+		uint LocalLightIndex = GetCulledLightDataGrid(GridIndex);
+		uint LocalLightBaseIndex = LocalLightIndex * LOCAL_LIGHT_DATA_STRIDE;
+
+		Out = GetLocalLightData_Internal(
+			LocalLightIndex, 
+			ForwardLightData.ClusteredDeferredSupportedEndIndex,
+			ForwardLightData.LumenSupportedStartIndex,
+			ForwardLightData.SimpleLightsEndIndex,
+			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 0],
+			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 1],
+			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 2],
+			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 3],
+			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 4],
+			ForwardLightData.ForwardLocalLightBuffer[LocalLightBaseIndex + 5]);
+#if (INSTANCED_STEREO || MOBILE_MULTI_VIEW)
+	}
+	else
+	{
+		uint LocalLightIndex = GetCulledLightDataGridISR(GridIndex);
+		uint LocalLightBaseIndex = LocalLightIndex * LOCAL_LIGHT_DATA_STRIDE;
+
+		Out = GetLocalLightData_Internal(
+			LocalLightIndex,
+			ForwardLightDataISR.ClusteredDeferredSupportedEndIndex,
+			ForwardLightDataISR.LumenSupportedStartIndex,
+			ForwardLightDataISR.SimpleLightsEndIndex,
+			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 0],
+			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 1],
+			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 2],
+			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 3],
+			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 4],
+			ForwardLightDataISR.ForwardLocalLightBuffer[LocalLightBaseIndex + 5]);
+	}
+#endif
+	return Out;
+}
+
+/**
+ * Helpers to pack/unpack the shadow mask for cluster shading and virtual shadow map
+ * Currently hard-coded for 4 bits per light, up to 32 lights per pixel in a uint4
+ */
+uint4 InitializePackedShadowMask()
+{
+	return uint(0xffffffff).xxxx;
+}
+
+uint GetPackedShadowMaskMaxLightCount()
+{
+	return VirtualShadowMap.PackedShadowMaskMaxLightCount;
+}
+
+void PackShadowMask(inout uint4 InOutShadowMask, float InShadowFactor, uint InLightIndex)
+{
+	uint Value = ~uint(round(InShadowFactor * 15.0f)) & 15U;
+	uint Dword = InLightIndex / 8;
+
+	InOutShadowMask.x ^= (Dword == 0U) ? (Value << (InLightIndex      ) * 4U) : 0U;
+	InOutShadowMask.y ^= (Dword == 1U) ? (Value << (InLightIndex -  8U) * 4U) : 0U;
+	InOutShadowMask.z ^= (Dword == 2U) ? (Value << (InLightIndex - 16U) * 4U) : 0U;
+	InOutShadowMask.w ^= (Dword == 3U) ? (Value << (InLightIndex - 24U) * 4U) : 0U;
+
+	//OutShadowMask ^= (~uint(round(InShadowFactor * 7.0)) & 7u) << (InLightIndex * 3u);
+}
+
+float UnpackShadowMask(uint4 InShadowMask, uint InLightIndex)
+{	
+	uint Dword = InLightIndex / 8;
+	return ((InShadowMask[Dword] >> (InLightIndex - Dword*8U) * 4U) & 15U) / 15.0f;	
+	//return ((InShadowMask >> (InLightIndex * 3u)) & 7u) / 7.0;
+}
+
+// Unpack with dither to hide some of the quantization
+float UnpackShadowMask(uint4 InShadowMask, uint InLightIndex, float Dither)
+{	
+	float ShadowFactor = UnpackShadowMask(InShadowMask, InLightIndex);
+	if (ShadowFactor > 0.0f && ShadowFactor < 1.0f)
+	{
+		ShadowFactor = saturate(ShadowFactor + (Dither - 0.5f) * (1.0f / 16.0f));
+	}
+	return ShadowFactor;
+}
+

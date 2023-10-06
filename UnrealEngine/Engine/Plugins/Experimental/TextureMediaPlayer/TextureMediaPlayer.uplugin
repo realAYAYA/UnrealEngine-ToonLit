@@ -1,0 +1,46 @@
+{
+	"FileVersion": 3,
+	"Version": 0,
+	"VersionName": "0.1",
+	"FriendlyName": "Texture Media Player",
+	"Description": "Implements a media player for textures.",
+	"Category": "Media Players",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "TextureMediaPlayer",
+			"Type": "ClientOnlyNoCommandlet",
+			"LoadingPhase": "PostEngineInit",
+			"TargetDenyList": [ "Server" ],
+			"PlatformAllowList": [ "Win64" ]
+		},
+		{
+			"Name": "TextureMediaPlayerFactory",
+			"Type": "ClientOnlyNoCommandlet",
+			"LoadingPhase": "PostEngineInit",
+			"TargetDenyList": [ "Server" ],
+			"PlatformAllowList": [ "Win64" ]
+		},
+		{
+			"Name": "TextureMediaPlayerFactory",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"TargetDenyList": [ "Server" ],
+			"PlatformAllowList": [ "Win64" ]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ElectraUtil",
+			"Enabled": true
+		},
+	]
+}

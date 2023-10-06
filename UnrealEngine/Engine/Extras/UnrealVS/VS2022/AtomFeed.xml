@@ -1,0 +1,43 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">UnrealVS Gallery</title>
+  <id>uuid:45b4571a-2981-49f1-9f70-04cfa96db5c8;id=1</id>
+  <updated>2022-10-21T18:08:01Z</updated>
+  <entry>
+    <id>ddbf523f-7eb6-4887-bd51-85a714ff87eb</id>
+    <title type="text">UnrealVS</title>
+    <summary type="text">Unreal Engine extension for Visual Studio</summary>
+    <published>2022-10-21T10:01:57-07:00</published>
+    <updated>2023-06-02T00:06:00-00:00</updated>
+    <author>
+      <name>Epic Games, Inc.</name>
+    </author>
+    <link rel="icon" href="ddbf523f-7eb6-4887-bd51-85a714ff87eb_Icon_Icon.png" />
+    <link rel="preview" href="ddbf523f-7eb6-4887-bd51-85a714ff87eb_Preview_Preview.png" />
+    <link rel="releasenotes" href="Resources\ReleaseNotes.txt" />
+    <link rel="alternate" href="https://docs.unrealengine.com/en-US/ProductionPipelines/DevelopmentSetup/VisualStudioSetup/UnrealVS/index.html" />
+    <content type="application/octet-stream" src="UnrealVS.vsix" />
+    <Vsix xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://schemas.microsoft.com/developer/vsx-syndication-schema/2010">
+      <Id>ddbf523f-7eb6-4887-bd51-85a714ff87eb</Id>
+      <Version>1.84.3.2</Version>
+      <Rating xsi:nil="true" />
+      <RatingCount xsi:nil="true" />
+      <DownloadCount xsi:nil="true" />
+      <Installations>
+        <Identifier>Microsoft.VisualStudio.Pro</Identifier>
+        <VersionRange>[17.0,18.0)</VersionRange>
+        <ProductArchitecture>amd64</ProductArchitecture>
+      </Installations>
+      <Installations>
+        <Identifier>Microsoft.VisualStudio.Community</Identifier>
+        <VersionRange>[17.0,18.0)</VersionRange>
+        <ProductArchitecture>amd64</ProductArchitecture>
+      </Installations>
+      <Installations>
+        <Identifier>Microsoft.VisualStudio.Enterprise</Identifier>
+        <VersionRange>[17.0,18.0)</VersionRange>
+        <ProductArchitecture>amd64</ProductArchitecture>
+      </Installations>
+    </Vsix>
+  </entry>
+</feed>

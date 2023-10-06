@@ -1,0 +1,602 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenCardSceneLighting.usf
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+#include "LumenCardCommon.ush"
+#include "LumenCardTile.ush"
+#include "LumenSceneLighting.ush"
+#include "SurfaceCache/LumenSurfaceCacheSampling.ush"
+#include "Radiosity/LumenRadiosity.ush"
+
+#ifndef THREADGROUP_SIZE
+	#define THREADGROUP_SIZE 1
+#endif
+
+RWStructuredBuffer<float4> RWCardPageBuffer;
+StructuredBuffer<uint> CardPageLastUsedBuffer;
+StructuredBuffer<uint> CardPageHighResLastUsedBuffer;
+
+RWStructuredBuffer<uint> RWDirectLightingCardPageIndexAllocator;
+RWStructuredBuffer<uint> RWDirectLightingCardPageIndexData;
+
+RWStructuredBuffer<uint> RWIndirectLightingCardPageIndexAllocator;
+RWStructuredBuffer<uint> RWIndirectLightingCardPageIndexData;
+
+RWStructuredBuffer<uint> RWPriorityHistogram;
+StructuredBuffer<uint> PriorityHistogram;
+
+RWStructuredBuffer<uint> RWMaxUpdateBucket;
+StructuredBuffer<uint> MaxUpdateBucket;
+
+RWStructuredBuffer<uint> RWCardPageTileAllocator;
+StructuredBuffer<uint> CardPageTileAllocator;
+
+uint FreezeUpdateFrame;
+uint CardPageNum;
+uint MaxDirectLightingTilesToUpdate;
+uint MaxIndirectLightingTilesToUpdate;
+float FirstClipmapWorldExtentRcp;
+uint NumCameraOrigins;
+float4 WorldCameraOrigins[2];
+
+float DirectLightingUpdateFactor;
+float IndirectLightingUpdateFactor;
+
+/**
+ * Batch clear all resources required for the subsequent card context update pass
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void ClearCardUpdateContextCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint ElementIndex = DispatchThreadId.x;
+
+	if (ElementIndex < 1)
+	{
+		RWDirectLightingCardPageIndexAllocator[ElementIndex] = 0;
+		RWIndirectLightingCardPageIndexAllocator[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < CARD_UPDATE_CONTEXT_MAX * MAX_UPDATE_BUCKET_STRIDE)
+	{
+		RWMaxUpdateBucket[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < CARD_UPDATE_CONTEXT_MAX * CARD_PAGE_TILE_ALLOCATOR_STRIDE)
+	{
+		RWCardPageTileAllocator[ElementIndex] = 0;
+	}
+
+	if (ElementIndex < CARD_UPDATE_CONTEXT_MAX * PRIORITY_HISTOGRAM_SIZE)
+	{
+		RWPriorityHistogram[ElementIndex] = 0;
+	}
+}
+
+uint GetMaxTilesToUpdate(uint CardUpdateContext)
+{
+	return CardUpdateContext == CARD_UPDATE_CONTEXT_DIRECT_LIGHTING ? MaxDirectLightingTilesToUpdate : MaxIndirectLightingTilesToUpdate;
+}
+
+uint GetLastLightingUpdateFrameIndex(FLumenCardPageData CardPage, uint CardUpdateContext)
+{
+	return CardUpdateContext == CARD_UPDATE_CONTEXT_DIRECT_LIGHTING ? CardPage.LastDirectLightingUpdateFrameIndex : CardPage.LastIndirectLightingUpdateFrameIndex;
+}
+
+uint GetUpdateFactor(uint CardUpdateContext)
+{
+	return CardUpdateContext == CARD_UPDATE_CONTEXT_DIRECT_LIGHTING ? DirectLightingUpdateFactor : IndirectLightingUpdateFactor;
+}
+
+uint GetNumCardPageTiles(FLumenCardPageData CardPage)
+{
+	return (CardPage.SizeInTexels.x * CardPage.SizeInTexels.y) / (CARD_TILE_SIZE * CARD_TILE_SIZE);
+}
+
+uint GetPriorityBucketIndex(FLumenCardData Card, FLumenCardPageData CardPage, uint CardPageIndex, uint CardUpdateContext)
+{
+	const float MaxUpdateFrequency = 7.0f;
+
+	uint LastLightingUpdateFrameIndex = GetLastLightingUpdateFrameIndex(CardPage, CardUpdateContext);
+	const float UpdateFactor = GetUpdateFactor(CardUpdateContext);
+
+	// [1;N]
+	uint FramesSinceLastUpdated = SurfaceCacheUpdateFrameIndex - LastLightingUpdateFrameIndex;
+
+	// [0;MaxUpdateFrequency]
+	float Frequency = 0.0f;
+	{
+		float DistanceFromViewer = 100000000.0f;
+
+		for (uint ViewIndex = 0; ViewIndex < NumCameraOrigins; ViewIndex++)
+		{
+			float3 CardSpaceViewPosition = mul(WorldCameraOrigins[ViewIndex].xyz - Card.Origin, Card.WorldToLocalRotation);
+			float3 CardPageLocalCenter;
+			float3 CardPageLocalExtent;
+			GetCardPageLocalBBox(CardPage, Card, CardPageLocalCenter, CardPageLocalExtent);
+			DistanceFromViewer = min(DistanceFromViewer, sqrt(ComputeSquaredDistanceFromBoxToPoint(CardPageLocalCenter, CardPageLocalExtent, CardSpaceViewPosition)));
+		}
+		Frequency = MaxUpdateFrequency - clamp(DistanceFromViewer * FirstClipmapWorldExtentRcp, 0.0f, MaxUpdateFrequency);
+	}
+
+	// Drive frequency based on the feedback
+	#if SURFACE_CACHE_FEEDBACK
+	{
+		const uint LastUsedFrameIndex = CardPageLastUsedBuffer[CardPageIndex];
+		const uint LastUsedHighResFrameIndex = CardPageHighResLastUsedBuffer[CardPageIndex];
+		const uint LastUsedCombinedFrameIndex = max(LastUsedFrameIndex, LastUsedHighResFrameIndex);
+
+		FramesSinceLastUpdated = LastUsedCombinedFrameIndex > LastLightingUpdateFrameIndex ? LastUsedCombinedFrameIndex - LastLightingUpdateFrameIndex : 1;
+
+		Frequency *= 0.5f;
+		if (SurfaceCacheUpdateFrameIndex >= LastUsedHighResFrameIndex + 1)
+		{
+			Frequency += 0.5f * MaxUpdateFrequency * saturate((SurfaceCacheUpdateFrameIndex - (LastUsedHighResFrameIndex + 1)) / 2.0f);
+		}
+	}
+	#endif
+
+	uint BucketIndex = 0;
+	if (LastLightingUpdateFrameIndex == 0)
+	{
+		// Special case where page wasn't ever updated, just place into first 8 most important buckets based on the frequency
+		BucketIndex = clamp(MaxUpdateFrequency - Frequency, 0.0f, MaxUpdateFrequency);
+	}
+	else
+	{
+		// [0;N]
+		float UpdateImportance = FramesSinceLastUpdated * (Frequency + 1.0f);
+
+		// Offset from [1;N] and invert in order to place most important pages in bucket 0
+		BucketIndex = PRIORITY_HISTOGRAM_SIZE - 1 - clamp(log2(UpdateImportance / (MaxUpdateFrequency + 1.0f)), 0, PRIORITY_HISTOGRAM_SIZE - 1);
+	}
+
+	return BucketIndex;
+}
+
+void BuildUpdatePriorityHistogram(FLumenCardData Card, FLumenCardPageData CardPage, uint CardPageIndex, uint NumCardPageTiles, uint CardUpdateContext)
+{
+	uint PriorityBucketIndex = GetPriorityBucketIndex(Card, CardPage, CardPageIndex, CardUpdateContext);
+	InterlockedAdd(RWPriorityHistogram[CardUpdateContext * PRIORITY_HISTOGRAM_SIZE + PriorityBucketIndex], NumCardPageTiles);
+}
+
+/**
+ * Iterate over all pages and build a histogram of card update priorities 
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void BuildPageUpdatePriorityHistogramCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint IndexInIndexBuffer = DispatchThreadId.x;
+
+	if (IndexInIndexBuffer < CardPageNum)
+	{
+		uint CardPageIndex = IndexInIndexBuffer;
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardPageIndex);
+		FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+		const uint NumCardPageTiles = GetNumCardPageTiles(CardPage);
+
+		if (NumCardPageTiles > 0)
+		{
+			BuildUpdatePriorityHistogram(Card, CardPage, CardPageIndex, NumCardPageTiles, CARD_UPDATE_CONTEXT_DIRECT_LIGHTING);
+			BuildUpdatePriorityHistogram(Card, CardPage, CardPageIndex, NumCardPageTiles, CARD_UPDATE_CONTEXT_INDIRECT_LIGHTING);
+		}
+	}
+}
+
+void SelectMaxUpdateBucket(uint CardUpdateContext)
+{
+	const uint MaxTilesToUpdate = GetMaxTilesToUpdate(CardUpdateContext);
+
+	uint UpdateTileSum = 0;
+	uint PriorityBucketIndex = 0;
+	uint PriorityBucketMaxTiles = MaxTilesToUpdate;
+
+	for (; PriorityBucketIndex < PRIORITY_HISTOGRAM_SIZE; ++PriorityBucketIndex)
+	{
+		uint TilesPerBucket = PriorityHistogram[CardUpdateContext * PRIORITY_HISTOGRAM_SIZE + PriorityBucketIndex];
+
+		if (UpdateTileSum + TilesPerBucket >= MaxTilesToUpdate)
+		{
+			PriorityBucketMaxTiles = MaxTilesToUpdate - UpdateTileSum;
+			break;
+		}
+
+		UpdateTileSum += TilesPerBucket;
+	}
+
+	RWMaxUpdateBucket[MAX_UPDATE_BUCKET_STRIDE * CardUpdateContext + 0] = PriorityBucketIndex;
+	RWMaxUpdateBucket[MAX_UPDATE_BUCKET_STRIDE * CardUpdateContext + 1] = PriorityBucketMaxTiles;
+}
+
+/** 
+ * Compute max bucket histogram to update and how many tiles should be updated in that last bucket 
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void SelectMaxUpdateBucketCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (GroupId.x == 0 && GroupThreadId.x == 0)
+	{
+		SelectMaxUpdateBucket(CARD_UPDATE_CONTEXT_DIRECT_LIGHTING);
+	}
+	else if (GroupId.x == 1 && GroupThreadId.x == 0)
+	{
+		SelectMaxUpdateBucket(CARD_UPDATE_CONTEXT_INDIRECT_LIGHTING);
+	}
+}
+
+bool BuildCardsUpdateList(
+	FLumenCardData Card,
+	FLumenCardPageData CardPage,
+	uint CardPageIndex,
+	uint NumCardPageTiles,
+	uint CardUpdateContext,
+	RWStructuredBuffer<uint> RWCardPageIndexAllocator,
+	RWStructuredBuffer<uint> RWCardPageIndexData)
+{
+	const uint MaxTilesToUpdate = GetMaxTilesToUpdate(CardUpdateContext);
+	const uint MaxUpdateBucketIndex = MaxUpdateBucket[MAX_UPDATE_BUCKET_STRIDE * CardUpdateContext + 0];
+	const uint MaxUpdateBucketMaxTiles = MaxUpdateBucket[MAX_UPDATE_BUCKET_STRIDE * CardUpdateContext + 1];
+
+	// Update everything up to the max selected priority bucket
+	uint PriorityBucketIndex = GetPriorityBucketIndex(Card, CardPage, CardPageIndex, CardUpdateContext);
+	bool bUpdateThisPage = PriorityBucketIndex <= MaxUpdateBucketIndex;
+
+	if (bUpdateThisPage && PriorityBucketIndex == MaxUpdateBucketIndex)
+	{
+		// Can't update more than MaxUpdateBucketMaxTiles in the max bucket to preserve the general order
+		uint NumAllocatedTilesInMaxUpdateBucket = 0;
+		InterlockedAdd(RWCardPageTileAllocator[CARD_PAGE_TILE_ALLOCATOR_STRIDE * CardUpdateContext + 1], NumCardPageTiles, NumAllocatedTilesInMaxUpdateBucket);
+
+		if (!(NumAllocatedTilesInMaxUpdateBucket + NumCardPageTiles <= MaxUpdateBucketMaxTiles))
+		{
+			bUpdateThisPage = false;
+		}
+	}
+
+	if (bUpdateThisPage)
+	{
+		bUpdateThisPage = false;
+		uint NumAllocatedTiles = 0;
+		InterlockedAdd(RWCardPageTileAllocator[CARD_PAGE_TILE_ALLOCATOR_STRIDE * CardUpdateContext + 0], NumCardPageTiles, NumAllocatedTiles);
+
+		if (NumAllocatedTiles + NumCardPageTiles <= MaxTilesToUpdate)
+		{
+			uint NextIndex = 0;
+			InterlockedAdd(RWCardPageIndexAllocator[0], 1, NextIndex);
+
+			if (NextIndex < CardPageNum)
+			{
+				RWCardPageIndexData[NextIndex] = CardPageIndex;
+				bUpdateThisPage = true;
+			}
+		}
+	}
+
+	return bUpdateThisPage;
+}
+
+/**
+ * Iterate over all cards and pick first N for update based on the histogram max update bucket
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void BuildCardsUpdateListCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint IndexInIndexBuffer = DispatchThreadId.x;
+
+	if (IndexInIndexBuffer < CardPageNum)
+	{
+		const uint CardPageIndex = IndexInIndexBuffer;
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardPageIndex);
+		FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+		const uint NumCardPageTiles = GetNumCardPageTiles(CardPage);
+
+		if (NumCardPageTiles > 0)
+		{
+			bool bUpdatedCardPage = false;
+
+			if (BuildCardsUpdateList(
+				Card,
+				CardPage,
+				CardPageIndex,
+				NumCardPageTiles,
+				CARD_UPDATE_CONTEXT_DIRECT_LIGHTING,
+				RWDirectLightingCardPageIndexAllocator,
+				RWDirectLightingCardPageIndexData))
+			{
+				CardPage.LastDirectLightingUpdateFrameIndex = SurfaceCacheUpdateFrameIndex;
+				bUpdatedCardPage = true;
+			}
+
+			if (BuildCardsUpdateList(
+				Card,
+				CardPage,
+				CardPageIndex,
+				NumCardPageTiles,
+				CARD_UPDATE_CONTEXT_INDIRECT_LIGHTING,
+				RWIndirectLightingCardPageIndexAllocator,
+				RWIndirectLightingCardPageIndexData))
+			{
+				CardPage.LastIndirectLightingUpdateFrameIndex = SurfaceCacheUpdateFrameIndex;
+				CardPage.IndirectLightingTemporalIndex = CardPage.IndirectLightingTemporalIndex + 1;
+				bUpdatedCardPage = true;
+			}
+
+			if (bUpdatedCardPage && FreezeUpdateFrame == 0)
+			{
+				SetCardPageUpdateData(CardPageIndex, CardPage);
+			}
+		}
+	}
+}
+
+RWBuffer<uint> RWDirectLightingDrawCardPageIndicesIndirectArgs;
+RWBuffer<uint> RWDirectLightingDispatchCardPageIndicesIndirectArgs;
+RWBuffer<uint> RWIndirectLightingDrawCardPageIndicesIndirectArgs;
+RWBuffer<uint> RWIndirectLightingDispatchCardPageIndicesIndirectArgs;
+
+StructuredBuffer<uint> DirectLightingCardPageIndexAllocator;
+StructuredBuffer<uint> IndirectLightingCardPageIndexAllocator;
+uint VertexCountPerInstanceIndirect;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void SetCardPageIndexIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x == 0)
+	{
+		{
+			uint NumPageIndices = DirectLightingCardPageIndexAllocator[0];
+
+			// FRHIDrawIndirectParameters
+			RWDirectLightingDrawCardPageIndicesIndirectArgs[0] = VertexCountPerInstanceIndirect;
+			RWDirectLightingDrawCardPageIndicesIndirectArgs[1] = NumPageIndices;
+			RWDirectLightingDrawCardPageIndicesIndirectArgs[2] = 0;
+			RWDirectLightingDrawCardPageIndicesIndirectArgs[3] = 0;
+
+			// Thread per page
+			WriteDispatchIndirectArgs(RWDirectLightingDispatchCardPageIndicesIndirectArgs, 0, (NumPageIndices + 63) / 64, 1, 1);
+
+			// Thread per tile
+			WriteDispatchIndirectArgs(RWDirectLightingDispatchCardPageIndicesIndirectArgs, 1, 4 * NumPageIndices, 1, 1);
+		}
+
+		{
+			uint NumPageIndices = IndirectLightingCardPageIndexAllocator[0];
+
+			// FRHIDrawIndirectParameters
+			RWIndirectLightingDrawCardPageIndicesIndirectArgs[0] = VertexCountPerInstanceIndirect;
+			RWIndirectLightingDrawCardPageIndicesIndirectArgs[1] = NumPageIndices;
+			RWIndirectLightingDrawCardPageIndicesIndirectArgs[2] = 0;
+			RWIndirectLightingDrawCardPageIndicesIndirectArgs[3] = 0;
+
+			// Thread per page
+			WriteDispatchIndirectArgs(RWIndirectLightingDispatchCardPageIndicesIndirectArgs, 0, (NumPageIndices + 63) / 64, 1, 1);
+
+			// Thread per tile
+			WriteDispatchIndirectArgs(RWIndirectLightingDispatchCardPageIndicesIndirectArgs, 1, 4 * NumPageIndices, 1, 1);
+		}
+	}
+}
+
+RWStructuredBuffer<uint> RWQuadAllocator;
+RWStructuredBuffer<uint> RWQuadData;
+
+StructuredBuffer<uint> CardPageIndexAllocator;
+StructuredBuffer<uint> CardPageIndexData;
+
+float2 IndirectLightingAtlasSize;
+
+void RasterizeToCardsVS(
+	uint VertexId : SV_VertexID,
+	uint InstanceId : SV_InstanceID, 
+	out FCardVSToPS CardInterpolants,
+	out float4 OutPosition : SV_POSITION
+	)
+{
+	float2 TexCoord = float2(0.0f, 0.0f);
+	TexCoord.x += VertexId == 1 || VertexId == 2 || VertexId == 4 ? 1.0f : 0.0f;
+	TexCoord.y += VertexId == 2 || VertexId == 4 || VertexId == 5 ? 1.0f : 0.0f;
+
+	uint QuadIndex = InstanceId.x;
+
+	CardInterpolants = (FCardVSToPS)0;
+	OutPosition = 0;
+
+	if (QuadIndex < CardPageIndexAllocator[0])
+	{
+		uint CardPageIndex = CardPageIndexData[QuadIndex];
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardPageIndex);
+		FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+
+		float2 ScreenUV = lerp(CardPage.PhysicalAtlasUVRect.xy, CardPage.PhysicalAtlasUVRect.zw, TexCoord);
+		float2 AtlasUV = ScreenUV;
+
+#if RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR == 1
+		float2 IndirectLightingAtlasUV = AtlasUV;
+#else
+		// When sampling from a downsampled Indirect Lighting atlas we need to appropriately clamp input UVs to prevent bilinear reading outside of the valid area
+		float2 CardWidthInTexels = (CardPage.PhysicalAtlasUVRect.zw - CardPage.PhysicalAtlasUVRect.xy) * IndirectLightingAtlasSize;
+		float2 ClampBorder = 0.5f / CardWidthInTexels;
+		float2 IndirectLightingTexCoord = clamp(TexCoord, ClampBorder, 1.0f - ClampBorder);
+		float2 IndirectLightingAtlasUV = lerp(CardPage.PhysicalAtlasUVRect.xy, CardPage.PhysicalAtlasUVRect.zw, IndirectLightingTexCoord);
+#endif
+
+		float2 ScreenPosition = float2(2.0f, -2.0f) * ScreenUV + float2(-1.0f, 1.0f);
+		OutPosition = float4(ScreenPosition, 0, 1);
+
+		float2 QuadCorner = -2.0f * TexCoord + 1.0f;
+		CardInterpolants.AtlasUV = AtlasUV;
+		CardInterpolants.IndirectLightingAtlasUV = IndirectLightingAtlasUV;
+		CardInterpolants.CardUV = lerp(CardPage.CardUVRect.xy, CardPage.CardUVRect.zw, TexCoord);
+		CardInterpolants.CardTileIndex = 0;
+		CardInterpolants.CardPageIndex = CardPageIndex;
+	}
+}
+
+float3 CombineFinalLighting(float3 Albedo, float3 Emissive, float3 DirectLighting, float3 IndirectLighting)
+{
+	Albedo = DecodeSurfaceCacheAlbedo(Albedo);
+
+	float3 FinalLighting = (DirectLighting + IndirectLighting) * Diffuse_Lambert(Albedo) + Emissive;
+
+	// Secure against strange values, as we are writing it to a persistent atlas with a feedback loop
+	FinalLighting = max(MakeFinite(FinalLighting), float3(0.0f, 0.0f, 0.0f));
+
+	return FinalLighting;
+}
+
+SamplerState BilinearClampedSampler;
+StructuredBuffer<uint> CardTiles;
+RWTexture2D<float3> RWFinalLightingAtlas;
+float2 IndirectLightingAtlasHalfTexelSize;
+
+[numthreads(CARD_TILE_SIZE, CARD_TILE_SIZE, 1)]
+void CombineLumenSceneLightingCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint CardTileIndex = GroupId.x;
+	uint2 TexelCoordInTile = GroupThreadId.xy;
+
+	FCardTileData CardTile = UnpackCardTileData(CardTiles[CardTileIndex]);
+
+	FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+	FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+
+	uint2 CoordInCardPage = CARD_TILE_SIZE * CardTile.TileCoord + TexelCoordInTile;
+	uint2 AtlasCoord = CardPage.PhysicalAtlasCoord + CoordInCardPage;
+	float2 AtlasUV = CardPage.PhysicalAtlasUVRect.xy + CardPage.PhysicalAtlasUVTexelScale * (CoordInCardPage + 0.5);
+
+#if RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR == 1
+	float2 IndirectLightingAtlasUV = AtlasUV;
+#else
+	// When sampling from a downsampled Indirect Lighting atlas we need to appropriately clamp input UVs to prevent bilinear reading outside of the valid area
+	float2 IndirectLightingAtlasUV = clamp(AtlasUV, CardPage.PhysicalAtlasUVRect.xy + IndirectLightingAtlasHalfTexelSize, CardPage.PhysicalAtlasUVRect.zw - IndirectLightingAtlasHalfTexelSize);
+#endif
+	
+	float3 Albedo = Texture2DSampleLevel(AlbedoAtlas, BilinearClampedSampler, AtlasUV, 0).xyz;
+	float3 Emissive = Texture2DSampleLevel(EmissiveAtlas, BilinearClampedSampler, AtlasUV, 0).xyz;
+	float3 DirectLighting = Texture2DSampleLevel(DirectLightingAtlas, BilinearClampedSampler, AtlasUV, 0).xyz;
+	float3 IndirectLighting = Texture2DSampleLevel(IndirectLightingAtlas, BilinearClampedSampler, IndirectLightingAtlasUV, 0).xyz;
+
+	float3 FinalLighting = CombineFinalLighting(Albedo, Emissive, DirectLighting, IndirectLighting);
+	RWFinalLightingAtlas[AtlasCoord] = FinalLighting;
+}
+
+void ClearLumenCardsPS(
+	out float4 Target0 : SV_Target0
+#if NUM_TARGETS > 1
+	,out float4 Target1 : SV_Target1
+#endif
+	)
+{
+	Target0 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+	#if NUM_TARGETS > 1
+		Target1 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	#endif
+}
+
+void ClearLumenCardCapturePS(
+	out float4 OutAlbedo : SV_Target0,
+	out float4 OutNormals : SV_Target1,
+	out float4 OutEmissive : SV_Target2
+)
+{
+	OutAlbedo = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	OutNormals = float4(0.5f, 0.5f, 0.0f, 0.0f);
+	OutEmissive = float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
+Buffer<uint4> NewCardPageResampleData;
+Texture2D RadiosityNumFramesAccumulatedAtlas;
+
+
+void ResampleLightingHistoryToCardCaptureAtlasPS(
+	float4 SvPosition : SV_POSITION,
+	float2 InUV : TEXCOORD0,
+	float2 InRectUV : TEXCOORD1,
+	float InRectIndex : RECT_INDEX,
+	out float3 OutDirectLightingCardCaptureAtlas : SV_Target0,
+	out float3 OutRadiosityCardCaptureAtlas : SV_Target1,
+	out float OutRadiosityNumFramesAccumulatedCardCaptureAtlas : SV_Target2)
+{
+	OutDirectLightingCardCaptureAtlas = 0;
+	OutRadiosityCardCaptureAtlas = 0;
+	OutRadiosityNumFramesAccumulatedCardCaptureAtlas = 0;
+
+	uint CardIndex = NewCardPageResampleData[InRectIndex * 2 + 0].x;
+
+	if (CardIndex != LUMEN_INVALID_CARD_INDEX)
+	{
+		// Load new card attributes manually
+		float4 NewCardUVRect = asfloat(NewCardPageResampleData[InRectIndex * 2 + 1]);
+		float2 NewCardUV = InRectUV * (NewCardUVRect.zw - NewCardUVRect.xy) + NewCardUVRect.xy;
+
+		// LumenCardScene contains the old card structure during the resample
+		FLumenCardData OldCard = GetLumenCardData(CardIndex);
+
+		// Assuming card extent hasn't changed
+		float2 LocalSamplePosition = GetCardLocalPosition(OldCard.LocalExtent, NewCardUV, 0.0f).xy;
+
+		FLumenCardSample CardSample = ComputeSurfaceCacheSample(OldCard, CardIndex, LocalSamplePosition, 0.0f, true);
+		if (CardSample.bValid)
+		{
+			OutDirectLightingCardCaptureAtlas = Texture2DSampleLevel(DirectLightingAtlas, GlobalBilinearClampedSampler, CardSample.PhysicalAtlasUV, 0.0f).xyz;
+			OutRadiosityCardCaptureAtlas = Texture2DSampleLevel(IndirectLightingAtlas, GlobalBilinearClampedSampler, CardSample.IndirectLightingPhysicalAtlasUV, 0.0f).xyz;
+			OutRadiosityNumFramesAccumulatedCardCaptureAtlas = Texture2DSampleLevel(RadiosityNumFramesAccumulatedAtlas, GlobalBilinearClampedSampler, CardSample.IndirectLightingPhysicalAtlasUV, 0.0f).x;
+		}
+	}
+}
+
+Texture2D AlbedoCardCaptureAtlas;
+Texture2D EmissiveCardCaptureAtlas;
+Texture2D DirectLightingCardCaptureAtlas;
+Texture2D RadiosityCardCaptureAtlas;
+Texture2D RadiosityNumFramesAccumulatedCardCaptureAtlas;
+
+void CopyCardCaptureLightingToAtlasPS(
+	float4 SvPosition : SV_POSITION,
+	float2 AtlasUV : TEXCOORD0,
+	out float3 OutDirectLightingAtlas : SV_Target0,
+	out float3 OutFinalLightingAtlas : SV_Target1
+	#if INDIRECT_LIGHTING
+		, out float3 OutRadiosityAtlas : SV_Target2
+		, out float OutRadiosityNumFramesAccumulatedAtlas : SV_Target3
+	#endif
+	)
+{
+	float3 Albedo = 0.0f;
+	float3 Emissive = 0.0f;
+	float3 DirectLighting = 0.0f;
+	float3 IndirectLighting = 0.0f;
+	float RadiosityNumFramesAccumulated = 0.0f;
+
+	#if RESAMPLE
+	{
+		Albedo = Texture2DSampleLevel(AlbedoCardCaptureAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+		Emissive = Texture2DSampleLevel(EmissiveCardCaptureAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+		DirectLighting = Texture2DSampleLevel(DirectLightingCardCaptureAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+		IndirectLighting = Texture2DSampleLevel(RadiosityCardCaptureAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+		RadiosityNumFramesAccumulated = Texture2DSampleLevel(RadiosityNumFramesAccumulatedCardCaptureAtlas, GlobalPointClampedSampler, AtlasUV, 0).x;
+	}
+	#endif
+
+	OutDirectLightingAtlas = DirectLighting;
+	OutFinalLightingAtlas = CombineFinalLighting(Albedo, Emissive, DirectLighting, IndirectLighting);
+
+	#if INDIRECT_LIGHTING
+	{
+		OutRadiosityAtlas = IndirectLighting;
+		OutRadiosityNumFramesAccumulatedAtlas = RadiosityNumFramesAccumulated;
+	}
+	#endif
+}

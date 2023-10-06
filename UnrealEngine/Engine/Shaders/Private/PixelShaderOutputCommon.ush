@@ -1,0 +1,223 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+PixelShaderOutputCommon.ush: To allow PS input/output passed into functions
+through a single struct, allowing for a more readable code
+(less #ifdefs, reducing the boolean hell)
+=============================================================================*/
+
+#include "ShaderOutputCommon.ush"
+
+PIXELSHADER_EARLYDEPTHSTENCIL
+void MainPS
+	(
+#if PIXELSHADEROUTPUT_INTERPOLANTS || PIXELSHADEROUTPUT_BASEPASS
+#if IS_NANITE_PASS
+		FNaniteFullscreenVSToPS NaniteInterpolants,
+#else
+		FVertexFactoryInterpolantsVSToPS Interpolants,
+#endif
+#endif
+#if PIXELSHADEROUTPUT_BASEPASS
+		FBasePassInterpolantsVSToPS BasePassInterpolants,
+#elif PIXELSHADEROUTPUT_MESHDECALPASS
+		FMeshDecalInterpolants MeshDecalInterpolants,
+#endif
+
+		in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position		// after all interpolators
+
+		OPTIONAL_IsFrontFace
+
+#if PIXELSHADEROUTPUT_MRT0
+	#if DUAL_SOURCE_COLOR_BLENDING_ENABLED && MATERIAL_WORKS_WITH_DUAL_SOURCE_COLOR_BLENDING
+		, out float4 OutTarget0 DUAL_SOURCE_BLENDING_SLOT(0) : SV_Target0
+	#else
+		, out float4 OutTarget0 : SV_Target0
+	#endif
+#endif
+
+#if PIXELSHADEROUTPUT_MRT1
+	#if DUAL_SOURCE_COLOR_BLENDING_ENABLED && MATERIAL_WORKS_WITH_DUAL_SOURCE_COLOR_BLENDING
+		, out float4 OutTarget1 DUAL_SOURCE_BLENDING_SLOT(1) : SV_Target1
+	#else
+		, out float4 OutTarget1 : SV_Target1
+	#endif
+#endif
+
+#if PIXELSHADEROUTPUT_MRT2
+		, out float4 OutTarget2 : SV_Target2
+#endif
+
+#if PIXELSHADEROUTPUT_MRT3
+		, out float4 OutTarget3 : SV_Target3
+#endif
+
+#if STRATA_OPAQUE_DEFERRED
+#if STRATA_BASE_PASS_MRT_OUTPUT_COUNT != 3
+#error Strata STRATA_BASE_PASS_MRT_OUTPUT_COUNT has been updated but not the uint MRTs
+#endif
+#if PIXELSHADEROUTPUT_MRT4
+#error Strata cannot map to such a case
+#endif
+#if PIXELSHADEROUTPUT_MRT3
+		, out uint StrataOutput4 : SV_Target4
+		, out uint StrataOutput5 : SV_Target5
+		, out uint StrataOutput6 : SV_Target6
+		, out STRATA_TOP_LAYER_TYPE StrataOutput7 : SV_Target7
+#elif PIXELSHADEROUTPUT_MRT2
+		, out uint StrataOutput3 : SV_Target3
+		, out uint StrataOutput4 : SV_Target4
+		, out uint StrataOutput5 : SV_Target5
+		, out STRATA_TOP_LAYER_TYPE StrataOutput6 : SV_Target6
+#elif PIXELSHADEROUTPUT_MRT1
+		, out uint StrataOutput2 : SV_Target2
+		, out uint StrataOutput3 : SV_Target3
+		, out uint StrataOutput4 : SV_Target4
+		, out STRATA_TOP_LAYER_TYPE StrataOutput5 : SV_Target5
+#else
+		, out uint StrataOutput1 : SV_Target1
+		, out uint StrataOutput2 : SV_Target2
+		, out uint StrataOutput3 : SV_Target3
+		, out STRATA_TOP_LAYER_TYPE StrataOutput4 : SV_Target4
+#endif
+#else // STRATA_OPAQUE_DEFERRED
+
+#if PIXELSHADEROUTPUT_MRT4
+		, out float4 OutTarget4 : SV_Target4
+#endif
+
+#if PIXELSHADEROUTPUT_MRT5
+		, out float4 OutTarget5 : SV_Target5
+#endif
+
+#if PIXELSHADEROUTPUT_MRT6
+		, out float4 OutTarget6 : SV_Target6
+#endif
+
+#if PIXELSHADEROUTPUT_MRT7
+		, out float4 OutTarget7 : SV_Target7
+#endif
+
+#endif // STRATA_OPAQUE_DEFERRED
+
+		// todo: if we are not inside a volumetric decal we could use OPTIONAL_OutDepthConservative for better performance, this would require a shader permutation
+		OPTIONAL_OutDepthConservative
+
+#if PIXELSHADEROUTPUT_COVERAGE || PIXELSHADEROUTPUT_A2C
+#if PIXELSHADEROUTPUT_A2C
+		, in uint InCoverage : SV_Coverage
+#endif
+		, out uint OutCoverage : SV_Coverage
+#endif
+	)
+{
+	// ---------------------------------------------------------------------------------
+#if IS_NANITE_PASS && (PIXELSHADEROUTPUT_INTERPOLANTS || PIXELSHADEROUTPUT_BASEPASS)
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	Interpolants.ViewIndex = NaniteInterpolants.ViewIndex;
+#if INSTANCED_STEREO
+	// Nanite fullscreen VS is run for the whole side-by-side RT and the primary (left) view is View0 so figure out EyeIndex based on that - cannot do it in VS since quads can span views.
+	// Revisit if we need to support > 1 instanced view or non side-by-side views
+	Interpolants.EyeIndex = (SvPosition.x >= (View.ViewRectMin.x + View.ViewSizeAndInvSize.x)) ? 1 : 0;
+#endif
+#endif
+
+	FPixelShaderIn PixelShaderIn = (FPixelShaderIn)0;
+	FPixelShaderOut PixelShaderOut = (FPixelShaderOut)0;
+
+#if PIXELSHADEROUTPUT_COVERAGE || PIXELSHADEROUTPUT_A2C
+#if PIXELSHADEROUTPUT_A2C
+	PixelShaderIn.Coverage = InCoverage;
+#else
+	PixelShaderIn.Coverage = 0xF;
+#endif
+	PixelShaderOut.Coverage = PixelShaderIn.Coverage;
+#endif 
+
+	PixelShaderIn.SvPosition = SvPosition;
+	PixelShaderIn.bIsFrontFace = bIsFrontFace;
+
+#if PIXELSHADEROUTPUT_BASEPASS
+	FPixelShaderInOut_MainPS(Interpolants, BasePassInterpolants, PixelShaderIn, PixelShaderOut);
+#elif PIXELSHADEROUTPUT_MESHDECALPASS
+	FPixelShaderInOut_MainPS(Interpolants, MeshDecalInterpolants, PixelShaderIn, PixelShaderOut);
+#elif PIXELSHADEROUTPUT_INTERPOLANTS
+	FPixelShaderInOut_MainPS(Interpolants, PixelShaderIn, PixelShaderOut);
+#else
+	FPixelShaderInOut_MainPS(PixelShaderIn, PixelShaderOut);
+#endif
+
+#if PIXELSHADEROUTPUT_MRT0
+	OutTarget0 = PixelShaderOut.MRT[0];
+#endif
+
+#if PIXELSHADEROUTPUT_MRT1
+	OutTarget1 = PixelShaderOut.MRT[1];
+#endif
+
+#if PIXELSHADEROUTPUT_MRT2
+	OutTarget2 = PixelShaderOut.MRT[2];
+#endif
+
+#if PIXELSHADEROUTPUT_MRT3
+	OutTarget3 = PixelShaderOut.MRT[3];
+#endif
+
+#if STRATA_OPAQUE_DEFERRED
+
+	// In this case, here is the gbuffer pattern
+	// MRT0 is pixel color
+	// MRT1 is velocity if enabled or precomputed shadow if velocity if disabled and precomputed shadow enabled
+	// MRT2 is precomputed shadow if both velocity and prec shadow are enabled.
+	// After, Strata output are appended (3 uint output)
+
+#if PIXELSHADEROUTPUT_MRT3
+	StrataOutput4 = PixelShaderOut.StrataOutput[0];
+	StrataOutput5 = PixelShaderOut.StrataOutput[1];
+	StrataOutput6 = PixelShaderOut.StrataOutput[2];
+	StrataOutput7 = PixelShaderOut.StrataTopLayerData;
+#elif PIXELSHADEROUTPUT_MRT2
+	StrataOutput3 = PixelShaderOut.StrataOutput[0];
+	StrataOutput4 = PixelShaderOut.StrataOutput[1];
+	StrataOutput5 = PixelShaderOut.StrataOutput[2];
+	StrataOutput6 = PixelShaderOut.StrataTopLayerData;
+#elif PIXELSHADEROUTPUT_MRT1
+	StrataOutput2 = PixelShaderOut.StrataOutput[0];
+	StrataOutput3 = PixelShaderOut.StrataOutput[1];
+	StrataOutput4 = PixelShaderOut.StrataOutput[2];
+	StrataOutput5 = PixelShaderOut.StrataTopLayerData;
+#else
+	StrataOutput1 = PixelShaderOut.StrataOutput[0];
+	StrataOutput2 = PixelShaderOut.StrataOutput[1];
+	StrataOutput3 = PixelShaderOut.StrataOutput[2];
+	StrataOutput4 = PixelShaderOut.StrataTopLayerData;
+#endif
+
+#else // STRATA_OPAQUE_DEFERRED
+
+#if PIXELSHADEROUTPUT_MRT4
+	OutTarget4 = PixelShaderOut.MRT[4];
+#endif
+
+#if PIXELSHADEROUTPUT_MRT5
+	OutTarget5 = PixelShaderOut.MRT[5];
+#endif
+
+#if PIXELSHADEROUTPUT_MRT6
+	OutTarget6 = PixelShaderOut.MRT[6];
+#endif
+
+#if PIXELSHADEROUTPUT_MRT7
+	OutTarget7 = PixelShaderOut.MRT[7];
+#endif
+
+#endif // STRATA_OPAQUE_DEFERRED
+
+#if PIXELSHADEROUTPUT_COVERAGE || PIXELSHADEROUTPUT_A2C
+	OutCoverage = PixelShaderOut.Coverage;
+#endif 
+
+#if OUTPUT_PIXEL_DEPTH_OFFSET
+	OutDepth = PixelShaderOut.Depth;
+#endif 
+}

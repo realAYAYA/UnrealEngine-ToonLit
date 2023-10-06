@@ -1,0 +1,36 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define PROBE_FRAME_INDEX_NEVER_TRACED 0
+
+// Must match LumenRadianceCache.cpp
+#define PRIORITY_HISTOGRAM_SIZE 16
+#define MAX_UPDATE_BUCKET_STRIDE 2				// [MaxBucketIndex; ProbeTraceCostFromMaxBucket]
+#define PROBES_TO_UPDATE_TRACE_COST_STRIDE 2	// [ProbeTraceCost; ProbeTraceCostFromMaxBucket]
+
+uint NumProbesToTraceBudget;
+float DownsampleDistanceFromCameraSq;
+float SupersampleDistanceFromCameraSq;
+
+uint GetProbeTraceCostBudget()
+{
+	return NumProbesToTraceBudget * 4;
+}
+
+// Note: should match GenerateProbeTraceTilesCS as closely as possible
+uint GetProbeTraceCost(float3 ProbeWorldPosition)
+{
+	float3 CameraVector = LWCHackToFloat(PrimaryView.WorldCameraOrigin) - ProbeWorldPosition;
+	float DistanceFromCameraSq = dot(CameraVector, CameraVector);
+
+	if (DistanceFromCameraSq < SupersampleDistanceFromCameraSq)
+	{
+		return 16;
+	}
+
+	if (DistanceFromCameraSq < DownsampleDistanceFromCameraSq)
+	{
+		return 4;
+	}
+
+	return 1;
+}

@@ -1,0 +1,451 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+
+#include "Common.ush"
+#include "GammaCorrectionCommon.ush"
+#include "SlateShaderCommon.ush"
+
+#ifndef SAMPLE_VIRTUAL_TEXTURE
+#define SAMPLE_VIRTUAL_TEXTURE 0
+#endif
+
+#if SAMPLE_VIRTUAL_TEXTURE
+	#define NUM_VIRTUALTEXTURE_SAMPLES 1
+	// Workaround for unbound View uniform buffer
+	#define VT_DISABLE_VIEW_UNIFORM_BUFFER 1
+	#include "VirtualTextureCommon.ush"
+#endif
+
+/** Display gamma x:gamma curve adjustment, y:inverse gamma (1/GEngine->DisplayGamma), z:InvertAlpha, w:Contrast */
+half4 GammaAndAlphaValues;
+/** x:DrawDisabledEffect */
+/** Per element params */
+float4 ShaderParams;
+float4 ShaderParams2;
+
+#define USE_LEGACY_DISABLED_EFFECT 0
+
+#if USE_MATERIALS
+half4 DrawFlags;
+#endif
+
+/** Texture for the element */
+Texture2D ElementTexture;
+SamplerState ElementTextureSampler;
+
+#if SAMPLE_VIRTUAL_TEXTURE
+Texture2D<uint4> InPageTableTexture;
+uint4 VTPackedPageTableUniform[2];
+uint4 VTPackedUniform;
+float4 VTShaderParams;
+#endif // SAMPLE_VIRTUAL_TEXTURE
+
+/**
+ * Applys a contrast about a midpoint squeezing the colors towards dark or light depending on
+ * the midpoint.  Additionally - it increases the opaqueness of colors to try and seperate them from
+ * the background.
+ */
+half4 ApplyContrast(half4 InColor)
+{
+    FLATTEN if( GammaAndAlphaValues.w != 1.0f )
+    {
+		float ContrastMidpoint = 0.25; //TODO We may want to make the midpoint configurable so that users can pick a different one, based on the overall saturation of their UI.
+	    InColor.rgb = saturate(((InColor.rgb - ContrastMidpoint) * GammaAndAlphaValues.w) + ContrastMidpoint);
+    }
+    
+    return InColor;
+}
+
+half3 GammaCorrect(half3 InColor)
+{
+	half3 CorrectedColor = InColor;
+
+#if SOURCE_IN_LINEAR_SPACE
+	FLATTEN if( GammaAndAlphaValues.y != 1.0f )
+	{
+		CorrectedColor = ApplyGammaCorrection(CorrectedColor, GammaAndAlphaValues.x);
+	}
+#endif
+
+	return CorrectedColor;
+}
+
+void GetSlateUVs(VertexToPixelInterpolants Interpolants, inout float2 UVs[8])
+{
+#if NUM_MATERIAL_TEXCOORDS > 0
+	UVs[0] = SLATE_UV0( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 1
+	UVs[1] = SLATE_UV1( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 2
+	UVs[2] = SLATE_UV2( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 3
+	UVs[3] = SLATE_UV3( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 4
+	UVs[4] = SLATE_UV4( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 5
+	UVs[5] = SLATE_UV5( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 6
+	UVs[6] = SLATE_UV6( Interpolants );
+#endif
+#if NUM_MATERIAL_TEXCOORDS > 7
+	UVs[7] = SLATE_UV7( Interpolants );
+#endif
+}
+
+#if USE_MATERIALS
+void FillTexCoords( inout FMaterialPixelParameters Parameters, VertexToPixelInterpolants InVertex, float2 InDefaultUV )
+{
+#if SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont
+	#if NUM_MATERIAL_TEXCOORDS == 1
+		// Note: The first channel is used to look up into the texture atlas. The second channel is the custom 0-1 UV set for the text run
+		Parameters.TexCoords[0] = SLATE_UV1( InVertex );
+	#elif NUM_MATERIAL_TEXCOORDS == 2
+		// Note: The first channel is used to look up into the texture atlas. The second channel is the custom 0-1 UV set for the text run
+		Parameters.TexCoords[0] = SLATE_UV1( InVertex );
+		Parameters.TexCoords[1] = InVertex.MaterialTexCoords;
+	#endif
+#elif (SHADER_TYPE == ST_Custom || NUM_CUSTOMIZED_UVS != 0) && NUM_MATERIAL_TEXCOORDS > 0
+	// note: We assume users who customize UVs or are using completely custom elements know what they are doing with UVs and want no assumptions made about how uvs are used
+	float2 UVs[8]; GetSlateUVs(InVertex, UVs);
+	UNROLL
+	for( int CoordinateIndex = 0; CoordinateIndex < NUM_MATERIAL_TEXCOORDS; CoordinateIndex++ )
+	{
+		Parameters.TexCoords[CoordinateIndex] = UVs[CoordinateIndex];
+	}
+#else
+	#if NUM_MATERIAL_TEXCOORDS == 1
+		Parameters.TexCoords[0] = InDefaultUV;
+	#elif NUM_MATERIAL_TEXCOORDS == 2
+		Parameters.TexCoords[0] = InDefaultUV;
+		Parameters.TexCoords[1] = SLATE_UV0( InVertex );
+	#elif NUM_MATERIAL_TEXCOORDS == 3
+		Parameters.TexCoords[0] = InDefaultUV;
+		Parameters.TexCoords[1] = SLATE_UV0( InVertex );
+		Parameters.TexCoords[2] = SLATE_UV1( InVertex );
+	#elif NUM_MATERIAL_TEXCOORDS >= 4
+		Parameters.TexCoords[0] = InDefaultUV;
+		Parameters.TexCoords[1] = SLATE_UV0( InVertex );
+		Parameters.TexCoords[2] = SLATE_UV1( InVertex );
+
+		float2 UVs[8]; GetSlateUVs(InVertex, UVs);
+		UNROLL
+		for( int CoordinateIndex = 3; CoordinateIndex < NUM_MATERIAL_TEXCOORDS; CoordinateIndex++ )
+		{
+			Parameters.TexCoords[CoordinateIndex] = UVs[CoordinateIndex];
+		}
+	#endif // NUM_MATERIAL_TEXCOORDS == 1
+#endif	// SHADER_TYPE
+}
+
+half4 GetMaterialColor( VertexToPixelInterpolants InVertex, float2 MeshUV )
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters Parameters = MakeInitializedMaterialPixelParameters();
+
+	// Inputs might require texcoords, so fill them in first
+	FillTexCoords( Parameters, InVertex, MeshUV );
+
+	Parameters.VertexColor = InVertex.Color;
+
+   
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParameters( Parameters, PixelMaterialInputs, InVertex.Position, true );
+
+	// Clip if masked
+	GetMaterialCoverageAndClipping( Parameters, PixelMaterialInputs );
+
+	half4 OutColor;
+	
+#if STRATA_ENABLED
+
+	// UI element are always rendered with a unlit BSDF behind the scene
+	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
+	UnlitBSDF.StrataSanitizeBSDF();
+
+#if ((STRATA_OPAQUE_DEFERRED || (STRATA_OPAQUE_MATERIAL && STRATA_FORWARD_SHADING)))
+
+	OutColor = half4(BSDF_GETEMISSIVE(UnlitBSDF), 1.0f);
+
+#else // STRATA_OPAQUE_DEFERRED
+
+	float3 Color = BSDF_GETEMISSIVE(UnlitBSDF);
+	float Coverage = saturate(1.0f - UNLIT_TRANSMITTANCE(UnlitBSDF).x);	// Unlit node transmittance is only generated from opacity
+
+#if MATERIALBLENDING_ALPHACOMPOSITE
+
+#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+	Coverage = GetMaterialOpacity(PixelMaterialInputs);
+#endif
+	OutColor = half4(Color, Coverage);
+
+#elif MATERIALBLENDING_MODULATE
+	OutColor = half4(Color, 0.0f);
+#elif MATERIALBLENDING_ALPHAHOLDOUT
+	OutColor = half4(0.0f, 0.0f, 0.0f, Coverage);
+#else // MATERIALBLENDING_ADDITIVE || MATERIALBLENDING_TRANSLUCENT
+	OutColor = half4(Color * Coverage, Coverage);
+#endif // MATERIALBLENDING_xxx
+
+#endif// STRATA_OPAQUE_DEFERRED
+
+#else // STRATA_ENABLED
+
+	half Opacity = GetMaterialOpacity(PixelMaterialInputs);
+	half3 Color = GetMaterialEmissive(PixelMaterialInputs);
+
+#if MATERIALBLENDING_ADDITIVE
+	OutColor = half4(Color * Opacity, 0.0f);
+#else
+	OutColor = half4(Color, Opacity);
+#endif
+
+#endif // STRATA_ENABLED
+
+	return OutColor;
+}
+#endif
+
+#if !USE_MATERIALS
+half4 GetTextureColor( VertexToPixelInterpolants InVertex, float2 UV )
+{
+	half4 BaseColor;
+
+	#if SAMPLE_VIRTUAL_TEXTURE
+			VTPageTableResult PageTableResult = TextureLoadVirtualPageTableLevel(InPageTableTexture, VTPageTableUniform_Unpack(VTPackedPageTableUniform[0], VTPackedPageTableUniform[1]), UV, VTADDRESSMODE_WRAP, VTADDRESSMODE_WRAP, VTShaderParams.x); 
+			BaseColor = TextureVirtualSampleLevel(ElementTexture, ElementTextureSampler, PageTableResult, (uint)VTShaderParams.y, VTUniform_Unpack(VTPackedUniform));
+	#else
+
+		BaseColor = Texture2DSample(ElementTexture, ElementTextureSampler, UV );
+
+		#if USE_TEXTURE_GRAYSCALE
+			#if !USE_TEXTURE_ALPHA
+				BaseColor.rgb = BaseColor.rrr;
+				BaseColor.a = 1;
+			#else
+				BaseColor.a = BaseColor.r;
+				BaseColor.rgb = half3(1,1,1);
+			#endif
+		#endif
+
+	#endif
+
+	#if !USE_TEXTURE_ALPHA
+		BaseColor.a = 1.0f;
+	#endif
+
+	return BaseColor;
+}
+#endif
+
+/** Gets a color from a texture and supplied vertex color.  Adjusting for tint masking if necessary */
+half4 GetColor( VertexToPixelInterpolants InVertex, float2 UV )
+{
+	half4 FinalColor;
+	
+#if USE_MATERIALS
+	half4 BaseColor = GetMaterialColor( InVertex, UV );
+#else
+	half4 BaseColor = GetTextureColor( InVertex, UV );
+#endif
+
+#if SHADER_TYPE == ST_Custom
+	// Make no assumptionn of what vertex color does in a custom material shader
+	FinalColor = BaseColor;
+#else
+	FinalColor = BaseColor * InVertex.Color;
+	#if USE_MATERIALS && MATERIALBLENDING_ADDITIVE
+		FinalColor *= InVertex.Color.a;
+	#endif
+#endif
+
+	return FinalColor;
+}
+
+#if SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont
+half4 GetFontElementColor( VertexToPixelInterpolants InVertex )
+{
+	float2 AtlasTextureCoordinates = SLATE_UV0( InVertex );
+#if USE_MATERIALS
+	half4 BaseColor = GetMaterialColor( InVertex, float2(0,0) ) * InVertex.Color;
+#else
+	half4 BaseColor = InVertex.Color;
+#endif
+	half4 OutColor = BaseColor;
+
+#if SHADER_TYPE == ST_GrayscaleFont
+	#if USE_MATERIALS && MATERIALBLENDING_ADDITIVE
+		OutColor *= Texture2DSample_A8( ElementTexture, ElementTextureSampler, AtlasTextureCoordinates );
+	#else
+		OutColor.a *= Texture2DSample_A8( ElementTexture, ElementTextureSampler, AtlasTextureCoordinates );
+	#endif
+#else
+	OutColor *= Texture2DSample( ElementTexture, ElementTextureSampler, AtlasTextureCoordinates );
+#endif
+
+	return OutColor;
+}
+#endif
+
+#if SHADER_TYPE == ST_Default || SHADER_TYPE == ST_Custom
+half4 GetDefaultElementColor( VertexToPixelInterpolants InVertex )
+{
+	return GetColor( InVertex, SLATE_UV0( InVertex ) * SLATE_UV1( InVertex ) );
+}
+#endif
+
+#if SHADER_TYPE == ST_Border 
+half4 GetBorderElementColor( VertexToPixelInterpolants InVertex )
+{
+	float4 TextureCoordinates = InVertex.TextureCoordinates0;
+	float2 NewUV;
+	if( TextureCoordinates.z == 0.0f && TextureCoordinates.w == 0.0f )
+	{
+		NewUV = TextureCoordinates.xy;
+	}
+	else
+	{
+		float2 MinUV;
+		float2 MaxUV;
+	
+		if( TextureCoordinates.z > 0 )
+		{
+			MinUV = float2(ShaderParams.x,0);
+			MaxUV = float2(ShaderParams.y,1);
+			TextureCoordinates.w = 1.0f;
+		}
+		else
+		{
+			MinUV = float2(0,ShaderParams.z);
+			MaxUV = float2(1,ShaderParams.w);
+			TextureCoordinates.z = 1.0f;
+		}
+
+		NewUV = TextureCoordinates.xy*TextureCoordinates.zw;
+		NewUV = frac(NewUV);
+		NewUV = lerp(MinUV,MaxUV,NewUV);	
+	}
+
+	return GetColor( InVertex, NewUV );
+}
+#endif
+
+
+#if SHADER_TYPE == ST_RoundedBox
+half4 GetRoundedBoxElementColor( VertexToPixelInterpolants InVertex )
+{
+	return GetRoundedBoxElementColorInternal(ShaderParams.zw, InVertex.MaterialTexCoords.xy, ShaderParams.y, ShaderParams2, GetColor(InVertex, SLATE_UV0(InVertex) * SLATE_UV1(InVertex)),  InVertex.SecondaryColor);
+}
+#endif
+
+#if SHADER_TYPE == ST_LineSegment
+/**
+ * Generates an anti-aliased line segment pixel
+ * This is based on the fast prefiltered lines technique published in GPU Gems 2
+ *
+ * Instead of passing edge function coefficients as uniform parameters we use
+ * texture coordinates to define the line
+ *
+ * When rasterized, the submitted geometry must contain every pixel that
+ * could have coverage > 0. Failing to do so will create sharp, aliased edges
+ */
+half4 GetLineSegmentElementColor( VertexToPixelInterpolants InVertex )
+{
+	const float2 Gradient = SLATE_UV0(InVertex);
+
+	// Get coverage based on distance from segment sides and ends
+	const float2 OutsideFilterUV = float2(1.0f, 1.0f);
+	const float2 InsideFilterUV = float2(ShaderParams.x, 0.0f);
+	const float2 LineCoverage = smoothstep(OutsideFilterUV, InsideFilterUV, abs(Gradient));
+
+	half4 Color = InVertex.Color;
+	Color.a *= LineCoverage.x * LineCoverage.y;
+	return Color;
+}
+#endif
+
+HALF4_TYPE Main( VertexToPixelInterpolants VIn ) : SV_Target0
+{
+	half4 OutColor;
+#if SHADER_TYPE == ST_Default || SHADER_TYPE == ST_Custom
+	OutColor = GetDefaultElementColor( VIn );
+#elif SHADER_TYPE == ST_RoundedBox
+	OutColor = GetRoundedBoxElementColor( VIn );
+#elif SHADER_TYPE == ST_Border
+	OutColor = GetBorderElementColor( VIn );
+#elif SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont
+	OutColor = GetFontElementColor( VIn );
+#else
+	OutColor = GetLineSegmentElementColor( VIn );
+#endif
+	
+	// For standard slate which only has a few shaders, the permutation is fine here,
+	// for Engine Materials, we don't ever define this macro, so instead we fallback
+	// to looking at the shader constants.
+#if USE_MATERIALS
+	const half DrawDisabledEffect = DrawFlags.x;
+#else
+	#if DRAW_DISABLED_EFFECT
+		const half DrawDisabledEffect = 1;
+	#else
+		const half DrawDisabledEffect = 0;
+	#endif
+#endif
+
+	if (DrawDisabledEffect != 0)
+	{
+#if USE_LEGACY_DISABLED_EFFECT
+		#if SOURCE_IN_LINEAR_SPACE
+			half3 LumCoeffs = half3( 0.3, 0.59, .11 );
+			half3 Grayish = half3(.1, .1, .1);
+		#else
+			// These are just the linear space values above converted to sRGB space.
+			half3 LumCoeffs = float3( 0.5843, 0.7921, 0.3647 );
+			half3 Grayish = float3(0.349, 0.349, 0.349);
+		#endif
+    
+		//desaturate
+		half Lum = dot( LumCoeffs, OutColor.rgb );
+		OutColor.rgb = lerp( OutColor.rgb, float3(Lum,Lum,Lum), .8 );
+		OutColor.rgb = lerp( OutColor.rgb, Grayish, clamp( distance( OutColor.rgb, Grayish ), 0, .8)  );
+#else
+		//float bw = (min(OutColor.r, min(OutColor.g, OutColor.b)) + max(OutColor.r, max(OutColor.g, OutColor.b))) * 0.5f;
+		//OutColor.rgb = lerp(OutColor.rgb, float3(bw, bw, bw), .5);
+
+		OutColor.a *= .45f;
+#endif
+	}
+
+	// Contrast
+	OutColor = ApplyContrast(OutColor);
+
+	// Gamma Correct
+	OutColor.rgb = GammaCorrect(OutColor.rgb);
+
+#if !USE_MATERIALS
+    // Deal with cases where the incoming alpha is inverted like if you're dealing with render targets coming
+    // from the scene renderer.
+    OutColor.a = lerp(OutColor.a, 1 - OutColor.a, GammaAndAlphaValues.z);
+#endif
+    
+	return OutColor;
+}
+
+float4 DebugOverdrawMain( VertexToPixelInterpolants VIn ) : SV_Target0
+{
+	return .1;
+}
+
+/** Batch Color */
+float4 BatchColor;
+
+float4 DebugBatchingMain(VertexToPixelInterpolants VIn) : SV_Target0
+{
+    return BatchColor;
+}
+

@@ -1,0 +1,28 @@
+{
+	"localeFilter": {
+		"filterType": "language",
+		"whitelist": [
+			"en",
+			"fr",
+			"it",
+			"de",
+			"es",
+			"zh",
+			"ja",
+			"ko"
+		]
+	},
+	"featureFilters": {
+		"conversion_mappings": {
+			"filterType": "exclude"
+		},
+		"stringprep": {
+			"filterType": "exclude"
+		},
+		"brkitr_dictionaries": {
+			"whitelist": [
+				"cjdict"
+			]
+		}
+	}
+}

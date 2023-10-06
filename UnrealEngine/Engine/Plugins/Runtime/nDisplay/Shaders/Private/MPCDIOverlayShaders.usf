@@ -1,0 +1,357 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "MPCDIUtils.ush"
+
+static const float DefaultChromakeyTileMultiplier = 10.0;
+
+OutputVS IcvfxWarpVS(InputVS IN)
+{
+	OutputVS OUT;
+
+#if MESH_WARP
+	OUT.PFMPosition = mul(float4(IN.Position.xyz,1.f), MeshToStageProjectionMatrix);
+	OUT.UV_Chromakey = float4(IN.UV_Chromakey, 0.f, 1.f);
+	float4 ScreenPosition = float4(IN.UV.xy, 0, 1);
+#else
+	float4 ScreenPosition = IN.Position;	
+#endif
+
+	DrawRectangle(ScreenPosition, IN.UV, OUT.Position, OUT.UV.xy);
+	OUT.Position.zw = float2(0.f, 1.f);
+	OUT.UV = float4(IN.UV, 0.f, 1.f);
+	return OUT;
+}
+
+OutputPS Passthrough_PS(OutputVS IN)
+{
+	OutputPS OUT;
+
+	float4 ViewportUV = mul(IN.UV, ViewportTextureProjectionMatrix);	
+	float4 ViewportColor = InputTexture.Sample(InputSampler, ViewportUV.xy);
+
+	OUT.Color = ViewportColor;
+	return OUT;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// LightCard
+////////////////////////////////////////////////////////////////////////////////
+float4 GetLightCardTextureColor(float2 InUV)
+{
+	return LightCardTexture.Sample(LightCardSampler, InUV);
+}
+
+float4 GetUVLightCardTextureColor(float2 InUV)
+{
+	float4 OutColor =UVLightCardTexture.Sample(UVLightCardSampler, InUV);
+
+	// UVLightCard alpha not inverted
+	return float4(OutColor.xyz, 1 - OutColor.w);
+}
+
+float3 ComposeOverlayColor(float4 InColor, float4 InOverlayColor)
+{
+	return InOverlayColor.xyz + InColor.xyz * InOverlayColor.w;
+}
+
+// Additive render pass with 2 overlays
+// a = in\out, b,c = ordered overlays (a + b + c)
+// c.xyz + (b.xyz + a.xyz * b.w)*c.w = a.xyz * (b.w *c.w) + b.xyz*c.w + c.xyz
+float4 ComposeRenderPassTwoOverlays(float4 InOverlay1, float4 InOverlay2)
+{
+	return float4(ComposeOverlayColor(InOverlay1, InOverlay2), InOverlay1.w * InOverlay2.w);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+float2 TileUV(float2 InUV, float InScale)
+{
+	return frac(InUV * InScale);
+}
+
+float GetFeatherAlpha(float2 EdgeOffset, float Feather)
+{
+	float Alpha = 1;
+
+	// do not change the alpha within an in-camera frame
+	if (EdgeOffset.x < 1)
+	{
+		Alpha *= smoothstep(0, Feather, EdgeOffset.x); // horizontal component
+	}
+	
+	// do not change the alpha within an in-camera frame
+	if (EdgeOffset.y < 1)
+	{
+		Alpha *= smoothstep(0, Feather, EdgeOffset.y); // vertical component
+	}
+
+	return Alpha;
+}
+
+float GetInnerCameraSoftEdgeAlpha(float2 CameraUV, float4 InInnerCameraSoftEdge)
+{
+	float2 EdgeOffset = float2(1, 1);
+
+	// InInnerCameraSoftEdge.x values are used to pass left/right soft edge values
+	if(CameraUV.x < InInnerCameraSoftEdge.x) // left 
+	{
+		float CameraTextureAlphaLeft = Pow2(saturate(abs(CameraUV.x) / InInnerCameraSoftEdge.x));
+		EdgeOffset.x = CameraTextureAlphaLeft;
+	}
+	else
+	if(CameraUV.x > (1 - InInnerCameraSoftEdge.x)) // right
+	{
+		float CameraTextureAlphaRight = Pow2(saturate(abs(1 - CameraUV.x) / InInnerCameraSoftEdge.x));
+		EdgeOffset.x = CameraTextureAlphaRight;
+	}
+
+	// InInnerCameraSoftEdge.y values are used to pass top/bottom soft edge values
+	if(CameraUV.y < (InInnerCameraSoftEdge.y)) // top
+	{
+		float CameraTextureAlphaTop = Pow2(saturate(abs(CameraUV.y) / InInnerCameraSoftEdge.y));
+		EdgeOffset.y = CameraTextureAlphaTop;
+	}
+	else
+	if(CameraUV.y > (1 - InInnerCameraSoftEdge.y)) // bottom
+	{
+		float CameraTextureAlphaBottom = Pow2(saturate(abs(1 - CameraUV.y) / InInnerCameraSoftEdge.y));
+		EdgeOffset.y = CameraTextureAlphaBottom;
+	}
+
+	// InInnerCameraSoftEdge.z are used to pass Feather soft edge values
+	float Feather = InInnerCameraSoftEdge.z;
+
+	return GetFeatherAlpha(EdgeOffset, Feather);
+}
+
+float4 GetChromakeyMarkerColor(float2 InMarkersUV)
+{
+	// Tile scale is inversely proprotional to the distance
+	float TileScale = DefaultChromakeyTileMultiplier / ChromakeyMarkerDistance;
+	
+	// Invert vertical axis for more intuitive controls
+	float2 InvertedChromakeyMarkerOffset = ChromakeyMarkerOffset;
+	InvertedChromakeyMarkerOffset.y = -ChromakeyMarkerOffset.y;
+
+	float2 ChromakeyMarkerUV = TileUV(InMarkersUV - InvertedChromakeyMarkerOffset/TileScale, TileScale);
+
+	// Scale individual tile from its center, and independently from the distance
+	float2 HalfTile = float2(0.5, 0.5);
+	ChromakeyMarkerUV -= HalfTile;
+	ChromakeyMarkerUV *= ChromakeyMarkerDistance / ChromakeyMarkerScale;
+	float4 ChromakeyMarkerTextureColor = ChromakeyMarkerTexture.Sample(ChromakeyMarkerSampler, ChromakeyMarkerUV + HalfTile);
+
+	// Anything outside scaled UV bounds is untextured
+	if(any(abs(ChromakeyMarkerUV) > HalfTile))
+	{
+		return float4(ChromakeyMarkerColor.xyz, 0);
+	}
+
+	return float4(ChromakeyMarkerColor.xyz, ChromakeyMarkerTextureColor.w);
+}
+
+float4 GetInnerCameraColor(float4 WarpedUV, OutputVS IN)
+{
+	// Transform WarpedUV to Camera ScreenSpaceUV
+	float4 CameraUVW = mul(WarpedUV, InnerCameraProjectionMatrix);
+	float2 CameraUV = CameraUVW.xy / CameraUVW.w;
+
+#if CHROMAKEYFRAMECOLOR
+	float4 CameraColor = float4(0,0,0,0);
+#else
+	// ** Incamera Frame **
+	float3 CameraBaseColor = InnerCameraTexture.Sample(InnerCameraSampler, CameraUV).rgb;
+	float4 CameraColor = float4(CameraBaseColor, 0);
+#endif
+
+	// ********* Compose camera alpha **********
+	if (CameraUVW.w > 0) // clip back plane
+	{
+		//Defined texel:
+		float2 ToEdge = (CameraUV.xy * 2) - 1.0f; // -1..1
+		float Weight = 1 - max(abs(ToEdge.x), abs(ToEdge.y));
+
+		// Near clip Plane tests 
+		if (Weight >= 0)
+		{
+			// *** InCamera Soft Edges ***
+			CameraColor.w = GetInnerCameraSoftEdgeAlpha(CameraUV, InnerCameraSoftEdge);
+
+			// **** disable incamera render inside overlapped areas
+			#if ENABLE_INNER_CAMERA_OVERLAP && !INNER_CAMERA_OVERLAP
+			if(OverlappedInnerCamerasNum > 0 && CameraColor.w < 1)
+			{
+				for(uint OverlappedCameraIndex = 0; OverlappedCameraIndex < OverlappedInnerCamerasNum; OverlappedCameraIndex++)
+				{
+					float4x4 InnerCameraProjectionMatrix2 = OverlappedInnerCamerasProjectionMatrices[OverlappedCameraIndex];
+
+					// Transform WarpedUV to Camera ScreenSpaceUV
+					float4 CameraUVW2 = mul(WarpedUV, InnerCameraProjectionMatrix2);
+					if (CameraUVW2.w > 0) // clip back plane
+					{
+						float2 CameraUV2 = CameraUVW2.xy / CameraUVW2.w;
+						float2 ToEdge2 = (CameraUV2.xy * 2) - 1.0f; // -1..1
+						float Weight2 = 1 - max(abs(ToEdge2.x), abs(ToEdge2.y));
+						if (Weight2 >= 0)
+						{
+							float UnderCameraAlpha = GetInnerCameraSoftEdgeAlpha(CameraUV2, OverlappedInnerCameraSoftEdges[OverlappedCameraIndex]);
+
+							//!
+							if(UnderCameraAlpha > 0.1)
+							{
+								// This pixel was overlapped. Do not render
+								CameraColor.w = 0;
+							}
+						}
+					}
+				}
+			}
+			#endif
+
+			// ********* Compose camera colors **********
+			#if CHROMAKEYFRAMECOLOR || CHROMAKEY
+				// Use frame color by default
+				float4 OverlayChromakeyColor = float4(ChromakeyColor.xyz,0);
+
+				#if CHROMAKEY
+					float4 ChromakeyCameraTextureColor = ChromakeyCameraTexture.Sample(ChromakeyCameraSampler, CameraUV);
+
+					// Get alpha from chromakey rtt frame
+					OverlayChromakeyColor.w = ChromakeyCameraTextureColor.w;
+				#endif
+
+				#if CHROMAKEY_MARKER
+					float4 ChromakeyMarkerTextureColor = GetChromakeyMarkerColor(IN.UV_Chromakey.xy);
+
+					// Blend marker color with chromakey
+					OverlayChromakeyColor.xyz = lerp(OverlayChromakeyColor.xyz, ChromakeyMarkerTextureColor.xyz, ChromakeyMarkerTextureColor.w);
+				#endif
+
+				// ********* When camera overlap we render chromakey **********
+				#if ENABLE_INNER_CAMERA_OVERLAP && INNER_CAMERA_OVERLAP
+					if(CameraColor.w >= 0)
+					{
+						OverlayChromakeyColor.w = 0;
+
+						// disable chromakey
+						float OverlayAlphaMult = 0;
+
+						for(uint OverlappedCameraIndex = 0; OverlappedCameraIndex < OverlappedInnerCamerasNum; OverlappedCameraIndex++)
+						{
+							float4x4 InnerCameraProjectionMatrix2 = OverlappedInnerCamerasProjectionMatrices[OverlappedCameraIndex];
+
+							// Transform WarpedUV to Camera ScreenSpaceUV
+							float4 CameraUVW2 = mul(WarpedUV, InnerCameraProjectionMatrix2);
+							if (CameraUVW2.w > 0) // clip back plane
+							{
+								float2 CameraUV2 = CameraUVW2.xy / CameraUVW2.w;
+								float2 ToEdge2 = (CameraUV2.xy * 2) - 1.0f; // -1..1
+								float Weight2 = 1 - max(abs(ToEdge2.x), abs(ToEdge2.y));
+								if (Weight2 >= 0)
+								{
+									// This pixel was overlapped
+									// force to render Chromakey
+									OverlayAlphaMult = max(OverlayAlphaMult, GetInnerCameraSoftEdgeAlpha(CameraUV2, OverlappedInnerCameraSoftEdges[OverlappedCameraIndex]));
+								}
+							}
+						}
+
+						CameraColor.w = CameraColor.w * OverlayAlphaMult;
+					}
+				#endif
+
+				CameraColor.xyz = lerp(CameraColor.xyz, OverlayChromakeyColor.xyz, 1-OverlayChromakeyColor.w);
+
+			#endif
+
+			// *** InCamera Border ***
+			if(InnerCameraBorderThickness>0)
+			{
+				if((ToEdge.x < (InnerCameraBorderThickness / InnerCameraFrameAspectRatio - 1)) || (ToEdge.x > (1 - InnerCameraBorderThickness / InnerCameraFrameAspectRatio)) ||
+					(ToEdge.y < (InnerCameraBorderThickness - 1)) || (ToEdge.y > (1 - InnerCameraBorderThickness)))
+				{
+					CameraColor.rgb = InnerCameraBorderColor.xyz;
+					CameraColor.w = 1.0f;
+				}
+			}
+		}
+	}
+
+	return CameraColor;
+}
+
+OutputPS IcvfxWarpPS(OutputVS IN)
+{
+	OutputPS OUT;
+
+	// Load warped UV
+#if MESH_WARP
+	float4 WarpedUV = float4(IN.PFMPosition, 1.f);
+#else
+	float4 WarpedUV = WarpMapTexture.Sample(WarpMapSampler, IN.UV.xy);
+#endif
+	
+	// Transform WarpedUV to ScreenSpaceUV
+	float4 ViewportUVW = mul(WarpedUV, ViewportTextureProjectionMatrix);
+	float2 ViewportUV = ViewportUVW.xy / ViewportUVW.w;
+
+
+	float4 OverlayUVW = mul(WarpedUV, OverlayProjectionMatrix);
+	float2 OverlayUV = OverlayUVW.xy / OverlayUVW.w;
+
+	#if LIGHTCARD_OVER || UVLIGHTCARD_OVER || LIGHTCARD_UNDER || UVLIGHTCARD_UNDER
+		#if (LIGHTCARD_OVER && UVLIGHTCARD_OVER) || (LIGHTCARD_UNDER && UVLIGHTCARD_UNDER)
+			float4 LightCardColor = ComposeRenderPassTwoOverlays(GetLightCardTextureColor(OverlayUV), GetUVLightCardTextureColor(IN.UV_Chromakey.xy));
+		#else
+			// Render overlays in separate render-pass
+			#if LIGHTCARD_UNDER || LIGHTCARD_OVER
+				float4 LightCardColor = GetLightCardTextureColor(OverlayUV);
+			#endif
+			#if UVLIGHTCARD_UNDER || UVLIGHTCARD_OVER
+				float4 LightCardColor = GetUVLightCardTextureColor(IN.UV_Chromakey.xy);
+			#endif
+		#endif
+	#endif
+
+	// Compose all:
+#if VIEWPORT_INPUT
+
+	// First and single pass renders:
+
+	#if VIEWPORT_INPUT_ALPHA
+		float4 OutColor = float4(InputTexture.Sample(InputSampler, ViewportUV));
+	#else
+		float4 OutColor = float4(InputTexture.Sample(InputSampler, ViewportUV).rgb, 1.0f);
+	#endif
+
+	#if LIGHTCARD_UNDER || UVLIGHTCARD_UNDER
+		OutColor.xyz = ComposeOverlayColor(OutColor, LightCardColor);
+	#endif
+	
+	#if INNER_CAMERA
+		float4 CameraColor = GetInnerCameraColor(WarpedUV, IN);
+		OutColor.xyz = lerp(OutColor.xyz, CameraColor.xyz, CameraColor.w);
+	#endif
+
+	#if LIGHTCARD_OVER || UVLIGHTCARD_OVER
+		OutColor.xyz = ComposeOverlayColor(OutColor, LightCardColor);
+	#endif
+
+#else 
+	// MultiCam or Final renderpass (only cam or overlay per pass))
+	#if INNER_CAMERA
+		float4 OutColor = GetInnerCameraColor(WarpedUV, IN);
+	#else
+		#if LIGHTCARD_OVER || UVLIGHTCARD_OVER
+			float4 OutColor = LightCardColor;
+		#else
+			float4 OutColor = float4(0,0,0,0);
+		#endif
+	#endif
+
+#endif
+
+	//@todo: add LUT here
+
+	// Apply final mpcdi color blending
+	OUT.Color = ApplyBlending(OutColor.xyz, IN, OutColor.w);
+	return OUT;
+}

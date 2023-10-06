@@ -1,0 +1,902 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	StrandHairFactory.usf
+=============================================================================*/
+#include "../VertexFactoryCommon.ush"  
+#include "../LocalVertexFactoryCommon.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsVertexFactoryCommon.ush"
+#include "HairStrandsAttributeCommon.ush"
+
+#include "/Engine/Generated/UniformBuffers/PrecomputedLightingBuffer.ush"
+
+#define USE_HAIR_COMPLEX_TRANSMITTANCE 1 
+
+#ifndef USE_HAIR_TRIANGLE_STRIP
+	#error Hair triangle geometry type needs to be defined
+#endif
+
+#if MANUAL_VERTEX_FETCH
+	Buffer<float4> VertexFetch_InstanceOriginBuffer;
+	Buffer<float4> VertexFetch_InstanceTransformBuffer;
+#endif
+
+// Enable cluster culling by default as the output of the strands interpolation output culled data, 
+// and this allows to support other rendered (e.g., hit proxy, shadow rendering), for which it is not 
+// possible to provide custom defines
+#ifndef USE_CULLED_CLUSTER
+#define USE_CULLED_CLUSTER 1
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
+// HAIR_STRAND_MESH_FACTORY
+// Define used in certain shader like DeepShadow for running specific code (coverage computation for instance) 
+// when vertices are produced by the strand hair vertex factory 
+// This is set by compilation enviromenent of the vertex factory
+///////////////////////////////////////////////////////////////////////////////
+
+
+// ## A quad is made of the following topology and indexing:
+//
+//  0__2    4 
+//  | /    /|
+//  |/    /_|
+//  1    5  3  
+//
+//  ## Control point identification
+//  Here is an example of two consecutive strands. The control point:
+//   * .a=1 starting
+//   * .a=0 within
+//   * .a=2 ending
+//
+//   _O       .a == 1  Strand 0
+//  | / /|
+//  |/ /_|
+//   _O       .a == 0
+//  | / /|
+//  |/ /_|
+//   _O       .a == 0
+//  | / /|
+//  |/ /_|
+//    O       .a == 2
+//     
+//    
+//    O       .a == 1   Strand 1
+//  | / /|
+//  |/ /_|
+//    O       .a == 2
+//
+//   ...
+
+/**
+ * Per-vertex inputs from bound vertex buffers
+ */
+bool UseStableRasterization()
+{
+	return HairStrandsVF.bStableRasterization > 0;
+}
+
+bool UseScatterSceneLighting()
+{
+	return HairStrandsVF.bScatterSceneLighting > 0;
+}
+
+struct FVertexFactoryInput
+{
+#if RAYHITGROUPSHADER
+	float4 Position;
+	uint TriangleId;          // from RayHit
+	uint TriangleVertexId;    // 0,1,2
+#endif
+
+	// Dynamic instancing related attributes with InstanceIdOffset : ATTRIBUTE13
+	VF_GPUSCENE_DECLARE_INPUT_BLOCK(13)
+
+	// Instanced stereo related params
+	VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+
+	uint VertexId : SV_VertexID;
+};
+
+struct FVertexInfo
+{
+	uint VertexIndex;
+	uint HairControlPointId;
+	uint IsTip;				// The vertex is on the quad side toward the tip of the strand.
+#if !RAYHITGROUPSHADER
+	uint IsLeft;
+	float LodRadiusScale;
+	bool bForceInvalidQuad;
+#endif
+};
+FVertexInfo GetVertexInfo(FVertexFactoryInput Input)
+{
+	uint VertexId = Input.VertexId;
+
+	FVertexInfo VertexInfo;
+#if RAYHITGROUPSHADER
+	uint BaseIndex    = VertexId / 4;
+	// TODO: is there any easy way we could handle end-caps?
+	VertexInfo.IsTip        = (Input.TriangleId % 2) == 0 ? Input.TriangleVertexId != 2 : Input.TriangleVertexId == 0;
+#elif USE_HAIR_TRIANGLE_STRIP
+	uint QuadIndex = VertexId % 2;
+	uint BaseIndex	= VertexId / 2;
+	VertexInfo.IsTip		= 0;
+	VertexInfo.IsLeft		= QuadIndex == 0 ? 1 : 0;
+#else
+	uint QuadIndex	= VertexId % 6;
+	uint BaseIndex	= VertexId / 6;
+	VertexInfo.IsTip		= QuadIndex == 0 || QuadIndex == 2 || QuadIndex == 4 ? 0 : 1;
+	VertexInfo.IsLeft		= QuadIndex == 0 || QuadIndex == 1 || QuadIndex == 5 ? 1 : 0;
+#endif
+	VertexInfo.HairControlPointId = BaseIndex;
+	VertexInfo.VertexIndex = BaseIndex + VertexInfo.IsTip;
+#if !RAYHITGROUPSHADER
+	VertexInfo.LodRadiusScale = 1.0f;
+	VertexInfo.bForceInvalidQuad = false;
+#endif
+
+#if USE_CULLED_CLUSTER == 1
+	if (HairStrandsVF.bCullingEnable)
+	{
+		VertexInfo.VertexIndex = HairStrandsVF.CullingIndexBuffer[BaseIndex + VertexInfo.IsTip];
+#if !RAYHITGROUPSHADER
+		VertexInfo.LodRadiusScale = HairStrandsVF.CullingRadiusScaleBuffer[BaseIndex + VertexInfo.IsTip];
+		VertexInfo.bForceInvalidQuad = VertexInfo.LodRadiusScale <= 0.0f;
+#endif
+		VertexInfo.HairControlPointId = VertexInfo.VertexIndex - VertexInfo.IsTip;
+	}
+#endif
+
+	return VertexInfo;
+}
+
+#if RAYHITGROUPSHADER
+FVertexFactoryInput LoadVertexFactoryInputForHGS(uint TriangleIndex, int VertexIndex)
+{
+	FVertexFactoryInput Input = (FVertexFactoryInput)0;
+
+#if !ENABLE_PROCEDURAL_INTERSECTOR
+	FTriangleBaseAttributes TriangleBase = LoadTriangleBaseAttributes(TriangleIndex);
+
+	Input.Position = float4(TriangleBase.LocalPositions[VertexIndex], 1.0f);
+	Input.VertexId = TriangleBase.Indices[VertexIndex];
+	Input.TriangleId = TriangleIndex;
+	Input.TriangleVertexId = VertexIndex;
+#endif // !ENABLE_PROCEDURAL_INTERSECTOR
+
+	// Note: GetInstanceUserData() stores the GPU-Scene primitive ID
+	VF_GPUSCENE_SET_INPUT_FOR_RT(Input, GetInstanceUserData(), 0U);
+
+	return Input;
+}
+#endif
+
+/** 
+ * Caches intermediates that would otherwise have to be computed multiple times.  Avoids relying on the compiler to optimize out redundant operations.
+ */
+struct FVertexFactoryIntermediates
+{
+	half3x3 TangentToLocal;
+	half3x3 TangentToWorld;
+	half TangentToWorldSign;
+	uint HairControlPointId;
+	float2 HairPrimitiveUV;
+	float2 HairDimensions;  // This is kept on the intermediate as this is used in several vertex shader for the actual coverage.
+	float  HairDensity;
+	/** Cached primitive and instance data */
+	FSceneDataIntermediates SceneData;
+};
+
+uint GetHairControlPointId(FVertexFactoryInput Input)
+{
+	return GetVertexInfo(Input).HairControlPointId;
+}
+
+FHairControlPoint GetVertexPosition(const FVertexInfo VertexInfo, bool bInvalidJointVertex=true)
+{
+	const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
+
+	const uint4 PackedData = HairStrandsVF.PositionBuffer[VertexInfo.VertexIndex];
+	FHairControlPoint Out = UnpackHairControlPoint(
+		PackedData, 
+		PositionOffset,
+#if RAYHITGROUPSHADER
+		HairStrandsVF.Radius,
+#else
+		HairStrandsVF.Radius * VertexInfo.LodRadiusScale,
+#endif
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale);
+	
+	// Create a degenerated quad the end of each strand to cut between each strands
+	// #hair_todo: This is not efficient for short strand like fur for instance. Need to revisit that at some point
+#if RAYHITGROUPSHADER
+	const bool bIsInvalidQuad = false; // can't hit an invalid quad in raytracing (filtered by the acceleration structure)
+#elif USE_HAIR_TRIANGLE_STRIP
+	const bool bIsInvalidQuad = (bInvalidJointVertex && Out.Type == HAIR_CONTROLPOINT_END) || VertexInfo.bForceInvalidQuad;
+#else
+	const bool bIsInvalidQuad = (bInvalidJointVertex && Out.Type == HAIR_CONTROLPOINT_START && VertexInfo.IsTip == 1) || (bInvalidJointVertex && Out.Type == HAIR_CONTROLPOINT_END && VertexInfo.IsTip == 0) || VertexInfo.bForceInvalidQuad;
+#endif
+	Out.Position = bIsInvalidQuad ? float3(INFINITE_FLOAT, INFINITE_FLOAT, INFINITE_FLOAT) : Out.Position;
+
+	return Out;
+}
+
+FHairControlPoint GetVertexPosition(FVertexFactoryInput Input, bool bInvalidJointVertex=true)
+{
+	const FVertexInfo VertexInfo = GetVertexInfo(Input);
+	return GetVertexPosition(VertexInfo, bInvalidJointVertex);
+}
+
+float GetWorldStrandRadius(FVertexFactoryInput Input)
+{
+	return GetVertexPosition(Input).WorldRadius;
+}
+
+float3 GetVertexPreviousPosition(FVertexFactoryInput Input, bool bInvalidJointVertex = true)
+{
+	const float3 PreviousPositionOffset = HairStrandsVF.PreviousPositionOffsetBuffer[0].xyz;
+
+	FVertexInfo VertexInfo = GetVertexInfo(Input);
+	const uint4 PackedData = HairStrandsVF.PreviousPositionBuffer[VertexInfo.VertexIndex];
+	FHairControlPoint Out = UnpackHairControlPoint(
+		PackedData,
+		PreviousPositionOffset,
+#if RAYHITGROUPSHADER
+		HairStrandsVF.Radius,
+#else
+		HairStrandsVF.Radius * VertexInfo.LodRadiusScale,
+#endif
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale);
+
+	// Create a degenerated quad the end of each strand to cut between each strands
+	// #hair_todo: This is not efficient for short strand like fur for instance. Need to revisit that at some point
+#if RAYHITGROUPSHADER
+	const bool bIsInvalidQuad = false; // can't hit an invalid quad in raytracing (filtered by the acceleration structure)
+#elif USE_HAIR_TRIANGLE_STRIP
+	const bool bIsInvalidQuad = (bInvalidJointVertex && Out.Type == HAIR_CONTROLPOINT_END) || VertexInfo.bForceInvalidQuad;
+#else
+	const bool bIsInvalidQuad = (bInvalidJointVertex && Out.Type == HAIR_CONTROLPOINT_START && VertexInfo.IsTip == 1) || (bInvalidJointVertex && Out.Type == HAIR_CONTROLPOINT_END && VertexInfo.IsTip == 0) || VertexInfo.bForceInvalidQuad;
+#endif
+	Out.Position = bIsInvalidQuad ? float3(INFINITE_FLOAT, INFINITE_FLOAT, INFINITE_FLOAT) : Out.Position;
+
+	return Out.Position;
+}
+
+// Segment UV coord of an hair segment. This is different from the UV coord of the hair strands
+float2 GetSegmentUVCoord(FVertexFactoryInput Input)
+{
+	FVertexInfo VertexInfo = GetVertexInfo(Input);
+#if RAYHITGROUPSHADER
+	const float VCoord = 0.5; // TODO: find a way to define this?
+#else
+	const float VCoord = VertexInfo.IsLeft ? 0.0f : 1.0f;
+#endif
+	const float UCoord = VertexInfo.IsTip  ? 1.0f : 0.0f;
+	return float2(UCoord, VCoord);
+}
+
+/** Converts from vertex factory specific interpolants to a FMaterialPixelParameters, which is used by material inputs. */
+FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVSToPS Interpolants, float4 SvPosition)
+{
+	// GetMaterialPixelParameters is responsible for fully initializing the result
+	FMaterialPixelParameters Result = MakeInitializedMaterialPixelParameters();
+
+	half3 TangentToWorld0 = GetTangentToWorld0(Interpolants).xyz;
+	half4 TangentToWorld2 = GetTangentToWorld2(Interpolants);
+	Result.UnMirrored = TangentToWorld2.w;
+
+	// Required for previewing materials that use ParticleColor
+	Result.Particle.Color = half4(1,1,1,1);
+
+	Result.TangentToWorld = AssembleTangentToWorld( TangentToWorld0, TangentToWorld2 );
+#if USE_WORLDVERTEXNORMAL_CENTER_INTERPOLATION
+	Result.WorldVertexNormal_Center = Interpolants.TangentToWorld2_Center.xyz;
+#endif
+
+	Result.TwoSidedSign = 1;
+	Result.PrimitiveId = ToScalarMemory(GetPrimitiveId(Interpolants));
+	Result.HairControlPointId = Interpolants.HairControlPointId;
+	Result.HairPrimitiveUV = float2(Interpolants.HairPrimitiveUV);
+
+	return Result;
+}
+
+half3x3 CalcTangentToWorldNoScale(FPrimitiveSceneData SceneData, half3x3 TangentToLocal)
+{
+	half3x3 LocalToWorld = LWCToFloat3x3(SceneData.LocalToWorld);
+	half3 InvScale = SceneData.InvNonUniformScale;
+	LocalToWorld[0] *= InvScale.x;
+	LocalToWorld[1] *= InvScale.y;
+	LocalToWorld[2] *= InvScale.z;
+	return mul(TangentToLocal, LocalToWorld); 
+}
+
+/** Converts from vertex factory specific input to a FMaterialVertexParameters, which is used by vertex shader material inputs. */
+FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 WorldPosition, half3x3 TangentToLocal)
+{
+	FMaterialVertexParameters Result = MakeInitializedMaterialVertexParameters();
+	Result.SceneData = Intermediates.SceneData;
+	Result.WorldPosition = WorldPosition;
+
+	// does not handle instancing!
+	Result.TangentToWorld = Intermediates.TangentToWorld;
+	
+	Result.PrevFrameLocalToWorld = Intermediates.SceneData.Primitive.PreviousLocalToWorld;
+	Result.PreSkinnedPosition = GetVertexPreviousPosition(Input);
+	Result.PreSkinnedNormal = TangentToLocal[2];
+	return Result;
+}
+
+float4 CalcWorldPosition(float3 Position, FLWCMatrix LocalToWorld)
+{
+	return TransformLocalToTranslatedWorld(Position, LocalToWorld);
+}
+
+half3x3 CalcTangentToLocal(uint VertexIndex, inout float TangentSign)
+{
+	const half3 TangentInputX = HairStrandsVF.TangentBuffer[VertexIndex * 2 + 0].xyz;
+	const half4 TangentInputZ = HairStrandsVF.TangentBuffer[VertexIndex * 2 + 1];
+
+	half3 TangentX = TangentBias(TangentInputX);
+	half4 TangentZ = TangentBias(TangentInputZ);
+	TangentSign = TangentZ.w;
+
+	// derive the binormal by getting the cross product of the normal and tangent
+	half3 TangentY = cross(TangentZ.xyz, TangentX) * TangentZ.w;
+
+	// Recalculate TangentX off of the other two vectors
+	// This corrects quantization error since TangentX was passed in as a quantized vertex input
+	// The error shows up most in specular off of a mesh with a smoothed UV seam (normal is smooth, but tangents vary across the seam)
+	half3x3 Result;
+	Result[0] = cross(TangentY, TangentZ.xyz) * TangentZ.w;
+	Result[1] = TangentY;
+	Result[2] = TangentZ.xyz;
+
+	return Result;
+}
+
+half3x3 CalcTangentToLocal(FVertexFactoryInput Input, inout float TangentSign)
+{
+	FVertexInfo VertexInfo = GetVertexInfo(Input);
+	return CalcTangentToLocal(VertexInfo.VertexIndex, TangentSign);
+}
+
+half3x3 CalcTangentToWorld(FPrimitiveSceneData SceneData, half3x3 TangentToLocal)
+{
+	return CalcTangentToWorldNoScale(SceneData, TangentToLocal);
+}
+
+float3 GetTangent(FVertexFactoryIntermediates Intermediates)
+{
+	// Hair shader expec the tangent to be stored in place of the normal. This is what the StrandHairComponent is filling in:
+	// [0]: Real normal		| Should be Tangent
+	// [1]: Bitangent		| Should be BiTangent
+	// [2]: Real Tangent	| Should be Normal
+	return Intermediates.TangentToWorld[2].xyz;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Raytracing custom intersection shader
+
+#if RAYHITGROUPSHADER
+
+#if USE_MATERIAL_INTERSECTION_SHADER
+
+
+RAY_TRACING_ENTRY_INTERSECTION(MaterialIS)
+{
+
+	float3 RayOrg = ObjectRayOrigin();
+	float3 RayDir = ObjectRayDirection();
+	float TMin = RayTMin();
+	float TMax = RayTCurrent();
+
+	uint VertexIndex0 = PrimitiveIndex() / HairStrandsVF.RaytracingProceduralSplits;
+	uint VertexIndex1 = VertexIndex0 + 1;
+	float ScaleR0 = 1, ScaleR1 = 1;
+	if (HairStrandsVF.bCullingEnable)
+	{
+		ScaleR0 = HairStrandsVF.CullingRadiusScaleBuffer[VertexIndex0];
+		ScaleR1 = HairStrandsVF.CullingRadiusScaleBuffer[VertexIndex1];
+		VertexIndex0 = HairStrandsVF.CullingIndexBuffer[VertexIndex0];
+		VertexIndex1 = HairStrandsVF.CullingIndexBuffer[VertexIndex1];
+	}
+
+	const float EffectiveRadius = HairStrandsVF.Radius * HairStrandsVF.RaytracingRadiusScale;
+	const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
+	FHairControlPoint P0 = UnpackHairControlPoint(
+		HairStrandsVF.PositionBuffer[VertexIndex0],
+		PositionOffset,
+		EffectiveRadius * ScaleR0,
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale);
+	FHairControlPoint P1 = UnpackHairControlPoint(
+		HairStrandsVF.PositionBuffer[VertexIndex1],
+		PositionOffset,
+		EffectiveRadius * ScaleR1,
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale);
+
+	// ray/ribbon intersection - this is very approximate compared to a real oriented cone, but sufficient for thin strands
+	float3 pa = P0.Position;
+	float3 pb = P1.Position;
+	float ra = P0.WorldRadius;
+	float rb = P1.WorldRadius;
+	float3 ro = RayOrg;
+	float3 rd = RayDir;
+	float3 u = pb - pa;
+	float3 w0 = pa - ro;
+	float3 w1 = pb - ro;
+	float3 n = cross(rd, u);
+	float3 n1 = cross(rd, n);
+	float sc = saturate(-dot(w0, n1) / dot(u, n1));
+	float3 cp = lerp(w0, w1, sc);
+	float rc = lerp(ra, rb, sc);
+	float t = dot(cp, rd) / dot(rd, rd);
+	float3 dp = t * rd - cp;
+	float d2 = length2(dp);
+	float r2 = rc * rc;
+	if (d2 < r2 && t > 4. * rc)
+	{
+		// NOTE: the tangents are not exactly equal to 'u' at the extremeties due to quantization, could be avoided with better compression
+		float3 ta = P0.Type == HAIR_CONTROLPOINT_START ? u : HairStrandsVF.TangentBuffer[VertexIndex0 * 2 + 1].xyz;
+		float3 tb = P1.Type == HAIR_CONTROLPOINT_END   ? u : HairStrandsVF.TangentBuffer[VertexIndex1 * 2 + 1].xyz;
+		// clip the rounded portion from the end each segment
+		if ((dot(t * rd - w0, ta) * dot(ta, u) < 0)) return;
+		if ((dot(t * rd - w1, tb) * dot(tb, u) > 0)) return;
+
+		float h = sign(dot(dp, n)) * sqrt(saturate(d2 / r2));
+		FRayTracingIntersectionAttributes Attributes = (FRayTracingIntersectionAttributes)0;
+		Attributes.SetBarycentrics(float2(sc, 0.5 * h + 0.5));
+		ReportHit(t, HIT_KIND_TRIANGLE_FRONT_FACE, Attributes);
+	}
+}
+
+#endif // USE_MATERIAL_INTERSECTION_SHADER
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Material evaluation for raytracing
+
+// define this to let shaders know this alternative method is available
+#define VF_SUPPORTS_RAYTRACING_PREPARE_MATERIAL_PIXEL_PARAMETERS 1 
+
+FMaterialPixelParameters GetMaterialPixelParameters(float3 RayOrigin, float3 RayDirection, float HitT, uint HitPrimitiveIndex, FRayTracingIntersectionAttributes HitAttributes, uint HitKind, out float3 WorldGeoNormal)
+{
+	FMaterialPixelParameters Result = MakeInitializedMaterialPixelParameters();
+
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	FVertexFactoryInput Input;
+	// Note: GetInstanceUserData() stores the GPU-Scene primitive ID
+	VF_GPUSCENE_SET_INPUT_FOR_RT(Input, GetInstanceUserData(), 0U);
+#endif
+
+	FSceneDataIntermediates SceneData = VF_GPUSCENE_GET_INTERMEDIATES(Input); // NOTE: Input is not used when VF_USE_PRIMITIVE_SCENE_DATA == 0
+
+	const float2 Barycentrics = HitAttributes.GetBarycentrics();
+
+#if ENABLE_PROCEDURAL_INTERSECTOR
+	uint VertexIndex0 = HitPrimitiveIndex / HairStrandsVF.RaytracingProceduralSplits;
+	uint VertexIndex1 = VertexIndex0 + 1;
+
+	if (HairStrandsVF.bCullingEnable)
+	{
+		VertexIndex0 = HairStrandsVF.CullingIndexBuffer[VertexIndex0];
+		VertexIndex1 = HairStrandsVF.CullingIndexBuffer[VertexIndex1];
+	}
+
+	const float EffectiveRadius = HairStrandsVF.Radius * HairStrandsVF.RaytracingRadiusScale;
+	float UCoord = Barycentrics.x;
+	float VCoord = Barycentrics.y;
+	const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
+	FHairControlPoint P0 = UnpackHairControlPoint(
+		HairStrandsVF.PositionBuffer[VertexIndex0],
+		PositionOffset,
+		EffectiveRadius,
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale);
+	FHairControlPoint P1 = UnpackHairControlPoint(
+		HairStrandsVF.PositionBuffer[VertexIndex1],
+		PositionOffset,
+		EffectiveRadius,
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale);
+
+#else
+	const float3 Weights = float3(
+		1 - Barycentrics.x - Barycentrics.y,
+		Barycentrics.x,
+		Barycentrics.y);
+
+	// fetch triangle
+	FTriangleBaseAttributes Tri = LoadTriangleBaseAttributes(HitPrimitiveIndex);
+	// Transform vertices into world space
+	const float3 WorldPositions[3] = {
+		CalcWorldPosition(Tri.LocalPositions[0], SceneData.Primitive.LocalToWorld).xyz,
+		CalcWorldPosition(Tri.LocalPositions[1], SceneData.Primitive.LocalToWorld).xyz,
+		CalcWorldPosition(Tri.LocalPositions[2], SceneData.Primitive.LocalToWorld).xyz
+	};
+	// Compute triangle normal
+	{
+		const float3 PA = WorldPositions[1] - WorldPositions[0];
+		const float3 PB = WorldPositions[2] - WorldPositions[0];
+		const float3 Unnormalized = cross(PB, PA);
+		const float InvWorldArea = rsqrt(dot(Unnormalized, Unnormalized));
+		WorldGeoNormal = Unnormalized * InvWorldArea;
+	}
+
+	// NOTE: This must match the tesselation pattern produced by SetBodySegment() in HairStrandsRaytracingGeometry.usf
+	// TODO: is there a way we could handle end-caps elegantly?
+	uint VertexIndex0 = Tri.Indices.z / 4; // last index always belongs to the "bottom" vertex of the hair segment
+	uint VertexIndex1 = VertexIndex0 + 1;
+
+	if (HairStrandsVF.bCullingEnable)
+	{
+		VertexIndex0 = HairStrandsVF.CullingIndexBuffer[VertexIndex0];
+		VertexIndex1 = HairStrandsVF.CullingIndexBuffer[VertexIndex1];
+	}
+
+	float UCoord = dot(float3(1, float((HitPrimitiveIndex % 2) == 0), 0), Weights);
+	float VCoord = 0;
+	{
+		// find central point of the hair strand
+		const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
+		const float EffectiveRadius = HairStrandsVF.Radius * HairStrandsVF.RaytracingRadiusScale;
+		FHairControlPoint P0 = UnpackHairControlPoint(
+			HairStrandsVF.PositionBuffer[VertexIndex0],
+			PositionOffset,
+			EffectiveRadius,
+			HairStrandsVF.RootScale,
+			HairStrandsVF.TipScale);
+		FHairControlPoint P1 = UnpackHairControlPoint(
+			HairStrandsVF.PositionBuffer[VertexIndex1],
+			PositionOffset,
+			EffectiveRadius,
+			HairStrandsVF.RootScale,
+			HairStrandsVF.TipScale);
+		float4 A = float4(P0.Position, P0.WorldRadius);
+		float4 B = float4(P1.Position, P1.WorldRadius);
+		float4 C = lerp(A, B, UCoord);
+		// approximate position along the width of the ribbon
+		float3 WorldC = LWCToFloat(TransformLocalToWorld(C.xyz, SceneData.Primitive.LocalToWorld));
+		float3 rd = RayDirection;
+		float3 cp = WorldC - RayOrigin;
+		float t = dot(cp, rd) / dot(rd, rd);
+		float3 dp = t * RayDirection - cp;
+		float d2 = length2(dp);
+		float v = saturate(sqrt(d2 / Pow2(C.w))); // TODO: account for scale of radius
+		// figure out sign of v
+		float3 WorldU = LWCToFloat(TransformLocalToWorld(B.xyz - A.xyz, SceneData.Primitive.LocalToWorld));
+		VCoord = v * sign(dot(dp, cross(RayDirection, WorldU)));
+		VCoord = 0.5 * VCoord + 0.5;
+	}
+
+
+
+#endif // ENABLE_PROCEDURAL_INTERSECTOR
+	Result.HairControlPointId = VertexIndex0;
+	Result.HairPrimitiveUV = float2(UCoord, VCoord);
+
+	// Required for previewing materials that use ParticleColor
+	Result.Particle.Color = half4(1, 1, 1, 1);
+
+	// Get tangent frame from each vertex
+	float TangentSign_V0 = 0; half3x3 TangentToWorld_V0 = CalcTangentToWorld(SceneData.Primitive, CalcTangentToLocal(VertexIndex0, TangentSign_V0));
+	float TangentSign_V1 = 0; half3x3 TangentToWorld_V1 = CalcTangentToWorld(SceneData.Primitive, CalcTangentToLocal(VertexIndex1, TangentSign_V1));
+	// interpolate to current point within the segment
+	float3 TangentToWorld0 = normalize(lerp(TangentToWorld_V0[0], TangentToWorld_V1[0], UCoord));
+	float3 TangentToWorld2 = normalize(lerp(TangentToWorld_V0[2], TangentToWorld_V1[2], UCoord));
+	float TangentSign = lerp(TangentSign_V0, TangentSign_V1, UCoord) * GetPrimitive_DeterminantSign_FromFlags(SceneData.Primitive.Flags);
+
+	Result.TangentToWorld = AssembleTangentToWorld(TangentToWorld0, float4(TangentToWorld2, TangentSign));
+
+	// compute a smooth ribbon normal based on the tangent vector
+	float3 T = Result.TangentToWorld[2];
+	float3 D = RayDirection;
+	WorldGeoNormal = normalize(cross(T, normalize(cross(D, T))));
+
+	Result.TwoSidedSign = sign(dot(RayDirection, WorldGeoNormal));
+
+	Result.PrimitiveId = SceneData.PrimitiveId;
+
+	return Result;
+}
+
+#endif // RAYHITGROUPSHADER
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Material evaluation for regular shader
+
+FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput Input)
+{
+	FVertexFactoryIntermediates Intermediates;
+	Intermediates.SceneData			= VF_GPUSCENE_GET_INTERMEDIATES(Input);
+	Intermediates.HairControlPointId= GetHairControlPointId(Input);
+	Intermediates.HairPrimitiveUV	= GetSegmentUVCoord(Input);
+	Intermediates.HairDensity		= HairStrandsVF.Density;
+	Intermediates.HairDimensions	= float2(0.f, GetWorldStrandRadius(Input));
+
+	float TangentSign;
+	Intermediates.TangentToLocal = CalcTangentToLocal(Input, TangentSign);
+	Intermediates.TangentToWorld = CalcTangentToWorld(Intermediates.SceneData.Primitive, Intermediates.TangentToLocal);
+	Intermediates.TangentToWorldSign = TangentSign * GetPrimitive_DeterminantSign_FromFlags(Intermediates.SceneData.Primitive.Flags);
+	return Intermediates;
+}
+
+/**
+* Get the 3x3 tangent basis vectors for this vertex factory
+* this vertex factory will calculate the binormal on-the-fly
+*
+* @param Input - vertex input stream structure
+* @return 3x3 matrix
+*/
+half3x3 VertexFactoryGetTangentToLocal( FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates )
+{
+	return Intermediates.TangentToLocal;
+}
+
+#if RAYHITGROUPSHADER
+
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return CalcWorldPosition(Input.Position.xyz, Intermediates.SceneData.Primitive.LocalToWorld);
+}
+
+#else
+
+float4 ComputeViewAlignedWorldPosition(FVertexFactoryInput Input, float3 WorldTangent, float4 WorldPosition, float WorldStrandRadius, FHairViewInfo HairViewInfo)
+{
+	FVertexInfo VertexInfo = GetVertexInfo(Input);
+
+	// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
+	const float DistanceToCamera = length(HairViewInfo.TranslatedWorldCameraOrigin - WorldPosition.xyz);
+	const float MinStrandHairRadius = HairViewInfo.bIsOrthoView ? HairViewInfo.RadiusAtDepth1 : (DistanceToCamera * HairViewInfo.RadiusAtDepth1);
+	const float3 ViewDir = -HairViewInfo.ViewForward;
+	const float3 Right = normalize(cross(WorldTangent, ViewDir));
+	const float3 OutWorldPosition = WorldPosition.xyz + (VertexInfo.IsLeft ? -Right : Right) * max(WorldStrandRadius, MinStrandHairRadius);
+	
+	return float4(OutWorldPosition, 1);
+}
+
+// @return translated world position 
+// Specialized version of VertexFactoryGetWorldPosition & ComputeViewAlignedWorldPosition, for visibility VS shader.
+float4 VertexFactoryGetWorldPosition_Visibility(FVertexFactoryInput Input, FHairViewInfo HairViewInfo, inout uint OutHairControlPointId)
+{
+	const FVertexInfo VertexInfo = GetVertexInfo(Input);
+	OutHairControlPointId = VertexInfo.HairControlPointId;
+
+	FHairControlPoint ControlPoint = GetVertexPosition(VertexInfo);
+
+	FVertexFactoryIntermediates Intermediates = GetVertexFactoryIntermediates(Input);
+	const float4 WorldPosition = CalcWorldPosition(ControlPoint.Position, Intermediates.SceneData.Primitive.LocalToWorld);
+	const float3 WorldTangent = GetTangent(Intermediates);
+
+	// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
+	const float DistanceToCamera = length(HairViewInfo.TranslatedWorldCameraOrigin - WorldPosition.xyz);
+	const float MinStrandHairRadius = DistanceToCamera * HairViewInfo.RadiusAtDepth1;
+	const float3 ViewDir = -HairViewInfo.ViewForward;
+	const float3 Right = normalize(cross(WorldTangent, ViewDir));
+	const float3 OutWorldPosition = WorldPosition.xyz + (VertexInfo.IsLeft ? -Right : Right) * max(ControlPoint.WorldRadius, MinStrandHairRadius);
+
+	return float4(OutWorldPosition, 1);
+}
+
+// @return translated world position 
+// Specialized version of VertexFactoryGetWorldPosition & ComputeViewAlignedWorldPosition, for voxelization VS shader.
+float4 VertexFactoryGetWorldPosition_Voxelization(FVertexFactoryInput Input, FHairViewInfo HairViewInfo, inout float OutHairWorldRadius, inout float OutHairDensity)
+{
+	const FVertexInfo VertexInfo = GetVertexInfo(Input);
+
+	FHairControlPoint ControlPoint = GetVertexPosition(VertexInfo);
+	OutHairWorldRadius = ControlPoint.WorldRadius;
+	OutHairDensity = HairStrandsVF.Density;
+
+	FVertexFactoryIntermediates Intermediates = GetVertexFactoryIntermediates(Input);
+	const float4 WorldPosition = CalcWorldPosition(ControlPoint.Position, Intermediates.SceneData.Primitive.LocalToWorld);
+	const float3 WorldTangent = GetTangent(Intermediates);
+
+	// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
+	const float3 ViewDir = -HairViewInfo.ViewForward;
+	const float3 Right = normalize(cross(WorldTangent, ViewDir));
+	const float3 OutWorldPosition = WorldPosition.xyz + (VertexInfo.IsLeft ? -Right : Right) * max(ControlPoint.WorldRadius, HairViewInfo.RadiusAtDepth1);
+
+	return float4(OutWorldPosition, 1);
+}
+
+// @return translated world position
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FHairViewInfo HairViewInfo)
+{
+	FHairControlPoint ControlPoint = GetVertexPosition(Input);
+	const float3 VertexPosition = ControlPoint.Position;
+	const float4 WorldPosition = CalcWorldPosition(VertexPosition, Intermediates.SceneData.Primitive.LocalToWorld);
+
+	// Hair shader expect the WorldNormal to be the tangent vector
+	const float3 WorldTangent = GetTangent(Intermediates);
+	return ComputeViewAlignedWorldPosition(Input, WorldTangent, WorldPosition, ControlPoint.WorldRadius, HairViewInfo);
+}
+
+// This function is referenced by several "system" shaders, but none of these shaders (apart HitProxy, are actually used)
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	const FHairRenderInfo HairRenderInfo = GetHairRenderInfo(ResolvedView.HairRenderInfo, ResolvedView.HairRenderInfoBits, UseStableRasterization());
+
+	FHairViewInfo HairViewInfo;
+	HairViewInfo.TranslatedWorldCameraOrigin = ResolvedView.TranslatedWorldCameraOrigin;
+	HairViewInfo.ViewForward = ResolvedView.ViewForward;
+	HairViewInfo.RadiusAtDepth1 = HairRenderInfo.RadiusAtDepth1Primary;
+	HairViewInfo.bIsOrthoView = HairRenderInfo.bIsOrthoView;
+
+	return VertexFactoryGetWorldPosition(Input, Intermediates, HairViewInfo);
+}
+#endif
+
+float4 VertexFactoryGetRasterizedWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float4 InWorldPosition)
+{
+	return InWorldPosition;
+}
+
+float3 VertexFactoryGetPositionForVertexLighting(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 TranslatedWorldPosition)
+{
+	return TranslatedWorldPosition;
+}
+
+FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FMaterialVertexParameters VertexParameters)
+{
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+
+	// Initialize the whole struct to 0
+	// Really only the last two components of the packed UVs have the opportunity to be uninitialized
+	Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+
+	SetTangents(Interpolants, Intermediates.TangentToWorld[0], Intermediates.TangentToWorld[2], Intermediates.TangentToWorldSign);
+
+#if INSTANCED_STEREO
+	Interpolants.EyeIndex = 0;
+#endif
+	
+	Interpolants.HairControlPointId = Intermediates.HairControlPointId;
+	Interpolants.HairPrimitiveUV = Intermediates.HairPrimitiveUV;
+	SetPrimitiveId(Interpolants, Intermediates.SceneData.PrimitiveId);
+
+	return Interpolants;
+}
+
+/** for depth-only pass (Not used by the actual hair shaders)*/
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input)
+{
+	return 0;
+}
+
+// @return translated world position (without quad extension/reorientation).This is used only for velocity computation
+float4 VertexFactoryGetWorldPositionRaw(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, bool bInvalidJointVertex = true)
+{
+	return CalcWorldPosition(GetVertexPosition(Input, bInvalidJointVertex).Position, Intermediates.SceneData.Primitive.LocalToWorld);
+}
+
+// @return previous translated world position
+float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, bool bInvalidJointVertex = true)
+{
+	float4x4 PreviousLocalToWorldTranslated = LWCMultiplyTranslation(Intermediates.SceneData.Primitive.PreviousLocalToWorld, ResolvedView.PrevPreViewTranslation);
+
+
+	const float3 VertexPosition = GetVertexPreviousPosition(Input, bInvalidJointVertex);
+	return mul(float4(VertexPosition,1), PreviousLocalToWorldTranslated);
+}
+
+float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(GetPrimitiveId(Interpolants));
+	return float4(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)), PrimitiveData.ObjectRadius);
+}
+
+uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	return GetPrimitiveId(Interpolants);
+}
+
+float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input)
+{
+	return float3(0, 0, 1); 
+}
+
+float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return float3(0,0,1);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Regular material evalution for raytracing
+
+#if RAYHITGROUP || COMPUTESHADER
+FVertexFactoryInput LoadVertexFactoryInputForDynamicUpdate(uint TriangleIndex, int VertexIndex, uint PrimitiveId)
+{
+	FVertexFactoryInput Input;
+
+	Input.VertexId = TriangleIndex * 3 + VertexIndex;
+
+	return Input;
+}
+
+uint GetNumRayTracingDynamicMeshVerticesIndirect()
+{
+	return 0;
+}
+#endif // RAYHITGROUP || COMPUTESHADER
+
+#if NEEDS_VERTEX_FACTORY_INTERPOLATION
+
+struct FVertexFactoryRayTracingInterpolants
+{
+	FVertexFactoryInterpolantsVSToPS InterpolantsVSToPS;
+};
+
+float2 VertexFactoryGetRayTracingTextureCoordinate(FVertexFactoryRayTracingInterpolants Interpolants)
+{
+#if NUM_MATERIAL_TEXCOORDS
+	return Interpolants.InterpolantsVSToPS.TexCoords[0].xy;
+#else // #if NUM_MATERIAL_TEXCOORDS
+	return float2(0, 0);
+#endif // #if NUM_MATERIAL_TEXCOORDS
+}
+
+FVertexFactoryInterpolantsVSToPS VertexFactoryAssignInterpolants(FVertexFactoryRayTracingInterpolants Input)
+{
+	return Input.InterpolantsVSToPS;
+}
+
+FVertexFactoryRayTracingInterpolants VertexFactoryGetRayTracingInterpolants(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FMaterialVertexParameters VertexParameters)
+{
+	FVertexFactoryRayTracingInterpolants Interpolants;
+	Interpolants.InterpolantsVSToPS = VertexFactoryGetInterpolantsVSToPS(Input, Intermediates, VertexParameters);
+	return Interpolants;
+}
+
+FVertexFactoryRayTracingInterpolants VertexFactoryInterpolate(FVertexFactoryRayTracingInterpolants a, float aInterp, FVertexFactoryRayTracingInterpolants b, float bInterp)
+{
+	// Default initialize. Otherwise, some graphics pipelines that
+	// couple tessellation with geometry shaders won't write to all TEXCOORD semantics,
+	// but read from them when <FVertexFactoryRayTracingInterpolants> is being copied as a whole.
+	FVertexFactoryRayTracingInterpolants O = (FVertexFactoryRayTracingInterpolants)0;
+
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	O.InterpolantsVSToPS.PrimitiveId = a.InterpolantsVSToPS.PrimitiveId;
+#if NEEDS_LIGHTMAP_COORDINATE
+	O.InterpolantsVSToPS.LightmapDataIndex = a.InterpolantsVSToPS.LightmapDataIndex;
+#endif
+#endif	
+	// Do we really need to interpolate TangentToWorld2 here? It should be replaced by the
+	// interpolated normal from 'whatever' interpolation scheme we're using
+
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.TangentToWorld0.xyz);
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.TangentToWorld2);
+#if INTERPOLATE_VERTEX_COLOR
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.Color);
+#endif
+#if USE_INSTANCING
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.PerInstanceParams);
+#endif
+
+#if NEEDS_LIGHTMAP_COORDINATE
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.LightMapCoordinate);
+#endif
+
+#if NUM_TEX_COORD_INTERPOLATORS
+	UNROLL
+		for (int tc = 0; tc < (NUM_TEX_COORD_INTERPOLATORS + 1) / 2; ++tc)
+		{
+			INTERPOLATE_MEMBER(InterpolantsVSToPS.TexCoords[tc]);
+		}
+#elif USE_PARTICLE_SUBUVS
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.TexCoords[0]);
+#endif
+
+	O.InterpolantsVSToPS.HairControlPointId = a.InterpolantsVSToPS.HairControlPointId;
+	INTERPOLATE_MEMBER(InterpolantsVSToPS.HairPrimitiveUV);
+	return O;
+}
+#endif // NEEDS_VERTEX_FACTORY_INTERPOLATION
+
+#include "/Engine/Private/VertexFactoryDefaultInterface.ush"

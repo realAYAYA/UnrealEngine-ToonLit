@@ -1,0 +1,2907 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../HairShadingCommon.ush"
+#include "../ColorMap.ush"
+
+#if SHADER_PRINT_INSTANCE || SHADER_PRINT || SHADER_PRINT_MEMORY || SHADER_CLUSTERAABB
+/////////////////////////////////////////////////////////////////////////////////////////
+// Utils function
+
+#include "../ShaderPrint.ush"
+
+// Print float number in 0..1000 aligned on the right
+void PrintNumberAlignedRight(inout FShaderPrintContext Context, float Value, FFontColor InColor)
+{
+	if (Value >= 100.f)
+	{
+		Print(Context, Value, InColor, 5, 1);
+	}
+	else if (Value >= 10.f)
+	{
+		Print(Context, TEXT(" "), InColor);
+		Print(Context, Value, InColor, 4, 1);
+	}
+	else
+	{
+		Print(Context, TEXT("  "), InColor);
+		Print(Context, Value, InColor, 3, 1);
+	}
+}
+
+// Print 
+void PrintLargeNumber(inout FShaderPrintContext Context, uint Value, FFontColor InColor)
+{
+	if (Value > 1000000000)
+	{
+		const float fValue = Value / 1000000000.f;
+		//Print(Context, fValue, InColor, 5, 1);
+		PrintNumberAlignedRight(Context, fValue, InColor);
+		Print(Context, TEXT("B"), InColor);
+	}
+	else if (Value > 1000000)
+	{
+		const float fValue = Value / 1000000.f;
+		//Print(Context, fValue, InColor, 5, 1);
+		PrintNumberAlignedRight(Context, fValue, InColor);
+		Print(Context, TEXT("M"), InColor);
+	}
+	else if (Value > 1000)
+	{
+		const float fValue = Value / 1000.f;
+		//Print(Context, fValue, InColor, 5, 1);
+		PrintNumberAlignedRight(Context, fValue, InColor);
+		Print(Context, TEXT("k"), InColor);
+	}
+	else
+	{
+		Print(Context, TEXT("   "), InColor);
+		Print(Context, Value, InColor, 3);
+	}
+}
+
+void PrintPercentage(inout FShaderPrintContext Context, float Value, FFontColor InColor)
+{
+	const uint iValue = ceil(clamp(Value * 100.f, 0.f, 100.f));
+	if (iValue < 10)
+	{
+		Print(Context, TEXT("  "), InColor);
+		Print(Context, iValue, InColor, 1);
+	}
+	else if (iValue < 100)
+	{
+		Print(Context, TEXT(" "), InColor);
+		Print(Context, iValue, InColor, 2);
+	}
+	else
+	{
+		Print(Context, iValue, InColor, 3);
+	}
+	Print(Context, TEXT("% "), InColor);
+}
+
+#endif // SHADER_PRINT_INSTANCE || SHADER_PRINT
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualize hair strands data as full screen view mode (BaseColor, Tangent, Roughness, ...)
+
+#if SHADER_DEBUG_MODE
+
+#include "../ColorMap.ush"
+#include "HairStrandsVisibilityCommon.ush"
+
+float2 OutputResolution;
+uint FastResolveMask;
+uint DebugMode;
+int SampleIndex;
+
+Texture2D<uint2> DepthStencilTexture;
+SamplerState LinearSampler;
+
+#define DEBUG_MODE_SAMPLE_COUNT 0 
+#define DEBUG_MODE_COVERAGE_TYPE 1
+#define DEBUG_MODE_TAA_RESOLVE_TYPE 2
+#define DEBUG_MODE_COVERAGE 3
+#define DEBUG_MODE_DEPTH 4
+#define DEBUG_MODE_BASECOLOR 5
+#define DEBUG_MODE_ROUGHNESS 6
+#define DEBUG_MODE_SPECULAR 7
+#define DEBUG_MODE_TANGENT 8
+#define DEBUG_MODE_TILE 9
+
+void MainPS(
+	in FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0)
+{
+	const float2 UV = Input.UV;
+	const float2 PixelPos = UV * OutputResolution;
+
+	const float HairPixelCoverage = HairStrands.HairCoverageTexture.Load(uint3(PixelPos, 0));
+	const bool bIsValid = HairPixelCoverage > 0 || DebugMode == DEBUG_MODE_TILE;
+	if (!bIsValid)
+		discard;
+
+	const FNodeDesc NodeDesc = DecodeNodeDesc(HairStrands.HairSampleOffset.Load(uint3(PixelPos, 0)));
+
+	float3 Color = 0;
+	float Alpha = 1;
+	if (DebugMode == DEBUG_MODE_SAMPLE_COUNT)
+	{
+		Color = GetHSVDebugColor(NodeDesc.Count/float(HairStrands.MaxSamplePerPixelCount));
+	}
+
+	if (DebugMode == DEBUG_MODE_COVERAGE_TYPE)
+	{
+		const bool bIsFullyCovered = HairPixelCoverage >= 1;
+		Color = bIsFullyCovered ? float3(0.25,0.85,0.25) : float3(0.85,0.25,0.25);
+	}
+
+	if (DebugMode == DEBUG_MODE_TAA_RESOLVE_TYPE)
+	{
+		const uint Stencil = DepthStencilTexture.Load(uint3(PixelPos,0)).y;
+		const bool bIsFastResolve = (Stencil & FastResolveMask) != 0;
+		Color = bIsFastResolve ? float3(1,1,0) : float3(0.15f, 0.25f, 0.75f);
+	}
+
+	if (DebugMode == DEBUG_MODE_COVERAGE)
+	{
+		Color = GetHSVDebugColor(saturate(HairPixelCoverage));
+	}
+
+	const bool bIsDebugModeMaterial =
+		DebugMode == DEBUG_MODE_DEPTH ||
+		DebugMode == DEBUG_MODE_BASECOLOR ||
+		DebugMode == DEBUG_MODE_ROUGHNESS ||
+		DebugMode == DEBUG_MODE_SPECULAR || 
+		DebugMode == DEBUG_MODE_TANGENT;
+
+	if (NodeDesc.Count > 0 && bIsDebugModeMaterial)
+	{
+		const int LocalSampleIndex = SampleIndex; 
+		const bool bAverageAllSamples = LocalSampleIndex < 0;
+		const uint SelectedIndex = LocalSampleIndex >= 0 ? clamp(LocalSampleIndex, 0, NodeDesc.Count - 1) : 0;
+		float	Depth = 0;
+		float3	Tangent = 0;
+		float3	BaseColor = 0;
+		float	Roughness = 0;
+		float	Specular = 0;
+
+		for (uint NodeIt = 0; NodeIt < NodeDesc.Count; ++NodeIt)
+		{
+			const uint NodeOffset = NodeDesc.Offset + NodeIt;
+			const FPackedHairSample Data = HairStrands.HairSampleData[NodeOffset];
+			const FHairSample Sample = UnpackHairSample(Data);
+
+			if (bAverageAllSamples)
+			{
+				Depth		+= Sample.Depth;
+				Tangent		+= Sample.Tangent;
+				BaseColor	+= Sample.BaseColor;
+				Roughness	+= Sample.Roughness;
+				Specular	+= Sample.Specular;
+			}
+			else if (SelectedIndex == NodeIt)
+			{
+				Depth		= Sample.Depth;
+				Tangent		= Sample.Tangent;
+				BaseColor	= Sample.BaseColor;
+				Roughness	= Sample.Roughness;
+				Specular	= Sample.Specular;
+			}
+		}
+
+		if (bAverageAllSamples)
+		{
+			Depth		/= NodeDesc.Count;
+			Tangent		/= NodeDesc.Count;
+			BaseColor	/= NodeDesc.Count;
+			Roughness	/= NodeDesc.Count;
+			Specular	/= NodeDesc.Count;
+		}
+
+		if (DebugMode == DEBUG_MODE_DEPTH)
+		{
+			Color = Depth;
+		}
+
+		if (DebugMode == DEBUG_MODE_BASECOLOR)
+		{
+			Color = BaseColor;
+		}
+
+		if (DebugMode == DEBUG_MODE_ROUGHNESS)
+		{
+			Color = Roughness;
+		}
+
+		if (DebugMode == DEBUG_MODE_SPECULAR)
+		{
+			Color = Specular;
+		}
+
+		if (DebugMode == DEBUG_MODE_TANGENT)
+		{
+			Color = (Tangent+1) * 0.5f;
+		}
+	}
+
+	OutColor = float4(Color, Alpha);
+}
+
+#endif // SHADER_DEBUG_MODE
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualize hair strands control points
+
+#if SHADER_CVS
+#include "HairStrandsVertexFactoryCommon.ush"
+
+float4x4 LocalToWorld;
+uint MaxVertexCount;
+
+SamplerState LinearSampler;
+Texture2D<float> DepthTexture;
+RWTexture2D<float4> ColorTexture;
+
+[numthreads(256, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint VertexId = DispatchThreadId.x;
+	if (VertexId > MaxVertexCount)
+		return;
+
+	uint VertexIndex = VertexId;
+	float ScaleR = 1;
+	if (HairStrandsVF.bCullingEnable)
+	{
+		ScaleR = HairStrandsVF.CullingRadiusScaleBuffer[VertexIndex];
+		VertexIndex = HairStrandsVF.CullingIndexBuffer[VertexIndex];
+	}
+
+	const float3 P_Local = UnpackHairControlPoint(
+		HairStrandsVF.PositionBuffer[VertexIndex],
+		HairStrandsVF.PositionOffsetBuffer[0].xyz,
+		HairStrandsVF.Radius * ScaleR,
+		HairStrandsVF.RootScale,
+		HairStrandsVF.TipScale).Position;
+
+	const float3 P_World = mul(float4(P_Local, 1), LocalToWorld).xyz;
+	float4 SamplePosition = float4(P_World + LWCHackToFloat(PrimaryView.PreViewTranslation), 1);
+	float4 ClipPosition = mul(SamplePosition, View.TranslatedWorldToClip);
+	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
+	float2 ScreenUV = ScreenPosition * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
+	float SampleSceneDepth = ClipPosition.w;
+
+	const float S = 1;
+	const float4 Color = float4(S, S, 0, 1);
+	const float SceneDepth = ConvertFromDeviceZ(DepthTexture.SampleLevel(LinearSampler, ScreenUV, 0));
+	const bool bIsVisible = SampleSceneDepth <= SceneDepth;
+	if (bIsVisible)
+	{
+		int2 OutCoord = ScreenUV * View.BufferSizeAndInvSize.xy;
+		OutCoord = clamp(OutCoord, int2(0, 0), View.BufferSizeAndInvSize.xy);
+		ColorTexture[OutCoord] = Color;
+	}
+}
+
+#endif // SHADER_CVS
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualize (Sim/Render & Rest/Deformed):
+// * hair strands root points
+// * skin triangle on which strands are attached to
+// * sample point used for RBF
+
+#if SHADER_MESH_PROJECTION_HAIR
+
+#include "HairStrandsBindingCommon.ush" 
+#include "../ShaderPrint.ush"
+
+#define INPUT_ROOT_FRAME 0
+#define INPUT_ROOT_TRIANGLE 1
+#define INPUT_ROOT_SAMPLES 2
+
+uint MaxUniqueSection;
+uint MaxUniqueTriangleCount;
+uint MaxRootCount;
+float4x4 RootLocalToWorld;
+uint DeformedFrameEnable;
+
+#if PERMUTATION_INPUT_TYPE == INPUT_ROOT_FRAME
+Buffer<uint>   RootBarycentricBuffer;
+#endif
+
+Buffer<uint>  RootToUniqueTriangleIndexBuffer;
+
+Buffer<float4>  RestPositionBuffer;
+Buffer<float4>  DeformedPositionBuffer;
+
+Buffer<float4> RestSamplePositionsBuffer;
+Buffer<float4> DeformedSamplePositionsBuffer;
+
+[numthreads(256, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	ResolvedView = ResolveView();
+
+#if PERMUTATION_INPUT_TYPE == INPUT_ROOT_FRAME  
+	const uint RootIndex = DispatchThreadId.x;
+	if (RootIndex >= MaxRootCount) return;
+	{
+		const uint TriangleIndex = RootToUniqueTriangleIndexBuffer[RootIndex];
+		const FHairMeshTriangleWithUVs RestTriangle		= GetTriangleWithUVsTransformation(TriangleIndex, RestPositionBuffer);
+		const FHairMeshTriangleWithUVs DeformedTriangle = GetTriangleWithUVsTransformation(TriangleIndex, DeformedPositionBuffer);
+
+		FHairMeshTriangleWithUVs Tri;
+		if (DeformedFrameEnable > 0)
+			Tri = DeformedTriangle;
+		else
+			Tri = RestTriangle;
+
+		const float3 B  = UnpackBarycentrics(RootBarycentricBuffer[RootIndex]);
+		float3 P0 = B.x * Tri.P0 + B.y * Tri.P1 + B.z * Tri.P2;
+		float3 P1 = P0 + Tri.N;
+
+		const float2 UVs = 
+			B.x * Tri.UV0 +
+			B.y * Tri.UV1 +
+			B.z * Tri.UV2;
+
+		P0 = mul(float4(P0, 1), RootLocalToWorld).xyz;
+		P1 = mul(float4(P1, 1), RootLocalToWorld).xyz;
+
+		const float3 N = normalize(P0 - P1);
+		const float4 Color = float4(UVs, 0, 1);
+		//Color = float4(N* 0.5f + 0.5f, 1);
+		AddLineWS(P0, P1, Color);
+
+		// Add triangle
+		const float4 TriColor = ColorWhite;
+		const float3 WP0 = mul(float4(Tri.P0, 1), RootLocalToWorld).xyz;
+		const float3 WP1 = mul(float4(Tri.P1, 1), RootLocalToWorld).xyz;
+		const float3 WP2 = mul(float4(Tri.P2, 1), RootLocalToWorld).xyz;
+		AddLineWS(WP0, WP1, TriColor);
+		AddLineWS(WP1, WP2, TriColor);
+		AddLineWS(WP2, WP0, TriColor);
+	}
+#endif // INPUT_ROOT_FRAME
+
+#if PERMUTATION_INPUT_TYPE == INPUT_ROOT_TRIANGLE
+	const uint TriangleIndex = DispatchThreadId.x;
+	if (TriangleIndex < MaxRootCount)
+	{
+		const FHairMeshTriangleWithUVs RestTriangle		= GetTriangleWithUVsTransformation(TriangleIndex, RestPositionBuffer);
+		const FHairMeshTriangleWithUVs DeformedTriangle = GetTriangleWithUVsTransformation(TriangleIndex, DeformedPositionBuffer);
+	
+		FHairMeshTriangleWithUVs Tri;
+		if (DeformedFrameEnable > 0)
+			Tri = DeformedTriangle;
+		else
+			Tri = RestTriangle;
+		
+	
+		// Debug: To test if the rest-triangle-to-deformed-triangle transformation works correctly
+		#if 0
+		if (DeformedFrameEnable > 0)
+		{
+			float3 Barycentric = 0;
+			if (TriangleVertex == 0)
+			{
+				P = RestTriangle.P0;
+				Barycentric = float3(1, 0, 0);
+			}
+			if (TriangleVertex == 1)
+			{
+				P = RestTriangle.P1;
+				Barycentric = float3(0, 1, 0);
+			}
+			if (TriangleVertex == 2)
+			{
+				P = RestTriangle.P2;
+				Barycentric = float3(0, 0, 1);
+			}
+			P = TransformPoint(P, Barycentric, RestTriangle, DeformedTriangle);
+		}
+		#endif
+	
+		float4 Color = float4(Tri.UV0, 0, 1);
+		// Color = float4((Tri.N + 1) * 0.5f, 1);
+	
+		const float3 WP0 = mul(float4(Tri.P0, 1), RootLocalToWorld).xyz;
+		const float3 WP1 = mul(float4(Tri.P1, 1), RootLocalToWorld).xyz; 
+		const float3 WP2 = mul(float4(Tri.P2, 1), RootLocalToWorld).xyz;
+	
+		FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(0, 0));
+		AddLineWS(WP0, WP1, Color);
+		AddLineWS(WP1, WP2, Color);
+		AddLineWS(WP2, WP0, Color);
+	}
+#endif // INPUT_ROOT_TRIANGLE
+
+#if PERMUTATION_INPUT_TYPE == INPUT_ROOT_SAMPLES 
+	const uint PointIndex = DispatchThreadId.x;	
+	if (PointIndex < MaxRootCount)
+	{
+		float3 P = (DeformedFrameEnable > 0) ? DeformedSamplePositionsBuffer[PointIndex].xyz : RestSamplePositionsBuffer[PointIndex].xyz;
+		P = mul(float4(P, 1), RootLocalToWorld).xyz;
+
+		AddCrossWS(P, 1.f, ColorYellow);
+	}
+#endif // INPUT_ROOT_SAMPLES
+}
+#endif // SHADER_MESH_PROJECTION_HAIR
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualize skin cache data, extracted & processed for hair strands deformation (Rest & Deformed)
+
+#if SHADER_MESH_PROJECTION_SKIN_CACHE
+
+#include "HairStrandsBindingCommon.ush"
+#include "../ShaderPrint.ush"
+
+float4x4 LocalToWorld;
+uint VertexOffset;
+uint IndexOffset;
+uint MaxIndexCount;
+uint MaxVertexCount;
+uint MeshUVsChannelOffset;
+uint MeshUVsChannelCount;
+uint bOutputInUVsSpace;
+uint MeshType;
+uint SectionIndex;
+float2 OutputResolution;
+
+Buffer<float> InputVertexPositionBuffer;
+Buffer<float2> InputVertexUVsBuffer;
+#if PERMUTATION_INPUT_TYPE == 1
+Buffer<uint> InputIndexBuffer;
+#endif
+
+#define REST_MESH 0
+#define DEFORMED_MESH 1
+#define SOURCE_MESH 2
+#define TARGET_MESH 3
+
+[numthreads(256, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	ResolvedView = ResolveView();
+
+	float4 Color = 0;
+	if (MeshType == REST_MESH)		Color = float4(1, 0, 0, 1);
+	if (MeshType == DEFORMED_MESH)	Color = float4(0, 1, 0, 1);
+	if (MeshType == SOURCE_MESH)	Color = float4(0, 0, 1, 1);
+	if (MeshType == TARGET_MESH)	Color = float4(1, 1, 0, 1);
+
+#if PERMUTATION_INPUT_TYPE == 0
+	const uint VertexId = DispatchThreadId.x * 3;
+	const uint VertexIndex0 = min(VertexOffset + VertexId, MaxVertexCount-1);
+
+	FHairMeshTriangleWithUVs Tri = (FHairMeshTriangleWithUVs)0;
+	Tri.P0 = InputVertexPositionBuffer[VertexIndex0 + 0];
+	Tri.P1 = InputVertexPositionBuffer[VertexIndex0 + 1];
+	Tri.P2 = InputVertexPositionBuffer[VertexIndex0 + 2];
+
+	Tri.UV0 = InputVertexUVsBuffer[VertexIndex0 + 0];
+	Tri.UV1 = InputVertexUVsBuffer[VertexIndex0 + 1];
+	Tri.UV2 = InputVertexUVsBuffer[VertexIndex0 + 2];
+
+	Tri.N = cross(Tri.P1 - Tri.P0, Tri.P2 - Tri.P0);
+#endif
+
+#if PERMUTATION_INPUT_TYPE == 1
+	const uint TriangleIndex = DispatchThreadId.x;
+	const FHairMeshTriangleWithUVs Tri = GetTriangleData(TriangleIndex, InputVertexPositionBuffer, InputVertexUVsBuffer, InputIndexBuffer, IndexOffset, MaxIndexCount, MaxVertexCount, MeshUVsChannelOffset, MeshUVsChannelCount);
+#endif
+
+	// Quick filter
+#if 0
+	//if (MeshType != REST_MESH)
+	//if (MeshType != DEFORMED_MESH)
+	//if (MeshType != SOURCE_MESH)
+	//if (MeshType != TARGET_MESH)
+	if (MeshType != SOURCE_MESH && MeshType != TARGET_MESH || SectionIndex != 0)
+	{
+		return;
+	}
+#endif
+
+	Color.xyz *= Tri.N * 0.5f + 0.5f;
+
+	if (bOutputInUVsSpace)
+	{
+		AddFilledTriangleWS(float3(Tri.UV0, 0), float3(Tri.UV1, 0), float3(Tri.UV2, 0), Color);
+	}
+	else
+	{
+		AddFilledTriangleWS(
+			mul(float4(Tri.P0, 1), LocalToWorld).xyz, 
+			mul(float4(Tri.P1, 1), LocalToWorld).xyz, 
+			mul(float4(Tri.P2, 1), LocalToWorld).xyz,
+			Color);
+	}
+}
+
+#endif // SHADER_MESH_PROJECTION_SKIN_CACHE
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualized stats for PPLL primary visibility
+
+#if SHADER_PPLL_DEBUG
+
+#include "../ShaderPrint.ush"
+#include "HairStrandsVisibilityCommon.ush" 
+
+float PPLLMeanListElementCountPerPixel;
+float PPLLMaxTotalListElementCount;
+
+Texture2D<uint> PPLLCounter;
+Texture2D<uint> PPLLNodeIndex;
+StructuredBuffer<FPackedHairVisPPLL> PPLLNodeData;
+
+RWTexture2D<float4> SceneColorTextureUAV;
+
+FFontColor GetOccupancyColor(float In)
+{
+	float3 Color = lerp(float3(0, 1, 0), float3(1, 0, 0), saturate(In));
+	return InitFontColor(Color);
+}
+
+[numthreads(8, 8, 1)]
+void VisibilityDebugPPLLCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 PixelPos = DispatchThreadId.xy;
+	float PPLLListElementcount = PPLLCounter[uint2(0, 0)];
+
+	uint NextNodeIndex = PPLLNodeIndex[PixelPos];
+	if (NextNodeIndex != 0xFFFFFFFF)
+	{
+		uint StrandCount = 0;
+		do
+		{
+			StrandCount++;
+			FPackedHairVisPPLL Node = PPLLNodeData[NextNodeIndex];
+			NextNodeIndex = Node.NextNodeIndex;
+		} while (NextNodeIndex != 0xFFFFFFFF);
+
+		float l = saturate(StrandCount / PPLLMeanListElementCountPerPixel);
+
+		SceneColorTextureUAV[PixelPos] = float4(l, 1.0f - l, 0.0f, 0.0f);
+	}
+
+	const float2 BarOrigin = 100.0f;
+	const float2 BarSize = float2(200.0f, 20.0f);
+	if (all(PixelPos >= BarOrigin) && all(PixelPos <= (BarOrigin + BarSize)))
+	{
+		float2 LocalPos = PixelPos - BarOrigin;
+		float MemoryUsage = PPLLListElementcount / PPLLMaxTotalListElementCount;
+
+		if (MemoryUsage > LocalPos.x / BarSize.x)
+		{
+			SceneColorTextureUAV[PixelPos] = float4(MemoryUsage, 1.0f - MemoryUsage, 1.0f - MemoryUsage, 0.0f);
+		}
+		else
+		{
+			SceneColorTextureUAV[PixelPos] = float4(0.2f, 0.2f, 0.2f, 0.0f);
+		}
+
+		if (any(PixelPos == BarOrigin) || any(PixelPos == (BarOrigin + BarSize)))
+		{
+			SceneColorTextureUAV[PixelPos] = float4(1.0f, 1.0f, 1.0f, 0.0f);
+		}
+	}
+
+	if (DispatchThreadId.x == 0 && DispatchThreadId.y == 0)
+	{
+		const float PPLLNodeSizeInMb = (4 + 4 + 4) / 1000000.f;
+		const float NodePercentage = float(PPLLListElementcount) / float(PPLLMaxTotalListElementCount);
+
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(BarOrigin + BarSize*uint2(0, 2)));
+		Print(Context, TEXT("Mean Node Per Pixel : "));
+		Print(Context, PPLLMeanListElementCountPerPixel, FontEmerald);
+		Newline(Context);
+		
+		Print(Context, TEXT("Nodes Used (%)      : "));
+		Print(Context, NodePercentage * 100.f, GetOccupancyColor(NodePercentage));
+		Newline(Context);
+
+		Print(Context, TEXT("Nodes Used          : "));
+		Print(Context, PPLLListElementcount, FontSilver);
+		Newline(Context);
+
+		Print(Context, TEXT("Allocated Nodes (Mb): "));
+		Print(Context, PPLLMaxTotalListElementCount * PPLLNodeSizeInMb, FontSilver);
+		Newline(Context);
+
+		Print(Context, TEXT("Total               : "));
+		Print(Context, PPLLMaxTotalListElementCount, FontOrange);
+		Newline(Context);
+	}
+}
+
+#endif // SHADER_PPLL_DEBUG
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// Visualized Deep Opacity Map stats and buffer
+
+#if SHADER_VISUALIZEDOM
+
+#include "../PostProcessCommon.ush"
+
+float DomScale = 1;
+float2 DomAtlasOffset;
+float2 DomAtlasScale;
+float2 OutputResolution;
+float2 InvOutputResolution;
+
+int4 HairViewRect;
+
+Texture2D<float> DeepShadowDepthTexture;
+Texture2D<float4> DeepShadowLayerTexture;
+
+SamplerState LinearSampler;
+
+bool IsInsideRect(float4 Rect, float2 PixelPos, inout float2 LocalUV)
+{
+	LocalUV = (PixelPos - Rect.xy) / Rect.zw;
+
+	return 	PixelPos.x > Rect.x && PixelPos.x < Rect.x + Rect.z &&
+			PixelPos.y > Rect.y && PixelPos.y < Rect.y + Rect.w;
+}
+
+bool IsOnBorder(float2 LocalUV, float4 Rect)
+{
+	float2 PixelPos = LocalUV * Rect.zw;
+	float BorderThickness = 1;
+
+	return
+		PixelPos.x < BorderThickness || PixelPos.x > Rect.z - 1 - BorderThickness ||
+		PixelPos.y < BorderThickness || PixelPos.y > Rect.w - 1 - BorderThickness;
+}
+
+float3 AddBorder(float2 LocalUV, float4 Rect)
+{
+	const bool bIsOnBorder = IsOnBorder(LocalUV, Rect);
+	return bIsOnBorder ? float3(1,1,0) : float3(0,0,0);
+}
+
+// Display the DOM textures into some insert rect
+#if PERMUTATION_OUTPUT_TYPE == 0
+void VisualizeDomPS(
+	in FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0)
+{
+	const float TileSize = 48;
+	const float2 UV = Input.UV;
+	const float2 PixelPos = UV * OutputResolution;
+
+	float2 PixelPosAtTileCenter = PixelPos - (frac(PixelPos / TileSize) - 0.5f) * TileSize;
+	float2 UVAtTileCenter = PixelPosAtTileCenter * InvOutputResolution;
+
+	const float OffsetX = 50;
+	const float OffsetY = 220;
+	const float RectSize = 300;
+	const float4 DepthRect = float4(OffsetX, OffsetY, RectSize, RectSize);
+	const float4 DomRect = float4(OffsetX * 2 + RectSize, OffsetY, RectSize, RectSize);
+
+	float3 Color = 0;
+
+	float2 LocalUV = 0;
+	if (IsInsideRect(DepthRect, PixelPos, LocalUV))
+	{
+		const float2 AtlasUV = LocalUV * DomAtlasScale + DomAtlasOffset;
+		Color = DeepShadowDepthTexture.SampleLevel(LinearSampler, AtlasUV, 0).xxx;
+		Color += AddBorder(LocalUV, DepthRect);
+	}
+	else if (IsInsideRect(DomRect, PixelPos, LocalUV))
+	{
+		const float2 AtlasUV = LocalUV * DomAtlasScale + DomAtlasOffset;
+		Color = DeepShadowLayerTexture.SampleLevel(LinearSampler, AtlasUV, 0).xyz / DomScale;
+		Color += AddBorder(LocalUV, DomRect);
+#if 0 
+		float4 Weight = PostprocessInput2.SampleLevel(LinearSampler, LocalUV, 0);
+		if (Weight.w > 0) Color = float3(0, 0, 1);
+		if (Weight.z > 0) Color = float3(0, 1, 0);
+		if (Weight.y > 0) Color = float3(1, 1, 0);
+		if (Weight.x > 0) Color = float3(1, 0, 0);
+		Color *= 1000;
+#endif
+	}
+	else
+	{
+		discard;
+	}
+
+	OutColor = float4(Color, 1);
+}
+#endif // PERMUTATION_OUTPUT_TYPE == 0
+
+// Display screen space rect for vizualizing projected viewrect of each hair macro group
+#if PERMUTATION_OUTPUT_TYPE == 1
+void VisualizeDomPS(
+	in FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0)
+{
+	const float2 UV = Input.UV;
+	const float2 PixelPos = UV * OutputResolution;
+
+	float3 Color = 0;
+	float2 LocalUV = 0;
+	if (IsInsideRect(HairViewRect, PixelPos, LocalUV) && IsOnBorder(LocalUV, HairViewRect))
+	{
+		Color += float3(0, 1, 0);
+	}
+	else
+	{
+		discard;
+	}
+
+	OutColor = float4(Color, 1);
+}
+#endif // PERMUTATION_OUTPUT_TYPE == 1
+
+#endif // SHADER_VISUALIZEDOM
+
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// Print Deep Opacity Map stats (to be merge with prev. pass)
+
+#if SHADER_DOMINFO
+
+#include "../ShaderPrint.ush"
+#include "../Matrices.ush"
+#include "../ShadingCommon.ush"
+#include "HairStrandsDeepShadowCommonStruct.ush"
+#include "HairStrandsAABBCommon.ush"
+
+uint AllocatedSlotCount;
+uint MacroGroupCount;
+uint bViewRectOptimizeEnabled;
+uint bVoxelizationEnabled;
+int2 AtlasResolution;
+uint bIsGPUDriven;
+
+Buffer<int>	MacroGroupAABBBuffer;
+StructuredBuffer<FDeepShadowViewInfo> ShadowViewInfoBuffer;
+
+[numthreads(1, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x > 0)
+	{
+		return;
+	}
+
+	for (uint MacroGroupIt = 0; MacroGroupIt < MacroGroupCount; ++MacroGroupIt)
+	{
+		const FHairAABB Bound = ReadHairAABB(MacroGroupIt, MacroGroupAABBBuffer);
+		AddAABBTWS(Bound.Min, Bound.Max, float4(1, 0.5f, 0, 1));
+	}
+
+	const float4 FrustumColor = float4(0.5f, 1, 0, 1);
+	for (uint SlotIt = 0; SlotIt < AllocatedSlotCount; ++SlotIt)
+	{
+		const float4x4 TranslatedWorldToClip = ShadowViewInfoBuffer[SlotIt].TranslatedWorldToClip;
+		const float4x4 ClipToTranslatedWorld = Inverse(TranslatedWorldToClip);
+
+		float4 P01 = float4(-1, -1, 0, 1);
+		float4 P11 = float4(-1,  1, 0, 1);
+		float4 P21 = float4( 1,  1, 0, 1);
+		float4 P31 = float4( 1, -1, 0, 1);
+
+		float4 P00 = float4(-1, -1, 1, 1);
+		float4 P10 = float4(-1,  1, 1, 1);
+		float4 P20 = float4( 1,  1, 1, 1);
+		float4 P30 = float4( 1, -1, 1, 1);
+
+		P00 = mul(P00, ClipToTranslatedWorld); P00 /= P00.w;
+		P10 = mul(P10, ClipToTranslatedWorld); P10 /= P10.w;
+		P20 = mul(P20, ClipToTranslatedWorld); P20 /= P20.w;
+		P30 = mul(P30, ClipToTranslatedWorld); P30 /= P30.w;
+
+		P01 = mul(P01, ClipToTranslatedWorld); P01 /= P01.w;
+		P11 = mul(P11, ClipToTranslatedWorld); P11 /= P11.w;
+		P21 = mul(P21, ClipToTranslatedWorld); P21 /= P21.w;
+		P31 = mul(P31, ClipToTranslatedWorld); P31 /= P31.w;
+
+		AddLineTWS(P00.xyz, P10.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P10.xyz, P20.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P20.xyz, P30.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P30.xyz, P00.xyz, FrustumColor, FrustumColor);
+
+		AddLineTWS(P00.xyz, P01.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P10.xyz, P11.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P20.xyz, P21.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P30.xyz, P31.xyz, FrustumColor, FrustumColor);
+
+		AddLineTWS(P01.xyz, P11.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P11.xyz, P21.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P21.xyz, P31.xyz, FrustumColor, FrustumColor);
+		AddLineTWS(P31.xyz, P01.xyz, FrustumColor, FrustumColor);
+	}
+
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 40));
+
+	FFontColor FontColor = FontSilver;
+	Print(Context, TEXT("Hair Components "), FontYellow); Newline(Context);
+	Print(Context, TEXT("R                     : "), FontColor); PrintBool(Context, View.HairComponents & HAIR_COMPONENT_R); Newline(Context);
+	Print(Context, TEXT("TT                    : "), FontColor); PrintBool(Context, View.HairComponents & HAIR_COMPONENT_TT); Newline(Context);
+	Print(Context, TEXT("TRT                   : "), FontColor); PrintBool(Context, View.HairComponents & HAIR_COMPONENT_TRT); Newline(Context);
+	Print(Context, TEXT("Global Scatt.         : "), FontColor); PrintBool(Context, View.HairComponents & HAIR_COMPONENT_GS); Newline(Context);
+	Print(Context, TEXT("Local Scatt.          : "), FontColor); PrintBool(Context, View.HairComponents & HAIR_COMPONENT_LS); Newline(Context);
+	Newline(Context);
+
+	Print(Context, TEXT("Misc "), FontYellow); Newline(Context); 
+	Print(Context, TEXT("Voxelization          : "), FontColor); PrintBool(Context, bVoxelizationEnabled); Newline(Context);
+	Print(Context, TEXT("View rect optim.      : "), FontColor); PrintBool(Context, bViewRectOptimizeEnabled); Newline(Context);
+	Newline(Context);
+
+	Print(Context, TEXT("DOM "), FontYellow); Newline(Context);
+	Print(Context, TEXT("Atlas resolution      : "), FontColor); Print(Context, AtlasResolution.x, FontColor, 4, 0); Print(Context, TEXT(" x "), FontColor); Print(Context, AtlasResolution.y, FontColor, 4, 0); Newline(Context);
+	Print(Context, TEXT("Atlas slots           : "), FontColor); Print(Context, AllocatedSlotCount, FontColor); Newline(Context);
+	Print(Context, TEXT("GPU driven            : "), FontColor); PrintBool(Context, bIsGPUDriven); Newline(Context);
+}
+#endif // SHADER_DOMINFO
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Print hair strands stats & material infos
+
+#if SHADER_PRINT
+
+#include "../SceneData.ush"
+#include "../ShaderPrint.ush"
+#include "../CommonViewUniformBuffer.ush"
+#include "../SceneTextureParameters.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../ShaderPrint.ush"
+#include "../PositionReconstructionCommon.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsAABBCommon.ush" 
+
+int2 PixelCoord;
+int2 MaxResolution;
+uint FastResolveMask;
+uint HairMacroGroupCount;
+uint2 GroupSize; 
+uint HairVisibilityNodeGroupSize;
+uint AllocatedSampleCount;
+uint HairInstanceCount;
+
+Buffer<uint> HairInstanceIDs;
+Texture2D<float> HairCountTexture;
+Texture2D<uint> HairCountUintTexture;
+
+Texture2D<uint2> StencilTexture;
+SamplerState LinearSampler;
+Buffer<uint> HairVisibilityIndirectArgsBuffer;
+
+Buffer<int> HairMacroGroupAABBBuffer;
+Buffer<int> HairMacroGroupVoxelAlignedAABBBuffer;
+
+#define MATERIAL_DATA 1
+#define DETAIL_DATA 1
+
+FFontColor GetOccupancyColor(float In)
+{
+	float3 Color = lerp(float3(0, 1, 0), float3(1, 0, 0), saturate(In));
+	return InitFontColor(Color);
+}
+
+void DrawInstanceAABB(uint PrimitiveId)
+{
+	// Since we don't have the actual instance ID (they are transient instance vs. persistent instance), 
+	// we find the primitive with the matching PrimitiveID
+	uint InstanceID = ~0;
+	const uint TotalInstanceCount = min(8192u, Scene.GPUScene.NumInstances);
+	for (uint LocalInstanceID = 0; LocalInstanceID < TotalInstanceCount; ++LocalInstanceID)
+	{
+		FInstanceSceneData InstanceData = GetInstanceSceneData(LocalInstanceID, Scene.GPUScene.InstanceDataSOAStride);
+		if (InstanceData.PrimitiveId == PrimitiveId)
+		{
+			InstanceID = LocalInstanceID;
+			break;
+		}
+	}
+
+	if (InstanceID != ~0)
+	{
+		FInstanceSceneData InstanceData = GetInstanceSceneData(InstanceID, Scene.GPUScene.InstanceDataSOAStride);
+		const float4 InstanceBoundColor = ColorLightGreen;
+		AddOBBWS(InstanceData.LocalBoundsCenter - InstanceData.LocalBoundsExtent, InstanceData.LocalBoundsCenter + InstanceData.LocalBoundsExtent, InstanceBoundColor, LWCHackToFloat(InstanceData.LocalToWorld));
+		AddReferentialWS(LWCHackToFloat(InstanceData.LocalToWorld), 50.f);
+	}
+}
+
+[numthreads(1, 1, 1)]
+void MainCS(uint InGroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+{	
+	// Draw AABB of the instance groups
+	if (all(DispatchThreadId == 0))
+	{
+		// Macro groups bounds
+		{
+			for (uint GroupIndex =0;GroupIndex< HairMacroGroupCount; GroupIndex++)
+			{
+				const float4 InstanceBoundColor = float4(0.25f, 1.f, 0.25f, 1.0f); 
+				FHairAABB Bound = ReadHairAABB(GroupIndex, HairMacroGroupAABBBuffer);
+				AddAABBTWS(Bound.Min, Bound.Max, InstanceBoundColor);
+			}
+		}
+
+		// Voxel aligned macro groups bounds
+		{
+			for (uint GroupIndex = 0; GroupIndex < HairMacroGroupCount; GroupIndex++)
+			{
+				const float4 InstanceBoundColor = float4(1.f, 0.5f, 0.5f, 1.0f);
+				FHairAABB Bound = ReadHairAABB(GroupIndex, HairMacroGroupVoxelAlignedAABBBuffer);
+				AddAABBTWS(Bound.Min, Bound.Max, InstanceBoundColor);
+			}
+		}
+
+		// Hair instance bounds
+		for (uint HairInstanceIndex = 0; HairInstanceIndex < HairInstanceCount; HairInstanceIndex++)
+		{
+			const uint InstanceID = HairInstanceIDs[HairInstanceIndex];
+			if (InstanceID != ~0)
+			{
+				DrawInstanceAABB(InstanceID);
+			}
+		}
+
+		const uint DispatchX = HairVisibilityIndirectArgsBuffer[0];
+		const uint DispatchY = HairVisibilityIndirectArgsBuffer[1];
+		const uint UsedSampleCount = HairStrands.HairSampleCount.Load(uint3(0, 0, 0));
+		const uint DispatchedSampleCount = DispatchX * DispatchY * HairVisibilityNodeGroupSize;
+
+		const uint2 EquivalentResolution = ceil(sqrt(UsedSampleCount));
+	
+		// Pixel coord
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(450, 100));
+		Print(Context, TEXT("Sample Count (Used/Alloc)  "), FontCyan);
+		PrintLargeNumber(Context, UsedSampleCount, FontCyan);
+		Print(Context, TEXT(" / "), FontCyan);
+		PrintLargeNumber(Context, AllocatedSampleCount, FontCyan);
+		Print(Context, TEXT(" "), FontCyan);
+
+		const float AllocationPercentage = float(UsedSampleCount) / float(AllocatedSampleCount);
+		PrintPercentage(Context, AllocationPercentage, GetOccupancyColor(AllocationPercentage));
+
+		Newline(Context);
+
+		Print(Context, TEXT("Sample Lighting Resolution "), FontCyan);
+		Print(Context, EquivalentResolution.x, FontCyan, 4);
+		Print(Context, TEXT("x"), FontSilver);
+		Print(Context, EquivalentResolution.y, FontCyan, 4);
+		Newline(Context);
+
+		Print(Context, TEXT("MacroGroup Count           "), FontYellow);
+		Print(Context, HairMacroGroupCount, FontYellow);
+		Newline(Context);
+	}
+
+	const float2 PixelPos = PixelCoord;
+	if (PixelCoord.x < 0 || PixelCoord.y < 0 || PixelCoord.x >= MaxResolution.x || PixelCoord.y >= MaxResolution.y)
+		return;
+
+	const float HairPixelCoverage = HairStrands.HairCoverageTexture.Load(uint3(PixelPos, 0));
+	const bool bIsValid = HairPixelCoverage > 0;
+	if (!bIsValid)
+		return;
+
+	const float ViewHairCount = HairCountTexture.Load(uint3(PixelPos, 0));
+	const float ViewHairCountUint = HairCountUintTexture.Load(uint3(PixelPos, 0)) /  1000.f;
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 500));
+
+	uint Total8BitCoverage = 0;
+	const FNodeDesc NodeDesc = DecodeNodeDesc(HairStrands.HairSampleOffset.Load(uint3(PixelCoord, 0)));
+	for (uint SampleIt0 = 0; SampleIt0 < NodeDesc.Count; SampleIt0++)
+	{
+		const uint LocalOffset = NodeDesc.Offset + SampleIt0;
+		const FPackedHairSample NodeData = HairStrands.HairSampleData[LocalOffset];
+		const FHairSample Sample = UnpackHairSample(NodeData);
+		Total8BitCoverage += Sample.Coverage8bit;
+	}
+
+	// Pixel coord
+	Print(Context, TEXT("Pixel           "), FontTurquoise);
+	Print(Context, PixelCoord, FontTurquoise);
+	Newline(Context);
+
+	// Max sample
+	Print(Context, TEXT("Max Sample      "));
+	Print(Context, HairStrands.MaxSamplePerPixelCount);
+	Newline(Context);
+
+	// Unique sample
+	Print(Context, TEXT("Sample          "), FontOrange);
+	Print(Context, NodeDesc.Count, FontOrange);
+	Newline(Context);
+
+	// Accurate coverage (if coverage pass is activated)
+	Print(Context, TEXT("Hair Count      "));
+	Print(Context, ViewHairCount);
+	Newline(Context);
+
+	// Accurate coverage (if coverage pass is activated) uint
+	Print(Context, TEXT("Hair Count Uint "));
+	Print(Context, ViewHairCountUint);
+	Newline(Context);
+	
+	// Accurate coverage (if coverage pass is activated)
+	Print(Context, TEXT("Coverage        "), FontOrange);
+	Print(Context, HairPixelCoverage, FontOrange);
+	Newline(Context);
+
+	// 8 bit Coverage (summed)
+	Print(Context, TEXT("Sum cov. 8bits  "));
+	Print(Context, Total8BitCoverage);
+	Newline(Context);
+
+	// Resolve type
+	const uint Stencil = StencilTexture.Load(uint3(PixelPos,0)).y;
+	const bool bIsFastResolve = (Stencil & FastResolveMask) != 0;
+	Print(Context, TEXT("Resolve         "));
+
+	if (bIsFastResolve)
+	{
+		Print(Context, TEXT("Fast"), FontEmerald);
+	}
+	else
+	{
+		Print(Context, TEXT("Regular"), FontEmerald);
+	}
+
+	Newline(Context);
+	Newline(Context);
+
+	const float2 ColumnPos = Context.Pos;
+
+	// Sample Description
+	{	
+		Print(Context, TEXT("Sample ID       "), FontWhite);	Newline(Context);
+	#if MATERIAL_DATA
+		Print(Context, TEXT(".Base Color R   "), FontRed);		Newline(Context); 
+		Print(Context, TEXT(".Base Color G   "), FontGreen);	Newline(Context);
+		Print(Context, TEXT(".Base Color B   "), FontBlue);		Newline(Context);
+		Newline(Context);
+
+		Print(Context, TEXT(".Tangent X      "), FontEmerald);	Newline(Context); 
+		Print(Context, TEXT(".Tangent Y      "), FontEmerald);	Newline(Context);
+		Print(Context, TEXT(".Tangent Z      "), FontEmerald);	Newline(Context);
+		Newline(Context);
+
+		Print(Context, TEXT(".Roughness      "), FontOrange);	Newline(Context);
+		Print(Context, TEXT(".Specular       "), FontEmerald);	Newline(Context);
+		Print(Context, TEXT(".Backlit        "), FontOrange);	Newline(Context);
+		Newline(Context);
+	#endif 													  
+	#if DETAIL_DATA											  
+		Print(Context, TEXT(".Light Channels "), FontEmerald);	Newline(Context);
+		Print(Context, TEXT(".Scatter Scene  "), FontOrange);	Newline(Context);
+		Print(Context, TEXT(".Depth          "), FontEmerald);	Newline(Context);
+		Newline(Context);
+
+		Print(Context, TEXT(".Macro Group ID "), FontYellow);	Newline(Context);
+		Print(Context, TEXT(".Primitive		 "), FontEmerald);	Newline(Context);
+	#endif													  
+		Print(Context, TEXT(".Coverage       "), FontOrange);	Newline(Context);
+	}
+
+	// Per sample description
+	for (uint SampleIt = 0; SampleIt < NodeDesc.Count; SampleIt++)
+	{
+		const uint LocalOffset = NodeDesc.Offset + SampleIt;
+		const FHairSample Sample = UnpackHairSample(HairStrands.HairSampleData[LocalOffset]);
+
+		FShaderPrintContext Context2 = InitShaderPrintContext(true, ColumnPos + float2(150.f + 80.f * SampleIt, 0.f) / float2(MaxResolution));
+
+		Print(Context2, SampleIt, FontWhite);									Newline(Context2);
+
+	#if MATERIAL_DATA
+		Print(Context2, Sample.BaseColor.x,	FontRed);							Newline(Context2);
+		Print(Context2, Sample.BaseColor.y,	FontGreen);							Newline(Context2);
+		Print(Context2, Sample.BaseColor.z,	FontBlue);							Newline(Context2);
+		Newline(Context2);
+
+		Print(Context2, Sample.Tangent.x,	FontEmerald);						Newline(Context2);
+		Print(Context2, Sample.Tangent.y,	FontEmerald);						Newline(Context2);
+		Print(Context2, Sample.Tangent.z,	FontEmerald);						Newline(Context2);
+		Newline(Context2);
+
+		Print(Context2, Sample.Roughness,	FontOrange);						Newline(Context2);
+		Print(Context2, Sample.Specular,		FontEmerald);						Newline(Context2);
+		Print(Context2, Sample.Backlit,		FontOrange);						Newline(Context2);
+		Newline(Context2);
+	#endif 
+
+	#if DETAIL_DATA
+		Print(Context2,(Sample.LightChannelMask & 0x1) ? 1u : 0u, FontEmerald);	Newline(Context2);
+//		Print(Context2,(Sample.LightChannelMask & 0x1) ? 1u : 0u);				Newline(Context2);
+//		Print(Context2,(Sample.LightChannelMask & 0x2) ? 1u : 0u);				Newline(Context2);
+//		Print(Context2,(Sample.LightChannelMask & 0x4) ? 1u : 0u);				Newline(Context2);
+		Print(Context2, Sample.bScatterSceneLighting ? 1u : 0u, FontOrange);		Newline(Context2);
+		Print(Context2, Sample.Depth, FontEmerald);								Newline(Context2);
+		Newline(Context2);
+
+		Print(Context2, Sample.MacroGroupId, FontYellow);						Newline(Context2);
+		Print(Context2, Sample.ControlPointId, FontEmerald);						Newline(Context2);
+	#endif
+		Print(Context2, Sample.Coverage8bit, FontOrange);						Newline(Context2);
+	}
+}
+
+#endif // SHADER_PRINT
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Print stats/info about hair instance (strands/cards/meshes)
+
+#if SHADER_PRINT_INSTANCE
+
+#include "HairStrandsAABBCommon.ush"
+
+int2					MaxResolution;
+uint					InstanceCount;
+uint					InstanceCount_StrandsPrimaryView;
+uint					InstanceCount_StrandsShadowView;
+uint					InstanceCount_CardsOrMeshesPrimaryView;
+uint					InstanceCount_CardsOrMeshesShadowView;
+
+Buffer<uint>			Infos;
+Buffer<int>				InstanceAABB;
+float4					InstanceScreenSphereBound;
+
+FSTRINGS(InstanceNames)
+FSTRINGS(AttributeNames)
+
+struct FInstanceInfo
+{
+	uint  GroupIndex;
+	uint  GroupCount;
+	uint  LODCount;
+	uint  GeometryType;
+	uint  BindingType;
+	bool  bHasSim;
+	bool  bHasRBF;
+	bool  bHasRTGeom;
+	float LOD;
+	float ClipValue;
+
+	// Strands data
+	uint StrandsCount;
+	uint VertexCount;
+	float ScreenSize;
+	uint ActivePointCount;
+	uint ActiveCurveCount;
+	uint Attributes;
+	float Radius;
+	float Density;
+	float TipScale;
+	float RootScale;
+	float Length;
+	float LengthScale;
+	float CoverageScale;
+	bool Voxel;
+	bool Scatter;
+	bool RTGeometry;
+	bool StableRaster;
+	bool CacheRen;
+	bool CacheSim;
+	bool bHasLODSwitched;
+	bool bAutoLOD;
+
+	// Binding
+	uint UniqueTriangle;
+	uint UniqueSection;
+	uint RootCount;
+	uint ControlPointCount;
+
+	uint bIsVisibleInPrimaryView;
+	uint bIsVisibleInShadowView;
+};
+
+FInstanceInfo ReadInstanceInfo(uint Index)
+{
+	const uint Index20 = Index * 20u;
+
+	uint4 Data0 = 0;
+	Data0.x = Infos[Index20 + 0];
+	Data0.y = Infos[Index20 + 1];
+	Data0.z = Infos[Index20 + 2];
+	Data0.w = Infos[Index20 + 3];
+
+	uint4 Data1 = 0;
+	Data1.x = Infos[Index20 + 4];
+	Data1.y = Infos[Index20 + 5];
+	Data1.z = Infos[Index20 + 6];
+	Data1.w = Infos[Index20 + 7];
+
+	uint4 Data2 = 0;
+	Data2.x = Infos[Index20 + 8];
+	Data2.y = Infos[Index20 + 9];
+	Data2.z = Infos[Index20 + 10];
+	Data2.w = Infos[Index20 + 11];
+
+	uint4 Data3 = 0;
+	Data3.x = Infos[Index20 + 12];
+	Data3.y = Infos[Index20 + 13];
+	Data3.z = Infos[Index20 + 14];
+	Data3.w = Infos[Index20 + 15];
+
+	uint4 Data4 = 0;
+	Data4.x = Infos[Index20 + 16];
+	Data4.y = Infos[Index20 + 17];
+	Data4.z = Infos[Index20 + 18];
+	Data4.w = Infos[Index20 + 19];
+
+	FInstanceInfo Out = (FInstanceInfo)0;
+	Out.GroupIndex 		= (Data0.x >> 0) & 0xFF;
+	Out.GroupCount 		= (Data0.x >> 8) & 0xFF;
+	Out.LODCount 		= (Data0.x >> 16) & 0xFF;
+	Out.GeometryType 	= (Data0.x >> 24) & 0x7;
+	Out.BindingType 	= (Data0.x >> 27) & 0x7;
+	Out.bHasSim 		= (Data0.x >> 30) & 0x1;
+	Out.bHasRBF 		= (Data0.x >> 31) & 0x1;
+
+	Out.LOD 			= f16tof32((Data0.y >> 0) & 0xFFFF);
+	Out.ClipValue 		= f16tof32((Data0.y >> 16) & 0xFFFF);
+
+	Out.StrandsCount 	= Data0.z;
+	Out.VertexCount 	= Data0.w;
+
+	// Strands binding data
+	Out.UniqueSection		= Data1.x;
+	Out.UniqueTriangle		= Data1.y;
+	Out.RootCount			= Data1.z;
+	Out.ControlPointCount	= Data1.w;
+
+	Out.bIsVisibleInPrimaryView = Data2.x & 0x1;
+	Out.bIsVisibleInShadowView	= Data2.x & 0x2;
+	Out.Scatter					= Data2.x & 0x4;
+	Out.RTGeometry				= Data2.x & 0x8;
+	Out.StableRaster			= Data2.x & 0x10;
+	Out.Voxel					= Data2.x & 0x20;
+	Out.CacheSim				= Data2.x & 0x40;
+	Out.CacheRen				= Data2.x & 0x80;
+	Out.ScreenSize				= f16tof32((Data2.x>>16) & 0xFFFF);
+	Out.ActivePointCount		= Data2.y;
+	Out.ActiveCurveCount		= Data2.z;
+	Out.Attributes				= Data2.w;
+	Out.bAutoLOD				= Data3.w >> 16u;
+
+	Out.Radius					= f16tof32(Data3.x & 0xFFFF);
+	Out.Density					= f16tof32(Data3.x >> 16u);
+	Out.RootScale				= f16tof32(Data3.y & 0xFFFF);
+	Out.TipScale				= f16tof32(Data3.y >> 16u);
+	Out.Length					= f16tof32(Data3.z & 0xFFFF);
+	Out.LengthScale				= f16tof32(Data3.z >> 16u);
+	Out.CoverageScale			= f16tof32(Data3.w & 0xFFFF);
+
+	Out.bHasLODSwitched			= Data4.x & 0x1;
+	Out.bHasRTGeom				= Data4.x & 0x2;
+
+	return Out;
+}
+
+bool HasAttribute(FInstanceInfo In, uint InAttributeIt)
+{
+	return (In.Attributes & (1u<< InAttributeIt)) != 0;
+}
+
+[numthreads(1, 1, 1)]
+void MainCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+#if PERMUTATION_OUTPUT_TYPE == 0
+{
+	// Draw AABB of the instance groups
+	if (any(DispatchThreadId != 0))
+	{
+		return;
+	}
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 100));
+	bool bShowAdvancedStrandsData = false;
+
+	// Draw totals
+	const uint TotalGroup = InstanceCount;
+	uint TotalStrandsCount = 0;
+	uint TotalVertexCount = 0;
+	{
+		for (uint InstanceIndex = 0; InstanceIndex < InstanceCount; ++InstanceIndex)
+		{
+			const FInstanceInfo Info = ReadInstanceInfo(InstanceIndex);
+			TotalStrandsCount += Info.StrandsCount;
+			TotalVertexCount += Info.VertexCount;
+		}
+	}
+
+	{
+		Print(Context, TEXT("Total Groups        : "), FontWhite);
+		Print(Context,TotalGroup, FontYellow, 8);
+		Newline(Context);
+
+		Print(Context, TEXT("Total Strand Curves : "), FontWhite);
+		PrintLargeNumber(Context,TotalStrandsCount, FontOrange);
+		Newline(Context);
+
+		Print(Context, TEXT("Total Strand Points : "), FontWhite);
+		PrintLargeNumber(Context,TotalVertexCount, FontSilver);
+		Newline(Context);
+	}
+	Newline(Context);
+
+	{
+		Print(Context, TEXT("Total Strand        : "), FontWhite);
+		Print(Context, TEXT(" Visible:"), FontSilver);
+		Print(Context,InstanceCount_StrandsPrimaryView, FontYellow, 4);
+		Print(Context, TEXT("| Shadow:"), FontSilver);
+		Print(Context,InstanceCount_StrandsShadowView, FontYellow, 4);
+		Newline(Context);
+
+		Print(Context, TEXT("Total Cards/Meshes  : "), FontWhite);
+		Print(Context, TEXT(" Visible:"), FontSilver);
+		Print(Context,InstanceCount_CardsOrMeshesPrimaryView, FontYellow, 4);
+		Print(Context, TEXT("| Shadow:"), FontSilver);
+		Print(Context, InstanceCount_CardsOrMeshesShadowView, FontYellow, 4);
+		Newline(Context);
+
+		bShowAdvancedStrandsData = AddCheckbox(Context, TEXT("Advanced"), false, FontSilver);
+		Newline(Context);
+	}
+	Newline(Context);
+
+	// Draw instance details
+	Print(Context, TEXT("   Group  LOD     Geometry Binding Cache Sim RBF Clip Screen CovSc. Strands            Points             Bind.Tri/Sect Vis. Shad. SwLOD RT  Name"));
+	Newline(Context);
+
+	for (uint InstanceIndex = 0; InstanceIndex < InstanceCount; ++InstanceIndex)
+	{
+		const FInstanceInfo Info = ReadInstanceInfo(InstanceIndex);
+
+		// Index
+		Print(Context,InstanceIndex, FontSilver, 2);
+		Print(Context, TEXT(" "));
+
+		// Group
+		Print(Context,Info.GroupIndex, FontYellow, 1);
+		Print(Context, TEXT("/"));
+		Print(Context,Info.GroupCount, FontYellow, 1);
+		Print(Context, TEXT("    "));
+
+		// LOD
+		if (Info.bAutoLOD)
+		{
+			Print(Context, TEXT("Auto    "), FontYellow);
+		}
+		else
+		{
+			Print(Context,Info.LOD, FontYellow, 4, 2);
+			Print(Context, TEXT("/"));
+			Print(Context,Info.LODCount-1, FontYellow, 1);
+			Print(Context, TEXT("  "));
+		}
+
+		// Geometry
+		if (Info.GeometryType == 0)		{ Print(Context, TEXT("Strands "), FontEmerald); }
+		else if (Info.GeometryType == 1){ Print(Context, TEXT("Cards   "), FontEmerald); }
+		else if (Info.GeometryType == 2){ Print(Context, TEXT("Meshes  "), FontEmerald); }
+		Print(Context, TEXT(" "));
+
+		// Binding
+		if (Info.BindingType == 0)		{ Print(Context, TEXT("None    "), FontTurquoise); }
+		else if (Info.BindingType == 1)	{ Print(Context, TEXT("Rigid   "), FontTurquoise); }
+		else if (Info.BindingType == 2)	{ Print(Context, TEXT("Skinned "), FontTurquoise); }
+
+		// Cache
+		if (Info.CacheRen)      { Print(Context, TEXT("Ren  "), FontOrange); }
+		else if (Info.CacheSim) { Print(Context, TEXT("Sim  "), FontOrange); }
+		else                    { Print(Context, TEXT("None "), FontSilver); }
+		Print(Context, TEXT(" "));
+		// Sim
+		PrintBool(Context, Info.bHasSim);
+
+		// RBF
+		PrintBool(Context, Info.bHasRBF);
+
+		// Clip
+		if (Info.ClipValue >= 0)
+			Print(Context,Info.ClipValue, FontGreen, 5,3);
+		else 
+			Print(Context,0u, FontSilver, 5, 3);
+
+		// Strands effective
+		Print(Context, Info.ScreenSize, FontOrange, 4, 2);
+		Print(Context, TEXT("   "));
+
+		Print(Context, Info.CoverageScale, FontOrange, 4, 2);
+		Print(Context, TEXT("   "));
+
+		// Curve sCount
+		const float CurveRatio = Info.ActiveCurveCount / float(Info.StrandsCount);
+		PrintPercentage(Context, CurveRatio, InitFontColor(ColorMapTurbo(CurveRatio)));
+		PrintLargeNumber(Context, Info.ActiveCurveCount, FontOrange);
+		Print(Context, TEXT("/"));
+		PrintLargeNumber(Context, Info.StrandsCount, FontSilver);
+		Print(Context, TEXT(" "), FontWhite);
+
+		// Point sCount
+		const float VertexRatio = Info.ActivePointCount / float(Info.VertexCount);
+		PrintPercentage(Context, VertexRatio, InitFontColor(ColorMapTurbo(VertexRatio)));
+		PrintLargeNumber(Context, Info.ActivePointCount, FontOrange);
+		Print(Context, TEXT("/"));
+		PrintLargeNumber(Context, Info.VertexCount, FontSilver);
+		Print(Context, TEXT(" "), FontWhite);
+
+		// Binding data
+		Print(Context,Info.UniqueTriangle, FontOrange, 8);
+		Print(Context, TEXT(" "));
+		Print(Context,Info.UniqueSection, FontSilver, 3);
+		Print(Context, TEXT("  "));
+
+		// Primary view
+		PrintBool(Context, Info.bIsVisibleInPrimaryView);
+		Print(Context, TEXT(" "));
+
+		// Shadow view
+		PrintBool(Context, Info.bIsVisibleInShadowView);
+		Print(Context, TEXT("  "));
+
+		// Has LOD switched
+		PrintBool(Context, Info.bHasLODSwitched);
+		Print(Context, TEXT("  "));
+
+		// Has RT geom
+		PrintBool(Context, Info.bHasRTGeom);
+		Print(Context, TEXT("  "));
+		
+		
+		// Name
+		PrintInstanceNames(Context, InstanceIndex, FontWhite);
+
+		Newline(Context);
+	}
+	Newline(Context);
+
+	// Optional advanced debugging
+	if (bShowAdvancedStrandsData)
+	{
+		// Attribute
+		Print(Context, TEXT("   Group  "), FontWhite);
+		Print(Context, TEXT("Voxel "), FontWhite);
+		Print(Context, TEXT("RT  "), FontWhite);
+		Print(Context, TEXT("Scatter "), FontWhite);
+		Print(Context, TEXT("Radius "), FontWhite);
+		Print(Context, TEXT("Root  "), FontWhite);
+		Print(Context, TEXT("Tip   "), FontWhite);
+		const uint AttributeNameInfoCount = NumAttributeNames();
+		for (uint AttributeIt=0; AttributeIt < AttributeNameInfoCount; ++AttributeIt)
+		{
+			PrintAttributeNames(Context, AttributeIt, FontWhite);
+			Print(Context, TEXT(" "));
+		}
+		Newline(Context);
+
+		for (uint StrandInstanceIndex = 0; StrandInstanceIndex < InstanceCount; ++StrandInstanceIndex)
+		{
+			const FInstanceInfo Info = ReadInstanceInfo(StrandInstanceIndex);
+			if (Info.GeometryType > 0)
+			{
+				continue;
+			}
+
+			// Index
+			Print(Context, StrandInstanceIndex, FontSilver, 2);
+			Print(Context, TEXT(" "));
+
+			// Group
+			Print(Context, Info.GroupIndex, FontYellow, 1);
+			Print(Context, TEXT("/"));
+			Print(Context, Info.GroupCount, FontYellow, 1);
+			Print(Context, TEXT("    "));
+
+			PrintBool(Context, Info.Voxel); Print(Context, TEXT("  "));
+			PrintBool(Context, Info.RTGeometry); 
+			PrintBool(Context, Info.Scatter); Print(Context, TEXT("    "));
+			Print(Context, Info.Radius, FontYellow, 5, 3); Print(Context, TEXT("  "));
+			Print(Context, Info.RootScale, FontYellow, 5, 3); Print(Context, TEXT(" "));
+			Print(Context, Info.TipScale, FontYellow, 5, 3); Print(Context, TEXT(" "));
+
+			for (uint AttributeIt = 0; AttributeIt < AttributeNameInfoCount; ++AttributeIt)
+			{
+				PrintBool(Context, HasAttribute(Info, AttributeIt));
+				const uint AttributeLen = LenAttributeNames(AttributeIt);
+				if (AttributeLen > 3)
+				{
+					const uint SpaceCount = AttributeLen - 3u;
+					for (uint SpaceIt = 0; SpaceIt < SpaceCount; ++SpaceIt)
+					{
+						Print(Context, TEXT(" "));
+					}
+				}
+			}
+
+			PrintInstanceNames(Context, StrandInstanceIndex, FontWhite);
+
+			Newline(Context);
+		}
+	}
+}
+#else  // PERMUTATION_OUTPUT_TYPE
+{
+	if (all(DispatchThreadId == 0))
+	{
+		// Bound
+		const FHairAABB AABB = ReadHairAABB(0, InstanceAABB);
+		AddAABBTWS(AABB.Min, AABB.Max, ColorDarkGreen);
+
+		// Screen size
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+		AddCircleSS(Context, InstanceScreenSphereBound.xy, InstanceScreenSphereBound.w, ColorGreen);
+	}
+}
+#endif // PERMUTATION_OUTPUT_TYPE
+
+#endif // SHADER_PRINT_INSTANCE
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Print tangent direction for strands/cards/meshes
+
+#if SHADER_TANGENT
+
+#include "../CommonViewUniformBuffer.ush"
+#include "../SceneTextureParameters.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../ShaderPrint.ush"
+#include "../PositionReconstructionCommon.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsAABBCommon.ush" 
+
+uint TileSize;
+int2 TileCount;
+float2 OutputResolution;
+RWTexture2D<float4> OutputTexture;
+
+#define HAIR_TANGENT_INVALID 0
+#define HAIR_TANGENT_STRANDS 1
+#define HAIR_TANGENT_CARDS   2
+
+
+struct FTangentDesc
+{
+	float3 Tangent;
+	uint Type;
+};
+
+FTangentDesc AddTangentPlot(uint2 PixelCoord, float2 UV)
+{
+	FTangentDesc Out = (FTangentDesc)0;
+
+	// Strands
+	{
+		// Find closest
+		float3 Closest_Tangent = 0;
+		float  Closest_Depth = 0;
+
+		uint Total8BitCoverage = 0;
+		const FNodeDesc NodeDesc = DecodeNodeDesc(HairStrands.HairSampleOffset.Load(uint3(PixelCoord, 0)));
+		for (uint SampleIt0 = 0; SampleIt0 < NodeDesc.Count; SampleIt0++)
+		{
+			const uint LocalOffset = NodeDesc.Offset + SampleIt0;
+			const FPackedHairSample NodeData = HairStrands.HairSampleData[LocalOffset];
+			const FHairSample Sample = UnpackHairSample(NodeData);
+
+			if (Sample.Depth > Closest_Depth)
+			{
+				Closest_Depth = Sample.Depth;
+				Closest_Tangent = Sample.Tangent;
+			}
+		}
+
+		// Draw tangent vector (strands)
+		if (NodeDesc.Count > 0)
+		{
+			const float SceneDepth = ConvertFromDeviceZ(Closest_Depth);
+			const float3 WorldPosition = ReconstructTranslatedWorldPositionFromDepth(UV, SceneDepth);
+			AddLineTWS(WorldPosition, WorldPosition + Closest_Tangent, ColorRed, ColorYellow);
+			Out.Type = 1;
+			Out.Tangent = Closest_Tangent;
+		}
+	}
+
+	// Cards
+	if (Out.Type == 0)
+	{
+		FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(UV);
+		const float SceneDepth = CalcSceneDepth(UV);
+		const float3 WorldPosition = ReconstructTranslatedWorldPositionFromDepth(UV, SceneDepth);
+		if (ScreenSpaceData.GBuffer.ShadingModelID == SHADINGMODELID_HAIR)
+		{
+			const float3 Tangent = ScreenSpaceData.GBuffer.WorldNormal;
+			AddLineTWS(WorldPosition, WorldPosition + Tangent, ColorPurple, ColorYellow);
+			Out.Type = 2;
+			Out.Tangent = Tangent;
+		}
+	}
+
+	return Out;
+}
+
+void AddTangentText(float2 UV, float3 Tangent, uint TangentType)
+{
+	FShaderPrintContext Context = InitShaderPrintContext(true, UV);
+
+	if (TangentType == HAIR_TANGENT_STRANDS)
+		Print(Context, TEXT("Strands"), FontYellow);
+	else if (TangentType == HAIR_TANGENT_CARDS)
+		Print(Context, TEXT("Cards "), FontYellow);
+	else if (TangentType == HAIR_TANGENT_CARDS)
+		Print(Context, TEXT("Invalid"), FontRed);
+
+	Newline(Context);
+
+	Print(Context, Tangent.x, FontRed);		Newline(Context);
+	Print(Context, Tangent.y, FontGreen);	Newline(Context);
+	Print(Context, Tangent.z, FontBlue);	Newline(Context);
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Cursor plot
+	if (all(DispatchThreadId == 0))
+	{
+		const float2 PixelCoord = GetCursorPos();// DispatchThreadId.xy + 0.5f;
+		const float2 UV = PixelCoord / float2(OutputResolution);
+		const float2 UVText = (PixelCoord + float2(20, 0)) / float2(OutputResolution);
+
+		FTangentDesc Desc = AddTangentPlot(PixelCoord, UV);
+		if (Desc.Type == HAIR_TANGENT_STRANDS)
+		{			
+			AddTangentText(UVText, Desc.Tangent, HAIR_TANGENT_STRANDS);
+		}
+		else if (Desc.Type == HAIR_TANGENT_CARDS)
+		{
+			AddTangentText(UVText, Desc.Tangent, HAIR_TANGENT_CARDS);
+		}
+	}
+
+	// Grid plot
+	if (all(DispatchThreadId.xy < TileCount))
+	{
+		const float2 PixelCoord = DispatchThreadId.xy * TileSize;
+		if (all(PixelCoord < OutputResolution))
+		{
+			const float2 UV = PixelCoord / float2(OutputResolution);
+			AddTangentPlot(PixelCoord, UV);
+		}
+	}
+}
+#endif // SHADER_TANGENT
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Print LOD info/stats
+
+#if SHADER_LOD_INFO
+
+#include "../ShaderPrint.ush"
+
+int2 MaxResolution;
+uint GroupIndex;
+uint GeometryType;
+uint CurveCount;
+uint PointCount;
+float CoverageScale;
+float LOD;
+float ScreenSize;
+float3 GroupColor;
+
+[numthreads(1, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Legend
+	if (GroupIndex == 0)
+	{
+		FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(10, 50));
+		Print(Ctx, TEXT("  Group Geom.   LOD  Screen Size #Curve      #Point      Scale"), FontSilver); Newline(Ctx);
+	}
+
+	// Values
+	{
+		FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(10, 65 + GroupIndex * 15));
+
+		// Group Color
+		Print(Ctx, TEXT("* "), InitFontColor(GroupColor));
+
+		// Group index
+		Print(Ctx, GroupIndex, FontEmerald, 3, 0);
+
+		// Geometry Type
+		Print(Ctx, TEXT("   "));
+		if (GeometryType == 0)
+		{
+			Print(Ctx, TEXT("Strands "), FontOrange);
+		}
+		else if (GeometryType == 1)
+		{
+			Print(Ctx, TEXT("Cards   "), FontOrange);
+		}
+		else if (GeometryType == 2)
+		{
+			Print(Ctx, TEXT("Meshes  "), FontOrange);
+		}
+
+		Print(Ctx, LOD, FontWhite, 4, 2); Print(Ctx, TEXT(" "));
+		Print(Ctx, saturate(ScreenSize), FontWhite);
+		Print(Ctx, CurveCount, FontWhite);
+		Print(Ctx, PointCount, FontWhite);
+		Print(Ctx, CoverageScale, FontWhite);
+		Newline(Ctx);
+	}
+}
+
+#endif // SHADER_LOD_INFO
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualize hair cards atlas data
+#if SHADER_CARDS_ATLAS
+
+#include "../ShaderPrint.ush"
+
+#define DEBUG_MODE_DEPTH 1
+#define DEBUG_MODE_COVERAGE 2
+#define DEBUG_MODE_TANGENT 3
+#define DEBUG_MODE_ROOTUV 4
+#define DEBUG_MODE_U 5
+#define DEBUG_MODE_SEED 6
+
+int2 OutputResolution;
+int2 AtlasResolution;
+int DebugMode;
+
+Texture2D<float4> AtlasTexture;
+RWTexture2D<float4> OutputTexture;
+SamplerState LinearSampler;
+
+[numthreads(8, 8, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{	
+	const int2 PixelCoord = DispatchThreadId.xy;
+	if (any(PixelCoord >= OutputResolution))
+		return;
+
+	const int2 Offset = 50;
+	const int2 Resolution = 512 * float2(AtlasResolution.x, AtlasResolution.y)/max(AtlasResolution.x, AtlasResolution.y);
+
+	const float2 LocalUV = float2(PixelCoord - Offset) / float2(Resolution);
+
+#if 1
+	if (all(LocalUV >= 0) && all(LocalUV <= 1))
+	{
+		float4 InData = AtlasTexture.SampleLevel(LinearSampler, float2(LocalUV.x,1-LocalUV.y), 0);
+		float3 Data = 0;
+		if (DebugMode == DEBUG_MODE_DEPTH) 		{ Data = InData.xxx; }
+		if (DebugMode == DEBUG_MODE_COVERAGE)	{ Data = InData.xxx; }
+		if (DebugMode == DEBUG_MODE_TANGENT)	{ Data = InData.xyz; }
+		if (DebugMode == DEBUG_MODE_ROOTUV)		{ Data = float3(InData.xy,0); }
+		if (DebugMode == DEBUG_MODE_U)			{ Data = InData.zzz; }
+		if (DebugMode == DEBUG_MODE_SEED)		{ Data = InData.www; }
+		OutputTexture[PixelCoord] = float4(Data, 1);
+	}
+#else
+	if (all(PixelCoord <= AtlasResolution))
+	{
+		float3 Data = AtlasTexture.Load(uint3(PixelCoord, 0)).xyz;
+		if (DebugMode == DEBUG_MODE_DEPTH) { Data = Data.xxx; }
+		if (DebugMode == DEBUG_MODE_COVERAGE) { Data = Data.xxx; }
+		if (DebugMode == DEBUG_MODE_TANGENT) {}
+		OutputTexture[PixelCoord] = float4(Data, 1);
+	}
+#endif
+
+#if PRINT_ATLAS_RESOLUTION
+	// Draw AABB of the instance groups
+	if (DispatchThreadId.x == 0 && DispatchThreadId.y == 0)
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 40));
+		Print(Context, TEXT("Atlas Resolution: "))
+		Print(Context, AtlasResolution);
+		Newline(Context);
+	}
+#endif
+}
+
+#endif // SHADER_CARDS_ATLAS
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Visualize cards hair guides
+
+#if SHADER_CARDS_GUIDE
+
+#include "HairStrandsVertexFactoryCommon.ush"
+#include "../ShaderPrint.ush"
+
+uint RenVertexCount;
+float3 RenRestOffset;
+
+uint SimVertexCount;
+float3 SimRestOffset;
+
+float4x4 LocalToWorld;
+
+Buffer<uint4> RenRestPosition;
+Buffer<uint4> RenDeformedPosition;
+Buffer<float4> RenDeformedOffset;
+
+Buffer<uint4> SimRestPosition;
+Buffer<uint4> SimDeformedPosition;
+Buffer<float4> SimDeformedOffset;
+
+float3 RestOffset;
+float3 DeformedOffset;
+Buffer<uint4> RestPosition;
+Buffer<uint4> DeformedPosition; 
+
+int DebugMode;
+
+#define DEBUGMODE_REN_REST 1
+#define DEBUGMODE_REN_DEFORMED 2
+#define DEBUGMODE_SIM_REST 3
+#define DEBUGMODE_SIM_DEFORMED 4
+
+[numthreads(32, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint VertexId = DispatchThreadId.x;
+	const uint VertexCount = DebugMode == DEBUGMODE_REN_REST || DebugMode == DEBUGMODE_REN_DEFORMED ? RenVertexCount : SimVertexCount;
+	if (VertexId+1 >= VertexCount)
+		return;
+
+	uint4 PackedP0 = 0;
+	uint4 PackedP1 = 0;
+	float3 Offset = 0;
+	float4 ColorRoot = ColorWhite;
+	float4 ColorTip  = ColorWhite;
+
+	if (DebugMode == DEBUGMODE_REN_REST)
+	{
+		PackedP0 = RenRestPosition[VertexId];
+		PackedP1 = RenRestPosition[VertexId + 1];
+		Offset   = RenRestOffset;
+		ColorRoot= ColorYellow;
+		ColorTip = ColorPurple;
+	}
+	else if (DebugMode == DEBUGMODE_REN_DEFORMED)
+	{
+		PackedP0 = RenDeformedPosition[VertexId];
+		PackedP1 = RenDeformedPosition[VertexId + 1];
+		Offset   = RenDeformedOffset[0].xyz;
+		ColorRoot= ColorYellow;
+		ColorTip = ColorPurple;
+	}
+	else if (DebugMode == DEBUGMODE_SIM_REST)
+	{
+		PackedP0 = SimRestPosition[VertexId];
+		PackedP1 = SimRestPosition[VertexId + 1];
+		Offset   = SimRestOffset;
+		ColorRoot= ColorCyan;
+		ColorTip = ColorRed;
+	}
+	else if (DebugMode == DEBUGMODE_SIM_DEFORMED)
+	{
+		PackedP0 = SimDeformedPosition[VertexId];
+		PackedP1 = SimDeformedPosition[VertexId + 1];
+		Offset   = SimDeformedOffset[0].xyz;
+		ColorRoot= ColorCyan;
+		ColorTip = ColorRed;
+	}
+
+	const FHairControlPoint P0 = UnpackHairControlPoint(PackedP0, Offset, 1, 1, 1);
+	const FHairControlPoint P1 = UnpackHairControlPoint(PackedP1, Offset, 1, 1, 1);
+
+	if (P1.Type != HAIR_CONTROLPOINT_START)
+	{
+		const float4 Color0 = lerp(ColorRoot, ColorTip, P0.UCoord);
+		const float4 Color1 = lerp(ColorRoot, ColorTip, P1.UCoord);
+		AddLineWS(mul(float4(P0.Position, 1), LocalToWorld), mul(float4(P1.Position,1), LocalToWorld), Color0, Color1);
+	}
+}
+
+#endif // SHADER_CARDS_GUIDE
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Visualize directional occlusion from voxelized hair strands (used for cards generation)
+
+#if SHADER_CARDS_DIRECTION_OCCLUSION
+
+int3 Voxel_Resolution;
+float Voxel_VoxelSize;
+float3 Voxel_MinBound;
+float3 Voxel_MaxBound;
+Buffer<uint> Voxel_DensityBuffer;
+RWBuffer<uint> OutBuffer;
+
+[numthreads(4, 4, 4)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const int3 VoxelCoord = DispatchThreadId.xyz;
+
+	if (any(VoxelCoord >= Voxel_Resolution))
+		return;
+
+	const uint VoxelLinearCoord = CoordToIndex(VoxelCoord, Voxel_Resolution, 0);
+
+	// Dilation
+#if 0
+	uint OutValue   = 0;
+	 int KernelSize = 1;
+	uint ValidCount = 0;
+
+	for (int Z = -KernelSize; Z <= KernelSize; ++Z)
+	for (int Y = -KernelSize; Y <= KernelSize; ++Y)
+	for (int X = -KernelSize; X <= KernelSize; ++X)
+	{
+		int3 C = VoxelCoord + int3(X, Y, Z);
+		if (all(C >= 0) && all(C < Voxel_Resolution))
+		{
+			const uint LinearC = CoordToIndex(C, Voxel_Resolution, 0);
+			OutValue += Voxel_DensityBuffer[LinearC];
+			ValidCount++;
+		}
+	}
+	OutValue /= max(1, ValidCount);
+#endif
+
+	// Occlusion
+#if 1
+	const uint CenterDensity = Voxel_DensityBuffer[VoxelLinearCoord];
+	if (CenterDensity == 0)
+		return;
+
+	int KernelSize = 1;
+	uint ValidCount = 0;
+	float3 OutDirection = 0;
+	for (int Z = -KernelSize; Z <= KernelSize; ++Z)
+	for (int Y = -KernelSize; Y <= KernelSize; ++Y)
+	for (int X = -KernelSize; X <= KernelSize; ++X)
+	{
+		const int3 Offset = int3(X, Y, Z);		
+		const int3 C = VoxelCoord + Offset;
+		if (all(C >= 0) && all(C < Voxel_Resolution) && !all(Offset == int3(0,0,0)))
+		{
+			const uint LinearC = CoordToIndex(C, Voxel_Resolution, 0);
+			const uint Density = Voxel_DensityBuffer[LinearC];
+			if (Density == 0)
+			{
+				OutDirection += normalize(float3(Offset));
+				ValidCount++;
+			}
+		}
+	}
+	if (ValidCount>0)
+	{
+		OutDirection = normalize(OutDirection);
+	}
+	const uint OutValue = PackDirection(OutDirection);
+#endif
+
+	// Pass through
+#if 0
+	const uint OutValue = Voxel_DensityBuffer[VoxelLinearCoord];
+#endif
+
+	OutBuffer[VoxelLinearCoord] = OutValue;
+}
+
+#endif //SHADER_CARDS_DIRECTION_OCCLUSION
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if SHADER_PLOTBSDF
+
+#include "../SceneTexturesCommon.ush"
+#include "../ShadingModels.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../HairBsdf.ush"
+#include "HairStrandsCommon.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsEnvironmentLightingCommon.ush"
+#include "HairStrandsDeepShadowCommon.ush"
+#include "HairStrandsDeepTransmittanceCommon.ush"
+#include "HairStrandsDeepTransmittanceDualScattering.ush"
+
+int2 InputCoord;
+int2 OutputOffset;
+int2 OutputResolution;
+int2 MaxResolution;
+uint HairComponents;
+float Roughness;
+float BaseColor;
+float Exposure;
+
+RWTexture2D<float4> OutputTexture;
+
+#define COMPARE_ROUGHNESS 0
+
+#if COMPARE_ROUGHNESS
+float DefaultLit(float3 N, float3 V, float3 L, float InRoughnesss)
+{
+	FGBufferData GBuffer;
+	GBuffer.Roughness = InRoughnesss;
+	GBuffer.SpecularColor = 1;
+	GBuffer.DiffuseColor = 0;
+
+	FAreaLight AreaLight;
+	AreaLight.IsRectAndDiffuseMicroReflWeight = 0;
+	AreaLight.FalloffColor = 1;
+	AreaLight.SphereSinAlpha = 0;
+	AreaLight.SphereSinAlphaSoft = 0;
+	AreaLight.LineCosSubtended = 1;
+	FShadowTerms Shadow;
+
+	if (dot(V,N) < 0)
+		V.z = -V.z;
+
+	const float NoL = saturate(dot(N, L));
+	const float3 Fs = DefaultLitBxDF(GBuffer, N, V, L, 1, NoL, AreaLight, Shadow).Specular;
+	return Fs.x;
+}
+#endif
+
+void MainPS(
+	in FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0)
+{
+	const int2 PixelCoord = Input.Position.xy;
+	if (PixelCoord.x < OutputOffset.x || PixelCoord.x >= OutputOffset.x+OutputResolution.x ||
+		PixelCoord.y < OutputOffset.y || PixelCoord.y >= OutputOffset.x+OutputResolution.y )
+		discard;
+
+	const float2 UV = ((PixelCoord-OutputOffset) + float2(0.5f,0.5f)) / float2(OutputResolution);
+	float2 InputUV = saturate(float2(InputCoord - OutputOffset) / float2(OutputResolution));
+	// InputUV = float2(0.5, 0.5);
+
+
+	float V_Phi   = (UV.x*2-1) * PI; //[-Pi..Pi]
+	float V_Theta = (UV.y*2-1) * PI * 0.5f;
+	float L_Phi   = (InputUV.x*2-1) * PI; //[-Pi..Pi]
+	float L_Theta = (InputUV.y*2-1) * PI * 0.5f;
+
+	const float3 Axis_U = float3(0,0,1); // Tangent
+	const float3 Axis_V = float3(1,0,0); // Perp. to the view direction
+	const float3 Axis_W = float3(0,1,0); // Ortho.
+
+	const float3 L_Local = float3(sin(L_Theta), cos(L_Theta)*cos(L_Phi), cos(L_Theta)*sin(L_Phi));
+	const float3 V_Local = float3(sin(V_Theta), cos(V_Theta)*cos(V_Phi), cos(V_Theta)*sin(V_Phi));
+	const float3 T 		 = float3(1,0,0);
+
+	const float3 V_World = 
+		V_Local.x * Axis_U + 
+		V_Local.y * Axis_V + 
+		V_Local.z * Axis_W;
+
+	FHairTransmittanceData TransmittanceData = (FHairTransmittanceData)0;
+	TransmittanceData.LocalScattering = 0;
+	TransmittanceData.GlobalScattering = 1;
+	TransmittanceData.ScatteringComponent = HairComponents;
+	TransmittanceData.OpaqueVisibility = 1;
+
+	const float Backlit = 1;
+	const float Specular = 0.5f;
+	FGBufferData HairGBuffer = (FGBufferData)0;
+	HairGBuffer.WorldNormal = T;
+	HairGBuffer.BaseColor = BaseColor.xxx;
+	HairGBuffer.Roughness = Roughness;
+	HairGBuffer.ShadingModelID = SHADINGMODELID_HAIR;
+	HairGBuffer.DiffuseColor = 0;
+	HairGBuffer.SpecularColor = 0;
+	HairGBuffer.Specular = Specular;
+	HairGBuffer.Metallic = 0;
+	HairGBuffer.Depth = 0.5f;
+	HairGBuffer.GBufferAO = 1;
+	HairGBuffer.CustomData = float4(0,0,Backlit,0);
+	HairGBuffer.IndirectIrradiance = 1000000;
+
+	OutColor = float4(0,0,0,1);
+
+#if COMPARE_ROUGHNESS
+	const float3 Fs_Lit_R   = DefaultLit(float3(0, 0,-1), V_Local, L_Local, HairToGGXRoughness_R  (HairGBuffer.Roughness));
+	const float3 Fs_Lit_TT  = DefaultLit(float3(0, 0,-1), V_Local, L_Local, HairToGGXRoughness_TT (HairGBuffer.Roughness));
+	const float3 Fs_Lit_TRT = DefaultLit(float3(0, 0,-1), V_Local, L_Local, HairToGGXRoughness_TRT(HairGBuffer.Roughness));
+#endif
+	const float3 Fs_Hair    = HairShading(HairGBuffer, L_Local, V_Local, T, 1, TransmittanceData, 1, 0, uint2(0,0) );
+
+#if COMPARE_ROUGHNESS
+	OutColor.xyz += Fs_Lit_R   * float3(1, 0, 0);
+	OutColor.xyz += Fs_Lit_TRT * float3(0, 1, 1);
+	OutColor.xyz += Fs_Lit_TT  * float3(0, 0, 1);
+#endif
+	OutColor.xyz += Fs_Hair;
+	OutColor.xyz *= Exposure;
+
+	//const float3 ColorV = (V_World+1)* 0.5f;
+	//OutColor = float4(ColorV, 1);
+	//OutColor = float4(UV, 0, 1);
+}
+
+#endif // SHADER_PLOTBSDF
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if SHADER_PLOTSAMPLE
+
+#include "HairStrandsDebugCommonStruct.ush"
+#include "../SceneTexturesCommon.ush"
+#include "../ShadingModels.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../HairBsdf.ush"
+#include "HairStrandsCommon.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsEnvironmentLightingCommon.ush"
+#include "HairStrandsDeepShadowCommon.ush"
+#include "HairStrandsDeepTransmittanceCommon.ush"
+#include "HairStrandsDeepTransmittanceDualScattering.ush"
+
+StructuredBuffer<FDebugShadingInfo>	Debug_ShadingPointBuffer;
+Buffer<uint>						Debug_ShadingPointCounter;
+StructuredBuffer<FDebugSample>		Debug_SampleBuffer;
+Buffer<uint>						Debug_SampleCounter;
+uint								Debug_MaxShadingPointCount;
+uint								Debug_MaxSampleCount;
+
+Texture3D<float4>					HairScatteringLUTTexture;
+SamplerState 						HairLUTSampler;
+
+int2 OutputOffset;
+int2 OutputResolution;
+int2 MaxResolution;
+uint HairComponents;
+float Exposure;
+
+struct FPlotRect
+{
+	int2 Offset;
+	int2 Resolution;
+};
+
+bool IsInside(const int2 Coord, const FPlotRect Rect)
+{
+	return all(Coord >= Rect.Offset) && all(Coord < Rect.Offset + Rect.Resolution);
+}
+
+float2 ToUV(const int2 Coord, const FPlotRect Rect)
+{
+	return ((Coord - Rect.Offset) + float2(0.5f, 0.5f)) / float2(OutputResolution);
+}
+
+RWTexture2D<float4> OutputTexture;
+
+float2 CartesianToUnwrap(float3 D)
+{
+	const float Theta = asin(D.x);
+	const float Phi = atan2(D.z, D.y);
+	return float2(Theta, Phi);
+}
+
+float2 CartesianToLatlong(float3 D)
+{
+	const float Theta = asin(D.x);
+	const float Phi = atan2(D.z, D.y);
+	return float2(((Phi/PI)+1)*0.5f, Theta/PI);
+}
+
+void MainPS(
+	in FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0)
+{
+	OutColor = float4(0, 0, 0, 1);
+
+	// Prune all pixel which are not within the band horizontal band
+	const int2 PixelCoord = Input.Position.xy;
+	if (PixelCoord.y < OutputOffset.y || PixelCoord.y >= OutputOffset.x + OutputResolution.y)
+	{
+		discard;
+	}
+
+	const float CosAngleThreshold = 0.999f;
+	const float PointSize = 3.f / OutputResolution.x;
+
+	// Local 
+	// Plot sample points
+	bool bIsValid = false;
+	const uint ShadingPointCount = Debug_ShadingPointCounter[0];
+	for (uint PointIt = 0; PointIt < ShadingPointCount; PointIt++)
+	{
+		FPlotRect Rect;
+		Rect.Offset = OutputOffset + PointIt * int2(OutputResolution.x + 10, 0);
+		Rect.Resolution = OutputResolution;
+
+		if (!IsInside(PixelCoord, Rect))
+			continue;
+
+		bIsValid = true;
+		const float2 UV = ToUV(PixelCoord, Rect);
+
+		const float  Pixel_Phi	= (UV.x * 2 - 1) * PI + PI*0.5; //[3PI/2, 0, 2PI, 3PI/2 ], so that the hair fiber is aligned on the center
+		const float  Pixel_Theta= (UV.y * 2 - 1) * PI * 0.5f;
+		const float3 PixelDir_Local	= float3(sin(Pixel_Theta), cos(Pixel_Theta)*cos(Pixel_Phi), cos(Pixel_Theta)*sin(Pixel_Phi));
+
+		const FDebugShadingInfo P = Debug_ShadingPointBuffer[PointIt];
+
+		// Shading frame T, V
+		const float3 Local_X = P.T;
+		const float3 Local_Y = normalize(cross(Local_X, P.V));
+		const float3 Local_Z = normalize(cross(Local_Y, Local_X));
+		const float3x3 WorldToLocal = transpose(float3x3(Local_X, Local_Y, Local_Z));
+
+		const float3 V_Local = mul(P.V, WorldToLocal);
+		const float3 T_Local = mul(P.T, WorldToLocal); // Should be float3(1,0,0)
+
+		{
+
+			const float SampleBacklit = 1;
+			const float SampleSpecular = 0.5f;
+			FHairTransmittanceData TransmittanceData = InitHairStrandsTransmittanceData();
+
+			uint InHairComponents = HairComponents;
+			const bool bPlotDualScatteringContribution = true;
+			if (!bPlotDualScatteringContribution)
+			{
+				TransmittanceData.LocalScattering = 1;
+				TransmittanceData.GlobalScattering = 1;
+				TransmittanceData.ScatteringComponent = InHairComponents;
+				TransmittanceData.OpaqueVisibility = 1;
+			}
+			else
+			{
+				const float3 L = PixelDir_Local;
+				const float3 T = T_Local;
+				const float3 V = V_Local;
+				const float SinLightAngle = dot(L, T);
+
+				// Compute the transmittance based on precompute Hair transmittance LUT
+				FHairAverageScattering AverageScattering = SampleHairLUT(View.HairScatteringLUTTexture, View.HairScatteringLUTSampler, P.BaseColor, P.Roughness, SinLightAngle);
+
+				TransmittanceData = ComputeDualScatteringTerms(
+					InitHairTransmittanceMask(),
+					AverageScattering,
+					P.Roughness,
+					SampleBacklit,
+					V,
+					L,
+					T,
+					InHairComponents);
+			}
+
+			FGBufferData HairGBuffer = (FGBufferData)0;
+			HairGBuffer.WorldNormal = P.T;
+			HairGBuffer.BaseColor = P.BaseColor;
+			HairGBuffer.Roughness = P.Roughness;
+			HairGBuffer.ShadingModelID = SHADINGMODELID_HAIR;
+			HairGBuffer.DiffuseColor = 0;
+			HairGBuffer.SpecularColor = 0;
+			HairGBuffer.Specular = SampleSpecular;
+			HairGBuffer.Metallic = 0;
+			HairGBuffer.Depth = 0.5f;
+			HairGBuffer.GBufferAO = 1;
+			HairGBuffer.CustomData = float4(0,0,SampleBacklit,0);
+			HairGBuffer.IndirectIrradiance = 1000000;
+
+			const float Area = 0;
+			const float BackLit = 1;
+			OutColor.xyz = HairShading(HairGBuffer, PixelDir_Local, V_Local, T_Local, 1, TransmittanceData, BackLit, Area, uint2(0, 0)) * Exposure;
+		}
+
+		for (uint SampleIt = 0; SampleIt < P.SampleCount; SampleIt++)
+		{
+			const FDebugSample S_World = Debug_SampleBuffer[P.SampleOffset + SampleIt];
+
+			const float3 S_Local = mul(S_World.Direction, WorldToLocal);
+
+			if (dot(PixelDir_Local, S_Local) > CosAngleThreshold)
+			{
+				OutColor.xyz = float3(1, 0, 0);
+			}
+		}
+	}
+
+	if (!bIsValid)
+	{
+		discard;
+	}
+}
+
+#endif // SHADER_PLOTSAMPLE
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Display groom culling from shadow perspective 
+
+#if SHADER_SHADOW_CULLING
+
+#include "../ShaderPrint.ush"
+#include "../Matrices.ush"
+
+void AddFrustumWS(float4x4 In, float4 InColor, bool bInv)
+{
+	const float Near = 0.0001f;
+	const float Far = 0.9999f;
+
+	float4x4 T = In;
+	if (bInv)
+	{
+		T = Inverse(In);
+	}
+	float4 P00 = mul(float4(-1, -1, Near, 1), T); P00 /= P00.w;
+	float4 P10 = mul(float4( 1, -1, Near, 1), T); P10 /= P10.w;
+	float4 P20 = mul(float4( 1,  1, Near, 1), T); P20 /= P20.w;
+	float4 P30 = mul(float4(-1,  1, Near, 1), T); P30 /= P30.w;
+
+	float4 P01 = mul(float4(-1, -1, Far, 1),  T); P01 /= P01.w;
+	float4 P11 = mul(float4( 1, -1, Far, 1),  T); P11 /= P11.w;
+	float4 P21 = mul(float4( 1,  1, Far, 1),  T); P21 /= P21.w;
+	float4 P31 = mul(float4(-1,  1, Far, 1),  T); P31 /= P31.w;
+
+	AddLineWS(P00.xyz, P10.xyz, InColor);
+	AddLineWS(P10.xyz, P20.xyz, InColor);
+	AddLineWS(P20.xyz, P30.xyz, InColor);
+	AddLineWS(P30.xyz, P00.xyz, InColor);
+
+	AddLineWS(P01.xyz, P11.xyz, InColor);
+	AddLineWS(P11.xyz, P21.xyz, InColor);
+	AddLineWS(P21.xyz, P31.xyz, InColor);
+	AddLineWS(P31.xyz, P01.xyz, InColor);
+
+	AddLineWS(P00.xyz, P01.xyz, InColor);
+	AddLineWS(P10.xyz, P11.xyz, InColor);
+	AddLineWS(P20.xyz, P21.xyz, InColor);
+	AddLineWS(P30.xyz, P31.xyz, InColor);
+}
+
+Buffer<float> InstanceBoundInLightSpace;
+Buffer<float> InstanceBoundInWorldSpace;
+Buffer<uint>  InstanceIntersection;
+
+uint InstanceCount;
+
+float3 LightCenter;
+float3 LightExtent;
+
+float4x4 LightToWorld;
+
+float4x4 ViewWorldToProj;
+float4x4 ViewProjToWorld;
+
+[numthreads(1, 1, 1)]
+void MainCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Draw AABB of the instance groups
+	if (any(DispatchThreadId != 0))
+	{
+		return;
+	}
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+
+	// View Frustum
+	//AddFrustumWS(ViewProjToWorld, ColorBlue, false);
+	AddFrustumWS(ViewWorldToProj, ColorBlue, true);
+
+	// Light bound
+	AddAABBWS(LightCenter - LightExtent, LightCenter + LightExtent, ColorPurple);
+
+	for (uint InstanceIndex = 0; InstanceIndex < InstanceCount; ++InstanceIndex)
+	{	
+		const uint Index6 = InstanceIndex * 6;
+		// In light space
+		{
+			const bool bIntersect = InstanceIntersection[InstanceIndex] > 0;
+			const float3 MinP = float3(InstanceBoundInLightSpace[Index6 + 0], InstanceBoundInLightSpace[Index6 + 1], InstanceBoundInLightSpace[Index6 + 2]);
+			const float3 MaxP = float3(InstanceBoundInLightSpace[Index6 + 3], InstanceBoundInLightSpace[Index6 + 4], InstanceBoundInLightSpace[Index6 + 5]);
+			// Transform back from light space to world space
+			AddOBBWS(MinP, MaxP, bIntersect ? ColorGreen : ColorYellow, LightToWorld);
+		}
+	
+		// In world space
+		{
+			const float3 MinP = float3(InstanceBoundInWorldSpace[Index6 + 0], InstanceBoundInWorldSpace[Index6 + 1], InstanceBoundInWorldSpace[Index6 + 2]);
+			const float3 MaxP = float3(InstanceBoundInWorldSpace[Index6 + 3], InstanceBoundInWorldSpace[Index6 + 4], InstanceBoundInWorldSpace[Index6 + 5]);
+			AddAABBWS(MinP, MaxP, ColorRed);
+		}
+	}
+}
+#endif // SHADER_SHADOW_CULLING
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Display hair picking attribute
+
+#if SHADER_ATTRIBUTE_DEBUG
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsVertexFactoryCommon.ush"
+HAIR_STRANDS_INSTANCE_PARAMETERS(HairInstance)
+
+#include "HairStrandsAttributeCommon.ush"
+#define HAIR_STRANDS_ATTRIBUTE_ACCESSORS(Name) HairInstance_##Name
+#include "/Engine/Private/HairStrands/HairStrandsAttributeTemplate.ush"
+
+uint MaterialId;
+Texture2D<uint> NodeIndexTexture;
+StructuredBuffer<FPackedHairVis> NodeVisBuffer;
+
+[numthreads(1, 1, 1)]
+void CSMain(
+	uint DispatchThreadID : SV_DispatchThreadID, 
+	uint GroupThreadID : SV_GroupThreadID, 
+	uint GroupID : SV_GroupID)
+{
+	const int2 PixelCoord = ShaderPrintData.CursorCoord;
+	if (all(PixelCoord < 0))
+	{
+		return;
+	}
+
+	const FNodeDesc NodeDesc = DecodeNodeDesc(NodeIndexTexture.Load(uint3(PixelCoord, 0)));
+	if (NodeDesc.Count == 0)
+	{
+		return;
+	}
+
+	if (NodeDesc.Count > 0)
+	{
+		// Only show the first sample properties for simplicity
+		const uint SampleIt = 0;
+		const uint SampleIndex = NodeDesc.Offset + SampleIt;
+		const FHairVis VisNode = UnpackHairVis(NodeVisBuffer[SampleIndex]);
+		if (VisNode.MaterialId == MaterialId)
+		{
+			FHairControlPoint Out = UnpackHairControlPoint(
+				HairInstance_PositionBuffer[VisNode.ControlPointId],
+				HairInstance_PositionOffsetBuffer[0].xyz,
+				HairInstance_Radius,
+				HairInstance_RootScale,
+				HairInstance_TipScale);
+
+			FFontColor FontValue = FontYellow;
+			FFontColor FontName = FontWhite;
+
+			FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(PixelCoord) + uint2(20, 0));
+			Print(Ctx, TEXT("Group    : "), FontName); Print(Ctx, GetHairStrandsGroupIndex(), FontValue); Newline(Ctx);
+			Print(Ctx, TEXT("Radius   : "), FontName); Print(Ctx, GetHairStrandsDimensions(VisNode.ControlPointId, 0).y, FontValue); Newline(Ctx);
+			Print(Ctx, TEXT("Seed     : "), FontName); Print(Ctx, GetHairStrandsSeed(VisNode.ControlPointId), FontValue); Newline(Ctx);
+			Print(Ctx, TEXT("CoordU   : "), FontName); Print(Ctx, GetHairStrandsUV(VisNode.ControlPointId, float2(0, 0.5f)).x, FontValue); Newline(Ctx);
+			Newline(Ctx);
+
+			if (HasHairStrandsRootUV()) 	{ Print(Ctx, TEXT("RootUV   : "), FontName); Print(Ctx, GetHairStrandsRootUV(VisNode.ControlPointId),  FontValue); Newline(Ctx); }
+			if (HasHairStrandsClumpId()) 	{ Print(Ctx, TEXT("Clump ID : "), FontName); Print(Ctx, GetHairStrandsClumpID(VisNode.ControlPointId).x, FontValue); Newline(Ctx); }
+			if (HasHairStrandsClumpId3()) 	{ Print(Ctx, TEXT("Clump IDs: "), FontName); Print(Ctx, GetHairStrandsClumpID(VisNode.ControlPointId), FontValue); Newline(Ctx); }
+			if (HasHairStrandsColor()) 		{ Print(Ctx, TEXT("Color    : "), FontName); Print(Ctx, GetHairStrandsColor(VisNode.ControlPointId, 0), FontValue); Newline(Ctx); }
+			if (HasHairStrandsRoughness()) 	{ Print(Ctx, TEXT("Roughness: "), FontName); Print(Ctx, GetHairStrandsRoughness(VisNode.ControlPointId, 0), FontValue); Newline(Ctx); }
+			if (HasHairStrandsAO()) 		{ Print(Ctx, TEXT("AO       : "), FontName); Print(Ctx, GetHairStrandsAO(VisNode.ControlPointId, 0), FontValue); Newline(Ctx); }
+			Newline(Ctx);
+		}
+	}
+}
+
+#endif // SHADER_ATTRIBUTE_DEBUG
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// Print memory
+
+#if SHADER_PRINT_MEMORY
+
+FSTRINGS(GroomNames)
+FSTRINGS(BindingNames)
+FSTRINGS(ComponentNames)
+
+uint ComponentCount;
+uint GroomCount;
+uint BindingCount;
+
+Buffer<uint> ComponentBuffer;
+Buffer<uint> GroomBuffer;
+Buffer<uint> BindingBuffer;
+
+struct FInfo
+{
+	uint4 Data0;
+	uint4 Data1;
+	uint4 Data2;
+	uint4 Data3;
+	uint4 Data4;
+};
+
+FInfo ReadInfo(uint Index, Buffer<uint> InBuffer)
+{
+	const uint Index20 = Index * 20u;
+	FInfo Out;
+	Out.Data0.x = InBuffer[Index20 + 0];
+	Out.Data0.y = InBuffer[Index20 + 1];
+	Out.Data0.z = InBuffer[Index20 + 2];
+	Out.Data0.w = InBuffer[Index20 + 3];
+	Out.Data1.x = InBuffer[Index20 + 4];
+	Out.Data1.y = InBuffer[Index20 + 5];
+	Out.Data1.z = InBuffer[Index20 + 6];
+	Out.Data1.w = InBuffer[Index20 + 7];
+	Out.Data2.x = InBuffer[Index20 + 8];
+	Out.Data2.y = InBuffer[Index20 + 9];
+	Out.Data2.z = InBuffer[Index20 + 10];
+	Out.Data2.w = InBuffer[Index20 + 11];
+	Out.Data3.x = InBuffer[Index20 + 12];
+	Out.Data3.y = InBuffer[Index20 + 13];
+	Out.Data3.z = InBuffer[Index20 + 14];
+	Out.Data3.w = InBuffer[Index20 + 15];
+	Out.Data4.x = InBuffer[Index20 + 16];
+	Out.Data4.y = InBuffer[Index20 + 17];
+	Out.Data4.z = InBuffer[Index20 + 18];
+	Out.Data4.w = InBuffer[Index20 + 19];
+	return Out;
+}
+
+struct FComponent
+{
+	uint GroupIndex;
+	uint GroupCount;
+	uint RestCurve;
+	uint ActiveCurve;
+
+	uint GPU_Guides;
+	uint GPU_Strands;
+	uint GPU_Cards;
+	uint GPU_Meshes;
+};
+
+FComponent GetComponent(uint Index)
+{	
+	const FInfo In = ReadInfo(Index, ComponentBuffer);
+
+	FComponent Out;
+	Out.GroupIndex 			=In.Data0.x;
+	Out.GroupCount 			=In.Data0.y;
+	Out.ActiveCurve			=In.Data0.z;
+	Out.RestCurve			=In.Data0.w;
+	
+	Out.GPU_Guides 			=In.Data1.x;
+	Out.GPU_Strands 		=In.Data1.y;
+	Out.GPU_Cards 			=In.Data1.z;
+	Out.GPU_Meshes 			=In.Data1.w;
+
+	return Out;
+}
+
+struct FGroom
+{
+	uint GroupIndex;
+	uint GroupCount;
+	uint RestCurve;
+	uint ActiveCurve;
+
+	uint CPU_Guides;
+	uint CPU_Strands;
+	uint CPU_Cards;
+	uint CPU_Meshes;
+
+	uint GPU_Guides;
+	uint GPU_Strands;
+	uint GPU_Cards;
+	uint GPU_Meshes;
+
+	uint GPU_Rest;
+	uint GPU_Interpolation;
+	uint GPU_Cluster;
+	uint GPU_Raytracing;
+
+	uint Curve_Rest;
+	uint Curve_Interpolation;
+	uint Curve_Cluster;
+	uint Curve_Raytracing;
+};
+
+FGroom GetGroom(uint Index)
+{	
+	const FInfo In = ReadInfo(Index, GroomBuffer);
+
+	FGroom Out;
+	Out.GroupIndex 			= In.Data0.x;
+	Out.GroupCount 			= In.Data0.y;
+	Out.ActiveCurve			= In.Data0.z;
+	Out.RestCurve			= In.Data0.w;
+
+	Out.CPU_Guides 			= In.Data1.x;
+	Out.CPU_Strands 		= In.Data1.y;
+	Out.CPU_Cards 			= In.Data1.z;
+	Out.CPU_Meshes 			= In.Data1.w;
+
+	Out.GPU_Guides 			= In.Data2.x;
+	Out.GPU_Strands 		= In.Data2.y;
+	Out.GPU_Cards 			= In.Data2.z;
+	Out.GPU_Meshes 			= In.Data2.w;
+
+	Out.GPU_Rest			= In.Data3.x;
+	Out.GPU_Interpolation	= In.Data3.y;
+	Out.GPU_Cluster			= In.Data3.z;
+	Out.GPU_Raytracing		= In.Data3.w;
+
+	Out.Curve_Rest			= In.Data4.x;
+	Out.Curve_Interpolation	= In.Data4.x;
+	Out.Curve_Cluster     	= In.Data4.x;
+	Out.Curve_Raytracing  	= In.Data4.x;
+
+	return Out;
+}
+
+struct FBinding
+{
+	uint GroupIndex;
+	uint GroupCount;
+	uint RestCurve;
+	uint ActiveCurve;
+
+	uint CPU_Guides;
+	uint CPU_Strands;
+	uint CPU_Cards;
+	uint CPU_Meshes;
+
+	uint GPU_Guides;
+	uint GPU_Strands;
+	uint GPU_Cards;
+	uint GPU_Meshes;
+};
+
+FBinding GetBinding(uint Index)
+{	
+	const FInfo In = ReadInfo(Index, BindingBuffer);
+
+	FBinding Out;
+	Out.GroupIndex 	= In.Data0.x;
+	Out.GroupCount 	= In.Data0.y;
+	Out.ActiveCurve	= In.Data0.z;
+	Out.RestCurve	= In.Data0.w;
+
+	Out.CPU_Guides 	= In.Data1.x;
+	Out.CPU_Strands = In.Data1.y;
+	Out.CPU_Cards 	= In.Data1.z;
+	Out.CPU_Meshes 	= In.Data1.w;
+
+	Out.GPU_Guides 	= In.Data2.x;
+	Out.GPU_Strands = In.Data2.y;
+	Out.GPU_Cards 	= In.Data2.z;
+	Out.GPU_Meshes 	= In.Data2.w;
+	return Out;
+}
+
+void PrintGroup(inout FShaderPrintContext Ctx, uint GroupIndex, uint GroupCount)
+{
+	Print(Ctx, GroupIndex,	FontEmerald, 2, 0);	
+	Print(Ctx, TEXT("/"), FontWhite);
+	Print(Ctx, GroupCount,	FontEmerald, 2, 0);
+}
+
+FFontColor GetOccupancyColor(float In)
+{
+	float3 Color = lerp(float3(0, 1, 0), float3(1, 0, 0), saturate(In));
+	return InitFontColor(Color);
+}
+
+void PrintCurve(inout FShaderPrintContext Ctx, uint ActiveCurve, uint RestCurve)
+{
+	const float Curve = float(ActiveCurve) / float(RestCurve);
+	PrintPercentage(Ctx, Curve, GetOccupancyColor(Curve));
+	//PrintLargeNumber(Ctx, Info.ActiveCurve,	FontOrange);	Print(Ctx, TEXT(" "), FontWhite);
+	//Print(Ctx, TEXT("/"), FontWhite);
+	//PrintLargeNumber(Ctx, Info.RestCurve,	FontOrange);	Print(Ctx, TEXT(" "), FontWhite);
+}
+
+[numthreads(1, 1, 1)]
+void MainCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Draw AABB of the instance groups
+	if (any(DispatchThreadId != 0))
+	{
+		return;
+	}
+
+	// Widgets
+	FShaderPrintContext Ctx2 = InitShaderPrintContext(true, uint2(900, 100));
+	Print(Ctx2, TEXT("Controls"), FontYellow); Newline(Ctx2);
+	const bool bComponent 	= AddCheckbox(Ctx2, TEXT("Components"), false, FontWhite); 	Newline(Ctx2);	
+	const bool bGroom     	= AddCheckbox(Ctx2, TEXT("Grooms"), true, FontWhite);     	Newline(Ctx2);	
+	const bool bBinding   	= AddCheckbox(Ctx2, TEXT("Bindings"), false, FontWhite);   	Newline(Ctx2);
+	const bool bStrandsOnly = AddCheckbox(Ctx2, TEXT("Strands Only"), true, FontWhite); Newline(Ctx2);
+
+	// Component
+	FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(50, 100));
+	uint Component_TotalGPU = 0;
+	if (bComponent)
+	{
+		Print(Ctx, TEXT("Components"), FontYellow); Newline(Ctx);
+		{
+			Print(Ctx, TEXT("Grp. Common Guides Strands Cards Meshes Total  Curv Name"), FontSilver); Newline(Ctx);
+			for (uint It = 0; It < ComponentCount; ++It)
+			{
+				const FComponent Info = GetComponent(It);
+				const uint Total
+					= Info.GPU_Guides
+					+ Info.GPU_Strands
+					+ Info.GPU_Cards;
+
+
+				PrintGroup(Ctx, Info.GroupIndex, Info.GroupCount);
+	
+				PrintLargeNumber(Ctx, Info.GPU_Guides,	FontWhite);		Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Info.GPU_Strands,	FontWhite);		Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Info.GPU_Cards,	FontWhite);		Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Info.GPU_Meshes,	FontWhite);		Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Total,			FontOrange);	Print(Ctx, TEXT(" "), FontWhite);
+				PrintCurve(Ctx, Info.ActiveCurve, Info.RestCurve);
+	
+				PrintComponentNames(Ctx, It, FontWhite);
+				Newline(Ctx);
+			}
+		}
+		Newline(Ctx);
+	}
+	// Total
+
+	// Grooms
+	if (bGroom)
+	{
+		Print(Ctx, TEXT("Grooms"), FontYellow); Newline(Ctx);
+		if (!bStrandsOnly)
+		{
+			Print(Ctx, TEXT("Grp. Guides Strands Cards Meshes Total Curv Name"), FontSilver); Newline(Ctx);
+			for (uint It = 0; It < GroomCount; ++It)
+			{
+				const FGroom Info = GetGroom(It);
+				PrintGroup(Ctx, Info.GroupIndex, Info.GroupCount);
+	
+				PrintLargeNumber(Ctx, Info.GPU_Guides, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Info.GPU_Strands, FontWhite);Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Info.GPU_Cards, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+				PrintLargeNumber(Ctx, Info.GPU_Meshes, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+				PrintCurve(Ctx, Info.ActiveCurve, Info.RestCurve);
+				PrintGroomNames(Ctx, It, FontWhite);
+				Newline(Ctx);
+			}
+		}
+		else
+		{
+			FFontColor FontMemory = FontWhite;
+			FFontColor FontCurve = FontSilver;
+
+			Print(Ctx, TEXT("Grp. Rest.  Intrp. Cluster  RT.  Total  Curv Name"), FontSilver); Newline(Ctx);
+			for (uint It = 0; It < GroomCount; ++It)
+			{
+				const FGroom Info = GetGroom(It);
+				const uint GPUStrandsTotal 
+					= Info.GPU_Rest
+					+ Info.GPU_Interpolation
+					+ Info.GPU_Cluster
+					+ Info.GPU_Raytracing;
+
+				PrintGroup(Ctx, Info.GroupIndex, Info.GroupCount);
+
+				PrintLargeNumber(Ctx, Info.GPU_Rest, FontMemory);	Print(Ctx, TEXT(" "), FontMemory);
+				PrintLargeNumber(Ctx, Info.GPU_Interpolation, FontMemory);Print(Ctx, TEXT(" "), FontMemory);
+				PrintLargeNumber(Ctx, Info.GPU_Cluster, FontMemory);	Print(Ctx, TEXT(" "), FontMemory);
+				PrintLargeNumber(Ctx, Info.GPU_Raytracing, FontMemory);	Print(Ctx, TEXT(" "), FontMemory);
+				PrintLargeNumber(Ctx, GPUStrandsTotal, FontOrange);	Print(Ctx, TEXT(" "), FontMemory);
+				PrintCurve(Ctx, Info.ActiveCurve, Info.RestCurve);
+				PrintGroomNames(Ctx, It, FontMemory);
+				Newline(Ctx);
+
+				// Curve count detail per resource type
+				#if 0
+				Print(Ctx, TEXT("     "), FontCurve);
+				PrintLargeNumber(Ctx, Info.Curve_Rest, FontCurve);	Print(Ctx, TEXT(" "), FontCurve);
+				PrintLargeNumber(Ctx, Info.Curve_Interpolation, FontCurve);Print(Ctx, TEXT(" "), FontCurve);
+				PrintLargeNumber(Ctx, Info.Curve_Cluster, FontCurve);	Print(Ctx, TEXT(" "), FontCurve);
+				PrintLargeNumber(Ctx, Info.Curve_Raytracing, FontCurve);	Print(Ctx, TEXT(" "), FontCurve);
+				Newline(Ctx);
+				#endif
+			}
+		}
+		Newline(Ctx);
+	}
+	// Total
+
+	// Bindings
+	if (bBinding)
+	{
+		Print(Ctx, TEXT("Bindings"), FontYellow); Newline(Ctx);
+		Print(Ctx, TEXT("Grp. Guides Strands Cards Meshes Total Curv Name"), FontSilver); Newline(Ctx);
+		for (uint It = 0; It < BindingCount; ++It)
+		{
+			const FBinding Info = GetBinding(It);
+			const uint Total
+				= Info.GPU_Guides
+				+ Info.GPU_Strands
+				+ Info.GPU_Cards
+				+ Info.GPU_Meshes;
+
+			PrintGroup(Ctx, Info.GroupIndex, Info.GroupCount);
+
+			PrintLargeNumber(Ctx, Info.GPU_Guides, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+			PrintLargeNumber(Ctx, Info.GPU_Strands, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+			PrintLargeNumber(Ctx, Info.GPU_Cards, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+			PrintLargeNumber(Ctx, Info.GPU_Meshes, FontWhite);	Print(Ctx, TEXT(" "), FontWhite);
+			PrintLargeNumber(Ctx, Total, FontOrange);			Print(Ctx, TEXT(" "), FontWhite);
+			PrintCurve(Ctx, Info.ActiveCurve, Info.RestCurve);
+			PrintBindingNames(Ctx, It, FontWhite);
+			Newline(Ctx);
+		}
+		Newline(Ctx);
+	}
+	// Total
+}
+
+#endif // SHADER_PRINT_MEMORY
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Debug draw clusters
+#ifdef SHADER_CLUSTERAABB
+
+#include "HairStrandsAABBCommon.ush"
+
+uint ClusterCount;
+uint HairGroupId;
+uint PointCount;
+uint CurveCount;
+uint bDrawAABB;
+
+Buffer<int> GroupAABBBuffer;
+Buffer<int> ClusterAABBBuffer;
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainDrawDebugAABBCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x == 0)
+	{
+		const bool bDrawClusterInfo = true;
+		const uint HairGroupHeight = 15;
+
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50 + (HairGroupId == 0 ? 0 : HairGroupHeight) + HairGroupId * HairGroupHeight));
+
+		FFontColor FontValue = FontWhite;
+		FFontColor FontPercent = FontSilver;
+
+		if (DispatchThreadId.x == 0)
+		{
+			if (HairGroupId == 0)
+			{
+				Print(Context, TEXT("Group Clusters Curves Points"), FontYellow);
+				Newline(Context);
+			}
+			Print(Context, HairGroupId, FontOrange, 6, 0);
+			Print(Context, ClusterCount, FontValue, 9, 0);
+			PrintLargeNumber(Context, CurveCount, FontValue);
+			Print(Context, TEXT(" "), FontYellow);
+			PrintLargeNumber(Context, PointCount, FontValue);
+		}
+	}
+
+	if (bDrawAABB)
+	{
+		// Group
+		if (DispatchThreadId.x == 0)
+		{
+			const FHairAABB GroupBound = ReadHairAABB(0, GroupAABBBuffer);
+			AddAABBTWS(GroupBound.Min, GroupBound.Max, float4(1.0f, 0.5f, 0.0f, 1.0f));
+		}
+	
+		// Cluster
+		if (DispatchThreadId.x < ClusterCount)
+		{
+			const FHairAABB ClusterBound = ReadHairAABB(DispatchThreadId, ClusterAABBBuffer, 1);
+			AddAABBTWS(ClusterBound.Min, ClusterBound.Max, float4(0.5f, 1.0f, 0.0f, 0.3f));
+		}
+	}
+}
+
+#endif // SHADER_CLUSTERAABB

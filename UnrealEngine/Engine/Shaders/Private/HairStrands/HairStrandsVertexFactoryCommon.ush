@@ -1,0 +1,55 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Shared/HairStrandsDefinitions.h"
+#include "/Engine/Private/HairStrands/HairStrandsPack.ush"
+
+#ifndef HAIR_STRANDS_PARAMETERS
+#define HAIR_STRANDS_PARAMETERS 0
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair strands instance parameters
+
+#define HAIR_STRANDS_INSTANCE_PARAMETERS(Prefix) \
+	uint				Prefix##_bCullingEnable; \
+	uint				Prefix##_bRaytracingGeometry; \
+	uint				Prefix##_RaytracingProceduralSplits; \
+	uint				Prefix##_GroupIndex; \
+	uint				Prefix##_GroupCount; \
+	float				Prefix##_Radius; \
+	float				Prefix##_RootScale; \
+	float				Prefix##_TipScale; \
+	float				Prefix##_Length; \
+	float				Prefix##_Density; \
+	uint				Prefix##_bStableRasterization; \
+	float3				Prefix##_PositionOffset; \
+	uint				Prefix##_PointCount; \
+	uint				Prefix##_CurveCount; \
+	uint				Prefix##_bSimulation; \
+	uint				Prefix##_bSingleGuide; \
+	float4x4			Prefix##_LocalToWorldPrimitiveTransform; \
+	float4x4			Prefix##_LocalToTranslatedWorldPrimitiveTransform; \
+	uint4				Prefix##_CurveAttributeOffsets[HAIR_CURVE_ATTRIBUTE_OFFSET_COUNT]; \
+	uint4				Prefix##_PointAttributeOffsets[HAIR_POINT_ATTRIBUTE_OFFSET_COUNT]; \
+	uint 				Prefix##_CurveAttributeIndexToChunkDivAsShift; \
+	uint				Prefix##_CurveAttributeChunkElementCount; \
+	uint				Prefix##_CurveAttributeChunkStrideInBytes; \
+	uint				Prefix##_PointAttributeIndexToChunkDivAsShift; \
+	uint				Prefix##_PointAttributeChunkElementCount; \
+	uint				Prefix##_PointAttributeChunkStrideInBytes; \
+	Buffer<uint4>		Prefix##_PositionBuffer; \
+	Buffer<float4>		Prefix##_PositionOffsetBuffer; \
+	Buffer<uint>		Prefix##_CurveBuffer; \
+	Buffer<uint>		Prefix##_PointToCurveBuffer; \
+	ByteAddressBuffer 	Prefix##_CurveAttributeBuffer; \
+	ByteAddressBuffer 	Prefix##_PointAttributeBuffer; \
+	Buffer<uint>		Prefix##_CullingIndirectBuffer; \
+	Buffer<uint>		Prefix##_CullingIndexBuffer; \
+	Buffer<float>		Prefix##_CullingRadiusScaleBuffer; \
+	Buffer<uint>		Prefix##_CullingIndirectBufferArgs;
+
+#if defined(HAIR_STRANDS_PARAMETERS) && HAIR_STRANDS_PARAMETERS == 1
+	HAIR_STRANDS_INSTANCE_PARAMETERS(HairStrandsVF)
+#endif

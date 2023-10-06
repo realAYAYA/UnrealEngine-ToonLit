@@ -1,0 +1,207 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) Contributors to the OpenEXR Project.
+
+add_executable(OpenEXRTest
+  TestUtilFStream.h
+  bswap_32.h
+  compareB44.cpp
+  compareB44.h
+  compareDwa.cpp
+  compareDwa.h
+  compareFloat.cpp
+  compareFloat.h
+  main.cpp
+  random.cpp
+  random.h
+  testAttributes.cpp
+  testAttributes.h
+  testB44ExpLogTable.cpp
+  testB44ExpLogTable.h
+  testBackwardCompatibility.cpp
+  testBackwardCompatibility.h
+  testBadTypeAttributes.cpp
+  testBadTypeAttributes.h
+  testChannels.cpp
+  testChannels.h
+  testCompositeDeepScanLine.cpp
+  testCompositeDeepScanLine.h
+  testCompression.cpp
+  testCompression.h
+  testConversion.cpp
+  testConversion.h
+  testCopyDeepScanLine.cpp
+  testCopyDeepScanLine.h
+  testCopyDeepTiled.cpp
+  testCopyDeepTiled.h
+  testCopyMultiPartFile.cpp
+  testCopyMultiPartFile.h
+  testCopyPixels.cpp
+  testCopyPixels.h
+  testCpuId.cpp
+  testCpuId.h
+  testCustomAttributes.cpp
+  testCustomAttributes.h
+  testDeepScanLineBasic.cpp
+  testDeepScanLineBasic.h
+  testDeepScanLineHuge.cpp
+  testDeepScanLineHuge.h
+  testDeepScanLineMultipleRead.cpp
+  testDeepScanLineMultipleRead.h
+  testDeepTiledBasic.cpp
+  testDeepTiledBasic.h
+  testDwaCompressorSimd.cpp
+  testDwaCompressorSimd.h
+  testDwaLookups.cpp
+  testDwaLookups.h
+  testExistingStreams.cpp
+  testExistingStreams.h
+  testFutureProofing.cpp
+  testFutureProofing.h
+  testHuf.cpp
+  testHuf.h
+  testIDManifest.cpp
+  testIDManifest.h
+  testInputPart.cpp
+  testInputPart.h
+  testIsComplete.cpp
+  testIsComplete.h
+  testLargeDataWindowOffsets.cpp
+  testLargeDataWindowOffsets.h
+  testLineOrder.cpp
+  testLineOrder.h
+  testLut.cpp
+  testLut.h
+  testMagic.cpp
+  testMagic.h
+  testMalformedImages.cpp
+  testMalformedImages.h
+  testMultiPartApi.cpp
+  testMultiPartApi.h
+  testMultiPartFileMixingBasic.cpp
+  testMultiPartFileMixingBasic.h
+  testMultiPartSharedAttributes.cpp
+  testMultiPartSharedAttributes.h
+  testMultiPartThreading.cpp
+  testMultiPartThreading.h
+  testMultiScanlinePartThreading.cpp
+  testMultiScanlinePartThreading.h
+  testMultiTiledPartThreading.cpp
+  testMultiTiledPartThreading.h
+  testMultiView.cpp
+  testMultiView.h
+  testNativeFormat.cpp
+  testNativeFormat.h
+  testOptimized.cpp
+  testOptimized.h
+  testOptimizedInterleavePatterns.cpp
+  testOptimizedInterleavePatterns.h
+  testPartHelper.cpp
+  testPartHelper.h
+  testPreviewImage.cpp
+  testPreviewImage.h
+  testRgba.cpp
+  testRgba.h
+  testRgbaThreading.cpp
+  testRgbaThreading.h
+  testRle.cpp
+  testRle.h
+  testSampleImages.cpp
+  testSampleImages.h
+  testScanLineApi.cpp
+  testScanLineApi.h
+  testSharedFrameBuffer.cpp
+  testSharedFrameBuffer.h
+  testStandardAttributes.cpp
+  testStandardAttributes.h
+  testTiledCompression.cpp
+  testTiledCompression.h
+  testTiledCopyPixels.cpp
+  testTiledCopyPixels.h
+  testTiledLineOrder.cpp
+  testTiledLineOrder.h
+  testTiledRgba.cpp
+  testTiledRgba.h
+  testTiledYa.cpp
+  testTiledYa.h
+  testWav.cpp
+  testWav.h
+  testXdr.cpp
+  testXdr.h
+  testYca.cpp
+  testYca.h
+  tmpDir.h
+)
+target_compile_definitions(OpenEXRTest PRIVATE ILM_IMF_TEST_IMAGEDIR="${CMAKE_CURRENT_SOURCE_DIR}/")
+target_link_libraries(OpenEXRTest OpenEXR::OpenEXR)
+set_target_properties(OpenEXRTest PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32 AND BUILD_SHARED_LIBS)
+  target_compile_definitions(OpenEXRTest PRIVATE OPENEXR_DLL)
+endif()
+
+function(DEFINE_OPENEXR_TESTS)
+  foreach(curtest IN LISTS ARGN)
+    # CMAKE_CROSSCOMPILING_EMULATOR is necessary to support cross-compiling (ex: to win32 from mingw and running tests with wine)
+    add_test(NAME OpenEXR.${curtest} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:OpenEXRTest> ${curtest})
+  endforeach()
+endfunction()
+
+define_openexr_tests(
+ testAttributes
+ testB44ExpLogTable
+ testBackwardCompatibility
+ testBadTypeAttributes
+ testChannels
+ testCompositeDeepScanLine
+ testCompression
+ testConversion
+ testCopyDeepScanLine
+ testCopyDeepTiled
+ testCopyMultiPartFile
+ testCopyPixels
+ testCpuId
+ testCustomAttributes
+ testDeepScanLineBasic
+ testDeepScanLineMultipleRead
+ testDeepTiledBasic
+ testDwaCompressorSimd
+ testDwaLookups
+ testExistingStreams
+ testFutureProofing
+ testHuf
+ testInputPart
+ testIsComplete
+ testLargeDataWindowOffsets
+ testLineOrder
+ testLut
+ testMagic
+ testMultiPartApi
+ testMultiPartFileMixingBasic
+ testMultiPartSharedAttributes
+ testMultiPartThreading
+ testMultiScanlinePartThreading
+ testMultiTiledPartThreading
+ testMultiView
+ testNativeFormat
+ testOptimized
+ testOptimizedInterleavePatterns
+ testPartHelper
+ testPreviewImage
+ testRgba
+ testRgbaThreading
+ testRle
+ testSampleImages
+ testScanLineApi
+ testSharedFrameBuffer
+ testStandardAttributes
+ testTiledCompression
+ testTiledCopyPixels
+ testTiledLineOrder
+ testTiledRgba
+ testTiledYa
+ testWav
+ testXdr
+ testYca
+ testIDManifest
+)

@@ -1,0 +1,144 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E58C7090-3EBD-459F-B9A3-ED4FC262E0DD}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>AJA</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+    <OutDir>..\..\..\..\..\..\Plugins\Media\AjaMedia\Binaries\ThirdParty\Win64\</OutDir>
+    <TargetName>$(ProjectName)d</TargetName>
+    <IntDir>Intermediate\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <OutDir>..\..\..\..\..\..\Plugins\Media\AjaMedia\Binaries\ThirdParty\Win64\</OutDir>
+    <IntDir>Intermediate\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;AJA_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>Source;..\Build\Include;ntv2lib-deploy\includes;ntv2lib-deploy\includes\ajantv2\src\win;ntv2lib-deploy\includes\ajantv2\includes;..\..\..\..\..\..\Restricted\NotForLicensees\Plugins\Media\GPUTextureTransfer\Source\ThirdParty\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>ntv2lib-deploy\lib;..\..\..\..\..\..\Plugins\Media\MediaIOFramework\Binaries\Win64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libajantv2d.lib;Ws2_32.lib;setupapi.lib;Netapi32.lib;Shlwapi.lib;winmm.lib;GPUTextureTransferLibd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;AJA_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>Source;..\Build\Include;ntv2lib-deploy\includes;ntv2lib-deploy\includes\ajantv2\src\win;ntv2lib-deploy\includes\ajantv2\includes;..\..\..\..\..\..\Restricted\NotForLicensees\Plugins\Media\GPUTextureTransfer\Source\ThirdParty\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalLibraryDirectories>ntv2lib-deploy\lib;..\..\..\..\..\..\Plugins\Media\MediaIOFramework\Binaries\Win64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libajantv2.lib;Ws2_32.lib;setupapi.lib;Netapi32.lib;Shlwapi.lib;winmm.lib;GPUTextureTransferLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\..\..\..\..\Plugins\Media\AjaMedia\Source\ThirdParty\Build\include\AJALib.h" />
+    <ClInclude Include="Source\AJALog.h" />
+    <ClInclude Include="Source\Private\AutoDetectChannel.h" />
+    <ClInclude Include="Source\Private\ChannelBase.h" />
+    <ClInclude Include="Source\Private\Device.h" />
+    <ClInclude Include="Source\Private\DeviceScanner.h" />
+    <ClInclude Include="Source\Private\Helpers.h" />
+    <ClInclude Include="Source\Private\InputChannel.h" />
+    <ClInclude Include="Source\Private\OutputChannel.h" />
+    <ClInclude Include="Source\Private\SSE2MemCpy.h" />
+    <ClInclude Include="Source\Private\SyncChannel.h" />
+    <ClInclude Include="Source\Private\ThreadSafeQueue.h" />
+    <ClInclude Include="Source\Private\TimecodeChannel.h" />
+    <ClInclude Include="Source\stdafx.h" />
+    <ClInclude Include="Source\targetver.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\AJA.cpp" />
+    <ClCompile Include="Source\AJALog.cpp" />
+    <ClCompile Include="Source\dllmain.cpp">
+      <CompileAsManaged Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</CompileAsManaged>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      </PrecompiledHeader>
+      <CompileAsManaged Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</CompileAsManaged>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+      </PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Source\Private\AutoDetectChannel.cpp" />
+    <ClCompile Include="Source\Private\ChannelBase.cpp" />
+    <ClCompile Include="Source\Private\Device.cpp" />
+    <ClCompile Include="Source\Private\DeviceScanner.cpp" />
+    <ClCompile Include="Source\Private\SSE2MemCpy.cpp" />
+    <ClCompile Include="Source\Private\TextureDMA.cpp" />
+    <ClCompile Include="Source\Private\TimecodeChannel.cpp" />
+    <ClCompile Include="Source\Private\VideoFormats.cpp" />
+    <ClInclude Include="Source\Private\VideoFormats.h" />
+    <ClCompile Include="Source\Private\Helpers.cpp" />
+    <ClCompile Include="Source\Private\InputChannel.cpp" />
+    <ClCompile Include="Source\Private\OutputChannel.cpp" />
+    <ClCompile Include="Source\Private\SyncChannel.cpp" />
+    <ClCompile Include="Source\stdafx.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

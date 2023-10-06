@@ -1,0 +1,21 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+struct FScalarGridData
+{
+	uint PackedData[2];
+};
+
+struct FVectorGridData
+{
+	uint PackedData[2];
+};
+
+struct FTopLevelGridData
+{
+	uint PackedData[1];
+};
+
+struct FTopLevelGridBitmaskData
+{
+	uint PackedData[2];
+};

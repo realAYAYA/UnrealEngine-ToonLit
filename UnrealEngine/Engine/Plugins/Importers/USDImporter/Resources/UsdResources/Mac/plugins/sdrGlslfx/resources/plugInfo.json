@@ -1,0 +1,19 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "SdrGlslfxParserPlugin": {
+                        "bases": ["NdrParserPlugin"], 
+                        "displayName": "Glslfx-based shader definition parser plugin"
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/sdrGlslfx.dylib",
+            "Name": "sdrGlslfx",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

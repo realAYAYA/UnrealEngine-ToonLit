@@ -1,0 +1,19 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "SdrGlslfxParserPlugin": {
+                        "bases": ["NdrParserPlugin"], 
+                        "displayName": "Glslfx-based shader definition parser plugin"
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../../../../Binaries/Win64/sdrGlslfx.dll",
+            "Name": "sdrGlslfx",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

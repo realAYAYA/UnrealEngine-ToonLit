@@ -1,0 +1,16 @@
+{
+	"ComputeDesiredSizeX": 75,
+	"ComputeDesiredSizeY": 15,
+	"AllottedGeometry": "[Abs=X=3.000 Y=37.000, Scale=1.00, Size=X=1000.000 Y=700.000]",
+	"WidgetStyle":
+	{
+		"ColorAndOpacityTint": "(R=1.000000,G=1.000000,B=1.000000,A=1.000000)",
+		"ForegroundColor": "(R=0.527115,G=0.527115,B=0.527115,A=1.000000)",
+		"SubduedForeground": "(R=0.527115,G=0.527115,B=0.527115,A=0.600000)"
+	},
+	"ShapedTextElement":
+	{
+		"Tint": "(R=0.500000,G=0.400000,B=0.300000,A=0.900000)",
+		"OutlineTint": "(R=0.000000,G=0.000000,B=0.000000,A=1.000000)"
+	}
+}

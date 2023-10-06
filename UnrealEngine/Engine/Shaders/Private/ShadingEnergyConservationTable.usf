@@ -1,0 +1,140 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "BRDF.ush"
+#include "ShadingCommon.ush"
+#include "/Engine/Shared/PathTracingDefinitions.h"
+
+// Move these utility functions into a common/non-path-tracer specific place
+#include "PathTracing/Material/PathTracingGlossy.ush"
+#include "PathTracing/Material/PathTracingFresnel.ush"
+#include "PathTracing/Utilities/PathTracingRandomSequence.ush"
+
+// This shader computes the directional albedo (basically a furnace test) of a given BxDF to determine how much energy is "missing"
+// from a given viewing direction and roughness. These tables can later be used to compensate for the missing energy during shading.
+// "Energy" here refers to the directional albedo. Energy loss is simply 1-Energy since we assume the raw BxDF should reflect all
+// incoming light.
+
+// Number of samples used for integrating directional albedo 
+uint NumSamples;
+// x: directional albedo for rough diffuse
+RWTexture2D<float>  Output1Texture2D;
+// x: directional albedo of pure GGX lobe
+// y: directional albedo of GGX+Schlick fresnel term
+RWTexture2D<float2> Output2Texture2D;
+// x: directional albedo from outside->in, y: directional albedo from inside->out
+RWTexture3D<float2> OutputTexture3D;
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void BuildEnergyTableCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const float3 Index = (float3(DispatchThreadId) + 0.5) / float(ENERGY_TABLE_RESOLUTION);
+
+	// Map from thread ID to the exact roughness/viewing angle we want to compute
+	const float NoV = max(Index.x, 1e-8);
+	const float Roughness = Index.y;
+#if BUILD_ENERGY_TABLE == 1
+	const float EtaIn = 1.0 + 2.0 * Index.z; // only handle Ior in [1,3] range
+	const float EtaOut = rcp(EtaIn);
+	// NOTE: Baking a table for all possible F0 values would greatly complicate things
+	// Instead, we aim for optimal results when the Ior values is consistent with F0.
+	// In practice, it appears that this gives very good results, and the penalty when
+	// Ior and F0 are mismatched does not appear to be that large.
+	const float F0 = DielectricIorToF0(EtaIn); // NOTE: this is always equal to DielectricIorToF0(EtaOut)
+#endif
+
+	float2 Alpha; GetGGXBasis(Roughness, float3(0, 0, 1), Alpha);
+	float3 V = float3(sqrt(1 - NoV * NoV), 0, NoV);
+
+	RandomSequence RandSequence;
+	float2 Result = 0;
+	// use plenty of samples -- this is computed on startup once and at fairly low resolution
+	LOOP
+	for (int Sample = 0; Sample < NumSamples; Sample++)
+	{
+		// draw a random sample
+		RandomSequence_Initialize(RandSequence, DispatchThreadId.xy, Sample, DispatchThreadId.z, NumSamples);
+		float3 RandSample = RandomSequence_GenerateSample3D(RandSequence);
+
+		float2 Weight = 0;
+
+#if BUILD_ENERGY_TABLE == 0
+		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Alpha, V).xyz;
+		const float3 L = reflect(-V, H);
+		if (L.z > 0)
+		{
+			const float2 GGXResult = GGXEvalReflection(L, V, H, Alpha);
+			Weight = float2(GGXResult.x, GGXResult.x * Pow5(1 - dot(V, H)));
+		}
+#elif BUILD_ENERGY_TABLE == 1
+		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Alpha, V).xyz;
+		{
+			// compute weight for outside -> in case
+			float3 L = 0;
+			float F = 0;
+			if (SampleRefraction(-V, H, EtaIn, F0, RandSample.z, L, F))
+			{
+				Weight.x = GGXEvalRefraction(L, V, H, Alpha, EtaIn).x;
+			}
+			else
+			{
+				Weight.x = GGXEvalReflection(L, V, H, Alpha).x;
+			}
+		}
+		{
+			// compute weight for inside -> out case
+			float3 L = 0;
+			float F = 0;
+			if (SampleRefraction(-V, H, EtaOut, F0, RandSample.z, L, F))
+			{
+				Weight.y = GGXEvalRefraction(L, V, H, Alpha, EtaOut).x;
+			}
+			else
+			{
+				Weight.y = GGXEvalReflection(L, V, H, Alpha).x;
+			}
+		}
+#elif BUILD_ENERGY_TABLE == 2
+		const float3 L = CosineSampleHemisphere(RandSample.xy).xyz;
+		const float NoV = V.z;
+		const float NoL = L.z;
+		const float3 H = normalize(V + L);
+		const float NoH = H.z;
+#if STRATA_ENABLED
+		const float DCloth = D_Charlie(Roughness, NoH);
+		const float VCloth = Vis_Ashikhmin(NoV, NoL);
+#else
+		const float DCloth = D_InvGGX(Alpha.x * Alpha.y, NoH);
+		const float VCloth = Vis_Cloth(NoV, NoL);
+#endif
+		const float ClothWeight = NoL > 0 && NoV > 0 ? (PI * DCloth * VCloth) : 0.0;
+
+		Weight = float2(ClothWeight, ClothWeight * Pow5(1 - dot(V, H)));
+#elif BUILD_ENERGY_TABLE == 3
+		const float3 L = CosineSampleHemisphere(RandSample.xy).xyz;
+		const float NoV = V.z;
+		const float NoL = L.z;
+		const float3 H = normalize(V + L);
+		const float VoH = dot(V, H);
+		const float NoH = H.z;
+		const float DiffuseWeight = NoL > 0 && NoV > 0 ? PI * Diffuse_Chan(float3(1, 1, 1), Alpha.x, NoV, NoL, VoH, NoH, 1.0f).x : 0.0f;
+
+		Weight = float2(DiffuseWeight, 1.f);
+#endif
+
+		// average in
+		Result = lerp(Result, Weight, 1.0 / (Sample + 1));
+	}
+
+#if BUILD_ENERGY_TABLE == 0 || BUILD_ENERGY_TABLE == 2
+	Output2Texture2D[DispatchThreadId.xy] = Result;
+#endif
+
+#if BUILD_ENERGY_TABLE == 1
+	OutputTexture3D[DispatchThreadId] = Result;
+#endif
+
+#if BUILD_ENERGY_TABLE == 3
+	Output1Texture2D[DispatchThreadId.xy] = Result.x;
+#endif	
+}

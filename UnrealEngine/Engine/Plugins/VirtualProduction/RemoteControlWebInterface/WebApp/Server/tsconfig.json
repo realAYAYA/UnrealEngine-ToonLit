@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "target": "es2018",
+    "noImplicitAny": true,
+    "moduleResolution": "node",
+    "sourceMap": false,
+    "outDir": "build",
+    "baseUrl": ".",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "plugins": [
+      { "name": "typescript-tslint-plugin" }
+    ],
+    "paths": {
+      "@Shared": ["../Client/src/shared/index.ts"]
+    },
+  },
+  "include": ["index.ts", "../Client/src/shared"]
+}

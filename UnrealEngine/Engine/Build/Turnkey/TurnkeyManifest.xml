@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<TurnkeyManifest>
+	<AdditionalManifests>
+		<Manifest>file:$(EngineDir)/Platforms/*/Build/Turnkey/TurnkeyManifest.xml</Manifest>
+		<Manifest>$(ThisManifestDir)/Licensee_TurnkeyManifest.xml</Manifest>
+		<Manifest>file:$(EngineDir)/Restricted/NotForLicensees/Build/Turnkey/TurnkeyManifest.xml</Manifest>
+		<Manifest>file:$(EngineDir)/Restricted/NoRedist/Build/Turnkey/TurnkeyManifest.xml</Manifest>
+		<Manifest>$(UE_STUDIO_TURNKEY_LOCATION)</Manifest>
+	</AdditionalManifests>
+
+    
+    <!-- Public file sources below we can share with all licensees -->
+    <FileSource>
+        <Platform>Android</Platform>
+        <Type>Misc</Type>
+        <Name>AndroidStudio</Name>
+		<!-- Flamingo 2022.2.1 Patch 2 May 24, 2023 -->
+        <Source HostPlatform="Win64">https://redirector.gvt1.com/edgedl/android/studio/install/2022.2.1.20/android-studio-2022.2.1.20-windows.exe</Source>
+        <Source HostPlatform="Linux">https://redirector.gvt1.com/edgedl/android/studio/ide-zips/2022.2.1.20/android-studio-2022.2.1.20-linux.tar.gz</Source>
+        <Source HostPlatform="Mac">https://redirector.gvt1.com/edgedl/android/studio/install/2022.2.1.20/android-studio-2022.2.1.20-mac.dmg</Source>
+    </FileSource>
+
+</TurnkeyManifest>

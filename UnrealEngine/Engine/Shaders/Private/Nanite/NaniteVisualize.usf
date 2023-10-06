@@ -1,0 +1,642 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "../SceneData.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../ColorMap.ush"
+#include "../Visualization.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapStaticCaching.ush"
+#include "../SplineMeshCommon.ush"
+
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+#include "NaniteCullingCommon.ush"
+
+RWTexture2D<float4>		DebugOutput;
+
+Texture2D<UlongType>	VisBuffer64;
+Texture2D<UlongType>	DbgBuffer64;
+Texture2D<uint>			DbgBuffer32;
+Texture2D<float>		SceneDepth;
+Texture2D<float>		SceneZDecoded;
+Texture2D<uint4>		SceneZLayout;
+Texture2D<float>		MaterialZDecoded;
+Texture2D<uint4>		MaterialZLayout;
+Texture2D<uint>			ShadingMask;
+
+StructuredBuffer<FNaniteRasterBinMeta> RasterBinMeta;
+StructuredBuffer<FNaniteShadingBinMeta> ShadingBinMeta;
+
+ByteAddressBuffer		MaterialSlotTable;
+ByteAddressBuffer		MaterialDepthTable;
+ByteAddressBuffer		MaterialHitProxyTable;
+
+int4					VisualizeConfig;
+int4					VisualizeScales;
+uint					RegularMaterialRasterBinCount;
+int2					PickingPixelPos;
+uint					FixedFunctionBin;
+
+RWStructuredBuffer<FNanitePickingFeedback> FeedbackBuffer;
+
+// TODO: Try N.V to improve shading look
+float3 ApplySobelFilter(uint2 PixelPosXY, uint DepthInt, float3 Color, float3 OutlineColor, bool bDarkOutline)
+{
+	// Sobel edge detect depth
+	static int SobelX[] =
+	{
+		1, 0, -1,
+		2, 0, -2,
+		1, 0, -1
+	};
+
+	static int SobelY[] =
+	{
+		 1,  2,  1,
+		 0,  0,  0,
+		-1, -2, -1
+	};
+
+	static uint2 UVSample[] =
+	{
+		{-1,  1},  {0,  1},  {1,  1},
+		{-1,  0},  {0,  0},  {1,  0},
+		{-1, -1},  {0, -1},  {1, -1}
+	};
+
+	float3 DepthGradX = float3(0.0f, 0.0f, 0.0f);
+	float3 DepthGradY = float3(0.0f, 0.0f, 0.0f);
+
+	uint DepthIntCurrent;
+	uint VisibleClusterIndexCurrent;
+	uint TriIndexCurrent;
+
+	for (uint Tap = 0; Tap < 9; ++Tap)
+	{
+		const UlongType VisPixelCurrent = VisBuffer64[PixelPosXY + UVSample[Tap]];
+		UnpackVisPixel(VisPixelCurrent, DepthIntCurrent, VisibleClusterIndexCurrent, TriIndexCurrent);
+
+		float SampleDensityDepth = log2( ConvertFromDeviceZ(asfloat(DepthIntCurrent)) + 1.0 ) * 10.0;
+
+		DepthGradX += SobelX[Tap] * SampleDensityDepth;
+		DepthGradY += SobelY[Tap] * SampleDensityDepth;
+	}
+
+	// Build outline from depth
+	float3 DepthOutline = max(abs(DepthGradX), abs(DepthGradY));
+
+	float3 CombineColor;
+	if( bDarkOutline )
+		CombineColor = Color * ( 1.0 - DepthOutline * 0.25 );
+	else
+		CombineColor = Color + DepthOutline * 0.25 * OutlineColor;
+
+	return saturate(CombineColor);
+}
+
+uint GetVisualizeMode()
+{
+	return VisualizeConfig.x;
+}
+
+uint GetPickingDomain()
+{
+	return VisualizeConfig.y;
+}
+
+float GetOverdrawScale()
+{
+	return clamp(float(VisualizeScales.x), 0.0f, 100.0f) / 100.0f;
+}
+
+float GetComplexityScale()
+{
+	return clamp(float(VisualizeScales.y), 0.0f, 100.0f) / 100.0f;
+}
+
+bool GetCompositeWithSceneDepth()
+{
+	return VisualizeConfig.z != 0;
+}
+
+bool ShouldApplySobelFilter()
+{
+	return VisualizeConfig.w != 0;
+}
+
+[numthreads(8, 8, 1)]
+void VisualizeCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
+{
+	const uint VisualizeMode = GetVisualizeMode();
+
+	const uint2 PickingPos	= uint2(PickingPixelPos);
+	const uint2 PixelPos	= DTID.xy + uint2(View.ViewRectMin.xy);
+	const uint2 TilePos		= GID.xy; // 8x8 tile 2D coord
+
+	const UlongType VisPixel = VisBuffer64[PixelPos];
+
+	uint DepthInt;
+	uint VisibleClusterIndex;
+	uint TriIndex;
+	bool bIsImposter;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex, bIsImposter);
+
+	FNaniteView NaniteView = GetNaniteView( 0 );
+
+	FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PixelPos]);
+
+	float3 Result = float3(0, 0, 0);
+	float3 OutlineColor = 1;
+	float Opacity = 1.0f;
+
+	bool bDarkOutline = false;
+	bool bApplySobel = true;
+
+	if (VisualizeMode == NANITE_VISUALIZE_OVERDRAW)
+	{
+		uint DebugValueAdd = DbgBuffer32[PixelPos];
+
+		const float OverdrawScale = GetOverdrawScale();
+		const float OverdrawCount = DebugValueAdd; // Num of evaluations per pixel
+		const float OverdrawColor = 1 - exp2(-OverdrawCount * OverdrawScale);
+		Result = ColorMapInferno(OverdrawColor);
+	}
+	else if (VisibleClusterIndex != 0xFFFFFFFF && (!GetCompositeWithSceneDepth() || UnpackedMask.bIsNanitePixel))
+	{
+		// Nanite Pixel
+
+		UlongType DbgPixel = DbgBuffer64[PixelPos];
+		uint DebugDepthInt;
+		uint DebugValueMax;
+		UnpackDbgPixel(DbgPixel, DebugDepthInt, DebugValueMax);
+		uint DebugValueAdd = DbgBuffer32[PixelPos];
+
+		FVisibleCluster VisibleCluster				= GetVisibleCluster(VisibleClusterIndex);
+		FInstanceSceneData InstanceData				= GetInstanceSceneData(VisibleCluster, false);
+		FInstanceDynamicData InstanceDynamicData	= CalculateInstanceDynamicData(NaniteView, InstanceData);
+		FPrimitiveSceneData PrimitiveData			= GetPrimitiveData(InstanceData.PrimitiveId);
+		FCluster Cluster							= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+
+		const uint3 TriIndices = DecodeTriangleIndices(Cluster, TriIndex);
+
+		const float3 PointLocal0 = DecodePosition(TriIndices.x, Cluster);
+		const float3 PointLocal1 = DecodePosition(TriIndices.y, Cluster);
+		const float3 PointLocal2 = DecodePosition(TriIndices.z, Cluster);
+
+		const float3 PointWorld0 = mul(float4(PointLocal0, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
+		const float3 PointWorld1 = mul(float4(PointLocal1, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
+		const float3 PointWorld2 = mul(float4(PointLocal2, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
+
+		const float4 PointClip0 = mul(float4(PointWorld0, 1), NaniteView.TranslatedWorldToClip);
+		const float4 PointClip1 = mul(float4(PointWorld1, 1), NaniteView.TranslatedWorldToClip);
+		const float4 PointClip2 = mul(float4(PointWorld2, 1), NaniteView.TranslatedWorldToClip);
+
+		const float2 PixelClip = (PixelPos + 0.5 - View.ViewRectMin.xy) * View.ViewSizeAndInvSize.zw * float2(2, -2) + float2(-1, 1);
+
+		// Calculate perspective correct barycentric coordinates with screen derivatives
+		const FBarycentrics Barycentrics = CalculateTriangleBarycentrics(PixelClip, PointClip0, PointClip1, PointClip2, View.ViewSizeAndInvSize.zw);
+
+		FNaniteRawAttributeData RawAttributeData[3];
+		GetRawAttributeData3(RawAttributeData, Cluster, TriIndices, NANITE_MAX_UVS);
+
+		const FNaniteAttributeData AttributeData = GetAttributeData(
+			Cluster,
+			PointLocal0,
+			PointLocal1,
+			PointLocal2,
+			RawAttributeData[0],
+			RawAttributeData[1],
+			RawAttributeData[2],
+			Barycentrics,
+			InstanceData,
+			NANITE_MAX_UVS
+		);
+
+		const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+		const int HierarchyOffset = InstanceData.NaniteHierarchyOffset;
+
+		// Note: The mode is no longer a bitmask at this point, just a single visualization mode.
+
+		if (VisualizeMode == NANITE_VISUALIZE_TRIANGLES)
+		{
+			Result = IntToColor(TriIndex);
+			Result = Result * 0.8 + 0.2;
+			bDarkOutline = true;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_CLUSTERS)
+		{
+			Result = IntToColor(VisibleCluster.ClusterIndex);
+			Result = Result * 0.8 + 0.2;
+			bDarkOutline = true;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_GROUPS)
+		{
+			Result = IntToColor(Cluster.GroupIndex);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_PAGES)
+		{
+			Result = IntToColor(VisibleCluster.PageIndex);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_PRIMITIVES)
+		{
+			Result = IntToColor(InstanceData.PrimitiveId) * 0.8;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_INSTANCES)
+		{
+			Result = IntToColor(VisibleCluster.InstanceId) * 0.8;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_RASTER_MODE)
+		{
+			Result = ( IntToColor(DebugValueMax) * 0.75 + 0.25 ) * ( IntToColor(TriIndex).x * 0.5 + 0.5 );
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_RASTER_BINS)
+		{
+			const bool bSecondaryRasterBin = !bWPOEnabled;
+			const uint RasterBin = GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryRasterBin, MaterialSlotTable);
+			Result = IntToColor(RasterBin);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_SHADING_BINS)
+		{
+			const uint ShadingBin = GetMaterialShadingBin(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+			Result = IntToColor(ShadingBin);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_HIERARCHY_OFFSET)
+		{
+			Result = IntToColor(HierarchyOffset);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_COUNT)
+		{
+			Result = IntToColor(GetMaterialCount(Cluster));
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_MODE)
+		{
+			Result = IsMaterialFastPath(Cluster) ? float3(0, 1, 0) : float3(1, 0, 0);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_INDEX)
+		{
+			Result = IntToColor(GetRelativeMaterialIndex(Cluster, TriIndex));
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_DEPTH)
+		{
+			const uint MaterialDepthId = GetMaterialDepthId(UnpackedMask.ShadingBin, MaterialDepthTable);
+			Result = IntToColor(MaterialDepthId);
+
+		#if 0
+			// For testing
+			const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].w;
+			FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(PackedFlags);
+			if (MaterialFlags.bPixelDiscard)
+			{
+				Result = float3(0.0f, 0.8f, 0.0f);
+			}
+			else
+			{
+				Result = float3(0.0f, 0.0f, 0.8f);
+			}
+		#endif
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_SHADING_WRITE_MASK)
+		{
+			const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].MaterialFlags;
+			const uint WriteMask = BitFieldExtractU32(PackedFlags, 8u, 24u);
+			Result = IntToColor(WriteMask);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MIN || VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MAX || VisualizeMode == NANITE_VISUALIZE_SCENE_Z_DELTA)// || VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MASK)
+		{
+			const uint4 ZLayout = SceneZLayout[PixelPos];
+			float2 MinMax = float2(f16tof32(ZLayout.y), f16tof32(ZLayout.y >> 16u));
+
+			if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MIN)
+			{
+				Result = float3(pow(MinMax.x, 0.11f), 0.0f, 0.0f);
+			}
+			else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MAX)
+			{
+				Result = float3(pow(MinMax.y, 0.11f), 0.0f, 0.0f);
+			}
+			else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_DELTA)
+			{
+				Result = float3(pow(MinMax.y - MinMax.x, 0.11f), 0.0f, 0.0f);
+			}
+			//else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_MASK)
+			//{
+			//	Result = IntToColor((uint)ZLayout.z);
+			//}
+
+			bApplySobel = false;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_SCENE_Z_DECODED)
+		{
+			const float ZDecoded = SceneZDecoded[PixelPos];
+			Result = float3(pow(ZDecoded, 0.11f), 0.0f, 0.0f);
+			bApplySobel = false;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MIN || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MAX || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_DELTA)// || VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MASK)
+		{
+			const uint4 ZLayout = MaterialZLayout[PixelPos];
+			float2 MinMax = float2(f16tof32(ZLayout.y), f16tof32(ZLayout.y >> 16u));
+
+			if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MIN)
+			{
+				Result = float3(pow(MinMax.x, 0.11f), 0.0f, 0.0f);
+			}
+			else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MAX)
+			{
+				Result = float3(pow(MinMax.y, 0.11f), 0.0f, 0.0f);
+			}
+			else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_DELTA)
+			{
+				Result = float3(pow(MinMax.y - MinMax.x, 0.11f), 0.0f, 0.0f);
+			}
+			//else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_MASK)
+			//{
+			//	Result = IntToColor((uint)ZLayout.z);
+			//}
+
+			bApplySobel = false;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_MATERIAL_Z_DECODED)
+		{
+			const float ZDecoded = MaterialZDecoded[PixelPos];
+			Result = float3(pow(ZDecoded, 0.11f), 0.0f, 0.0f);
+			bApplySobel = false;
+		}
+	#if USE_EDITOR_SHADERS
+		else if (VisualizeMode == NANITE_VISUALIZE_HIT_PROXY_DEPTH)
+		{
+			if ((InstanceData.Flags & INSTANCE_SCENE_DATA_FLAG_HAS_EDITOR_DATA) != 0u)
+			{
+				Result = IntToColor(InstanceData.EditorData.HitProxyPacked);
+			}
+			else
+			{
+				Result = IntToColor(GetMaterialHitProxyId(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialHitProxyTable));
+			}
+		}
+	#endif
+		else if (VisualizeMode == NANITE_VISUALIZE_NANITE_MASK)
+		{
+			Result = float3(0, 1, 0);
+			Opacity = 0.5f;
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_EVALUATE_WORLD_POSITION_OFFSET)
+		{
+			const bool bAlwaysEvaluateWPO = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_ALWAYS_EVALUATE_WPO_MATERIALS) != 0u;
+			const bool bEvaluateWPO = !bIsImposter && bWPOEnabled;
+			if (bAlwaysEvaluateWPO)
+			{
+				Result = float3(1, 1, 0);
+			}
+			else if (bEvaluateWPO)
+			{
+				Result = float3(0, 1, 0);
+			}
+			else
+			{
+				Result = float3(1, 0, 0);
+			}
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_LIGHTMAP_UVS)
+		{
+			const float2 LightmapUVs = AttributeData.TexCoords[PrimitiveData.LightmapUVIndex];
+			Result = float3(LightmapUVs.x, LightmapUVs.y, 0);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_LIGHTMAP_UV_INDEX)
+		{
+			Result = IntToColor(PrimitiveData.LightmapUVIndex);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_LIGHTMAP_DATA_INDEX)
+		{
+			Result = IntToColor(PrimitiveData.LightmapDataIndex);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_POSITION_BITS)
+		{
+			const uint NumBits = Cluster.PosBits.x + Cluster.PosBits.y + Cluster.PosBits.z;
+
+			if (NumBits <= 30)
+			{
+				Result = lerp(float3(0.0f, 1.0f, 0.0f), float3(1.0f, 1.0f, 1.0f), NumBits / 30.0f);
+			}
+			else
+			{
+				Result = lerp(float3(1.0f, 1.0f, 1.0f), float3(1.0f, 0.0f, 0.0f), (NumBits - 30) / (float)(3 * 16 - 30));
+			}
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_VSM_STATIC_CACHING)
+		{
+			Result = ShouldCacheInstanceAsStatic(InstanceData, false) ? float3(1, 1, 0) : float3(0.5, 0.5, 0.5);
+		}
+		else if (VisualizeMode == NANITE_VISUALIZE_PICKING)
+		{
+			bApplySobel = false;
+
+			const UlongType PickedVisPixel = VisBuffer64[PickingPos];
+
+			uint PickedDepthInt;
+			uint PickedVisibleClusterIndex;
+			uint PickedTriIndex;
+			UnpackVisPixel(PickedVisPixel, PickedDepthInt, PickedVisibleClusterIndex, PickedTriIndex);
+
+			FVisibleCluster PickedVisibleCluster	= GetVisibleCluster(PickedVisibleClusterIndex);
+			FInstanceSceneData PickedInstanceData	= GetInstanceSceneData(PickedVisibleCluster, false);
+
+			bool bPicked = false;
+			switch (GetPickingDomain())
+			{
+				case NANITE_PICKING_DOMAIN_TRIANGLE:
+					bPicked = (VisibleClusterIndex == PickedVisibleClusterIndex && PickedTriIndex == TriIndex);
+					Result = IntToColor(TriIndex) * 0.8 + 0.2;
+					break;
+
+				case NANITE_PICKING_DOMAIN_CLUSTER:
+					bPicked = (VisibleClusterIndex == PickedVisibleClusterIndex);
+					Result = IntToColor(VisibleCluster.ClusterIndex) * 0.8;
+					break;
+
+				case NANITE_PICKING_DOMAIN_INSTANCE:
+					bPicked = (VisibleCluster.InstanceId == PickedVisibleCluster.InstanceId);
+					Result = IntToColor(VisibleCluster.InstanceId) * 0.8;
+					break;
+
+				case NANITE_PICKING_DOMAIN_PRIMITIVE:
+					bPicked = (InstanceData.PrimitiveId == PickedInstanceData.PrimitiveId);
+					Result = IntToColor(InstanceData.PrimitiveId) * 0.8;
+					break;
+
+				default:
+					// Invalid picking domain
+					break;
+			}
+
+			if (bPicked)
+			{
+				Result = float3(1.0f, 0.0f, 1.0f);
+			}
+			else
+			{
+				Result *= 0.3f;
+			}
+		}
+	}
+	else
+	{
+		// Non-Nanite Pixel
+
+		if (GetVisualizeMode() == NANITE_VISUALIZE_NANITE_MASK)
+		{
+			if (SceneDepth[PixelPos] > 0.0f) // only visualize written fragments
+			{
+				Result = float3(1, 0, 0);
+				Opacity = 0.5f;
+			}
+		}
+	}
+
+	if (bApplySobel && ShouldApplySobelFilter() && (!GetCompositeWithSceneDepth() || UnpackedMask.bIsNanitePixel))
+	{
+		Result = ApplySobelFilter(PixelPos, DepthInt, Result, OutlineColor, bDarkOutline);
+	}
+
+	DebugOutput[PixelPos] = float4(Result, Opacity);
+}
+
+[numthreads(1, 1, 1)]
+void PickingCS(uint3 DTID : SV_DispatchThreadID, uint3 GID : SV_GroupID)
+{
+	FNanitePickingFeedback FeedbackResults = (FNanitePickingFeedback)0;
+
+	const uint2 PickingPos	= uint2(PickingPixelPos);
+	FeedbackResults.PixelX = PickingPos.x;
+	FeedbackResults.PixelY = PickingPos.y;
+
+	const UlongType PickedPixel = VisBuffer64[PickingPos];
+
+	uint DepthInt;
+	uint VisibleClusterIndex;
+	uint TriIndex;
+	UnpackVisPixel(PickedPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	FNaniteView NaniteView = GetNaniteView(0);
+
+	FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PickingPos]);
+
+	if (VisibleClusterIndex != 0xFFFFFFFFu && UnpackedMask.bIsNanitePixel)
+	{
+		UlongType DbgPixel = DbgBuffer64[PickingPos];
+		uint DebugDepthInt;
+		uint DebugValueMax;
+		UnpackDbgPixel(DbgPixel, DebugDepthInt, DebugValueMax);
+		uint DebugValueAdd = DbgBuffer32[PickingPos];
+
+		FVisibleCluster VisibleCluster				= GetVisibleCluster(VisibleClusterIndex);
+		FInstanceSceneData InstanceData				= GetInstanceSceneData(VisibleCluster, false);
+		FInstanceDynamicData InstanceDynamicData	= CalculateInstanceDynamicData(NaniteView, InstanceData);
+		FPrimitiveSceneData PrimitiveData			= GetPrimitiveData(InstanceData.PrimitiveId);
+		FCluster Cluster							= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+
+		const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;		
+		const bool bSecondaryRasterBin = !bWPOEnabled;
+
+		FeedbackResults.PrimitiveId			= InstanceData.PrimitiveId;
+		FeedbackResults.InstanceId			= VisibleCluster.InstanceId;
+		FeedbackResults.PersistentIndex		= PrimitiveData.PersistentPrimitiveIndex;
+		FeedbackResults.ClusterIndex		= VisibleCluster.ClusterIndex;
+		FeedbackResults.GroupIndex			= Cluster.GroupIndex;
+		FeedbackResults.PageIndex			= VisibleCluster.PageIndex;
+		FeedbackResults.TriangleIndex		= TriIndex;
+		FeedbackResults.DepthInt			= DepthInt;
+		FeedbackResults.RasterMode			= DebugValueMax;
+		FeedbackResults.RasterBin			= GetMaterialRasterBin(Cluster, InstanceData.PrimitiveId, TriIndex, RegularMaterialRasterBinCount, RenderFlags, FixedFunctionBin, bSecondaryRasterBin, MaterialSlotTable);
+		FeedbackResults.ShadingBin			= GetMaterialShadingBin(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+		FeedbackResults.LegacyShadingId		= GetMaterialLegacyShadingId(Cluster, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+		FeedbackResults.MaterialDepthId		= GetMaterialDepthId(FeedbackResults.LegacyShadingId, MaterialDepthTable);
+		FeedbackResults.MaterialIndex		= GetRelativeMaterialIndex(Cluster, TriIndex);
+		FeedbackResults.MaterialCount		= GetMaterialCount(Cluster);
+		FeedbackResults.MaterialMode		= IsMaterialFastPath(Cluster) ? 0u : 1u;
+		FeedbackResults.HierarchyOffset		= InstanceData.NaniteHierarchyOffset;
+		FeedbackResults.RuntimeResourceID	= InstanceData.NaniteRuntimeResourceID;
+
+		const float4 ClusterBoundsColor		= ColorLightGreen;
+		const float4 InstanceBoundsColor	= ColorOrange;
+		const float4 ClusterLODBoundsColor	= ColorYellow;
+
+		FShaderPrintContext ShaderPrint = InitShaderPrintContext();
+		const float4x4 LocalToTranslatedWorld = LWCMultiplyTranslation(InstanceData.LocalToWorld, NaniteView.PreViewTranslation);
+
+		const float3 WPOExtent = GetLocalMaxWPOExtent(PrimitiveData, InstanceData, bWPOEnabled);
+	#if ACCURATE_DISPLACEMENT_BOUNDS
+		const float AbsMaxMaterialDisplacement = GetAbsMaxMaterialDisplacement(RasterBinMeta, FeedbackResults.RasterBin);
+	#else
+		const float AbsMaxMaterialDisplacement = GetAbsMaxMaterialDisplacement(PrimitiveData);
+	#endif
+
+		// If WPO and/or material displacement is enabled, the cluster bounds will have been dilated to account for max displacement
+		float3 ClusterBoxBoundsCenter = Cluster.BoxBoundsCenter;
+		float3 ClusterBoxBoundsExtent = Cluster.BoxBoundsExtent;
+		float4 ClusterLODSphere = Cluster.LODBounds;
+
+		BRANCH
+		if ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SPLINE_MESH) != 0 &&
+			(InstanceData.Flags & INSTANCE_SCENE_DATA_FLAG_HAS_PAYLOAD_EXTENSION) != 0)
+		{
+			// Only show the spline mesh debug stuff when picking clusters
+			ShaderPrint.bIsActive = GetPickingDomain() == NANITE_PICKING_DOMAIN_CLUSTER;
+
+			const FSplineMeshShaderParams SplineMeshParams = SplineMeshLoadParamsFromInstancePayload(InstanceData);
+			const FSplineMeshDeformedLocalBounds NewBounds = SplineMeshDeformLocalBoundsDebug(
+				SplineMeshParams,
+				ShaderPrint,
+				LocalToTranslatedWorld,
+				ClusterBoxBoundsCenter,
+				ClusterBoxBoundsExtent
+			);
+			ClusterBoxBoundsCenter = NewBounds.BoundsCenter;
+			ClusterBoxBoundsExtent = NewBounds.BoundsExtent;
+
+			ClusterLODSphere = SplineMeshDeformLODSphereBounds(SplineMeshParams, ClusterLODSphere);
+
+			ShaderPrint.bIsActive = true;
+		}
+		ClusterBoxBoundsExtent += WPOExtent + AbsMaxMaterialDisplacement.xxx;
+
+		const float3 InstanceBoxBoundsCenter = InstanceData.LocalBoundsCenter;
+		const float3 InstanceBoxBoundsExtent = InstanceData.LocalBoundsExtent; // TODO: Verify WPO and material disp. is baked in already
+
+		AddOBBTWS(
+			ShaderPrint,
+			ClusterBoxBoundsCenter - ClusterBoxBoundsExtent,
+			ClusterBoxBoundsCenter + ClusterBoxBoundsExtent,
+			ClusterBoundsColor,
+			LocalToTranslatedWorld
+		);
+
+		AddOBBTWS(
+			ShaderPrint,
+			InstanceBoxBoundsCenter - InstanceBoxBoundsExtent,
+			InstanceBoxBoundsCenter + InstanceBoxBoundsExtent,
+			InstanceBoundsColor,
+			LocalToTranslatedWorld
+		);
+
+		AddReferentialTWS(ShaderPrint, LocalToTranslatedWorld, 50.f);
+
+		// Only show the cluster LOD bounds with cluster picking to reduce visual noise
+		if (GetPickingDomain() == NANITE_PICKING_DOMAIN_CLUSTER)
+		{
+			AddSphereTWS(
+				ShaderPrint,
+				mul(float4(ClusterLODSphere.xyz, 1), LocalToTranslatedWorld).xyz,
+				ClusterLODSphere.w * InstanceData.NonUniformScale.w,
+				ClusterLODBoundsColor,
+				32
+			);
+		}
+	}
+	else
+	{
+		FeedbackResults.PrimitiveId = INVALID_PRIMITIVE_ID;
+	}
+
+	FeedbackBuffer[0] = FeedbackResults;
+}

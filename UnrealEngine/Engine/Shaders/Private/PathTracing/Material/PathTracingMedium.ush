@@ -1,0 +1,69 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+PathTracingMedium.usf: Volumetric phase function
+   To support atmosphere, we represent a blend of two components: rayleigh scattering and an HG lobe
+   In the future, we may add additional HG lobe for cases like cloud rendering
+===============================================================================================*/
+#pragma once
+
+#include "../../ParticipatingMediaCommon.ush"
+
+#define USE_UNIFORM_PHASE_FUNCTION 0
+
+FMaterialSample Medium_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample)
+{
+	const float3 RayleighWeight = Payload.GetBaseColor();
+	const float3 HGWeight = Payload.GetHGWeight();
+	const float G = Payload.GetHGPhaseG();
+
+#if USE_UNIFORM_PHASE_FUNCTION
+	const float4 Result = UniformSampleSphere(RandSample.xy);
+	// uniform scattering
+	return CreateMaterialSample(Result.xyz, RayleighWeight + HGWeight, Result.w, 1.0, 1.0, PATHTRACER_SCATTER_VOLUME);
+#else
+	const float LobeProb = LobeSelectionProb(RayleighWeight, HGWeight);
+
+	const float CosTheta = RandSample.x < LobeProb ?
+		RayleighPhaseInvertCdf(RescaleRandomNumber(RandSample.x, 0.0, LobeProb)) :
+		HenyeyGreensteinPhaseInvertCDF(RescaleRandomNumber(RandSample.x, LobeProb, 1.0), G);
+	const float SinTheta = sqrt(saturate(1.0 - CosTheta * CosTheta));
+	const float Phi = RandSample.y * (2.0 * PI);
+
+	const float3 L_World = TangentToWorld(float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, CosTheta), -V_World);
+
+	FMaterialSample Result = CreateMaterialSample(L_World, 0.0, 0.0, 1.0, 1.0, PATHTRACER_SCATTER_VOLUME);
+	Result.AddLobeWithMIS(RayleighWeight, RayleighPhase(CosTheta), LobeProb);
+	Result.AddLobeWithMIS(HGWeight      , HenyeyGreensteinPhase(G, CosTheta )  , 1.0 - LobeProb);
+	return Result;
+#endif
+}
+
+FMaterialEval Medium_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	const float3 RayleighWeight = Payload.GetBaseColor();
+	const float3 HGWeight = Payload.GetHGWeight();
+	const float G = Payload.GetHGPhaseG();
+
+#if USE_UNIFORM_PHASE_FUNCTION
+	// simple omni-directional evaluation
+	return CreateMaterialEval((RayleighWeight + HGWeight) * DiffuseSpecularScale.x, 1.0 / (4 * PI));
+#else
+	const float LobeProb = LobeSelectionProb(RayleighWeight, HGWeight);
+
+	const float CosTheta = dot(V_World, L_World);
+	FMaterialEval Result = NullMaterialEval();
+	Result.AddLobeWithMIS(RayleighWeight, RayleighPhase(CosTheta), LobeProb);
+	Result.AddLobeWithMIS(HGWeight      , HenyeyGreensteinPhase(G, CosTheta), 1.0 - LobeProb);
+	Result.Weight *= DiffuseSpecularScale.x;
+	return Result;
+#endif
+}

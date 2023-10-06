@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 30004,
+	"VersionName": "3.0.4",
+	"FriendlyName": "Animation Compression Library",
+	"Description": "Use the Animation Compression Library (ACL) to compress AnimSequences.",
+	"Category": "Animation",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"Modules": [
+		{
+			"Name": "ACLPlugin",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformDenyList": []
+		},
+		{
+			"Name": "ACLPluginEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformDenyList": []
+		}
+	]
+}

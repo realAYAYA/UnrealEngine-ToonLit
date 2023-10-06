@@ -1,0 +1,59 @@
+{
+	"FileVersion": 3,
+	"Version": 0.1,
+	"VersionName": "0.1",
+	"FriendlyName": "NNERuntimeORTCpu",
+	"Description": "CPU accelerated runtime for the NNE plugin (deep learning and neural network inference in Unreal Engine) backed by ONNX Runtime CPU providers.",
+	"Category": "Experimental",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"SupportedTargetPlatforms": [
+		"Win64", "Linux", "Mac"
+	],
+	"Modules": [
+		{
+			"Name": "NNEUtils",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEProfiling",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNEOnnxruntime",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "ORTHelper",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		},
+		{
+			"Name": "NNERuntimeORTCpu",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "NNE",
+			"Enabled": true
+		}
+	]
+}

@@ -1,0 +1,152 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../HTileEncoding.ush"
+
+#ifdef OVERRIDE_RTWRITEMASKPROCESSING_USH
+#include "/Platform/Private/RTWriteMaskLookup.ush"
+#endif
+
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+
+uint4 ViewRect;
+uint ValidWriteMask;
+
+Texture2D<uint> ShadingMask;
+StructuredBuffer<FNaniteShadingBinMeta> ShadingBinMeta;
+
+#ifndef NUM_EXPORTS
+#define NUM_EXPORTS 1
+#endif
+
+RWByteAddressBuffer OutCMaskBuffer_0;
+
+#if NUM_EXPORTS > 1
+RWByteAddressBuffer OutCMaskBuffer_1;
+#endif
+
+#if NUM_EXPORTS > 2
+RWByteAddressBuffer OutCMaskBuffer_2;
+#endif
+
+#if NUM_EXPORTS > 3
+RWByteAddressBuffer OutCMaskBuffer_3;
+#endif
+
+#if NUM_EXPORTS > 4
+RWByteAddressBuffer OutCMaskBuffer_4;
+#endif
+
+#if NUM_EXPORTS > 5
+RWByteAddressBuffer OutCMaskBuffer_5;
+#endif
+
+#if NUM_EXPORTS > 6
+RWByteAddressBuffer OutCMaskBuffer_6;
+#endif
+
+#if NUM_EXPORTS > 7
+RWByteAddressBuffer OutCMaskBuffer_7;
+#endif
+
+// Potential optimizations
+// - Use a larger group size so that a group can process and write down an entire cmask dwork without the use of interlocked or
+// - Special case (ballot) when the entire 8x8 is the same material (no need to vote on matching write masks, they will all be the same mask)
+
+[numthreads(8, 8, 1)]
+void ClearTiles(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
+{
+#ifdef OVERRIDE_RTWRITEMASKPROCESSING_USH
+	const uint2 PixelLocalPos = SwizzleThreadIndex(ThreadIndex & 63u);
+	const uint2 PixelPos = ((GroupId << 3) | PixelLocalPos) + ViewRect.xy;
+
+	if (any(PixelPos.xy >= ViewRect.zw))
+	{
+		return;
+	}
+
+	RWByteAddressBuffer CMaskExports[] = 
+	{
+		OutCMaskBuffer_0,
+	#if NUM_EXPORTS > 1
+		OutCMaskBuffer_1,
+	#endif
+	#if NUM_EXPORTS > 2
+		OutCMaskBuffer_2,
+	#endif
+	#if NUM_EXPORTS > 3
+		OutCMaskBuffer_3,
+	#endif
+	#if NUM_EXPORTS > 4
+		OutCMaskBuffer_4,
+	#endif
+	#if NUM_EXPORTS > 5
+		OutCMaskBuffer_5,
+	#endif
+	#if NUM_EXPORTS > 6
+		OutCMaskBuffer_6,
+	#endif
+	#if NUM_EXPORTS > 7
+		OutCMaskBuffer_7
+	#endif
+	};
+
+	FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PixelPos]);
+	const bool bIsNanitePixel = UnpackedMask.bIsNanitePixel;
+
+	if (WaveActiveAllTrue(bIsNanitePixel))
+	{
+		const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].MaterialFlags;
+		uint WriteMask = BitFieldExtractU32(PackedFlags, 8u, 24u);
+
+		// Remove mask bits if they are not valid writes (i.e. no cmask for that export)
+		WriteMask &= ValidWriteMask;
+
+		// Compute memory location (byte address and tile bit shift offset) of the
+		// cmask data mapped to this pixel position.
+		uint Index, Shift;
+		const uint2 TileCoord = PixelPos / 8u;
+		ComputeCMaskIndexAndShift(TileCoord, Index, Shift);
+
+		UNROLL
+		for (uint Export = 0; Export < NUM_EXPORTS; ++Export)
+		{
+			uint FoundBits = 0;
+			uint MaskIndex = 0;
+
+			// Remaps from compacted (valid) targets to sparse write mask indices
+			// i.e. Export0 can be MRT1 which is represented as bit index 1 in ValidWriteMask
+			//   - 0 is MRT0/SceneColor which isn't valid to export
+			while (true)
+			{
+				if (BitFieldExtractU32(ValidWriteMask, 1u, MaskIndex) != 0u)
+				{
+					FoundBits++;
+					if (FoundBits == Export + 1u)
+					{
+						break;
+					}
+				}
+
+				MaskIndex++;
+			}
+
+			// If all lanes in the 8x8 indicate they write through this particular MRT, it's safe to optimize the meta data.
+			BRANCH
+			if (WaveActiveAllTrue(BitFieldExtractU32(WriteMask, 1u, MaskIndex) != 0u))
+			{
+				// Only want a single lane of an 8x8 to write the meta data out
+				BRANCH
+				if (WaveIsFirstLane())
+				{
+					const uint BitOffset = (Index & 0x3) * 8u;
+					CMaskExports[Export].InterlockedOr(Index, (0xFu << (Shift + BitOffset)));
+				}
+			}
+		}
+	}
+#endif
+}

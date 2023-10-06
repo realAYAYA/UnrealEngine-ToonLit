@@ -1,0 +1,225 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+PathTracingSolidGlass.ush: Microfacet Refractive BSDF for solid glass
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingFresnel.ush"
+#include "PathTracingGlossy.ush"
+#include "PathTracingEnergyConservation.ush"
+
+struct FRoughGlassData
+{
+	float3x3 Basis;
+	float2 Alpha;
+	float3 V;
+
+	FBxDFEnergyTermsRGB Spec;
+	float3 DiffWeight;
+
+	float2 LobeCdf;
+	float3 LobePdf;
+
+	// glass lobe data
+	float Eta;
+	float F0;
+	float EGlass;
+};
+
+FRoughGlassData PrepareRoughGlassData(FPathTracingPayload Payload, float3 V_World)
+{
+	FRoughGlassData Data = (FRoughGlassData)0;
+
+	Data.Basis = GetGGXBasis(Payload.Roughness, Payload.Anisotropy, Payload.WorldNormal, Payload.WorldTangent, Data.Alpha);
+	Data.V = mul(Data.Basis, V_World);
+	const float NoV = saturate(Data.V.z);
+
+
+	Data.Spec = ComputeGGXSpecEnergyTermsRGB(Payload.Roughness, NoV, Payload.SpecularColor);
+	Data.DiffWeight = Payload.DiffuseColor * (1 - Data.Spec.E);
+
+	// Probability of picking diffuse vs spec vs glass
+	Data.LobeCdf = LobeSelectionCdf(Payload.BSDFOpacity * Data.DiffWeight, Payload.BSDFOpacity * Data.Spec.E, 1.0 - Payload.BSDFOpacity);
+	Data.LobePdf = LobeSelectionPdf(Data.LobeCdf);
+
+
+	// NOTE: IsFrontFace() determines polygon orientation, because the normal is always flipped towards in the incoming ray
+	// #dxr_todo: Maintain a refraction stack on the path tracing payload
+	Data.Eta = Payload.IsFrontFace() ? Payload.Ior : rcp(Payload.Ior);
+	Data.F0 = F0RGBToF0(Payload.SpecularColor);
+
+	// correct for energy loss by scaling the whole BSDF
+	Data.EGlass = GGXEnergyLookup(Payload.Roughness, NoV, Data.Eta);
+
+	return Data;
+}
+
+
+FMaterialSample RoughGlass_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample)
+{
+	const FRoughGlassData Data = PrepareRoughGlassData(Payload, V_World);
+	const float3 V = Data.V;
+	const float NoV = saturate(V.z);
+	if (NoV == 0)
+	{
+		// invalid grazing angle
+		return NullMaterialSample();
+	}
+
+	// Randomly choose to sample diffuse or specular
+	if (RandSample.x < Data.LobeCdf.x)
+	{
+		RandSample.x = RescaleRandomNumber(RandSample.x, 0.0, Data.LobeCdf.x);
+
+		// Lambert
+		// TODO: evaluate CosineSampleHemisphereConcentric
+		const float4 Result = CosineSampleHemisphere(RandSample.xy);
+
+		const float3 L = Result.xyz;
+		const float3 H = normalize(L + V);
+
+		// transform to world space
+		const float3 L_World = normalize(mul(L, Data.Basis));
+
+		const float NoL = saturate(L.z);
+		const float VoH = saturate(dot(V, H));
+		const float NoH = saturate(H.z);
+
+		const float3 Diffuse = GetPathTracingDiffuseModel(Data.DiffWeight, Payload.Roughness, NoV, NoL, VoH, NoH);
+		const float3 DiffWeight = (Payload.BSDFOpacity / Data.LobePdf.x) * Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal);
+		const float DiffPdf = Data.LobePdf.x * NoL / PI;
+
+		return CreateMaterialSample(L_World, DiffWeight, DiffPdf, 1.0, 1.0, PATHTRACER_SCATTER_DIFFUSE);
+	}
+	else
+	{
+		const bool bDoSpec = RandSample.x < Data.LobeCdf.y;
+
+		if (bDoSpec)
+		{
+			RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.x, Data.LobeCdf.y);
+		}
+		else
+		{
+			RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.y, 1.0);
+		}
+
+
+		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, Data.Alpha, V).xyz;
+
+		if (bDoSpec)
+		{
+			const float3 L = reflect(-V, H);
+			if (L.z <= 0)
+			{
+				// invalid output direction, exit early
+				return NullMaterialSample();
+			}
+
+			// transform to world space
+			const float3 L_World = normalize(mul(L, Data.Basis));
+
+			const float NoL = saturate(L.z);
+			const float VoH = saturate(dot(V, H));
+			const float NoH = saturate(H.z);
+
+			// Specular lobe
+			const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+			const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+			const float3 SpecWeight = (Payload.BSDFOpacity / Data.LobePdf.y) * F * GGXResult.x * Data.Spec.W;
+			const float SpecPdf = GGXResult.y * Data.LobePdf.y;
+
+			return CreateMaterialSample(L_World, SpecWeight, SpecPdf, 1.0, Payload.Roughness, PATHTRACER_SCATTER_SPECULAR);
+		}
+		else
+		{
+			// Glass lobe (reflection and refraction)
+			float3 L = 0;
+			float F = 0;
+
+			const bool bRefract = SampleRefraction(-V, H, Data.Eta, Data.F0, RandSample.z, L, F);
+			// transform to world space
+			const float3 L_World = normalize(mul(L, Data.Basis));
+
+			const float2 GGXResult = bRefract ? GGXEvalRefraction(L, V, H, Data.Alpha, Data.Eta) : GGXEvalReflection(L, V, H, Data.Alpha);
+
+			return CreateMaterialSample(L_World, (1.0 - Payload.BSDFOpacity) * GGXResult.x / (Data.EGlass * Data.LobePdf.z), F * GGXResult.y * Data.LobePdf.z, bRefract ? -1.0 : 1.0, Payload.Roughness, bRefract ? PATHTRACER_SCATTER_REFRACT : PATHTRACER_SCATTER_SPECULAR);
+		}
+	}
+}
+
+FMaterialEval RoughGlass_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	const FRoughGlassData Data = PrepareRoughGlassData(Payload, V_World);
+	const float3 V = Data.V;
+	const float NoV = saturate(V.z);
+	if (NoV == 0)
+	{
+		// invalid grazing angle
+		return NullMaterialEval();
+	}
+
+
+	// move vectors into right shading frame
+	const float3 L = mul(Data.Basis, L_World);
+
+	FMaterialEval Result = NullMaterialEval();
+
+	if (L.z > 0)
+	{
+		// reflection side
+		const float3 H = normalize(V + L);
+
+		const float NoL = saturate(L.z);
+		const float VoH = saturate(dot(V, H));
+		const float NoH = saturate(H.z);
+
+		// Diffuse Lobe
+		const float3 Diffuse = GetPathTracingDiffuseModel(Data.DiffWeight, Payload.Roughness, NoV, NoL, VoH, NoH);
+		Result.AddLobeWithMIS(Payload.BSDFOpacity * Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal) * DiffuseSpecularScale.x, NoL / PI, Data.LobePdf.x);
+
+		// Specular lobe
+		const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+		const float3 Fs = F_Schlick(Payload.SpecularColor, VoH);
+		const float3 SpecWeight = Payload.BSDFOpacity * GGXResult.x * Data.Spec.W * Fs;
+		const float SpecPdf = GGXResult.y;
+		Result.AddLobeWithMIS(SpecWeight * DiffuseSpecularScale.y, SpecPdf, Data.LobePdf.y);
+
+		// Glass lobe
+		const float Fg = FresnelReflectance(VoH, Data.Eta, Data.F0);
+		const float3 GlassWeight = GGXResult.x * (1 - Payload.BSDFOpacity) / Data.EGlass;
+		const float GlassPdf = GGXResult.y * Fg;
+		Result.AddLobeWithMIS(GlassWeight * DiffuseSpecularScale.y, GlassPdf, Data.LobePdf.z);
+	}
+	else if (L.z < 0 && Data.LobePdf.z > 0)
+	{
+		// refraction side
+		const float NoL = saturate(-L.z);
+		float3 Ht = -(Data.Eta * L + V);
+		Ht = normalize((Data.Eta < 1.0f) ? -Ht : Ht);
+
+		const float VoH = dot(V, Ht);
+		const float Fg = 1.0f - FresnelReflectance(VoH, Data.Eta, Data.F0);
+		if (Fg > 0)
+		{
+			const float2 GGXResult = GGXEvalRefraction(L, V, Ht, Data.Alpha, Data.Eta);
+
+			const float3 GlassWeight = GGXResult.x * (1 - Payload.BSDFOpacity) / Data.EGlass;
+			const float GlassPdf = GGXResult.y * Fg;
+
+			Result.AddLobeWithMIS(GlassWeight * DiffuseSpecularScale.y, GlassPdf, Data.LobePdf.z);
+		}
+	}
+	return Result;
+}

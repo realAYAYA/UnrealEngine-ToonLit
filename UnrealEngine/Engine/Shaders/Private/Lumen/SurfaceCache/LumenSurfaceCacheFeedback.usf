@@ -1,0 +1,152 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "../../Hash.ush"
+
+RWStructuredBuffer<uint2> RWCompactedFeedbackBuffer;
+uint CompactedFeedbackBufferSize;
+
+StructuredBuffer<uint> FeedbackBufferAllocator;
+StructuredBuffer<uint2> FeedbackBuffer;
+uint FeedbackBufferSize;
+
+// Feedback element hashes
+RWStructuredBuffer<uint> RWHashTableKeys;
+
+// Deduplicated feedback elements
+RWStructuredBuffer<uint> RWHashTableElementIndices;
+StructuredBuffer<uint> HashTableElementIndices;
+RWStructuredBuffer<uint> RWHashTableElementCounts;
+StructuredBuffer<uint> HashTableElementCounts;
+
+uint HashTableSize;
+uint HashTableIndexWrapMask;
+
+RWBuffer<uint> RWBuildHashTableIndirectArgs;
+
+/**
+ * Setups FBuildFeedbackHashTableCS arguments to run one lane per feedback element
+ */
+[numthreads(1, 1, 1)]
+void BuildFeedbackHashTableIndirectArgsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if (DispatchThreadId.x == 0)
+	{
+		WriteDispatchIndirectArgs(RWBuildHashTableIndirectArgs, 0, (min(FeedbackBufferAllocator[0], FeedbackBufferSize) + 63) / 64, 1, 1);
+	}
+}
+
+/** 
+ * Takes input Key, which is a hash and tries to add it to the linear probing hash table
+ * Returns true if element was added for the first time
+ * Returns Index which is index to the hash table bucket
+ */
+bool HashTableAdd(uint Key, inout uint Index)
+{
+	// Just skip add if search gets too long
+	const uint MaxLinearProbingSteps = 32;
+
+	LOOP
+	for (uint LinearProbingStep = 0; LinearProbingStep < MaxLinearProbingSteps; ++LinearProbingStep)
+	{
+		Index = (Key + LinearProbingStep) & HashTableIndexWrapMask;
+
+		uint StoredKey = RWHashTableKeys[Index];
+		if (StoredKey != Key)
+		{
+			if (StoredKey != 0)
+			{
+				continue;
+			}
+
+			uint PrevKey;
+			InterlockedCompareExchange(RWHashTableKeys[Index], 0, Key, PrevKey);
+
+			if (PrevKey == 0)
+			{
+				RWHashTableKeys[Index] = Key;
+				return true;
+			}
+			else if (PrevKey != Key)
+			{
+				continue;
+			}
+		}
+
+		break;
+	}
+
+	return false;
+}
+
+/**
+ * Takes a list of feedback elements and builds a hash table with element counts
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void BuildFeedbackHashTableCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ElementIndex = DispatchThreadId.x;
+
+	if (ElementIndex < FeedbackBufferAllocator[0])
+	{
+		uint2 PackedFeedback = FeedbackBuffer[ElementIndex];
+
+		uint Key = MurmurAdd(MurmurMix(PackedFeedback.x), PackedFeedback.y);
+
+		uint HashTableIndex = 0;
+		const bool bAdded = HashTableAdd(Key, HashTableIndex);
+		if (bAdded)
+		{
+			RWHashTableElementIndices[HashTableIndex] = ElementIndex;
+		}
+
+		InterlockedAdd(RWHashTableElementCounts[HashTableIndex], 1);
+	}
+}
+
+/**
+ * Compacts feedback element hash table into a unique and tightly packed array of feedback elements with counts
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void CompactFeedbackHashTableCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint HashTableIndex = DispatchThreadId.x;
+
+	if (HashTableIndex < HashTableSize)
+	{
+		const uint ElementCount = HashTableElementCounts[HashTableIndex];
+
+		if (ElementCount > 0)
+		{
+			uint WriteOffset = 0;
+			InterlockedAdd(RWCompactedFeedbackBuffer[0].x, 1, WriteOffset);
+
+			// Skip header element
+			WriteOffset += 1;
+
+			if (WriteOffset < CompactedFeedbackBufferSize)
+			{
+				uint ElementIndex = HashTableElementIndices[HashTableIndex];
+
+				if (ElementIndex < FeedbackBufferSize)
+				{
+					uint2 PackedFeedback = FeedbackBuffer[ElementIndex];
+
+					// Append element count
+					PackedFeedback.y |= ((ElementCount & 0xFFFF) << 16);
+
+					RWCompactedFeedbackBuffer[WriteOffset] = PackedFeedback;
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,256 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+struct FVolumeIntersection
+{
+	float VolumeTMin;
+	float VolumeTMax;
+	float BlockerHitT;
+
+	bool HitVolume()
+	{
+		return VolumeTMin < VolumeTMax;
+	}
+
+	bool HitBlocker()
+	{
+		return BlockerHitT > 0.0;
+	}
+};
+
+FVolumeIntersection CreateVolumeIntersection(float TMin, float TMax, float BlockerT = -1.0)
+{
+	FVolumeIntersection Result = (FVolumeIntersection)0;
+	Result.VolumeTMin = TMin;
+	Result.VolumeTMax = TMax;
+	Result.BlockerHitT = BlockerT;
+	return Result;
+}
+
+FVolumeIntersection CreateEmptyVolumeIntersection()
+{
+	return (FVolumeIntersection)0;
+}
+
+#define VOLUMEID_ATMOSPHERE				0
+#define VOLUMEID_FOG					1
+#define VOLUMEID_HETEROGENEOUS_VOLUMES	2
+#define PATH_TRACER_MAX_VOLUMES			3
+
+// representes an interval along the ray over which the specified volumes are known to exist
+struct FVolumeIntersectionInterval
+{
+	float VolumeTMin;
+	float VolumeTMax;
+	uint VolumeID[PATH_TRACER_MAX_VOLUMES];
+	int Num;
+};
+
+struct FVolumeIntersectionList
+{
+	float VolumeTMin[PATH_TRACER_MAX_VOLUMES];
+	float VolumeTMax[PATH_TRACER_MAX_VOLUMES];
+	uint  VolumeID[PATH_TRACER_MAX_VOLUMES];
+	int Num;
+
+	// only need to track one blocker (assume they are opaque)
+	float BlockerHitT;
+	uint  BlockerID;
+
+	bool HitVolume()
+	{
+		return Num > 0;
+	}
+
+	bool HitBlocker()
+	{
+		return BlockerHitT > 0;
+	}
+
+	void Add(uint ID, FVolumeIntersection VolumeIntersection)
+	{
+		// merge the provided hit into the list
+		if (VolumeIntersection.HitVolume())
+		{
+			VolumeTMin[Num] = VolumeIntersection.VolumeTMin;
+			VolumeTMax[Num] = VolumeIntersection.VolumeTMax;
+			VolumeID[Num] = ID;
+			Num++;
+		}
+		if (VolumeIntersection.HitBlocker())
+		{
+			if (!HitBlocker() || BlockerHitT > VolumeIntersection.BlockerHitT)
+			{
+				BlockerHitT = VolumeIntersection.BlockerHitT;
+				BlockerID = ID;
+			}
+		}
+	}
+
+	// Return the interval of TValues closest to the front of the list
+	FVolumeIntersectionInterval GetCurrentInterval()
+	{
+		FVolumeIntersectionInterval Result = (FVolumeIntersectionInterval)0;
+		Result.Num = 0;
+		Result.VolumeTMin = VolumeTMin[0];
+		Result.VolumeTMax = VolumeTMax[0];
+		for (int Index = 1; Index < Num; Index++)
+		{
+			// NOTE: we only enter the loop body if Result was a valid interval
+			float TMin = VolumeTMin[Index];
+			float TMax = VolumeTMax[Index];
+			if (Result.VolumeTMin == TMin)
+			{
+				// both segments start together, figure out which ends first
+				Result.VolumeTMax = min(Result.VolumeTMax, TMax);
+			}
+			else if (Result.VolumeTMin < TMin)
+			{
+				// what we have so far _starts_ before the current segment
+				// so either the two segments are disjoint (Result.y is closer)
+				// or the two overlap, and we need to stop at the next transition line
+				Result.VolumeTMax = min(Result.VolumeTMax, TMin);
+			}
+			else
+			{
+				// segments could be disjoint (TMax is closer) or overlapping (TMax is closer)
+				Result.VolumeTMax = min(TMax, Result.VolumeTMin);
+				Result.VolumeTMin = TMin; // we just established this one is closer
+			}
+		}
+		// now that we established the distance, figure out which IDs overlap with the resolved segment
+		for (int Index2 = 0; Index2 < Num; Index2++)
+		{
+			if (Result.VolumeTMax > VolumeTMin[Index2] &&
+				Result.VolumeTMin < VolumeTMax[Index2])
+			{
+				Result.VolumeID[Result.Num] = VolumeID[Index2];
+				Result.Num++;
+			}
+		}
+		return Result;
+	}
+
+	// Update all active intervals, knowing we have processed everything up to distance 'T'
+	FVolumeIntersectionList Update(float T)
+	{
+		FVolumeIntersectionList Result = (FVolumeIntersectionList)0;
+		Result.Num = 0;
+		// clip the current intervals, knowning that we are "T" away
+		for (int Index = 0; Index < Num; Index++)
+		{
+			float TMax = VolumeTMax[Index];
+			if (T < TMax)
+			{
+				// still valid? then add it back in
+				Result.VolumeTMin[Result.Num] = max(T, VolumeTMin[Index]);
+				Result.VolumeTMax[Result.Num] = TMax;
+				Result.VolumeID[Result.Num] = VolumeID[Index];
+				Result.Num++;
+			}
+		}
+		Result.BlockerHitT = BlockerHitT;
+		Result.BlockerID = BlockerID;
+		return Result;
+	}
+};
+
+FVolumeIntersectionList CreateEmptyVolumeIntersectionList()
+{
+	return (FVolumeIntersectionList)0;
+}
+
+
+// Represent a strict lower and upper bound on the values that can be returned by VolumeGetDensity along the given ray
+struct FVolumeDensityBounds
+{
+	float3 SigmaMin; // minorant (control extinction)
+	float3 SigmaMax; // majorant (upper bound)
+};
+
+FVolumeDensityBounds CreateVolumeDensityBound(float3 SigmaMin, float3 SigmaMax)
+{
+	FVolumeDensityBounds Result = (FVolumeDensityBounds)0;
+	Result.SigmaMin = SigmaMin;
+	Result.SigmaMax = SigmaMax;
+	return Result;
+}
+
+void MergeVolumeDensityBounds(inout FVolumeDensityBounds Merged, FVolumeDensityBounds Other)
+{
+	Merged.SigmaMin += Other.SigmaMin;
+	Merged.SigmaMax += Other.SigmaMax;
+}
+
+
+// The result of sampling a volume at a given point
+struct FVolumeShadedResult
+{
+	float3 SigmaT;         // extinction
+	float3 SigmaSRayleigh; // Rayleight scattering coefficient
+	float3 SigmaSHG;       // Henyey-Greenstein scattering coefficient
+	float3 Emission;
+	float PhaseG;          // 'g' term for HG lobe
+	// TODO: second HG lobe?
+};
+
+FPathTracingPayload CreateMediumHitPayload(float HitT, float3 TranslatedWorldPos, FVolumeShadedResult ShadedResult)
+{
+	FPathTracingPayload Result = (FPathTracingPayload)0; // clear all fields
+	Result.HitT = HitT;
+	Result.TranslatedWorldPos = TranslatedWorldPos;
+	Result.ShadingModelID = SHADINGMODELID_MEDIUM;
+	Result.BSDFOpacity = 1.0;
+	Result.PrimitiveLightingChannelMask = 7;
+	Result.SetFrontFace();
+	const float3 SigmaS = ShadedResult.SigmaSRayleigh + ShadedResult.SigmaSHG;
+	const float3 RayleighWeight = select(SigmaS > 0.0, min(ShadedResult.SigmaSRayleigh, SigmaS) / SigmaS, 0.0);
+	const float3 HGWeight = select(SigmaS > 0, min(ShadedResult.SigmaSHG, SigmaS) / SigmaS, 0.0);
+	Result.SetBaseColor(RayleighWeight);
+	Result.SetHG(HGWeight, ShadedResult.PhaseG);
+	return Result;
+}
+
+void MergeVolumeShadedResult(inout FVolumeShadedResult Merged, FVolumeShadedResult Other)
+{
+	Merged.SigmaT += Other.SigmaT;
+	Merged.SigmaSRayleigh += Other.SigmaSRayleigh;
+	Merged.SigmaSHG += Other.SigmaSHG;
+	Merged.Emission += Other.Emission;
+	// blend phase function anisotropy based on amount of each medium
+	float Qa = Other.SigmaSHG.x + Other.SigmaSHG.y + Other.SigmaSHG.z;
+	float Qs = Merged.SigmaSHG.x + Merged.SigmaSHG.y + Merged.SigmaSHG.z;
+	Merged.PhaseG = lerp(Merged.PhaseG, Other.PhaseG, Qs > 0 ? Qa / Qs : 0.0);
+}
+
+struct FVolumeSampleResult
+{
+	float3 SurfaceThroughput;  // the path throughput beyond the volume (for the surface hit behind usually)
+	float3 VolumeThroughput;   // the path throughput up to the volume sample (if we sampled one)
+	float  VolumeT;            // distance to volume sample along the ray (will be <= 0 if none was sampled)
+	FVolumeShadedResult VolumeSample; // actual shaded volume hit (if we have one)
+
+	bool VolumeHit() { return VolumeT > 0.0; }
+};
+
+FVolumeSampleResult CreateEmptyVolumeSampleResult()
+{
+	FVolumeSampleResult Result = (FVolumeSampleResult)0;
+	Result.VolumeT = -1.0;
+	return Result;
+}
+
+// represent a stochastically chosen volume element that is guaranteed to lie between 
+struct FVolumeSegment
+{
+	float3 Throughput; // path contribution from the start of the volume segment
+	FVolumeIntersectionInterval Interval;
+
+	bool IsValid() { return Interval.VolumeTMin < Interval.VolumeTMax; }
+};
+
+FVolumeSegment CreateEmptyVolumeSegment()
+{
+	return (FVolumeSegment)0;
+}

@@ -1,0 +1,25 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/SparseVolumeTexture/SparseVolumeTextureCommon.ush"
+RWTexture3D<float4>	DestinationBuffer;
+
+SamplerState		TileDataTextureSampler;
+Texture3D<uint>		SparseVolumeTexturePageTable;
+Texture3D			SparseVolumeTextureA;
+ByteAddressBuffer	StreamingInfoBuffer;
+uint4				PackedSVTUniforms0;
+uint4				PackedSVTUniforms1;
+int3				TextureSize;
+int					MipLevels;
+
+[numthreads(4, 4, 4)]
+void PerformCopyCS(uint3 Index : SV_DispatchThreadID)
+{
+	const FSparseVolumeTextureUniforms Uniforms = SparseVolumeTextureUnpackUniforms(PackedSVTUniforms0, PackedSVTUniforms1, StreamingInfoBuffer);
+	const int MipLevel = Uniforms.LowestResidentMipLevel; // We want to sample level 0, but we also need to be able to fall back to coarser mips.
+	const int3 VirtualCoord = Index >> MipLevel;
+	const int3 VoxelCoord = SparseVolumeTextureLoadPageTable(SparseVolumeTexturePageTable, Uniforms, VirtualCoord, MipLevel);
+
+	DestinationBuffer[Index] = SparseVolumeTextureA.Load(int4(VoxelCoord, 0));
+}

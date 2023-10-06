@@ -1,0 +1,20 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Shared/RayTracingPayloadType.h"
+#include "RayTracingCommon.ush"
+
+#if IS_PAYLOAD_ENABLED(RT_PAYLOAD_TYPE_RAYTRACING_DEBUG)
+struct FRayTracingDebugPayload : FMinimalPayload
+{
+	uint InstanceHash;
+	uint TriangleIndex;
+	uint InstanceIndex;
+	uint GeometryInstanceIndex;
+
+	float3 WorldNormal;
+	uint GeometryIndex;
+};
+CHECK_RT_PAYLOAD_SIZE(FRayTracingDebugPayload)
+#endif

@@ -1,0 +1,18 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HgiGL" : {
+                        "bases": ["Hgi"]
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/libusd_hgiGL.dylib",
+            "Name": "hgiGL",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

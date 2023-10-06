@@ -1,0 +1,4 @@
+../../../Templates/TP_FirstPersonBP/manifest.json
+../../../Templates/TP_FirstPersonBP/Config/config.ini
+../../../Templates/TP_FirstPersonBP/Media/TP_FirstPersonBP.png
+../../../Templates/TP_FirstPersonBP/Media/TP_FirstPersonBP_Preview.png

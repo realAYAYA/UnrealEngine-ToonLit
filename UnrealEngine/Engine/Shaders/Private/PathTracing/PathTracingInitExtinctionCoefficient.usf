@@ -1,0 +1,60 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "PathTracingCommon.ush"
+
+RaytracingAccelerationStructure TLAS;
+RWBuffer<float> RWStartingExtinctionCoefficient;
+
+RAY_TRACING_ENTRY_RAYGEN(PathTracingInitExtinctionCoefficientRG)
+{
+	const uint RayFlags = 0;
+	const uint MissShaderIndex = 0;
+	const uint InstanceInclusionMask = PATHTRACER_MASK_CAMERA; // Ignore hair strands, only trace what camera rays can see
+
+	FRayDesc UpRay;
+	UpRay.Origin = PrimaryView.TranslatedWorldCameraOrigin;
+	UpRay.Direction = float3(0, 0, 1);
+	UpRay.TMin = 0.0;
+	UpRay.TMax = POSITIVE_INFINITY;
+		
+	float3 StartingSigmaT = 0.0;
+	for (;;)
+	{
+		FPackedPathTracingPayload PackedPayload = InitPathTracingPayload(PATHTRACER_SCATTER_CAMERA, 0.0);
+		// STRATA_TODO: Set the stochastic slab random value? Add special flag to only return extinction of solid glass?
+		// The current behavior will only work correctly for single-slab materials
+		TraceRay(
+			TLAS,
+			RayFlags,
+			InstanceInclusionMask,
+			RAY_TRACING_SHADER_SLOT_MATERIAL,
+			RAY_TRACING_NUM_SHADER_SLOTS,
+			MissShaderIndex,
+			UpRay.GetNativeDesc(),
+			PackedPayload);
+		if (PackedPayload.IsMiss())
+		{
+			// we didn't hit anything
+			break;
+		}
+		FPathTracingPayload HitPayload = UnpackPathTracingPayload(PackedPayload, UpRay);
+		if (HitPayload.IsMaterialSolidGlass())
+		{
+			// Found a solid transmissive medium -- pickup the extinction
+			float3 LocalSigmaT = HitPayload.GetExtinction();
+
+			// increase when we leave a medium (that means we must have been inside before)
+			// decrease when we enter a medium (will be cancelled out when we leave)
+			StartingSigmaT += HitPayload.IsFrontFace() ? -LocalSigmaT : +LocalSigmaT;
+		}
+		// keep tracing
+		UpRay.TMin = asfloat(asuint(PackedPayload.HitT) + 1);
+	}
+	// clamp against 0 in the unlikely case that we only hit front faces of glass on our way up
+	StartingSigmaT = max(StartingSigmaT, 0.0);
+
+	RWStartingExtinctionCoefficient[0] = StartingSigmaT.x;
+	RWStartingExtinctionCoefficient[1] = StartingSigmaT.y;
+	RWStartingExtinctionCoefficient[2] = StartingSigmaT.z;
+}

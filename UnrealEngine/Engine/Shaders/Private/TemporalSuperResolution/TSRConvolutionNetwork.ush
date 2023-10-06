@@ -1,0 +1,533 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "TSRCommon.ush"
+#include "/Engine/Public/LaneVectorization.ush"
+
+
+#ifndef WAVE_COUNT_X
+	#error WAVE_COUNT_X is undefined.
+#endif
+
+#ifndef WAVE_COUNT_Y
+	#error WAVE_COUNT_Y is undefined.
+#endif
+
+#ifndef LANE_COUNT_X
+	#error LANE_COUNT_X is undefined.
+#endif
+
+#ifndef LANE_COUNT_Y
+	#error LANE_COUNT_Y is undefined.
+#endif
+
+/** Total number of waves. */
+#define WAVE_COUNT (WAVE_COUNT_X * WAVE_COUNT_Y)
+
+/** Total number of lane per wave. */
+#define LANE_COUNT (LANE_COUNT_X * LANE_COUNT_Y)
+
+
+/**
+ * LANE_COUNT_X=2
+ * LANE_COUNT_Y=2
+ * LaneStride=(4, 2)
+ *
+ *    o   o   o   o | o   o   o   o
+ *	                |
+ *    o   o   o   o | o   o   o   o
+ *	  --------------+--------------
+ *    o   o   o   o | o   o   o   o
+ *	                |
+ *    o   o   o   o | o   o   o   o
+ */
+
+ 
+//------------------------------------------------------- GLOBAL VARIABLE
+
+static uint GGroupThreadIndex = 0;
+
+
+//------------------------------------------------------- VECTOR MEMORY ORDER
+
+/** Returns coordinate of a pixel within a lane. */
+CALL_SITE_DEBUGLOC
+template<uint LaneStrideX, uint LaneStrideY>
+tsr_short2 GetSimdIndexPixelCoordinateInLane(const uint SimdIndex)
+{
+	return tsr_short2(SimdIndex % LaneStrideX, SimdIndex / LaneStrideX);
+}
+
+CALL_SITE_DEBUGLOC
+template<uint LaneStrideX, uint LaneStrideY>
+uint GetPixelCoordinateInLaneSimdIndex(const tsr_short2 PixelCoordinateInLane)
+{
+	return uint(dot(PixelCoordinateInLane, tsr_short2(1, LaneStrideX)));
+}
+
+
+/** Returns coordinate of a pixel within a wave. */
+CALL_SITE_DEBUGLOC
+template<uint LaneStrideX, uint LaneStrideY>
+tsr_short2 GetLaneSimdPixelOffset(const uint LaneIndex, const uint SimdIndex)
+{
+	return (
+		tsr_short2(LaneIndex % uint(LANE_COUNT_X * WAVE_COUNT_X), LaneIndex / uint(LANE_COUNT_X * WAVE_COUNT_X)) * tsr_short2(LaneStrideX, LaneStrideY) +
+		GetSimdIndexPixelCoordinateInLane<LaneStrideX, LaneStrideY>(SimdIndex)
+	);
+}
+
+
+//------------------------------------------------------- GROUP SHARED COMMUNICATION
+
+#if defined(LDS_SIZE)
+
+groupshared tsr_half4 SharedData[LDS_SIZE];
+
+void WriteElementToLDS(const uint SharedIndex, tsr_half X)
+{
+	SharedData[SharedIndex] = tsr_half4(X, 0.0, 0.0, 0.0);
+}
+
+void WriteElementToLDS(const uint SharedIndex, tsr_half3 X)
+{
+	SharedData[SharedIndex] = tsr_half4(X, 0.0);
+}
+
+void WriteElementToLDS(const uint SharedIndex, tsr_half4 X)
+{
+	SharedData[SharedIndex] = tsr_half4(X);
+}
+
+void ReadElementFromLDS(const uint SharedIndex, out tsr_half X)
+{
+	X = SharedData[SharedIndex].x;
+}
+
+void ReadElementFromLDS(const uint SharedIndex, out tsr_half3 X)
+{
+	X = SharedData[SharedIndex].xyz;
+}
+
+void ReadElementFromLDS(const uint SharedIndex, out tsr_half4 X)
+{
+	X = SharedData[SharedIndex].xyzw;
+}
+
+#endif // defined(LDS_SIZE)
+
+
+//------------------------------------------------------- FUNCTIONS
+
+#if WAVE_COUNT_X == 1 || WAVE_COUNT_Y == 1
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> WaveAccessNeighborTexel(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Input,
+	const tsr_short2 Offset)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Return;
+	
+	UNROLL
+	for (uint SimdIndex = 0; SimdIndex < LaneStrideX * LaneStrideY; SimdIndex++)
+	{
+		const uint2 SimdPixelCoord = uint2(GetSimdIndexPixelCoordinateInLane<LaneStrideX, LaneStrideY>(SimdIndex));
+
+		// Compute the simd index of the neighbor.
+		const uint2 NeigborSimdPixelCoord = (SimdPixelCoord + uint2(Offset)) % uint2(LaneStrideX, LaneStrideY);
+		const uint NeigborSimdIndex = dot(NeigborSimdPixelCoord, uint2(1, LaneStrideX));
+
+		// Compute the lane rotaton of the neighbor.
+		const bool2 bNeedsLaneRotation = (SimdPixelCoord + uint2(Offset)) >= uint2(LaneStrideX, LaneStrideY);
+		const int LaneRotation = dot(select(bNeedsLaneRotation, int2(Offset), 0), int2(1, LANE_COUNT_X));
+		
+		// Access the lement.
+		vector<ScalarType, VectorSize> SimdElement = Input.GetElement(NeigborSimdIndex);
+		vector<ScalarType, VectorSize> ReturnSimdElement = SimdElement;
+		if (LaneRotation != 0)
+		{
+			// Only uses wave intrinsics on platforms that provides RDNA's ds_swizzle because we know the wave size of this platforms. 
+			#if !PLATFORM_SUPPORTS_WAVE_ROTATE
+				//#error InitWaveRotateLaneGroup() isn't supported.
+			#endif
+			const FWaveBroadcastSettings BroadcastSettings = InitWaveRotateLaneGroup(/* LaneGroupSize = */ LANE_COUNT, LaneRotation);
+			ReturnSimdElement = WaveBroadcast(BroadcastSettings, SimdElement);
+		}
+
+		Return.SetElement(SimdIndex, ReturnSimdElement);
+	}
+
+	return Return;
+}
+
+#endif // WAVE_COUNT_X == 1 || WAVE_COUNT_Y == 1
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+void AccessNeighborTexels3x1(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CO,
+	out TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CP,
+	out TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CN)
+#if WAVE_COUNT_X > 1
+{
+	const uint TotalNumberOfLaneInGroup = LANE_COUNT_Y * WAVE_COUNT;
+
+	if (LaneStrideX == 1)
+	{
+		GroupMemoryBarrierWithGroupSync();
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LaneStrideY; SimdIndex++)
+		{
+			WriteElementToLDS(GGroupThreadIndex + SimdIndex * TotalNumberOfLaneInGroup, CO.GetElement(SimdIndex));
+		}
+		GroupMemoryBarrierWithGroupSync();
+		
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LaneStrideY; SimdIndex++)
+		{
+			vector<ScalarType, VectorSize> FirstElement;
+			vector<ScalarType, VectorSize> LastElement;
+			ReadElementFromLDS(((GGroupThreadIndex - 1) % TotalNumberOfLaneInGroup) + SimdIndex * TotalNumberOfLaneInGroup, /* out */ FirstElement);
+			ReadElementFromLDS(((GGroupThreadIndex + 1) % TotalNumberOfLaneInGroup) + SimdIndex * TotalNumberOfLaneInGroup, /* out */ LastElement);
+	
+			CP.SetElement(SimdIndex, LastElement);
+			CN.SetElement(SimdIndex, FirstElement);
+		}
+	}
+	else
+	{
+		// TODO
+		CP = CN = CO;
+	}
+}
+#else
+{
+	CP = WaveAccessNeighborTexel(CO, tsr_short2(1, 0));
+	CN = WaveAccessNeighborTexel(CO, tsr_short2(-1, 0));
+}
+#endif
+
+
+CALL_SITE_DEBUGLOC
+ISOLATE
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+void AccessNeighborTexels1x3(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CO,
+	out TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CP,
+	out TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CN)
+#if WAVE_COUNT_Y > 1
+{
+	const uint TotalNumberOfLaneInGroup = LANE_COUNT_X * WAVE_COUNT;
+
+	if (LaneStrideY == 1)
+	{
+		GroupMemoryBarrierWithGroupSync();
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LaneStrideX; SimdIndex++)
+		{
+			WriteElementToLDS(GGroupThreadIndex + SimdIndex * TotalNumberOfLaneInGroup, CO.GetElement(SimdIndex));
+		}
+		GroupMemoryBarrierWithGroupSync();
+		
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LaneStrideX; SimdIndex++)
+		{
+			vector<ScalarType, VectorSize> FirstElement;
+			vector<ScalarType, VectorSize> LastElement;
+			ReadElementFromLDS(((GGroupThreadIndex - LANE_COUNT_X * WAVE_COUNT_X) % TotalNumberOfLaneInGroup) + SimdIndex * TotalNumberOfLaneInGroup, /* out */ FirstElement);
+			ReadElementFromLDS(((GGroupThreadIndex + LANE_COUNT_X * WAVE_COUNT_X) % TotalNumberOfLaneInGroup) + SimdIndex * TotalNumberOfLaneInGroup, /* out */ LastElement);
+	
+			CP.SetElement(SimdIndex, LastElement);
+			CN.SetElement(SimdIndex, FirstElement);
+		}
+	}
+	else
+	{
+		const uint FirstSimdIndex = 0;
+		const uint LastSimdIndex = LaneStrideX * LaneStrideY - LaneStrideX;
+
+		GroupMemoryBarrierWithGroupSync();
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LaneStrideX; SimdIndex++)
+		{
+			WriteElementToLDS(GGroupThreadIndex + (0 + SimdIndex) * TotalNumberOfLaneInGroup, CO.GetElement(FirstSimdIndex + SimdIndex));
+			WriteElementToLDS(GGroupThreadIndex + (2 + SimdIndex) * TotalNumberOfLaneInGroup, CO.GetElement(LastSimdIndex + SimdIndex));
+		}
+		GroupMemoryBarrierWithGroupSync();
+	
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LastSimdIndex; SimdIndex++)
+		{
+			CP.SetElement(SimdIndex + 0, CO.GetElement(SimdIndex + LaneStrideX));
+			CN.SetElement(SimdIndex + LaneStrideX, CO.GetElement(SimdIndex + 0));
+		}
+	
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < LaneStrideX; SimdIndex++)
+		{
+			vector<ScalarType, VectorSize> FirstElement;
+			vector<ScalarType, VectorSize> LastElement;
+			ReadElementFromLDS(((GGroupThreadIndex - LANE_COUNT_X * WAVE_COUNT_X) % TotalNumberOfLaneInGroup) + (2 + SimdIndex) * TotalNumberOfLaneInGroup, /* out */ FirstElement);
+			ReadElementFromLDS(((GGroupThreadIndex + LANE_COUNT_X * WAVE_COUNT_X) % TotalNumberOfLaneInGroup) + (0 + SimdIndex) * TotalNumberOfLaneInGroup, /* out */ LastElement);
+	
+			CP.SetElement(LastSimdIndex + SimdIndex, LastElement);
+			CN.SetElement(FirstSimdIndex + SimdIndex, FirstElement);
+		}
+	}
+}
+#else
+{
+	CP = WaveAccessNeighborTexel(CO, tsr_short2(0, 1));
+	CN = WaveAccessNeighborTexel(CO, tsr_short2(0, -1));
+}
+#endif
+
+
+//------------------------------------------------------- BLUR 3x3 CONVOLUTION
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Blur3x3(TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Center)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CO = Center;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CN;
+	AccessNeighborTexels1x3(CO, /* out */ CP, /* out */ CN);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> BO = (
+		CO * TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY>::Const(0.5) +
+		CP * TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY>::Const(0.25) +
+		CN * TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY>::Const(0.25));
+
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> BP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> BN;
+	AccessNeighborTexels3x1(BO, /* out */ BP, /* out */ BN);
+
+	return (
+		BO * TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY>::Const(0.5) +
+		BP * TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY>::Const(0.25) +
+		BN * TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY>::Const(0.25));
+}
+
+
+//------------------------------------------------------- MIN & MAX 3x3 CONVOLUTION
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Min3x3(TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Center)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CO = Center;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CN;
+	AccessNeighborTexels1x3(CO, /* out */ CP, /* out */ CN);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MinO = min3(CN, CP, CO);
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MinP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MinN;
+	AccessNeighborTexels3x1(MinO, /* out */ MinP, /* out */ MinN);
+
+	return min3(MinN, MinP, MinO);
+}
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Max3x3(TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Center)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CO = Center;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CN;
+	AccessNeighborTexels1x3(CO, /* out */ CP, /* out */ CN);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MaxO = max3(CN, CP, CO);
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MaxP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MaxN;
+	AccessNeighborTexels3x1(MaxO, /* out */ MaxP, /* out */ MaxN);
+
+	return max3(MaxN, MaxP, MaxO);
+}
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+void MinMax3x3(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Center,
+	out TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> OutMin,
+	out TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> OutMax)
+#if 1
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CO = Center;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> CN;
+	AccessNeighborTexels1x3(CO, /* out */ CP, /* out */ CN);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MinO = min3(CN, CP, CO);
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MaxO = max3(CN, CP, CO);
+
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MinP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MinN;
+	AccessNeighborTexels3x1(MinO, /* out */ MinP, /* out */ MinN);
+	OutMin = min3(MinN, MinP, MinO);
+
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MaxP;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> MaxN;
+	AccessNeighborTexels3x1(MaxO, /* out */ MaxP, /* out */ MaxN);
+	OutMax = max3(MaxN, MaxP, MaxO);
+}
+#else
+{
+	OutMin = Min3x3(Center);
+	OutMax = Max3x3(Center);
+}
+#endif
+
+
+//------------------------------------------------------- MEDIAN 3x3 CONVOLUTION
+
+// Operator that output, lowest, median and highest values from 3 input values.
+CALL_SITE_DEBUGLOC
+template<typename FSampleType>
+void LMHOperator(FSampleType A, FSampleType B, FSampleType C, out FSampleType L, out FSampleType M, out FSampleType H)
+#if COMPILER_SUPPORTS_MED3
+{
+	L = min3(A, B, C);
+	M = med3(A, B, C);
+	H = max3(A, B, C);
+}
+#else
+{
+	FSampleType X = min(B, C);
+	FSampleType Y = max(B, C);
+	
+	L = min(A, X);
+	FSampleType Z = max(A, X);
+
+	M = min(Z, Y);
+	H = max(Z, Y);
+}
+#endif
+
+// 3 samples median.
+CALL_SITE_DEBUGLOC
+template<typename FSampleType>
+FSampleType Median(FSampleType A, FSampleType B, FSampleType C)
+#if COMPILER_SUPPORTS_MED3
+{
+	return med3(A, B, C);
+}
+#else
+{
+	FSampleType L, M, H;
+	LMHOperator(A, B, C, L, M, H);
+	return M;
+}
+#endif
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Median3x3(TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Center)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> C0 = Center;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> C1;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> C2;
+	AccessNeighborTexels1x3(C0, /* out */ C1, /* out */ C2);
+	
+	// First layer.
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0L0;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0M0;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0H0;
+	LMHOperator(C0, C1, C2, M0L0, M0M0, M0H0);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0L1;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0L2;
+	AccessNeighborTexels3x1(M0L0, /* out */ M0L1, /* out */ M0L2);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0M1;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0M2;
+	AccessNeighborTexels3x1(M0M0, /* out */ M0M1, /* out */ M0M2);
+	
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0H1;
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M0H2;
+	AccessNeighborTexels3x1(M0H0, /* out */ M0H1, /* out */ M0H2);
+	
+	// Second layer.
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> M1[3];
+	M1[0] = max3(M0L0, M0L1, M0L2);
+	M1[1] = Median(M0M0, M0M1, M0M2);
+	M1[2] = min3(M0H0, M0H1, M0H2);
+	
+	// Third layer.
+	return Median(M1[0], M1[1], M1[2]);
+}
+
+
+//------------------------------------------------------- DOWNSAMPLE 2x2 CONVOLUTIONS
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> DownsampleMin2x2(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Input)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> OutMin;
+	UNROLL
+	for (uint OutputSimdIndex = 0; OutputSimdIndex < ((LaneStrideX * LaneStrideY) / 4); OutputSimdIndex++)
+	{
+		const uint2 OutputPos = GetSimdIndexPixelCoordinateInLane<LaneStrideX / 2, LaneStrideY / 2>(OutputSimdIndex);
+		vector<ScalarType, VectorSize> Input0 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[0])));
+		vector<ScalarType, VectorSize> Input1 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[1])));
+		vector<ScalarType, VectorSize> Input2 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[2])));
+		vector<ScalarType, VectorSize> Input3 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[3])));
+
+		OutMin.SetElement(OutputSimdIndex, min(min(Input0, Input1), min(Input2, Input3)));
+	}
+	return OutMin;
+}
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> DownsampleMax2x2(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Input)
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> OutMax;
+	UNROLL
+	for (uint OutputSimdIndex = 0; OutputSimdIndex < ((LaneStrideX * LaneStrideY) / 4); OutputSimdIndex++)
+	{
+		const uint2 OutputPos = GetSimdIndexPixelCoordinateInLane<LaneStrideX / 2, LaneStrideY / 2>(OutputSimdIndex);
+		vector<ScalarType, VectorSize> Input0 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[0])));
+		vector<ScalarType, VectorSize> Input1 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[1])));
+		vector<ScalarType, VectorSize> Input2 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[2])));
+		vector<ScalarType, VectorSize> Input3 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[3])));
+
+		OutMax.SetElement(OutputSimdIndex, max(max(Input0, Input1), max(Input2, Input3)));
+	}
+	return OutMax;
+}
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> DownsampleDot2x2(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Input, const ScalarType Weights[4])
+{
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> OutMax;
+	UNROLL
+	for (uint OutputSimdIndex = 0; OutputSimdIndex < ((LaneStrideX * LaneStrideY) / 4); OutputSimdIndex++)
+	{
+		const uint2 OutputPos = GetSimdIndexPixelCoordinateInLane<LaneStrideX / 2, LaneStrideY / 2>(OutputSimdIndex);
+		vector<ScalarType, VectorSize> Input0 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[0])));
+		vector<ScalarType, VectorSize> Input1 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[1])));
+		vector<ScalarType, VectorSize> Input2 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[2])));
+		vector<ScalarType, VectorSize> Input3 = Input.GetElement(GetPixelCoordinateInLaneSimdIndex<LaneStrideX, LaneStrideY>(tsr_short2(OutputPos * 2 + Offsets2x2[3])));
+
+		OutMax.SetElement(OutputSimdIndex, Input0 * Weights[0] + Input1 * Weights[1] + Input2 * Weights[2] + Input3 * Weights[3]);
+	}
+	return OutMax;
+}
+
+CALL_SITE_DEBUGLOC
+template<typename ScalarType, uint VectorSize, uint LaneStrideX, uint LaneStrideY>
+TLaneVector2D<ScalarType, VectorSize, LaneStrideX / 2, LaneStrideY / 2> DownsampleAvg2x2(
+	TLaneVector2D<ScalarType, VectorSize, LaneStrideX, LaneStrideY> Input)
+{
+	const ScalarType Weights[4] = { ScalarType(0.25), ScalarType(0.25), ScalarType(0.25), ScalarType(0.25) };
+	return DownsampleDot2x2(Input, Weights);
+}

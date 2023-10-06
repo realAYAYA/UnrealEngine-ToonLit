@@ -1,0 +1,773 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+
+ByteAddressBuffer	BlockBuffer;
+Texture3D<float>	DistValues;
+
+void BlockBounds( uint2 Block, out uint3 Min, out uint3 Max )
+{
+	// Block is 64bits split into 2 uints to represent 4x4x4.
+	// Bit = x + y * 4 + z * 16;
+	uint Bits;
+
+	// Z
+	if(1)
+	{
+		Bits = Block.x | Block.y;
+
+		Block.x = ( Block.x | ( Block.x >> 8 ) ) & 0x00ff00ff;
+		Block.y = ( Block.y | ( Block.y >> 8 ) ) & 0x00ff00ff;
+
+		Block.x = ( Block.x | ( Block.x >> 8 ) );
+		Block.y = ( Block.y | ( Block.y >> 8 ) );
+
+		uint BitsZ = Block.x | ( Block.y << 16 );
+
+		Min.z = firstbitlow ( BitsZ ) >> 3;
+		Max.z = firstbithigh( BitsZ ) >> 3;
+	}
+	else
+	{
+		Bits  = ( Block.x | ( Block.x >> 16 ) ) & 0x0000ffff;
+		Bits |= ( Block.y | ( Block.y << 16 ) ) & 0xffff0000;
+
+		Min.z = firstbitlow ( Bits ) >> 3;
+		Max.z = firstbithigh( Bits ) >> 3;
+	}
+
+	// Y
+	Bits = (Bits | (Bits >> 16)) & 0xffff;
+
+	Min.y = firstbitlow ( Bits ) >> 2;
+	Max.y = firstbithigh( Bits ) >> 2;
+
+	// X
+	Bits = (Bits | (Bits >> 8));// & 0xff;
+	Bits = (Bits | (Bits >> 4)) & 0x0f;
+
+	Min.x = firstbitlow ( Bits );
+	Max.x = firstbithigh( Bits );
+
+	//Min.xy = 0;
+	//Max.xy = 3;
+
+	// Max is upper bound
+	Max += 1;
+}
+
+struct FRay
+{
+	float3	Origin;
+	float3	Direction;
+
+	float2	Time;
+};
+
+struct FDDA
+{
+	float2	Time;
+
+	bool3	IsPositive;
+	float3	Step;
+	uint	VoxelIndex;
+
+	float3	InvDir;
+	float3	Next;
+};
+
+FDDA InitDDA( FRay Ray )
+{
+	FDDA DDA;
+	DDA.Time = Ray.Time;
+	DDA.IsPositive = Ray.Direction >= 0;
+	DDA.Step = select( DDA.IsPositive, int3( 1, 4, 16 ), -int3( 1, 4, 16 ) );
+	DDA.VoxelIndex = 0;
+	DDA.InvDir = rcp( Ray.Direction );
+	return DDA;
+}
+
+void StartDDA( inout FDDA DDA, const uint Dimension, const FRay Ray )
+{
+	float3 Position = Ray.Origin + Ray.Direction * DDA.Time[0];
+	float3 Voxel = floor( Position );
+
+	DDA.VoxelIndex = uint( ( Voxel.x + Voxel.y * 4 ) + Voxel.z * 16 );
+	DDA.InvDir = rcp( Ray.Direction );
+	//DDA.Next = DDA.Time[0] + ( ( Voxel - Position + 0.5 ) * DDA.Sign + 0.5 ) * abs( DDA.InvDir );
+
+	//uint3 MinCorner = uint3( Voxel );// & ~(Dimension - 1);
+	float3 MinCorner = Voxel;
+	float3 FarCorner = MinCorner + select( DDA.IsPositive, Dimension, 0 );
+	DDA.Next = DDA.Time[0] + ( FarCorner - Position ) * DDA.InvDir;
+}
+
+float NextTime( FDDA DDA )
+{
+	return min3( DDA.Next.x, DDA.Next.y, DDA.Next.z );
+}
+
+void StepDDA( inout FDDA DDA, const uint Dimension )
+{
+	DDA.Time[0] = NextTime( DDA );
+
+#if 1
+#if 0
+	bool3 bLeast = DDA.Next.xyz <= min( DDA.Next.yzx, DDA.Next.zxy );
+	//float3 Mask = float3( (DDA.Next.xyz < DDA.Next.yzx) & (DDA.Next.xyz <= DDA.Next.zxy) );
+//#elif 0
+	//bool3 bLeast = DDA.Next.xxy < DDA.Next.yzz;
+	//bLeast.x = bLeast.x && bLeast.y;
+	//bLeast.y = !bLeast.x && bLeast.z;
+	//bLeast.z = !bLeast.x && !bLeast.y;
+	float3 Mask = bLeast ? Dimension : 0;
+#else
+	float3 Mask = 0;
+	FLATTEN
+	if( DDA.Next.x < DDA.Next.y && DDA.Next.x < DDA.Next.z )
+		Mask.x = Dimension;
+	else if( DDA.Next.y < DDA.Next.z )
+		Mask.y = Dimension;
+	else
+		Mask.z = Dimension;
+#endif
+	
+	DDA.Next		+= Mask * abs( DDA.InvDir );
+	DDA.VoxelIndex	+= dot( Mask, DDA.Step );
+#else
+	FLATTEN
+	if( DDA.Next.x < DDA.Next.y && DDA.Next.x < DDA.Next.z )
+	{
+		DDA.Next.x += abs( DDA.InvDir.x );
+		DDA.VoxelIndex += DDA.Step.x;
+	}
+	else if( DDA.Next.y < DDA.Next.z )
+	{
+		DDA.Next.y += abs( DDA.InvDir.y );
+		DDA.VoxelIndex += DDA.Step.y;
+	}
+	else
+	{
+		DDA.Next.z += abs( DDA.InvDir.z );
+		DDA.VoxelIndex += DDA.Step.z;
+	}
+#endif
+}
+
+uint PrefixSum64( uint2 Occupency, uint Index, uint2 Mask )
+{
+	uint Offset;
+	Mask -= 1;
+	Offset  = countbits( Occupency.x & ( Index < 32 ? Mask.x : ~0u ) );
+	Offset += countbits( Occupency.y & ( Index < 32 ? 0 : Mask.y ) );
+	return Offset;
+}
+
+float2 RayUnitBox( FRay Ray )
+{
+#if 0
+	float3 Origin = Ray.Direction >= 0 ? -Ray.Origin : Ray.Origin;
+	float3 InvDir = rcp( abs( Ray.Direction ) );
+	float3 MinIntersection = ( Origin - 0.5 ) * InvDir;
+	float3 MaxIntersection = ( Origin + 0.5 ) * InvDir;
+#else
+	float3 InvDir = rcp( Ray.Direction );
+	float3 Center = -Ray.Origin * InvDir;
+	float3 Extent = 0.5 * abs( InvDir );
+	float3 MinIntersection = Center - Extent;
+	float3 MaxIntersection = Center + Extent;
+#endif
+	Ray.Time[0] = max( Ray.Time[0], max3( MinIntersection.x, MinIntersection.y, MinIntersection.z ) );
+	Ray.Time[1] = min( Ray.Time[1], min3( MaxIntersection.x, MaxIntersection.y, MaxIntersection.z ) );
+	return Ray.Time;
+}
+
+float2 Intersect( FRay Ray, float3 Bounds[2] )
+{
+	float3 InvDir = rcp( Ray.Direction );
+	float3 PlaneIntersect0 = ( Bounds[0] - Ray.Origin ) * InvDir;
+	float3 PlaneIntersect1 = ( Bounds[1] - Ray.Origin ) * InvDir;
+	float3 MinIntersection = min( PlaneIntersect0, PlaneIntersect1 );
+	float3 MaxIntersection = max( PlaneIntersect0, PlaneIntersect1 );
+
+	Ray.Time[0] = max( Ray.Time[0], max3( MinIntersection.x, MinIntersection.y, MinIntersection.z ) );
+	Ray.Time[1] = min( Ray.Time[1], min3( MaxIntersection.x, MaxIntersection.y, MaxIntersection.z ) );
+
+	return Ray.Time;
+}
+
+
+struct FRayCastCounters
+{
+	int		Tests;
+	uint	Steps;
+	uint	StepIn;
+	uint	StepOut;
+};
+
+// Assumes Ray in local 0-1 space
+float RayCastBrick_L1( FRay Ray, uint BrickOffset, inout FRayCastCounters Counters )
+{
+	const float Epsilon = 1e-4;
+
+	uint2 NodeBlock = BlockBuffer.Load2( 8 * BrickOffset );
+
+	Ray.Time += float2( Epsilon, -Epsilon );
+
+	Ray.Origin *= 4;
+	Ray.Direction *= 4;
+
+	FDDA DDA = InitDDA( Ray );
+	StartDDA( DDA, 1, Ray );
+
+	while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= 4*3 )
+	{
+		Counters.Tests++;
+
+		uint VoxelMask = 1u << ( DDA.VoxelIndex & 31 );
+		bool bVoxelExists = ( DDA.VoxelIndex < 32 ? NodeBlock.x : NodeBlock.y ) & VoxelMask;
+
+		if( bVoxelExists )
+		{
+			return DDA.Time[0];
+#if 0
+#if 0
+			uint ValuesOffset = 2;
+			ValuesOffset  = countbits( RootBlock.x );
+			ValuesOffset += countbits( RootBlock.y );
+
+			uint BlockOffset = PrefixSum64( NodeBlock, VoxelIndex, VoxelMask );
+#endif
+
+			float2 Time = { DDA.Time[0], NextTime( DDA ) };
+			//Time += float2( Epsilon, -Epsilon );
+
+			// TODO transform to volume space
+
+			float Value[2];
+			Value[0] = DistValues.SampleLevel( View.SharedBilinearClampedSampler, Ray.Origin + Ray.Direction * Time[0], 0 ) - 0.5;
+			Value[1] = DistValues.SampleLevel( View.SharedBilinearClampedSampler, Ray.Origin + Ray.Direction * Time[1], 0 ) - 0.5;
+
+			// Zero crossing
+			//if( Value[0] * Value[1] < 0 )
+			if( Value[1] < 0 )	// Assume Value[0] > 0
+			{
+				Ray.Time[0] = Time[0] + ( Time[1] - Time[0] ) * Value[0] / ( Value[0] - Value[1] );
+				return true;
+			}
+#endif
+		}
+		
+		Counters.Steps++;
+#if 1
+		StepDDA( DDA, 1 );
+#elif 1
+		DDA.Time[0] = NextTime( DDA );
+
+		if( DDA.Time[0] >= DDA.Time[1] )
+			break;
+
+		bool3 bLeast = DDA.Next.xyz <= min( DDA.Next.yzx, DDA.Next.zxy );
+		float3 Mask = bLeast;
+
+		DDA.Next		+= Mask * abs( DDA.InvDir );
+		DDA.VoxelIndex	+= dot( Mask, DDA.Step );
+#else
+		{
+			DDA.Time[0] = NextTime( DDA );
+
+			FLATTEN
+			if( DDA.Next.x < DDA.Next.y && DDA.Next.x < DDA.Next.z )
+			{
+				DDA.Next.x += abs( DDA.InvDir.x );
+				DDA.VoxelIndex += DDA.Step.x;
+			}
+			else if( DDA.Next.y < DDA.Next.z )
+			{
+				DDA.Next.y += abs( DDA.InvDir.y );
+				DDA.VoxelIndex += DDA.Step.y;
+			}
+			else
+			{
+				DDA.Next.z += abs( DDA.InvDir.z );
+				DDA.VoxelIndex += DDA.Step.z;
+			}
+		}
+#endif
+	}
+
+	return Ray.Time[1] + 1.0;
+}
+
+// Assumes Ray in local 0-1 space
+float RayCastBrick_L2_Flat( FRay Ray, uint BrickOffset, inout FRayCastCounters Counters )
+{
+	const float Epsilon = 1e-4;
+
+	uint2 RootBlock = BlockBuffer.Load2( 8 * BrickOffset );
+
+	Ray.Time += float2( Epsilon, -Epsilon );
+
+	Ray.Origin *= 16;
+	Ray.Direction *= 16;
+
+#if 0
+	FDDA DDA = InitDDA( Ray );
+	StartDDA( DDA, 1, Ray );
+#else
+	FDDA DDA;
+	DDA.Time = Ray.Time;
+	DDA.IsPositive = Ray.Direction >= 0;
+	DDA.Step = select( DDA.IsPositive, int3( 1, 4, 16 ), -int3( 1, 4, 16 ) );
+	DDA.InvDir = rcp( Ray.Direction );
+
+	float3 Position = Ray.Origin + Ray.Direction * DDA.Time[0];
+	//float3 Voxel = floor( Position );
+	uint3 Voxel = Position;
+
+	float3 DDA_Sign = select( DDA.IsPositive, 1.0, -1.0 );
+
+	//DDA.VoxelIndex = uint( ( Voxel.x + Voxel.y * 4 ) + Voxel.z * 16 );
+
+	//float3 MinCorner = Voxel;
+	//float3 FarCorner = MinCorner + select( DDA.IsPositive, 1.0, 0.0 );
+	//DDA.Next = DDA.Time[0] + ( FarCorner - Position ) * DDA.InvDir;
+	DDA.Next = DDA.Time[0] + ( ( Voxel - Position + 0.5 ) * DDA_Sign + 0.5 ) * abs( DDA.InvDir );
+#endif
+
+	const uint MaxTests = 3*16 + 3*4;
+	while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= 4*3 )
+	{
+		uint BlockIndex;
+		uint BlockMask;
+		bool bBlockExists;
+
+		do
+		{
+			Counters.Tests++;
+
+			uint3 BlockPos = Voxel >> 2;
+			BlockIndex = BlockPos.x + BlockPos.y * 4 + BlockPos.z * 16;
+			BlockMask = 1u << ( BlockIndex & 31 );
+
+			bBlockExists = ( BlockIndex < 32 ? RootBlock.x : RootBlock.y ) & BlockMask;
+
+			if( bBlockExists )
+				break;
+
+			DDA.Time[0] = NextTime( DDA );
+
+			if( DDA.Time[0] >= DDA.Time[1] )
+				break;
+
+			Counters.Steps++;
+
+			float3 VoxelPos = Voxel & 3;
+			float3 Step4 = select( DDA.IsPositive, 3.0 - VoxelPos, VoxelPos );
+			float3 Next = DDA.Next + abs( DDA.InvDir ) * Step4;
+
+			float3 Step = floor( 1.0 + ( min3( Next.x, Next.y, Next.z ) - DDA.Next ) * abs( Ray.Direction ) );
+
+			DDA.Next	+= Step * abs( DDA.InvDir );
+			Voxel		+= Step * DDA_Sign;
+		}
+		while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests );
+
+		if( !bBlockExists )
+			break;
+
+#if 1
+		return DDA.Time[0];
+#else
+		float3 VoxelPos = Voxel & 3;
+		float3 Next = DDA.Next + abs( DDA.InvDir ) * select( DDA.IsPositive, 3.0 - VoxelPos, VoxelPos );
+
+		float LeafEnd = min3( Next.x, Next.y, Next.z );
+		LeafEnd = min( LeafEnd, DDA.Time[1] );
+
+		uint BlockOffset = PrefixSum64( RootBlock, BlockIndex, BlockMask );
+		uint2 NodeBlock = BlockBuffer.Load2( 8 * ( BrickOffset + 1 + BlockOffset ) );
+		
+		// Step into leaf block
+		Counters.StepIn++;
+
+		do
+		{
+			Counters.Tests++;
+
+			uint3 VoxelPos = Voxel & 3;
+			uint VoxelIndex = uint( VoxelPos.x + VoxelPos.y * 4 + VoxelPos.z * 16 );
+			uint VoxelMask = 1u << ( VoxelIndex & 31 );
+
+			bool bVoxelExists = ( VoxelIndex < 32 ? NodeBlock.x : NodeBlock.y ) & VoxelMask;
+			if( bVoxelExists )
+			{
+				Counters.Tests = -Counters.Tests;
+				return DDA.Time[0];
+				//break;
+			}
+		
+			Counters.Steps++;
+
+			DDA.Time[0] = NextTime( DDA );
+
+			//if( DDA.Time[0] >= DDA.Time[1] )
+			//	break;
+
+			bool3 bLeast = DDA.Next.xyz <= min( DDA.Next.yzx, DDA.Next.zxy );
+			float3 Step = bLeast;
+
+			DDA.Next	+= Step * abs( DDA.InvDir );
+			Voxel		+= Step * DDA_Sign;
+		}
+		while( DDA.Time[0] < LeafEnd && Counters.Tests <= MaxTests );
+#endif
+	}
+
+	return Ray.Time[1] + 1.0;
+}
+
+// Assumes Ray in local 0-1 space
+float RayCastBrick_L2( FRay Ray, uint BrickOffset, inout FRayCastCounters Counters )
+{
+	const float Epsilon = 1e-4;
+
+	bool bRoot = true;
+
+	uint2 RootBlock = BlockBuffer.Load2( 8 * BrickOffset );
+	uint2 NodeBlock = RootBlock;
+
+	Ray.Time += float2( Epsilon, -Epsilon );
+
+	const uint RootShift = 0;
+
+	Ray.Origin		*= 4 << RootShift;
+	Ray.Direction	*= 4 << RootShift;
+
+	FDDA RootDDA;
+
+	FDDA DDA = InitDDA( Ray );
+	StartDDA( DDA, 1 << RootShift, Ray );
+
+	const uint MaxTests = 3*16 + 3*4;
+	while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests )
+	{
+		Counters.Tests++;
+
+		uint VoxelMask = 1 << ( DDA.VoxelIndex & 31 );
+		bool bVoxelExists = ( DDA.VoxelIndex < 32 ? NodeBlock.x : NodeBlock.y ) & VoxelMask;
+
+		if( bVoxelExists )
+		{
+			if( bRoot )
+			{
+				// Step into leaf block
+				Counters.StepIn++;
+
+				RootDDA = DDA;
+
+				bRoot = false;
+
+				uint BlockOffset = PrefixSum64( RootBlock, DDA.VoxelIndex, VoxelMask );
+				NodeBlock = BlockBuffer.Load2( 8 * ( BrickOffset + 1 + BlockOffset ) );
+
+				DDA.Time[1] = NextTime( DDA );
+				DDA.Time += float2( Epsilon, -Epsilon );
+
+				FRay LocalRay = Ray;
+				//LocalRay.Origin -= DDA.Voxel;
+				LocalRay.Origin.x -= ( DDA.VoxelIndex >> 0 ) & 3;
+				LocalRay.Origin.y -= ( DDA.VoxelIndex >> 2 ) & 3;
+				LocalRay.Origin.z -= ( DDA.VoxelIndex >> 4 ) & 3;
+				LocalRay.Origin *= 4;
+				LocalRay.Direction *= 4;
+
+				StartDDA( DDA, 1, LocalRay );
+			}
+			else
+			{
+				return DDA.Time[0];
+			}
+		}
+		else
+		{
+			Counters.Steps++;
+			StepDDA( DDA, bRoot ? (1 << RootShift) : 1 );
+		}
+
+		if( DDA.Time[0] >= DDA.Time[1] && !bRoot )
+		{
+			// Step out, back to root.
+			Counters.StepOut++;
+
+			bRoot = true;
+			NodeBlock = RootBlock;
+			DDA.Time[1] = Ray.Time[1];
+#if 0
+			StartDDA( DDA, (1 << RootShift), Ray );
+#else
+			DDA.InvDir = rcp( Ray.Direction );
+			DDA.VoxelIndex	= RootDDA.VoxelIndex;
+			DDA.Next		= RootDDA.Next;
+
+			StepDDA( DDA, 1 << RootShift );
+#endif
+		}
+	}
+
+	return Ray.Time[1] + 1.0;
+}
+
+#if 1
+void StartDDA2( inout FDDA DDA, const float Scale, const FRay Ray )
+{
+	float3 Position = Ray.Origin + Ray.Direction * DDA.Time[0];
+	float3 Voxel = floor( Position / Scale );
+
+	DDA.VoxelIndex = uint( ( Voxel.x + Voxel.y * 4 ) + Voxel.z * 16 );
+	DDA.Next = DDA.Time[0] + ( ( Voxel + DDA.IsPositive ) * Scale - Position ) * DDA.InvDir;
+}
+
+void StepDDA2( inout FDDA DDA, const float Scale )
+{
+	FLATTEN
+	if( DDA.Next.x < DDA.Next.y && DDA.Next.x < DDA.Next.z )
+	{
+		DDA.Next.x += abs( DDA.InvDir.x ) * Scale;
+		DDA.VoxelIndex += DDA.Step.x;
+	}
+	else if( DDA.Next.y < DDA.Next.z )
+	{
+		DDA.Next.y += abs( DDA.InvDir.y ) * Scale;
+		DDA.VoxelIndex += DDA.Step.y;
+	}
+	else
+	{
+		DDA.Next.z += abs( DDA.InvDir.z ) * Scale;
+		DDA.VoxelIndex += DDA.Step.z;
+	}
+}
+
+// Assumes Ray in local 0-1 space
+float RayCastBrick_L2_WhileWhile( FRay Ray, uint BrickOffset, inout FRayCastCounters Counters )
+{
+	const float Epsilon = 1e-4;
+
+	uint2 RootBlock = BlockBuffer.Load2( 8 * BrickOffset );
+
+	Ray.Time += float2( Epsilon, -Epsilon );
+
+	Ray.Origin		*= 16;
+	Ray.Direction	*= 16;
+
+#if 0
+	FDDA DDA = InitDDA( Ray );
+	StartDDA( DDA, 1, Ray );
+#else
+	FDDA DDA;
+	DDA.Time = Ray.Time;
+	DDA.IsPositive = Ray.Direction >= 0;
+	DDA.Step = select( DDA.IsPositive, int3( 1, 4, 16 ), -int3( 1, 4, 16 ) );
+	DDA.InvDir = rcp( Ray.Direction );
+#endif
+
+	StartDDA2( DDA, 4, Ray );
+
+	const uint MaxTests = 3*16 + 3*4;
+	while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests )
+	{
+		uint BlockMask;
+		bool bBlockExists;
+
+		//StartDDA2( DDA, 4, Ray );
+
+		do
+		{
+			Counters.Tests++;
+
+			BlockMask    = 1u << ( DDA.VoxelIndex & 31 );
+			bBlockExists = ( DDA.VoxelIndex < 32 ? RootBlock.x : RootBlock.y ) & BlockMask;
+
+			if( bBlockExists )
+				break;
+
+			DDA.Time[0] = NextTime( DDA );
+
+			if( DDA.Time[0] >= DDA.Time[1] )
+				break;
+
+			StepDDA2( DDA, 4 );
+			Counters.Steps++;
+		}
+		while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests );
+
+		if( !bBlockExists )
+			break;
+
+		//return DDA.Time[0];
+		
+		uint BlockOffset = PrefixSum64( RootBlock, DDA.VoxelIndex, BlockMask );
+		uint2 NodeBlock = BlockBuffer.Load2( 8 * ( BrickOffset + 1 + BlockOffset ) );
+		
+		DDA.Time[0] += Epsilon;
+		DDA.Time[1] = NextTime( DDA ) - Epsilon * 2;	// 2 to counter the previous Epsilon
+
+		uint	RootIndex	= DDA.VoxelIndex;
+		float3	RootNext	= DDA.Next;
+
+#if 0
+		FRay LocalRay = Ray;
+		LocalRay.Origin.x -= ( DDA.VoxelIndex << 2 ) & 12;
+		LocalRay.Origin.y -= ( DDA.VoxelIndex >> 0 ) & 12;
+		LocalRay.Origin.z -= ( DDA.VoxelIndex >> 2 ) & 12;
+
+		uint3 Min, Max;
+		BlockBounds( NodeBlock, Min, Max );
+		float3 Bounds[2] = { Min, Max };
+
+		DDA.Time = Intersect( LocalRay, Bounds );
+		DDA.Time += float2( Epsilon, -Epsilon );
+		
+		StartDDA2( DDA, 1, LocalRay );
+#else
+		float3 Position = Ray.Origin + Ray.Direction * DDA.Time[0];
+		uint3 Voxel = int3( Position ) & 3;
+
+		DDA.VoxelIndex = uint( ( Voxel.x + Voxel.y * 4 ) + Voxel.z * 16 );
+		DDA.Next = DDA.Time[0] + ( DDA.IsPositive - frac( Position ) ) * DDA.InvDir;
+#endif
+		
+		// Step into leaf block
+		Counters.StepIn++;
+
+		do
+		{
+			Counters.Tests++;
+
+			uint VoxelMask    = 1u << ( DDA.VoxelIndex & 31 );
+			bool bVoxelExists = ( DDA.VoxelIndex < 32 ? NodeBlock.x : NodeBlock.y ) & VoxelMask;
+
+			if( bVoxelExists )
+				return DDA.Time[0];
+
+			DDA.Time[0] = NextTime( DDA );
+
+			if( DDA.Time[0] >= DDA.Time[1] )
+				break;
+
+			StepDDA2( DDA, 1 );
+			Counters.Steps++;
+		}
+		while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests );
+
+		// Step out, back to root.
+		Counters.StepOut++;
+
+		DDA.Time[1]		= Ray.Time[1];
+		DDA.VoxelIndex	= RootIndex;
+		DDA.Next		= RootNext;
+		
+		StepDDA2( DDA, 4 );
+		Counters.Steps++;
+	}
+
+	return Ray.Time[1] + 1.0;
+}
+#endif
+
+// Assumes Ray in local 0-1 space
+float RayCastBrick_L2_WhileIf( FRay Ray, uint BrickOffset, inout FRayCastCounters Counters )
+{
+	const float Epsilon = 1e-4;
+
+	bool bRoot = true;
+
+	uint2 RootBlock = BlockBuffer.Load2( 8 * BrickOffset );
+	uint2 NodeBlock = RootBlock;
+
+	Ray.Time += float2( Epsilon, -Epsilon );
+
+	Ray.Origin *= 4;
+	Ray.Direction *= 4;
+
+	FDDA DDA = InitDDA( Ray );
+	StartDDA( DDA, 4, Ray );
+
+	const uint MaxTests = 3*16 + 3*4;
+	while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests )
+	{
+		uint  VoxelIndex;
+		uint2 VoxelMask;
+		bool bVoxelExists;
+
+		do
+		{
+			Counters.Tests++;
+
+			VoxelIndex = DDA.VoxelIndex;
+			//VoxelIndex = uint( DDA.Voxel.x + DDA.Voxel.y * 4 + DDA.Voxel.z * 16 );
+			VoxelMask = uint2(
+				1u << VoxelIndex,
+				1u << VoxelIndex - 32 );
+
+			bVoxelExists = VoxelIndex < 32 ?
+				NodeBlock.x & VoxelMask.x :
+				NodeBlock.y & VoxelMask.y;
+
+			if( bVoxelExists )
+				break;
+
+			Counters.Steps++;
+			StepDDA( DDA, bRoot ? 4 : 1 );
+		}
+		while( DDA.Time[0] < DDA.Time[1] && Counters.Tests <= MaxTests );
+
+		if( bVoxelExists )
+		{
+			if( bRoot )
+			{
+				// Step into leaf block
+				Counters.StepIn++;
+
+				bRoot = false;
+
+				uint BlockOffset = PrefixSum64( RootBlock, VoxelIndex, VoxelMask );
+				NodeBlock = BlockBuffer.Load2( 8 * ( BrickOffset + 1 + BlockOffset ) );
+
+				DDA.Time[1] = NextTime( DDA );
+				DDA.Time += float2( Epsilon, -Epsilon );
+
+				FRay LocalRay = Ray;
+				//LocalRay.Origin -= DDA.Voxel;
+				LocalRay.Origin.x -= ( VoxelIndex >> 0 ) & 3;
+				LocalRay.Origin.y -= ( VoxelIndex >> 2 ) & 3;
+				LocalRay.Origin.z -= ( VoxelIndex >> 4 ) & 3;
+				LocalRay.Origin *= 4;
+				LocalRay.Direction *= 4;
+
+				StartDDA( DDA, 1, LocalRay );
+			}
+			else
+			{
+				Counters.Tests = -Counters.Tests;
+				break;
+			}
+		}
+		
+		if( DDA.Time[0] >= DDA.Time[1] && !bRoot )
+		{
+			// Step out, back to root.
+			Counters.StepOut++;
+
+			bRoot = true;
+			NodeBlock = RootBlock;
+			DDA.Time[1] = Ray.Time[1];
+
+			StartDDA( DDA, 4, Ray );
+		}
+	}
+
+	return DDA.Time[0];
+}

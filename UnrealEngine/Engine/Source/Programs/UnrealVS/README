@@ -1,0 +1,14 @@
+If nuget packages are updated, the minimum Visual Studio version needs to be updated to match in the .vsixmanifest.
+
+Ex. Microsoft.VisualStudio.SDK 16.9.31025.194 = Minimum Visual Studio version needs to be 16.9
+
+# Installation
+
+In Visual Studio
+Tool->Options->Environment->Extension
+Add an Addition Extension Gallery.
+Point the URL to the AtomFeed of where UnrealVS.vsix is synced
+ex.
+
+Name: UnrealVS
+URL: file:///D:/dev/ue5main/Engine/Extras/UnrealVS/VS2022/AtomFeed.xml

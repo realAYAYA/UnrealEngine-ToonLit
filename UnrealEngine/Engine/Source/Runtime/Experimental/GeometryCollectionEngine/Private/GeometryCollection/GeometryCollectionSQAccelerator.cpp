@@ -1,0 +1,17 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "GeometryCollection/GeometryCollectionSQAccelerator.h"
+#include "Physics/Experimental/PhysScene_Chaos.h"
+#include "Chaos/Box.h"
+#include "Chaos/Capsule.h"
+#include "Chaos/ImplicitObjectTransformed.h"
+#include "Chaos/Sphere.h"
+#include "Chaos/PBDRigidParticles.h"
+#include "GeometryCollection/ManagedArray.h"
+#include "GeometryCollection/GeometryCollectionComponent.h"
+#include "GeometryCollection/GeometryCollectionActor.h"
+#include "Components/BoxComponent.h"
+#include "ChaosSolversModule.h"
+#include "ChaosStats.h"
+#include "PhysicsSolver.h"
+#include "PhysicsProxy/GeometryCollectionPhysicsProxy.h"

@@ -1,0 +1,32 @@
+Availability:NoPublish
+Title:UUserInterfaceSettings
+Crumbs:
+
+[EXCERPT:FontDPIPreset]
+When you create visual designs in an external application and realize them later in UMG, your text elements might appear to be the wrong size. This is typically because the applications use different scaling factors to determine the pixel heights of letters based on the point size of the font.
+
+You may be able to fix this discrepancy by adjusting the scaling factor in your project’s Font Resolution setting to match the one used by your design application.
+
+- 72 DPI matches common web-based design tools like Figma. It is the default value for UMG in Unreal Engine 5.3 and later.
+
+- 96 DPI matches the scaling factor used internally by Unreal Engine and Slate. It was also the default value for UMG up until Unreal Engine 5.2. Use it if you need to remain consistent with older projects and workflows, or if you need Unreal Engine artists and programmers to refer to font sizes using consistent values.
+
+- If you use a design application that has a different scaling factor, you can set your own custom Font Resolution value.
+
+Note:
+- This setting only affects the way UMG interprets and displays font sizes. Internally, font sizes are always converted to 96 DPI before saving. This may occasionally result in minor rounding errors for specific combinations of font sizes and resolutions.
+
+- Always use the fewest possible number of different font sizes in your project. This avoids wasting memory in font atlas textures. If you need to change font resolution or font size after you have already created UMG assets with text elements, make sure the font sizes used in those existing assets match the sizes you use for new assets you create.
+[/EXCERPT:FontDPIPreset]
+
+[EXCERPT:bUseCustomFontDPI]
+[VAR:ExcerptAlias]
+FontDPIPreset
+[/VAR]
+[/EXCERPT:bUseCustomFontDPI]
+
+[EXCERPT:EFontDPI]
+[VAR:ExcerptAlias]
+FontDPIPreset
+[/VAR]
+[/EXCERPT:EFontDPI]

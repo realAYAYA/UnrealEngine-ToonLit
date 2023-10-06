@@ -1,0 +1,168 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Shared/StrataDefinitions.h"   
+#include "Strata.ush"
+
+#if STRATA_ENABLED
+
+#ifndef USE_8BIT_TILE_COORD
+#error USE_8BIT_TILE_COORD needs to be defined
+#define USE_8BIT_TILE_COORD 0
+#endif
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Strata material type tile
+
+uint2 StrataUnpackTile(uint In)
+{
+#if USE_8BIT_TILE_COORD
+	return uint2(In & 0xFF, In >> 8);
+#else
+	return uint2(In & 0xFFFF, In >> 16);
+#endif
+}
+
+uint StrataPackTile(uint2 TileCoord)
+{
+#if USE_8BIT_TILE_COORD
+	return TileCoord.x | (TileCoord.y << 8);
+#else
+  #if COMPILER_SUPPORTS_PACK_INTRINSICS
+	return PackUInt2ToUInt(TileCoord.x, TileCoord.y);
+  #else
+	return TileCoord.x | (TileCoord.y << 16); // assumes 16bit is enough to represent a tiled resolution up to 65,535 :)
+  #endif
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Strata BSDF tile
+
+// For tile whose conatins at least 1 pixel with several BSDF, we store a list of 'overflow' tiles
+// 
+// For handling material with several BSDF per pixel we extend the original texture (primary space) 
+// with an overflow space. Pixels with more than one BSDF data will write BSDF 2/3/... data into 
+// the overflow space
+//  ________________
+// |				|
+// | Primary space	|
+// |________________|
+// | Overflow space |
+// |________________|
+//
+// The primary & overflow spaces are divided into tiles, and one primary-space tile refers a list 
+// of tiles in overflow-space, if the tile contains at least one pixel with has more than 1 BSDF
+// If several tiles are needed, they are contigously stored in overflow space
+//  ________________
+// |_:_:_:_:_:_:_:_:|
+// |_:_:_:_:_:_:_:_:| Primary space
+// |_:_:_:_:_:_:_:_:|
+//  ----------------
+// |_:_:_:_:_:_:	| Overflow space
+// |________________|
+
+struct FStrataBSDFTile
+{
+	uint2 TileCoord; // If Index == 0, points to the first 'overflow' tiles. If Index != 0, points towards the 'parent'/primary space tile
+	uint  Index;
+	uint  Count;
+};
+
+uint PackBSDFTile(FStrataBSDFTile In)
+{
+	// Tile coord are encoded onto 10bits. Max resolution 8k x 8k. Max 8 tiles.
+	return (In.TileCoord.x & 0x3FF) | ((In.TileCoord.y & 0x3FF) << 10) | ((In.Index & 0x7) << 20) | ((In.Count & 0x7) << 23);
+}
+
+FStrataBSDFTile UnpackBSDFTile(uint In)
+{
+	FStrataBSDFTile Out;
+	Out.TileCoord.x = In & 0x3FF;
+	Out.TileCoord.y = (In >> 10u) & 0x3FF;
+	Out.Index = (In >> 20u) & 0x7;
+	Out.Count = (In >> 23u) & 0x7;
+	return Out;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Strata BSDF offset
+
+// Store the material slice index offset for each BSDF, for pixels containing several BSDFs
+struct FStrataBSDFOffset
+{
+	uint BSDFOffsets[STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET];
+	uint BSDFCount;
+};
+
+uint PackBSDFOffset(FStrataBSDFOffset In)
+{
+	// Packed as relative cumulative offsets of N bits, stored into 32 bits
+	// | N bits | N bits | N bits | N bits | ... | N bits |
+	//   BSDF 0   BSDF 1   BSDF 2   BSDF 3  ...   BSDF (2^N - 1)
+
+	uint Out = 0;
+	const uint BSDFCount = min(In.BSDFCount, STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET);
+	if (BSDFCount > 0)
+	{
+		Out = In.BSDFOffsets[0] & STRATA_BSDF_OFFSET_BIT_MASK;
+		UNROLL_N(STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET-1)
+		for (uint i = 1; i < BSDFCount; i++)
+		{
+			const uint Curr = In.BSDFOffsets[i];
+			const uint Prev = In.BSDFOffsets[i-1];
+			Out = Out | (((Curr - Prev) & STRATA_BSDF_OFFSET_BIT_MASK) << (STRATA_BSDF_OFFSET_BIT_COUNT * i));
+		}
+	}
+	return Out;
+}
+
+FStrataBSDFOffset UnpackBSDFOffset(uint In, uint InBSDFCount)
+{
+	FStrataBSDFOffset Out = (FStrataBSDFOffset)0;
+	if (InBSDFCount > 0)
+	{
+		Out.BSDFCount = min(InBSDFCount, STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET);
+		Out.BSDFOffsets[0] = (In & STRATA_BSDF_OFFSET_BIT_MASK);
+
+		UNROLL_N(STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET-1)
+		for (uint i = 1; i < Out.BSDFCount; i++)
+		{
+			Out.BSDFOffsets[i] = Out.BSDFOffsets[i-1] + ((In>>(STRATA_BSDF_OFFSET_BIT_COUNT * i)) & STRATA_BSDF_OFFSET_BIT_MASK);
+		}
+	}
+	return Out;
+}
+
+uint UnpackBSDFOffsetAtIndex(uint In, uint InIndex, uint InBSDFCount)
+{
+	uint Out = 0;
+	if (InBSDFCount > 0)
+	{
+		const uint BSDFCount = min(InBSDFCount, STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET);
+		UNROLL_N(STRATA_MAX_BSDF_COUNT_FOR_BDSFOFFSET)
+		for (uint i = 0; i <= InIndex; i++)
+		{
+			Out += ((In >> (STRATA_BSDF_OFFSET_BIT_COUNT * i)) & STRATA_BSDF_OFFSET_BIT_MASK);
+		}
+	}
+	return Out;
+}
+
+void StrataSeekBSDF(inout FStrataAddressing Addressing, uint AddressOffset)
+{
+	Addressing.CurrentIndex = AddressOffset;
+	Addressing.ReadBytes = Addressing.CurrentIndex * 4;
+}
+
+void StrataSeekBSDF(inout FStrataAddressing Addressing, FStrataBSDFOffset Offsets, uint BSDFIndex)
+{
+	if (BSDFIndex < Offsets.BSDFCount)
+	{
+		Addressing.CurrentIndex = Offsets.BSDFOffsets[BSDFIndex];
+		Addressing.ReadBytes = Addressing.CurrentIndex * 4;
+	}
+}
+
+#endif // STRATA_ENABLED

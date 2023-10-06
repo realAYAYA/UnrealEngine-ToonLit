@@ -1,0 +1,79 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/**
+ * LightmapData.ush
+ */
+
+#pragma once
+
+#ifndef USE_GLOBAL_GPU_LIGHTMAP_DATA
+	#define USE_GLOBAL_GPU_LIGHTMAP_DATA 0
+#endif
+
+#if VF_USE_PRIMITIVE_SCENE_DATA
+
+// Must match FPrecomputedLightingUniformParameters in C++
+struct FLightmapSceneData
+{
+	float4 StaticShadowMapMasks;
+	float4 InvUniformPenumbraSizes;
+	float4 LightMapCoordinateScaleBias;
+	float4 ShadowMapCoordinateScaleBias;
+	float4 LightMapScale[2];
+	float4 LightMapAdd[2];
+	uint4 LightmapVTPackedPageTableUniform[2];
+	uint4 LightmapVTPackedUniform[5];
+};
+
+// Stride of a single lightmap data entry in float4's, must match C++
+#define LIGHTMAP_SCENE_DATA_STRIDE 15
+
+#if USE_GLOBAL_GPU_LIGHTMAP_DATA
+StructuredBuffer<float4> GPUSceneLightmapData;
+#endif
+
+float4 LoadLightmapDataElement(uint Index)
+{
+#if USE_GLOBAL_GPU_LIGHTMAP_DATA
+	checkStructuredBufferAccessSlow(GPUSceneLightmapData, Index);
+	return GPUSceneLightmapData[Index];
+#else
+	checkStructuredBufferAccessSlow(Scene.GPUScene.GPUSceneLightmapData, Index);
+	return Scene.GPUScene.GPUSceneLightmapData[Index];
+#endif
+}
+
+// Fetch from scene lightmap data buffer
+FLightmapSceneData GetLightmapData(uint LightmapDataIndex) 
+{
+	// Note: layout must match FLightmapSceneShaderData in C++
+	// Relying on optimizer to remove unused loads
+
+	FLightmapSceneData LightmapData;
+	uint LightmapDataBaseOffset = LightmapDataIndex * LIGHTMAP_SCENE_DATA_STRIDE;
+	LightmapData.StaticShadowMapMasks = LoadLightmapDataElement(LightmapDataBaseOffset + 0);
+	LightmapData.InvUniformPenumbraSizes = LoadLightmapDataElement(LightmapDataBaseOffset + 1);
+	LightmapData.LightMapCoordinateScaleBias = LoadLightmapDataElement(LightmapDataBaseOffset + 2);
+	LightmapData.ShadowMapCoordinateScaleBias = LoadLightmapDataElement(LightmapDataBaseOffset + 3);
+	LightmapData.LightMapScale[0] = LoadLightmapDataElement(LightmapDataBaseOffset + 4);
+	LightmapData.LightMapScale[1] = LoadLightmapDataElement(LightmapDataBaseOffset + 5);
+	LightmapData.LightMapAdd[0] = LoadLightmapDataElement(LightmapDataBaseOffset + 6);
+	LightmapData.LightMapAdd[1] = LoadLightmapDataElement(LightmapDataBaseOffset + 7);
+	LightmapData.LightmapVTPackedPageTableUniform[0] = asuint(LoadLightmapDataElement(LightmapDataBaseOffset + 8));
+	LightmapData.LightmapVTPackedPageTableUniform[1] = asuint(LoadLightmapDataElement(LightmapDataBaseOffset + 9));
+
+	UNROLL
+	for (uint i = 0u; i < 5u; ++i)
+	{
+		LightmapData.LightmapVTPackedUniform[i] = asuint(LoadLightmapDataElement(LightmapDataBaseOffset + 10 + i));
+	}
+
+	return LightmapData;
+}
+
+#else 
+
+// Route to uniform buffer
+#define GetLightmapData(x) PrecomputedLightingBuffer
+
+#endif

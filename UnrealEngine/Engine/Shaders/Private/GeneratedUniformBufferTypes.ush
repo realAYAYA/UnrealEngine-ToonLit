@@ -1,0 +1,15 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Define types used by Generated Uniform buffers (which is pulled in by Common.ush)
+
+// Nanite
+#include "Nanite/NanitePackedNaniteView.ush"
+
+// Hair Strands
+#include "HairStrands/HairStrandsVisibilityCommonStruct.ush"
+#include "HairStrands/HairStrandsVoxelPageCommonStruct.ush"
+#include "HairStrands/HairStrandsDeepShadowCommonStruct.ush"
+
+#include "/Engine/Shared/LightSceneData.h"

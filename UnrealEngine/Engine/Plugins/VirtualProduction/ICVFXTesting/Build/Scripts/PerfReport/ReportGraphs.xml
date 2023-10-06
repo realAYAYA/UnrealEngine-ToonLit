@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<graphGroups>
+	<baseSettings thickness="2" smooth="1" smoothKernelSize="60" compression="0.5"
+				  width="3000" height="800" stacked="0" maxHierarchyDepth="2" hideStatPrefix="" showEvents="ICVFXTest/* App_* HitchDetector GC AutoPix/* Razor/* PSO/* Sandbox* SpecialEvent/* OT*" maxy="40" showAverages="1"/>
+
+	<graphGroup name="Core">
+		<baseSettings smoothKernelSize="60" smoothKernelPercent="-1"/>
+
+		<graph title="Stat Unit" showAverages="1" thickness="3">
+			<statString>frametime,gamethreadtime,renderthreadtime,gputime,rhithreadtime,MaxFrameTime</statString>
+		</graph>
+
+		<graph title="Stat Unit Raw" showAverages="1" thickness="1" smooth="0" maxy="0">
+			<statString>frametime,gamethreadtime,renderthreadtime,gputime,rhithreadtime,MaxFrameTime</statString>
+		</graph>
+
+		<graph title="Stat Unit 30hz" showAverages="1" maxy="60" thickness="3">
+			<statString>frametime,gamethreadtime,renderthreadtime,gputime,rhithreadtime,MaxFrameTime</statString>
+		</graph>
+
+		<graph title="Stat Unit 20hz" showAverages="1" maxy="80" thickness="3">
+			<statString>frametime,gamethreadtime,renderthreadtime,gputime,rhithreadtime,MaxFrameTime</statString>
+		</graph>
+
+		<graph title="Dynamic Resolution" maxy="100" thickness="4" showAverages="1">
+			<statString>DynamicResolutionPercentage,MaxFrameTime</statString>
+		</graph>
+
+		<graph title="Cmds DayaLayers"  smooth="0" thickness="4" miny="5000" maxy="25000" showEvents="Cmd* DataLayer*" >
+			<statString>PhysicalUsedMB, SystemMaxMB, MemoryFreeMB</statString>
+		</graph>
+		<graph title="Physical Memory"  smooth="0" thickness="4" maxy="0" >
+			<statString>PhysicalUsedMB,MemoryFreeMB,SystemMaxMB</statString>
+		</graph>
+		
+		<graph title="Physical Memory Over Budget"  smooth="0" thickness="4" maxy="3000">
+			<statString>PhysicalUsedMB, MemoryFreeMB,ExtendedUsedMB</statString>
+		</graph>
+
+		<graph title="RHI Drawcalls" maxy="4000" thickness="4">
+			<statString>RHI/Drawcalls</statString>
+		</graph>
+
+		<graph title="Gamethread Breakdown" showAverages="1" hideStatPrefix="exclusive/Gamethread/" stacked="1" mainStat="gamethreadtime" ignoreStats="exclusive/Gamethread/EventWait*" legendAverageThreshold="0.1">
+			<statString>exclusive/gamethread/*,gamethreadtime</statString>
+		</graph>
+
+		<graph title="Gamethread Breakdown Raw" hideStatPrefix="exclusive/Gamethread/" stacked="1" mainStat="gamethreadtime" ignoreStats="exclusive/Gamethread/EventWait*" smooth="0"  maxy="100" legendAverageThreshold="0.1">
+			<statString>exclusive/gamethread/*,gamethreadtime</statString>
+		</graph>
+
+		<graph title="Gamethread Waits" showAverages="1" hideStatPrefix="exclusive/gamethread/eventwait/" stacked="1" mainStat="frametime" ignoreStats="exclusive/Gamethread/EventWait" maxHierarchyDepth="3">
+			<statString>exclusive/gamethread/eventwait/*,gamethreadtime</statString>
+		</graph>
+
+		<graph title="Gamethread Physics" showAverages="1" stacked="1" maxy="0" maxHierarchyDepth="3" hideStatPrefix="exclusive/gamethread/">
+		  <statString>exclusive/gamethread/eventwait/EndPhysics,exclusive/gamethread/Physics,exclusive/gamethread/vehicle*</statString>
+		</graph>
+
+		<graph title="Gamethread Breakdown Giant" hideStatPrefix="exclusive/Gamethread/" stacked="1" mainStat="gamethreadtime" ignoreStats="exclusive/Gamethread/EventWait*" smooth="0"  maxy="100" legendAverageThreshold="0.1" width="40000" height="1000">
+			<statString>exclusive/gamethread/*,gamethreadtime</statString>
+		</graph>
+
+		<graph title="Gamethread Budget: Effects" showAverages="1" stacked="1" maxy="0" hideStatPrefix="exclusive/gamethread/">
+		  <statString>exclusive/gamethread/effects</statString>
+		</graph>
+    
+		<graph title="Renderthread Breakdown" showAverages="1" hideStatPrefix="exclusive/RenderThread/" stacked="1" mainStat="renderthreadtime" ignoreStats="exclusive/Renderthread/FetchVisibilityForPrimitives;exclusive/renderthread/eventwait*">
+			<statString>exclusive/renderthread/*,renderthreadtime</statString>
+		</graph>
+
+		<graph title="Renderthread Breakdown Raw" hideStatPrefix="exclusive/RenderThread/" stacked="1" mainStat="renderthreadtime" ignoreStats="exclusive/Renderthread/FetchVisibilityForPrimitives;exclusive/renderthread/eventwait*" smooth="0"  maxy="100">
+			<statString>exclusive/renderthread/*,renderthreadtime</statString>
+		</graph>
+
+		<graph title="Render Targets Peak(MB)" showAverages="0" stacked="1" mainStat="RenderTargetProfiler/Total" smooth="0" maxy="0" hideStatPrefix="RenderTargetProfiler/">
+			<statString>RenderTargetProfiler/*</statString>
+		</graph>
+		
+		<graph title="Textures Peak(MB)" showAverages="0" stacked="1" mainStat="TextureProfiler/Total" smooth="0" maxy="0" hideStatPrefix="TextureProfiler/">
+			<statString>TextureProfiler/*</statString>
+		</graph>
+
+		<graph title="Virtual Texture" showAverages="0" maxy="0" hideStatPrefix="RenderTargetPool/" stacked="1">
+			<statString>VirtualTexturePageUsage, VirtualUsedMB</statString>
+		</graph>
+
+		<graph title="GPU Breakdown" showAverages="1" smoothKernelSize="120" hideStatPrefix="gpu/" stacked="1" mainStat="gpu/total" maxy="80">
+			<statString>GPU/*</statString>
+		</graph>
+
+		<graph title="GPU Breakdown Raw" showAverages="1" smooth="0" hideStatPrefix="gpu/" stacked="1" mainStat="gpu/total" maxy="80">
+			<statString>GPU/*</statString>
+		</graph>
+
+		<graph title="D3D12 Video Memory" showAverages="1" stacked="1" maxy="0">
+			<statString>D3D12Memory*</statString>
+		</graph>
+
+		<graph title="Niagara Breakdown" thickness="2" ignoreStats="global*" smooth="1" smoothKernelSize="10" maxy="60">
+			<statString>Ticks/NiagaraComponent,Exclusive/GameThread/Niagara,GPU/NiagaraGPUSimulation,GPU/NiagaraGPUSorting</statString>
+		</graph>
+
+		<graph title="Light Counts" hideStatPrefix="LightCount/" thickness="4" smooth="0" snapToPeaks="0" maxy="0" showAverages="0">
+			<statString>LightCount/*</statString>
+		</graph>
+
+		<graph title="Ticks Queued" showAverages="0" maxy="0" thickness="4" smooth="0">
+			<statString>Basic/TicksQueued</statString>
+		</graph>
+
+		<graph title="Ticks Breakdown" showAverages="1" maxy="0" maxHierarchyDepth="4" hideStatPrefix="Ticks/" stacked="1" mainStat="Basic/TicksQueued" threshold="1">
+			<statString>Ticks/*</statString>
+		</graph>
+
+		<graph title="Actor Counts" showAverages="0" maxy="0" thickness="4" hideStatPrefix="ActorCount/" smooth="0" stacked="1" mainStat="ActorCount/TotalActorCount">
+			<statString>ActorCount/*</statString>
+		</graph>
+
+		<graph title="Animation Budget" showAverages="0" hideStatPrefix="Exclusive/GameThread/" mainStat="Exclusive/GameThread/Animation" thickness="4" smooth="1" filterOutZeros="0">
+			<statString>Exclusive/GameThread/Animation,AnimationBudget/*</statString>
+		</graph>
+
+		<graph title="Log Counts" showAverages="1" hideStatPrefix="fmsglogf/" mainStat="fmsglogf/fmsglogfcount" thickness="4" smooth="0" filterOutZeros="0">
+			<statString>fmsglogf/*</statString>
+		</graph>
+
+		<graph title="Texture Streaming" showAverages="1" hideStatPrefix="texturestreaming/" mainStat="textureStreaming/streamingPool" thickness="4" smooth="0" snapToPeaks="0" maxy="0">
+			<statString>texturestreaming/*</statString>
+		</graph>
+
+		<graph title="FX Breakdown Total" showAverages="1" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/Total/" showEvents="Particles*">
+		  <statString>Particles/Total/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown GTOnly" showAverages="1" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/GTOnly/" showEvents="Particles*">
+		  <statString>Particles/GTOnly/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown RT" showAverages="1" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/RT/" showEvents="Particles*">
+		  <statString>Particles/RT/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown GPU" showAverages="1" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/GPU/" showEvents="Particles*">
+		  <statString>Particles/GPU/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown Per Inst Avg GT" showAverages="1" stacked="0" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/InstAvgGT/" showEvents="Particles*">
+		  <statString>Particles/InstAvgGT/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown Per Inst Avg RT" showAverages="1" stacked="0" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/InstAvgRT/" showEvents="Particles*">
+		  <statString>Particles/InstAvgRT/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown Per Inst Avg GPU" showAverages="1" stacked="0" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/InstAvgGPU/" showEvents="Particles*">
+		  <statString>Particles/InstAvgGPU/*</statString>
+		</graph>		
+		
+		<graph title="FX Breakdown Count" showAverages="0" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/Count/" showEvents="Particles*">
+		  <statString>Particles/Count/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown Activation" showAverages="0" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/Activation/" showEvents="Particles*">
+		  <statString>Particles/Activation/*</statString>
+		</graph>
+		
+		<graph title="FX Breakdown Waits" showAverages="0" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/Waits/" showEvents="Particles*">
+		  <statString>Particles/Waits/*</statString>
+		</graph>
+		
+		<graph title="Niagara Culling" showAverages="0" stacked="0" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/NiagaraCulled/" showEvents="Particles*">
+		  <statString>Particles/NiagaraCulled/*,Particles/TotalCullProxies</statString>
+		</graph>
+		
+		<graph title="Niagara Culling Breakdown" showAverages="0" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/Culled/" showEvents="Particles*">
+		  <statString>Particles/Culled/*</statString>
+		</graph>
+		
+		<graph title="Niagara Cull Proxy Breakdown" showAverages="0" stacked="1" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/NumCullProxies/" showEvents="Particles*">
+		  <statString>Particles/NumCullProxies/*</statString>
+		</graph>
+		
+		<graph title="FX Budget Breakdown" showAverages="1" stacked="0" maxy="0" fixedlegend="1" dynamicranges="1" hideStatPrefix="Particles/Budget/" showEvents="Particles*">
+		  <statString>Particles/Budget/*</statString>
+		</graph>
+
+		<graph title="CSV Profiler" showAverages="1" hideStatPrefix="CSVProfiler/" stacked="1" mainStat="frametime" maxy="0">
+			<statString>CSVProfiler/Num*</statString>
+		</graph>
+
+		<graph title="FScene Breakdown" showAverages="1" hideStatPrefix="exclusive/RenderThread/" stacked="1" mainStat="Exclusive/RenderThread/AddPrimitiveSceneInfos">
+			<statString>Exclusive/RenderThread/UpdatePrimitiveTransform,Exclusive/RenderThread/UpdatePrimitiveInstances,Exclusive/RenderThread/AddPrimitiveSceneInfos,Exclusive/RenderThread/RemovePrimitiveSceneInfos</statString>
+		</graph>
+
+		<graph title="FScene Breakdown Raw" hideStatPrefix="exclusive/RenderThread/" stacked="1" mainStat="Exclusive/RenderThread/AddPrimitiveSceneInfos" smooth="0"  maxy="100">
+			<statString>Exclusive/RenderThread/UpdatePrimitiveTransform,Exclusive/RenderThread/UpdatePrimitiveInstances,Exclusive/RenderThread/AddPrimitiveSceneInfos,Exclusive/RenderThread/RemovePrimitiveSceneInfos</statString>
+		</graph>
+
+	</graphGroup>
+
+
+	<!-- a graph group is a convenient way to apply common settings to multiple graphs, avoiding duplication -->
+	<graphGroup name="LLMBase">
+	<baseSettings maxHierarchyDepth="3" stacked="0" hideStatPrefix="LLM/" requiresDetailedStats="0" thickness="10" compression="0.5" showEvents="ICVFXTest/* GC Skydiving* Athena* Spectator/* Sidekick/* SpecialEvent/*"/>
+
+		<!-- ignoreStats should include all parent LLM tags -->
+		<graph title="Tracked Memory Breakdown" stacked="1" thickness="1" maxHierarchyDepth="1" ignoreStats="LLM/Total;LLM/Untracked" mainStat="LLM/TrackedTotal">
+			<statString>LLM/*</statString>
+		</graph>
+
+		<!-- top level LLM summary graphs -->
+		<graph title="Total Memory Stats">
+			<statString>LLM/Total,LLM/Untracked,LLM/TrackedTotal</statString>
+		</graph>
+		<graph title="Misc Memory Stats">
+			<statString>LLM/EngineInit,LLM/EnginePreInit,LLM/EngineMisc,LLM/TaskGraphMiscTasks,LLM/FName,LLM/GC,LLM/Localization,LLM/AssetRegistry,LLM/ConfigSystem,LLM/RealTimeCommunications,LLM/StreamingManager</statString>
+		</graph>
+		<graph title="Rendering Memory Stats">
+			<statString>LLM/RenderingThread,LLM/RenderTargets,LLM/PSO,LLM/SceneRender,LLM/RHIMisc,LLM/Graphics</statString>
+		</graph>
+		<graph title="Development Memory Stats">
+			<statString>LLM/Stats,LLM/CsvProfiler</statString>
+		</graph>
+		<graph title="Initialization Memory Stats">
+			<statString>LLM/EnginePreInit,LLM/EngineInit,LLM/ProgramSize</statString>
+		</graph>
+		<graph title="Loading Memory Stats">
+			<statString>LLM/AsyncLoading,LLM/FileSystem,LLM/StreamingManager,LLM/LoadMapMisc</statString>
+		</graph>
+
+
+		<!-- Memory breakdowns -->
+		<graph title="Content Memory Breakdown" stacked="1" thickness="1" maxHierarchyDepth="2" hideStatPrefix="LLM/Meshes/;LLM/Audio/;LLM/">
+			<statString>LLM/Textures,LLM/Shaders,LLM/Materials,LLM/MaterialInstance,LLM/Meshes/*,LLM/Audio/AudioSoundWaves,LLM/Animation</statString>
+		</graph>
+		<graph title="Audio Memory Breakdown" maxHierarchyDepth="2" hideStatPrefix="LLM/Audio/" stacked="1" stackTotalStat="LLM/Audio">
+			<statString>LLM/Audio/*</statString>
+		</graph>
+		<graph title="Mesh Memory Breakdown" maxHierarchyDepth="2" hideStatPrefix="LLM/Meshes/" stacked="1" stackTotalStat="LLM/Meshes">
+			<statString>LLM/Meshes/*</statString>
+		</graph>
+		<graph title="Physics Memory Breakdown" maxHierarchyDepth="2" hideStatPrefix="LLM/Physics/"  stacked="1" stackTotalStat="LLM/Physics">
+			<statString>LLM/Physics/*</statString>
+		</graph>
+
+
+		<!-- Individual stat graphs -->
+		<graph title="Tracked Total Memory">
+			<statString>LLM/TrackedTotal</statString>
+		</graph>
+		<graph title="Untagged Memory">
+			<statString>LLM/Untagged</statString>
+		</graph>
+		<graph title="Untracked Memory">
+			<statString>LLM/Untracked</statString>
+		</graph>
+		<graph title="UObject Memory">
+			<statString>LLM/UObject</statString>
+		</graph>
+		<graph title="Shaders Memory">
+			<statString>LLM/Shaders</statString>
+		</graph>
+		<graph title="RenderTargets Memory">
+			<statString>LLM/RenderTargets</statString>
+		</graph>
+		<graph title="Textures Memory">
+			<statString>LLM/Textures</statString>
+		</graph>
+		<graph title="Materials Memory">
+			<statString>LLM/Materials</statString>
+		</graph>
+		<graph title="Animation Memory">
+			<statString>LLM/Animation</statString>
+		</graph>
+		<graph title="EngineMisc Memory">
+			<statString>LLM/EngineMisc</statString>
+		</graph>
+	</graphGroup>
+
+	<graphGroup name="LLMPlatformBase">
+		<baseSettings maxHierarchyDepth="4" maxy="1024" stacked="0" hideStatPrefix="" requiresDetailedStats="0" thickness="10" compression="0.5" showEvents="ICVFXTest/* GC Skydiving* Athena* Spectator/* Sidekick/* SpecialEvent/*" />
+
+		<graph title="Platform FMalloc Memory" maxy="2500">
+			<statString>LLMPlatform/FMalloc</statString>
+		</graph>
+		<graph title="Platform GenericPlatformMallocCrash Memory" maxy="5">
+			<statString>LLMPlatform/GenericPlatformMallocCrash</statString>
+		</graph>
+		<graph title="Platform Graphics Memory" maxy="2000">
+			<statString>LLMPlatform/Graphics</statString>
+		</graph>
+		<graph title="Platform Thread Stack Memory" maxy="10">
+			<statString>LLMPlatform/ThreadStack</statString>
+		</graph>
+	</graphGroup>
+</graphGroups>

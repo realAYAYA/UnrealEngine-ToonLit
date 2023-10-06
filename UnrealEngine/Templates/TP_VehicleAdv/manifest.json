@@ -1,0 +1,88 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Vehicle"
+		},
+		{
+			"Language": "ja",
+			"Text": "ビークル"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "载具"
+		},
+		{
+			"Language": "ko",
+			"Text": "비히클"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "The vehicle pack features both a regular vehicle and a more complex vehicle. Vehicle movement can be controlled with either keyboard, controller or virtual joystick on a touch device. The advanced vehicle itself features working double wishbone suspension. There is also an engine sound in this template. There is also a HUD that shows the current gear and speed."
+		},
+		{
+			"Language": "ja",
+			"Text": "ビークル パックには通常のビークルとより複雑なビークルが含まれています。キーボード、コントローラー、タッチデバイスでのバーチャルジョイスティックでビークルを操作できます。このビークルにはダブルウィッシュボーン式サスペンションが含まれています。またエンジン音もテンプレートにあります。また現在のギアと速度を示すHUDも用意されています。"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "载具包包含一辆普通载具和高级载具。你可以通过键盘、手柄或触摸式设备上的虚拟摇杆来控制载具移动。高级载具具有双横臂式悬架。此外，该模板还包含引擎音效，以及一个能够显示当前挡位和车速的HUD。"
+		},
+		{
+			"Language": "ko",
+			"Text": "비히클 팩은 일반 비히클과 조금 더 복잡한 비히클을 모두 제공합니다. 비히클의 이동은 키보드, 컨트롤러 또는 터치 디바이스의 버추얼 조이스틱으로 제어 가능합니다. 고급 비히클은 더블 위시본 서스펜션을 갖추고 있습니다. 이 템플릿에는 엔진 사운드와, 현재 기어와 속도를 보여주는 HUD도 포함되어 있습니다."
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": "Static Mesh, Landscape Layer, Material, Instance, Physical Material, Sound Attenuation, Sound cue, Sound Wave, Texture, Skeletal Mesh, Skeleton, Physics Asset, Animation blueprint, Data Asset, Vehicle Wheel"
+		}
+	],	
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": "Tyre,Suspension,Wheel,Racing,Vehicle,Car"
+		}
+	],
+	"ClassTypes": "GameMode, WheeledVehiclePawn, HUD, SpringArmComponent, Font, CameraComponent, TextRenderComponent, InputComponent, PhysicalMaterial, AudioComponent",
+	"Category": "CodeFeature",
+	"FocusAsset": "/Game/VehicleAdvCPP/AdvancedVehicleOverview.AdvancedVehicleOverview",
+	"Thumbnail": "TP_VehicleAdv.png",
+	"Screenshots":
+	[
+		"TP_VehicleAdv_Preview.png"
+	],
+	"SortKey": "ZVehicle_Adv",
+	"AdditionalFeaturePacks":
+	[
+		{
+			"MountName": "Vehicles",
+			"DetailLevels":
+			[
+				"Standard"
+			]
+		},
+		{
+			"MountName": "Track",
+			"DetailLevels":
+			[
+				"High"
+			]
+		},
+		{
+			"MountName": "LevelPrototyping",
+			"DetailLevels":
+			[
+				"High"
+			]
+		}
+	]
+}

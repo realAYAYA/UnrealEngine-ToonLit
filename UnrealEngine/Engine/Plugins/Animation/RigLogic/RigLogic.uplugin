@@ -1,0 +1,55 @@
+{
+	"FileVersion": 3,
+	"Version": 9.1,
+	"VersionName": "9.1.3",
+	"FriendlyName": "RigLogic Plugin v9.1.3",
+	"Description": "3Lateral RigLogic Plugin for Facial Animation v9.1.3",
+	"Category": "Animation",
+	"CreatedBy": "3Lateral",
+	"CreatedByURL": "https://www.3lateral.com/",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "RigLogicLib",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		},
+		{
+			"Name": "RigLogicLibTest",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "RigLogicModule",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name" : "RigLogicDeveloper",
+			"Type" : "UncookedOnly",
+			"LoadingPhase" : "PreDefault"
+		},
+		{
+			"Name": "RigLogicEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ControlRig",
+			"Enabled": true
+		}
+	]
+}

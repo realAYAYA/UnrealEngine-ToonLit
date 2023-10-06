@@ -1,0 +1,114 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "HairStrandsClusterCommon.ush"
+#include "HairStrandsBindingCommon.ush"
+
+#if SHADER_DEFORM_GUIDE
+
+float3 SimRestOffset;
+uint VertexCount;
+
+Buffer<float4> SimDeformedOffsetBuffer;
+Buffer<uint4> SimRestPosePositionBuffer;
+RWBuffer<uint4> OutSimDeformedPositionBuffer;
+
+
+#define DEFORMATION_BYPASS 0
+#define DEFORMATION_OFFSET_GUIDE 1
+#define DEFORMATION_OFFSET_GUIDE_DYNAMIC 2
+#define DEFORMATION_OFFSET_GUIDE_GLOBAL 3
+#define DEFORMATION_OFFSET_GUIDE_BONES 4
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_DYNAMIC
+
+Buffer<float4>  SimRestPositionBuffer;
+Buffer<float4>  SimDeformedPositionBuffer;
+
+Buffer<uint>	SimRootBarycentricBuffer;
+Buffer<uint>    SimPointToCurveBuffer;
+Buffer<uint>	SimRootToUniqueTriangleIndexBuffer;
+
+// Return world position of a guide vertex deformed by a skinned triangle
+float3 DeformGuideByTriangle(
+	uint GuideIndex,
+	FHairMeshTriangle RestTriangle,
+	FHairMeshTriangle DeformedTriangle,
+	float3 RootBarycentric)
+{
+	const float3 WorldRestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex], SimRestOffset);
+	const float3 LocalRestGuidePoint = ToTriangle(WorldRestGuidePoint, RootBarycentric, RestTriangle);
+	const float3 WorldDeformedGuidePoint = ToWorld(LocalRestGuidePoint, RootBarycentric, DeformedTriangle);
+
+	return WorldDeformedGuidePoint;
+}
+
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_BONES
+
+Buffer<float4>  BoneDeformedPositionBuffer;
+
+#endif
+
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_GLOBAL
+uint SampleCount;
+Buffer<float4>  RestSamplePositionsBuffer;
+Buffer<float4>  MeshSampleWeightsBuffer;
+#endif
+
+float3 DisplacePosition(uint VertexIndex, float3 Pos)
+{
+	const float3 OutSimHairPositionOffset = SimDeformedOffsetBuffer[0].xyz;
+
+// By pass
+#if PERMUTATION_DEFORMATION == DEFORMATION_BYPASS
+	return Pos;
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE
+	return Pos + (SimRestOffset - OutSimHairPositionOffset);
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_DYNAMIC
+	const uint RootIndex = SimPointToCurveBuffer[VertexIndex];
+	const float3 RootBarycentric = UnpackBarycentrics(SimRootBarycentricBuffer[RootIndex]);
+
+	const uint TriangleIndex = SimRootToUniqueTriangleIndexBuffer[RootIndex];
+	const FHairMeshTriangle RestTriangle = GetTriangleTransformation(TriangleIndex, SimRestPositionBuffer);
+	const FHairMeshTriangle DeformedTriangle = GetTriangleTransformation(TriangleIndex, SimDeformedPositionBuffer);
+
+	return DeformGuideByTriangle(VertexIndex, RestTriangle, DeformedTriangle, RootBarycentric) - OutSimHairPositionOffset;
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_GLOBAL
+	const float3 RestControlPoint = Pos + SimRestOffset;
+	const float3 ControlPoint = ApplyRBF(RestControlPoint, SampleCount, RestSamplePositionsBuffer, MeshSampleWeightsBuffer);
+	return ControlPoint - OutSimHairPositionOffset;
+#endif
+
+#if PERMUTATION_DEFORMATION == DEFORMATION_OFFSET_GUIDE_BONES
+	const float4 RestControlPoint = float4(Pos + SimRestOffset,1);
+	const int BufferOffset = 3 * (VertexIndex+1);
+
+	const float3x4 BoneMatrix = float3x4(BoneDeformedPositionBuffer[BufferOffset], BoneDeformedPositionBuffer[BufferOffset+1], BoneDeformedPositionBuffer[BufferOffset+2]);
+	return mul(BoneMatrix,RestControlPoint) - OutSimHairPositionOffset;
+#endif
+}
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint VertexIndex = DispatchThreadId;
+	
+	if (VertexIndex < VertexCount)
+	{
+		const uint4  PackedCP			= SimRestPosePositionBuffer[VertexIndex];
+		const float3 CPPosition			= UnpackHairControlPointPosition(PackedCP);
+		const float3 DisplacedPosition	= DisplacePosition(VertexIndex, CPPosition);		
+		OutSimDeformedPositionBuffer[VertexIndex] = PackHairControlPointPosition(PackedCP, DisplacedPosition);
+	}
+}
+
+#endif // SHADER_DEFORM_GUIDE

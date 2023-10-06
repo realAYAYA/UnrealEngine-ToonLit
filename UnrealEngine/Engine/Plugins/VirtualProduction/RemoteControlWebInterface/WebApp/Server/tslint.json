@@ -1,0 +1,12 @@
+{
+    "defaultSeverity": "error",
+    "extends": [
+    ],
+    "jsRules": {},
+    "rules": {
+        "trailing-comma": [ false ],
+        "no-console": [ true, "warn" ],
+        "semicolon": [ true, "always" ]
+    },
+    "rulesDirectory": []
+}

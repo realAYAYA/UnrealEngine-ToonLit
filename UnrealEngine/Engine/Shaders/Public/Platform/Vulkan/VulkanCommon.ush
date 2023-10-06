@@ -1,0 +1,65 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	VulkanCommon.ush: Common Vulkan shader code
+=============================================================================*/
+
+// Update this GUID to improve shader recompilation for Vulkan only shaders
+// GUID = EEA3F6F8-2405-4093-9A65-5072C38494AC
+
+#pragma once
+
+
+#define COMPILER_SUPPORTS_ULONG_TYPES 1
+#define COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS (1 && COMPILER_SUPPORTS_ULONG_TYPES)
+
+#if COMPILER_SUPPORTS_ULONG_TYPES
+
+#define UlongType uint64_t
+
+UlongType PackUlongType(uint2 Value)
+{
+	return ((UlongType)Value.y << 32) | Value.x;
+}
+
+uint2 UnpackUlongType(UlongType Value)
+{
+	return uint2(uint(Value), uint(Value >> 32));
+}
+
+#endif
+
+#if COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
+void ImageInterlockedMaxUInt64(RWTexture2D<UlongType> Dest, uint2 Coord, UlongType Value)
+{
+	InterlockedMax(Dest[Coord], Value);
+}
+#endif
+
+#if PLATFORM_SUPPORTS_BINDLESS
+	// While we use descriptor indexing, declare unbounded resource arrays
+	COMPILER_DEFINE VULKAN_HEAP_NAME(Prefix, Type) Prefix##Type
+	COMPILER_DEFINE VULKAN_SAMPLER_HEAP(Type) VULKAN_HEAP_NAME(VULKAN_BINDLESS_SAMPLER_ARRAY_PREFIX,Type)
+	COMPILER_DEFINE VULKAN_RESOURCE_HEAP(Type) VULKAN_HEAP_NAME(VULKAN_BINDLESS_RESOURCE_ARRAY_PREFIX,Type)
+
+	// Bindless resource heaps are filled in by the shader compiler
+	COMPILER_DEFINE GetResourceFromHeap(Type, Index)  /* filled by compiler */
+
+	// Override the UB_RESOURCE_MEMBER_RESOURCE to use the Vulkan resource heaps
+	#define UB_RESOURCE_MEMBER_RESOURCE(Type, Name) typedef Type SafeType##Name; SafeType##Name VULKAN_RESOURCE_HEAP(SafeType##Name)[]; static const Type Name = VULKAN_RESOURCE_HEAP(SafeType##Name)[BindlessResource_##Name]
+
+	// bindless sampler heaps (specify a register so AUTO_BINDLESS macros aren't applied on them)
+	COMPILER_DEFINE GetSamplerFromHeap(Type, Index)  /* filled by compiler */
+
+	// Override the UB_RESOURCE_MEMBER_SAMPLER to use the Vulkan sampler heaps
+	#define UB_RESOURCE_MEMBER_SAMPLER(Type, Name) typedef Type SafeType##Name; SafeType##Name VULKAN_SAMPLER_HEAP(SafeType##Name)[]; static const Type Name = VULKAN_SAMPLER_HEAP(SafeType##Name)[BindlessSampler_##Name]
+#endif
+
+#if VULKAN_SUPPORTS_SUBGROUP_SIZE_CONTROL
+	#define COMPILER_SUPPORTS_WAVE_SIZE 1
+
+	// NOTE: Wave size in Vulkan is supported at shader stage in the pipeline creation.
+	// Create something unique we can read back from the shader, but that goes away on the rewrite
+	COMPILER_DEFINE VULKAN_WAVESIZE(N)
+	#define WAVESIZE(N) VULKAN_WAVESIZE(N)
+#endif

@@ -1,0 +1,105 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	PostProcessSubsurfaceTile.usf: Screenspace subsurface scattering tile shaders.
+=============================================================================*/
+
+#pragma once
+
+#include "Common.ush"
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#ifndef SHADER_TILE_VS
+#define SHADER_TILE_VS 0
+#endif
+
+#ifndef SUBSURFACE_COMPUTE
+#define SUBSURFACE_COMPUTE 0
+#endif
+
+#define LINE_TEXEL_SIZE 1
+
+#if SUBSURFACE_COMPUTE
+
+int2 ViewportSize;
+uint Offset;
+Buffer<uint> ConditionBuffer;
+RWBuffer<uint> RWIndirectDispatchArgsBuffer;
+
+[numthreads(1, 1, 1)]
+void BuildIndirectDispatchArgsCS(uint DT_ID : SV_DispatchThreadID)
+{
+	uint condition = ConditionBuffer[Offset];
+	const bool bShouldDispatch = (condition > 0);
+
+	if (bShouldDispatch)
+	{
+		int2 DestTextureSize = (ViewportSize + SUBSURFACE_TILE_SIZE * LINE_TEXEL_SIZE - 1)
+								/ (SUBSURFACE_TILE_SIZE * LINE_TEXEL_SIZE);
+
+		WriteDispatchIndirectArgs(RWIndirectDispatchArgsBuffer, DT_ID, DestTextureSize.x, DestTextureSize.y, 1);
+	}
+	else
+	{
+		WriteDispatchIndirectArgs(RWIndirectDispatchArgsBuffer, DT_ID, 0, 0, 0);
+	}
+}
+
+uint2 TextureExtent;
+uint2 ViewportMin;
+RWTexture2D<float4> TextureOutput;
+
+[numthreads(SUBSURFACE_TILE_SIZE, SUBSURFACE_TILE_SIZE, 1)]
+void ClearUAV(uint2 DT_ID : SV_DispatchThreadID)
+{
+	uint2 BufferPos = ViewportMin + DT_ID * LINE_TEXEL_SIZE;
+
+	if (all(BufferPos < TextureExtent))
+	{
+		UNROLL
+		for (uint i = 0; i < LINE_TEXEL_SIZE; ++i)
+		{
+			UNROLL
+			for (uint j = 0; j < LINE_TEXEL_SIZE; ++j)
+			{
+				uint2 CurrentBufferPos = min(BufferPos + uint2(i, j), TextureExtent - uint2(1,1));
+				TextureOutput[CurrentBufferPos] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+			}
+		}
+	}
+}
+
+#endif
+
+#if SHADER_TILE_VS
+
+int2 ViewMin;
+int2 ViewMax;
+float2 ExtentInverse;
+uint TileType;
+Buffer<uint> TileDataBuffer;
+
+void MainVS(
+	in uint InVertexId : SV_VertexID,
+	in uint InInstanceId : SV_InstanceID,
+	out FScreenVertexOutput Out)
+{
+	Out = (FScreenVertexOutput)0;
+	const uint2 TileCoord = uint2(TileDataBuffer[InInstanceId * 2 + 0], TileDataBuffer[InInstanceId * 2 + 1]);
+
+	uint2 TileVertex = TileCoord * SUBSURFACE_TILE_SIZE;
+	TileVertex.x += InVertexId == 1 || InVertexId == 2 || InVertexId == 4 ? SUBSURFACE_TILE_SIZE : 0;
+	TileVertex.y += InVertexId == 2 || InVertexId == 4 || InVertexId == 5 ? SUBSURFACE_TILE_SIZE : 0;
+	Out.UV = float2(min((int2)TileVertex + ViewMin, ViewMax)) * ExtentInverse;
+	Out.Position = float4(Out.UV * float2(2.0f, -2.0f) + float2(-1.0, 1.0f), 0.0f, 1.0f);
+}
+
+#endif //SHADER_TILE_VS
+
+void SubsurfaceTileFallbackScreenPassVS(
+	in float4 InPosition : ATTRIBUTE0,
+	in float2 InTexCoord : ATTRIBUTE1,
+	out FScreenVertexOutput Out)
+{
+	DrawRectangle(InPosition, InTexCoord, Out.Position, Out.UV);
+}

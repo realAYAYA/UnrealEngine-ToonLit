@@ -1,0 +1,314 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenRadiosityProbeGather.ush
+=============================================================================*/
+
+#pragma once
+
+#include "../../MonteCarlo.ush"
+
+// Must match LumenRadiosityProbeGather.cpp
+#define RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR 1
+
+StructuredBuffer<uint> CardTileAllocator;
+StructuredBuffer<uint> CardTileData;
+
+// Probe trace radiance in hemisphere layout
+Texture2D<float3> TraceRadianceAtlas;
+
+// Probe trace hit distance
+Texture2D<float> TraceHitDistanceAtlas;
+
+// Number of texels between Radiosity probes, always a power of two
+uint ProbeSpacingInRadiosityTexels;
+
+// Shift to apply to divide by ProbeSpacingInRadiosityTexels
+uint ProbeSpacingInRadiosityTexelsDivideShift;
+
+// CARD_TILE_SIZE / ProbeSpacingInRadiosityTexels
+uint RadiosityTileSize;
+
+// Resolution of the hemisphere trace layout in one dimension
+uint HemisphereProbeResolution;
+
+// HemisphereProbeResolution * HemisphereProbeResolution
+uint NumTracesPerProbe;
+
+uint UseProbeOcclusion;
+
+// When >= 0, specifies a fixed temporal index for debugging
+int FixedJitterIndex;
+
+// Size of the Radiosity physical texture
+uint2 RadiosityAtlasSize;
+
+// Length of the temporal jitter pattern, and controls the weight of the temporal accumulation history
+uint MaxFramesAccumulated;
+
+// Number of views in the renderer
+uint NumViews;
+
+// Index of the current view for the dispatch
+uint ViewIndex;
+
+// Maximum number of card tiles for one view
+uint MaxCardTiles;
+
+// Returns the jitter offset in the range [0, ProbeSpacingInRadiosityTexels - 1]
+uint2 GetProbeJitter(uint IndirectLightingTemporalIndex)
+{
+	uint TemporalIndex = (FixedJitterIndex < 0 ? IndirectLightingTemporalIndex : FixedJitterIndex);
+	return Hammersley16(TemporalIndex % MaxFramesAccumulated, MaxFramesAccumulated, 0) * ProbeSpacingInRadiosityTexels;
+}
+
+FCardTileData GetCardTile(uint CardTileIndex)
+{
+	return UnpackCardTileData(CardTileData[ViewIndex * MaxCardTiles + CardTileIndex]);
+}
+
+void UnswizzleCardTileIndex(
+	uint RadiosityProbeIndex,
+	inout uint CardTileIndex,
+	inout uint2 CoordInCardTile)
+{
+	uint NumProbesPerTile = RadiosityTileSize * RadiosityTileSize;
+	CardTileIndex = RadiosityProbeIndex / NumProbesPerTile;
+	uint LinearIndexInCardTile = RadiosityProbeIndex - CardTileIndex * NumProbesPerTile;
+	uint2 ProbeCoord = uint2(LinearIndexInCardTile % RadiosityTileSize, LinearIndexInCardTile / RadiosityTileSize);
+
+	FCardTileData CardTile = GetCardTile(CardTileIndex);
+	FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+	CoordInCardTile = ProbeCoord * ProbeSpacingInRadiosityTexels + GetProbeJitter(CardPage.IndirectLightingTemporalIndex);
+}
+
+void UnswizzleTexelTraceCoords(
+	uint DispatchThreadId,
+	inout uint CardTileIndex,
+	inout uint2 CoordInCardTile,
+	inout uint2 TraceTexelCoord)
+{
+	uint RadiosityProbeIndex = DispatchThreadId / NumTracesPerProbe;
+
+	UnswizzleCardTileIndex(RadiosityProbeIndex, CardTileIndex, CoordInCardTile);
+
+	uint LinearTexelIndex = DispatchThreadId - RadiosityProbeIndex * NumTracesPerProbe;
+	TraceTexelCoord = uint2(LinearTexelIndex % HemisphereProbeResolution, LinearTexelIndex / HemisphereProbeResolution);
+}
+
+struct FRadiosityTexel
+{
+	bool bInsideAtlas;
+	bool bHeightfield;
+	bool bValid;
+
+	float3 WorldPosition;
+	float3 WorldNormal;
+	float3x3 WorldToLocalRotation;
+
+	uint2 AtlasCoord;
+	uint2 CardCoord;
+	uint IndirectLightingTemporalIndex;
+};
+
+FRadiosityTexel GetRadiosityTexel(FLumenCardPageData CardPage, uint2 CoordInCardPage)
+{
+	FRadiosityTexel RadiosityTexel = (FRadiosityTexel)0;
+	RadiosityTexel.bInsideAtlas = false;
+	RadiosityTexel.bHeightfield = false;
+	RadiosityTexel.bValid = false;
+	RadiosityTexel.WorldPosition = float3(0.0f, 0.0f, 0.0f);
+	RadiosityTexel.WorldNormal = float3(0.0f, 0.0f, 0.0f);
+
+	FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+	float2 AtlasUV = CardPage.PhysicalAtlasUVRect.xy + CardPage.PhysicalAtlasUVTexelScale * (CoordInCardPage + 0.5f * RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR);
+	float2 CardUV = CardPage.CardUVRect.xy + CardPage.CardUVTexelScale * (CoordInCardPage + 0.5f * RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR);
+
+	if (all(CoordInCardPage < (uint2)CardPage.SizeInTexels))
+	{
+		RadiosityTexel.bInsideAtlas = true;
+		RadiosityTexel.bHeightfield = Card.bHeightfield;
+		RadiosityTexel.AtlasCoord = AtlasUV * RadiosityAtlasSize;
+		RadiosityTexel.CardCoord = (CardPage.CardUVRect.xy * CardPage.ResLevelSizeInTiles) * CARD_TILE_SIZE + CoordInCardPage;
+		RadiosityTexel.IndirectLightingTemporalIndex = CardPage.IndirectLightingTemporalIndex;
+		RadiosityTexel.WorldToLocalRotation = Card.WorldToLocalRotation;
+
+		#if RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR == 2
+		{
+			float4 TexelDepths = LumenCardScene.DepthAtlas.Gather(GlobalPointClampedSampler, AtlasUV, 0.0f);
+			float4 NormalX4 = LumenCardScene.NormalAtlas.GatherRed(GlobalPointClampedSampler, AtlasUV);
+			float4 NormalY4 = LumenCardScene.NormalAtlas.GatherGreen(GlobalPointClampedSampler, AtlasUV);
+
+			float NumValidTexels = 0.0f;
+			float DepthSum = 0.0f;
+			float2 EncodedNormalSum = float2(0.0f, 0.0f);
+			for (uint TexelIndex = 0; TexelIndex < 4; ++TexelIndex)
+			{
+				if (IsSurfaceCacheDepthValid(TexelDepths[TexelIndex]))
+				{
+					NumValidTexels += 1.0f;
+					DepthSum += DepthData[TexelIndex].Depth;
+					EncodedNormalSum.x += NormalX4[TexelIndex];
+					EncodedNormalSum.y += NormalY4[TexelIndex];
+				}
+			}
+
+			if (NumValidTexels > 0.0f)
+			{
+				float AvgDepth = DepthSum / NumValidTexels;
+				float2 AvgEncodedNormal = EncodedNormalSum / NumValidTexels;
+
+				RadiosityTexel.bValid = true;
+				RadiosityTexel.WorldPosition = GetCardWorldPosition(Card, CardUV, AvgDepth);
+				RadiosityTexel.WorldNormal = DecodeSurfaceCacheNormal(Card, AvgEncodedNormal);
+			}
+		}
+		#else
+		{
+			FLumenSurfaceCacheData SurfaceCacheData = GetSurfaceCacheData(Card, CardUV, AtlasUV);
+			RadiosityTexel.bValid = SurfaceCacheData.bValid;
+			RadiosityTexel.WorldPosition = SurfaceCacheData.WorldPosition;
+			RadiosityTexel.WorldNormal = SurfaceCacheData.WorldNormal;
+		}
+		#endif
+	}
+
+	return RadiosityTexel;
+}
+
+FRadiosityTexel GetRadiosityTexelFromCardTile(uint CardTileIndex, uint2 CoordInCardTile)
+{
+	FRadiosityTexel RadiosityTexel = (FRadiosityTexel)0;
+	RadiosityTexel.bInsideAtlas = false;
+
+	if (CardTileIndex < CardTileAllocator[ViewIndex])
+	{
+		FCardTileData CardTile = GetCardTile(CardTileIndex);
+		uint2 CoordInCardPage = CardTile.TileCoord * CARD_TILE_SIZE + CoordInCardTile;
+
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+		RadiosityTexel = GetRadiosityTexel(CardPage, CoordInCardPage);
+	}
+
+	return RadiosityTexel;
+}
+
+// Coord in persistent radiosity probe atlas
+uint2 GetRadiosityProbeAtlasCoord(FLumenCardPageData CardPage, FCardTileData CardTile, uint2 CoordInCardTile)
+{
+	uint2 AtlasCoord = CardPage.PhysicalAtlasCoord + CardTile.TileCoord * uint2(CARD_TILE_SIZE, CARD_TILE_SIZE) + CoordInCardTile;
+	return AtlasCoord >> ProbeSpacingInRadiosityTexelsDivideShift;
+}
+
+float2 GetProbeTexelCenter(uint IndirectLightingTemporalIndex, uint2 ProbeTileCoord)
+{
+#define JITTER_RAY_DIRECTION 1
+#if JITTER_RAY_DIRECTION
+	uint2 RandomSeed = Rand3DPCG16(int3(ProbeTileCoord, 0)).xy;
+	uint TemporalIndex = (FixedJitterIndex < 0 ? IndirectLightingTemporalIndex : FixedJitterIndex);
+	return Hammersley16(TemporalIndex % MaxFramesAccumulated, MaxFramesAccumulated, RandomSeed);
+#else
+	return float2(0.5, 0.5);
+#endif
+}
+
+float2 CosineSampleHemisphereInverseFast(float3 Vector)
+{
+	float CosTheta = Vector.z;
+	float SinTheta = sqrt(1 - CosTheta * CosTheta);
+	float Phi = atan2Fast(Vector.y, Vector.x);
+
+	float2 E;
+	E.x = Phi / (2 * PI);
+	E.y = Vector.z * Vector.z;
+	return E;
+}
+
+float2 UniformSampleHemisphereInverseFast(float3 Vector)
+{
+	float CosTheta = Vector.z;
+	float SinTheta = sqrt(1 - CosTheta * CosTheta);
+	float Phi = atan2Fast(Vector.y, Vector.x);
+
+	float2 E;
+	E.x = Phi / (2 * PI);
+	E.y = Vector.z;
+	return E;
+}
+
+#define PROBE_HEMISPHERE_HEMI_OCTAHEDRON	0
+#define PROBE_HEMISPHERE_UNIFORM			1
+#define PROBE_HEMISPHERE_COSINE				2
+
+#define RADIOSITY_PROBE_MAPPING				PROBE_HEMISPHERE_UNIFORM
+
+void GetRadiosityRay(FRadiosityTexel RadiosityTexel, uint2 ProbeCoord, uint2 TracingTexelCoord, out float3 WorldRayDirection, out float ConeHalfAngle, out float PDF)
+{
+	float2 ProbeTexelCenter = GetProbeTexelCenter(RadiosityTexel.IndirectLightingTemporalIndex, ProbeCoord);
+	float2 ProbeUV = (TracingTexelCoord + ProbeTexelCenter) / float(HemisphereProbeResolution);
+
+	float3 LocalRayDirection;
+
+	uint RadiosityProbeHemisphereMapping = RADIOSITY_PROBE_MAPPING;
+	// Sample generation must match probe occlusion
+	if (RadiosityProbeHemisphereMapping == PROBE_HEMISPHERE_HEMI_OCTAHEDRON)
+	{
+		LocalRayDirection = HemiOctahedronToUnitVector(ProbeUV * 2 - 1);
+		//@todo - hemi octahedron solid angle
+		PDF = 1.0 / (2 * PI);
+	}
+	else if (RadiosityProbeHemisphereMapping == PROBE_HEMISPHERE_UNIFORM)
+	{
+		float4 Sample = UniformSampleHemisphere(ProbeUV);
+		LocalRayDirection = Sample.xyz;
+		PDF = Sample.w;
+	}
+	else
+	{
+		float4 Sample = CosineSampleHemisphere(ProbeUV);
+		LocalRayDirection = Sample.xyz;
+		PDF = Sample.w;
+	}
+
+	float3x3 TangentBasis = GetTangentBasisFrisvad(RadiosityTexel.WorldNormal);
+	WorldRayDirection = mul(LocalRayDirection, TangentBasis);
+
+	ConeHalfAngle = acosFast(1.0f - 1.0f / (float)(NumTracesPerProbe));
+}
+
+float CalculateProbeVisibility(float3 WorldPositionBeingTested, FRadiosityTexel ProbeTexel, uint2 ProbeAtlasCoord)
+{
+	float VisibilityWeight = 1.0f;
+	float3 ProbeToTexel = WorldPositionBeingTested - ProbeTexel.WorldPosition;
+
+	if (dot(ProbeToTexel, ProbeToTexel) > .01f)
+	{
+		float3x3 TangentBasis = GetTangentBasisFrisvad(ProbeTexel.WorldNormal);
+		float3 LocalProbeToTexel = mul(ProbeToTexel, transpose(TangentBasis));
+
+		uint RadiosityProbeHemisphereMapping = RADIOSITY_PROBE_MAPPING;
+		float2 TexelUV;
+
+		if (RadiosityProbeHemisphereMapping == PROBE_HEMISPHERE_HEMI_OCTAHEDRON)
+		{
+			TexelUV = UnitVectorToHemiOctahedron(LocalProbeToTexel) * .5f + .5f;
+		}
+		else if (RadiosityProbeHemisphereMapping == PROBE_HEMISPHERE_UNIFORM)
+		{
+			TexelUV = UniformSampleHemisphereInverseFast(LocalProbeToTexel);
+		}
+		else
+		{
+			TexelUV = CosineSampleHemisphereInverseFast(LocalProbeToTexel);
+		}
+
+		TexelUV = clamp(TexelUV, 0.0f, .99f);
+
+		uint2 RadiosityProbeTracingAtlasCoord = (ProbeAtlasCoord + TexelUV) * HemisphereProbeResolution;
+		float TraceHitDistance = TraceHitDistanceAtlas[RadiosityProbeTracingAtlasCoord];
+
+		VisibilityWeight = TraceHitDistance * TraceHitDistance < dot(ProbeToTexel, ProbeToTexel) ? 0 : 1;
+	}
+
+	return VisibilityWeight;
+}

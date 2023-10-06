@@ -1,0 +1,221 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+PathTracingCapsuleLight.ush: Light sampling functions for capsule case of point lights
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingLightCommon.ush"
+#include "../../CapsuleLightSampling.ush"
+
+#define CAPSULE_SOLIDANGLE_SAMPLING		1
+
+float3 CapsuleNormal(float3 Pos, float3 Center, float3 Axis)
+{
+	float3 pa = Pos - Center;
+	float h = clamp(dot(pa, Axis) / dot(Axis, Axis), -0.5, 0.5);
+	return normalize(pa - h * Axis);
+}
+
+float GetCapsuleRadius(int LightId)
+{
+	// don't allow 0 area capsules since we need to divide the light power by area to get radiance
+	return max(GetRadius(LightId), 0.01);
+}
+
+FLightHit CapsuleLight_TraceLight(FRayDesc Ray, int LightId)
+{
+	float3 TranslatedLightPosition = GetTranslatedPosition(LightId);
+	float LightRadius = GetCapsuleRadius(LightId);
+	float LightRadius2 = Pow2(LightRadius);
+	float SourceLength = GetSourceLength(LightId);
+
+#if 0 // DEBUG code: visualize the bounding rectangle against the capsule intersection test
+	FCapsuleSphericalBounds CapsuleBounds = CapsuleGetSphericalBounds(TranslatedLightPosition - Ray.Origin, GetdPdv(LightId), LightRadius, SourceLength);
+
+	float ConeSolidAngle = CapsuleBounds.ConeSolidAngle;
+	float RectSolidAngle = CapsuleBounds.SphericalRect.SolidAngle;
+	bool HitBounds = false;
+	float t = -1;
+	if (ConeSolidAngle < RectSolidAngle)
+	{
+		// Is ray pointing inside the cone of directions?
+		float CosTheta = dot(normalize(Ray.Direction), CapsuleBounds.ConeAxis);
+		t = CosTheta >= SqrtOneMinusX(CapsuleBounds.ConeSinThetaMax2) ? length(TranslatedLightPosition) : -1.0;
+	}
+	else
+	{
+		float DoN = dot(Ray.Direction, CapsuleBounds.SphericalRect.Axis[2]);
+		t = CapsuleBounds.SphericalRect.z0 / DoN;
+		// ray points toward the plane and intersect it?
+		if (t > Ray.TMin && t < Ray.TMax)
+		{
+			float2 UV = t * float2(
+				dot(Ray.Direction, CapsuleBounds.SphericalRect.Axis[0]),
+				dot(Ray.Direction, CapsuleBounds.SphericalRect.Axis[1])) - float2(
+					0.5 * (CapsuleBounds.SphericalRect.x0 + CapsuleBounds.SphericalRect.x1),
+					0.5 * (CapsuleBounds.SphericalRect.y0 + CapsuleBounds.SphericalRect.y1)
+				);
+			float2 Extent = 0.5 * float2(
+				CapsuleBounds.SphericalRect.x1 - CapsuleBounds.SphericalRect.x0,
+				CapsuleBounds.SphericalRect.y1 - CapsuleBounds.SphericalRect.y0);
+			// reject hit if outside of quad extents
+			t = all(abs(UV) < Extent) ? t : -1.0;
+		}
+	}
+
+	// ray points toward the plane and intersect it?
+	if (t > Ray.TMin && t < Ray.TMax)
+	{
+		float CapsArea = LightRadius2;
+		float BodyArea = 0.5 * LightRadius * SourceLength;
+		float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+		float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
+		float t = CapsuleIntersect(Ray.Direction, TranslatedLightPosition - Ray.Origin, GetdPdv(LightId), LightRadius2, SourceLength);
+		if (t > Ray.TMin && t < Ray.TMax)
+		{
+			LightRadiance *= float3(0, 1, 0);
+		}
+		return CreateLightHit(LightRadiance, 0.0, t);
+	}
+
+	// missed the bounding rect, test capsule anyway to see if any part of the capsule was missing
+	{
+		float CapsArea = LightRadius2;
+		float BodyArea = 0.5 * LightRadius * SourceLength;
+		float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+		float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
+		{
+			// exact
+			float t = CapsuleIntersect(Ray.Direction, TranslatedLightPosition - Ray.Origin, GetdPdv(LightId), LightRadius2, SourceLength);
+			if (t > Ray.TMin && t < Ray.TMax)
+			{
+				LightRadiance *= float3(1, 0, 0);
+				return CreateLightHit(LightRadiance, 0.0, t);
+			}
+		}
+	}
+#else
+	float3 Axis = GetdPdv(LightId);
+	float t = CapsuleIntersect(Ray.Direction, TranslatedLightPosition - Ray.Origin, Axis, LightRadius2, SourceLength);
+	if (t > Ray.TMin && t < Ray.TMax)
+	{
+		float CapsArea = LightRadius2;
+		float BodyArea = 0.5 * LightRadius * SourceLength;
+		float3 LightPower = GetColor(LightId) * ComputeIESAttenuation(LightId, Ray.Origin);
+		float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
+		float3 LightDirection = TranslatedLightPosition - Ray.Origin;
+		float LightDistanceSquared = dot(LightDirection, LightDirection);
+		LightRadiance *= ComputeAttenuationFalloff(LightDistanceSquared, LightId);
+#if CAPSULE_SOLIDANGLE_SAMPLING
+		float Pdf = 1.0 / GetCapsuleBoundsSolidAngle(CapsuleGetSphericalBounds(LightDirection, Axis, LightRadius, SourceLength));
+#else
+		float3 Normal = CapsuleNormal(Ray.Origin + t * Ray.Direction, TranslatedLightPosition, Axis * SourceLength);
+
+		float CosTheta = saturate(-dot(Normal, Ray.Direction));
+
+		float Pdf = CosTheta > 0 ? t * t / (4 * PI * CosTheta * (CapsArea + BodyArea)) : 0.0;
+#endif
+		return CreateLightHit(LightRadiance, Pdf, t);
+	}
+#endif
+	return NullLightHit();
+}
+
+
+FLightSample CapsuleLight_SampleLight(
+	int LightId,
+	float2 RandSample,
+	float3 TranslatedWorldPos,
+	float3 WorldNormal
+)
+{
+	// Capsule case
+	// #dxr_todo: only sample the visible portion of the capsule and account for the 1/d^2 falloff down the axis
+
+	float Radius = GetCapsuleRadius(LightId);
+	float Radius2 = Radius * Radius;
+	float SourceLength = GetSourceLength(LightId);
+
+	// the caps are two halves of a full sphere
+	// the body is a cylinder
+	// the common factor of 4*PI is accounted for at the end
+	float CapsArea = Radius2;
+	float BodyArea = 0.5 * Radius * SourceLength;
+
+	float3 Axis = GetdPdv(LightId);
+
+#if CAPSULE_SOLIDANGLE_SAMPLING
+	float3 LightPower = GetColor(LightId);
+	float3 LightRadiance = LightPower / (PI * (CapsArea + BodyArea));
+
+	float3 LightDirection = GetTranslatedPosition(LightId) - TranslatedWorldPos;
+	FCapsuleSphericalBounds CapsuleBounds = CapsuleGetSphericalBounds(LightDirection, Axis, Radius, SourceLength);
+
+	float4 Result = SampleCapsuleBounds(CapsuleBounds, RandSample);
+
+	float3 L = Result.xyz;
+	float SolidAngle = Result.w;
+		
+	// check direction to account for rays that hit the bounding shape but not the capsule
+#if 1
+	// optimized check (also more robust for tiny radii)
+	float Distance = CapsuleTest(L, LightDirection, Axis, Radius2, SourceLength);
+#else
+	// exact check (produces artifacts for tiny radii)
+	float Distance = CapsuleIntersect(L, LightDirection, Axis, Radius2, SourceLength);
+#endif
+	if (Distance > 0)
+	{
+		return CreateLightSample(LightRadiance * SolidAngle, 1.0 / SolidAngle, L, Distance);
+	}
+	// didn't pass the acceptance test -- reject this sample
+	return NullLightSample();
+#else
+	// plain area sampling
+	float Prob = CapsArea / (CapsArea + BodyArea);
+
+	float3 LightPoint;
+	float3 LightNormal;
+	if (RandSample.x < Prob)
+	{
+		RandSample.x /= Prob;
+		// sample the caps
+		float4 Result = UniformSampleSphere(float2(RandSample));
+
+		LightPoint = Result.xyz * Radius;
+		LightPoint.z += 0.5 * SourceLength * sign(Result.z);
+
+		LightNormal = Result.xyz;
+	}
+	else
+	{
+		RandSample.x -= Prob;
+		RandSample.x /= 1 - Prob;
+		// sample the cylinder body
+
+		float Phi = 2 * PI * RandSample.x;
+
+		LightNormal = float3(cos(Phi), sin(Phi), 0.0);
+		LightPoint = float3(Radius * LightNormal.xy, (RandSample.y - 0.5) * SourceLength);
+	}
+	float3x3 CylinderBasis = GetTangentBasis(Axis);
+
+	float3 LightDirection = GetTranslatedPosition(LightId) - TranslatedWorldPos;
+	float3 LocalLightDirection = mul(CylinderBasis, LightDirection); // World To Local
+
+	float CosTheta = saturate(dot(LightNormal, -normalize(LocalLightDirection + LightPoint)));
+
+	LightPoint = mul(LightPoint, CylinderBasis) + LightDirection; // Local to World
+
+	float DistanceSquared = dot(LightPoint, LightPoint);
+	float Distance = sqrt(DistanceSquared);
+	float3 Direction = LightPoint * rcp(Distance);
+
+	float3 LightPower = GetColor(LightId);
+	float3 RadianceOverPdf = LightPower * CosTheta * 4 / DistanceSquared;
+	float Pdf = CosTheta > 0 ? DistanceSquared / (4 * PI * CosTheta * (CapsArea + BodyArea)) : 0.0;
+	return CreateLightSample(RadianceOverPdf, Pdf, Direction, Distance);
+#endif
+}

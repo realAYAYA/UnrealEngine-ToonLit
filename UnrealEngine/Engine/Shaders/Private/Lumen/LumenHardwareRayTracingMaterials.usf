@@ -1,0 +1,57 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/SceneData.ush"
+#include "/Engine/Private/RayTracing/RayTracingHitGroupCommon.ush"
+#include "/Engine/Private/Lumen/LumenHardwareRayTracingCommon.ush"
+#include "/Engine/Private/Lumen/LumenHardwareRayTracingPayloadCommon.ush"
+#include "/Engine/Private/Lumen/LumenHardwareRayTracingPlatformCommon.ush"
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(LumenHardwareRayTracingMaterialCHS,
+	FLumenMinimalPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	Payload.HitT = RayTCurrent();
+
+	const int Primitive = GetInstanceUserData();
+	Payload.SetPrimitiveIndex(Primitive);
+
+	const int PrimitiveInstanceIndex = InstanceIndex() - GetBaseInstanceIndex();
+	Payload.SetInstanceIndex(PrimitiveInstanceIndex);
+
+	uint MaterialShaderIndex = GetHitGroupUserData() & 0x3FFFFFFF;
+	Payload.SetMaterialShaderIndex(MaterialShaderIndex);
+
+	uint bIsTranslucent = (GetHitGroupUserData() >> 31) & 0x1;
+	Payload.SetIsTranslucent(bIsTranslucent);
+
+	uint bIsTwoSided = (GetHitGroupUserData() >> 30) & 0x1;
+	Payload.SetIsTwoSided(bIsTwoSided);
+
+	float3 WorldNormal = ComputeWorldNormal(PrimitiveIndex());
+	Payload.SetWorldNormal(WorldNormal);
+}
+
+RAY_TRACING_ENTRY_MISS(LumenHardwareRayTracingMaterialMS,
+	FLumenMinimalPayload, Payload)
+{
+	Payload.SetMiss();
+}
+
+RAY_TRACING_ENTRY_ANY_HIT(
+	LumenHardwareRayTracingMaterialAHS,
+	FLumenMinimalPayload,
+	Payload,
+	FRayTracingIntersectionAttributes,
+	Attributes)
+{
+	const bool bAcceptHit = LumenMinimalRayAnyHitShader(
+		GetHitGroupUserData(),
+		RayTCurrent(),
+		HitKind() == HIT_KIND_TRIANGLE_BACK_FACE);
+
+	if (!bAcceptHit)
+	{
+		IgnoreHit();
+	}
+}

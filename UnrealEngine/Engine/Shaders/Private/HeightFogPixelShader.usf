@@ -1,0 +1,88 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	HeightFogPixelShader.usf: Scene fogging pixel shader.
+=============================================================================*/
+
+#include "Common.ush"
+#include "SceneTexturesCommon.ush"
+#include "SHCommon.ush"
+#include "HeightFogCommon.ush"
+#include "Random.ush"
+
+float UpsampleJitterMultiplier;
+
+float bOnlyOnRenderedOpaque;
+uint bUseWaterDepthTexture;
+
+float4 WaterDepthTextureMinMaxUV;
+float4 OcclusionTextureMinMaxUV;
+
+Texture2D OcclusionTexture;
+SamplerState OcclusionSampler;
+
+Texture2D WaterDepthTexture;
+SamplerState WaterDepthSampler;
+
+void ExponentialPixelMain(
+	float2 TexCoord : TEXCOORD0,
+	float3 ScreenVector : TEXCOORD1,
+	float4 SVPos : SV_POSITION,
+	out float4 OutColor : SV_Target0
+	)
+{
+	float SceneDepth;
+	float DeviceZ;
+	if (bUseWaterDepthTexture)
+	{
+		float2 SampleUV = clamp(TexCoord, WaterDepthTextureMinMaxUV.xy, WaterDepthTextureMinMaxUV.zw);
+		DeviceZ = Texture2DSampleLevel(WaterDepthTexture, WaterDepthSampler, SampleUV, 0).r;
+		SceneDepth = ConvertFromDeviceZ(DeviceZ);
+	}
+	else
+	{
+	#if SCENE_TEXTURES_DISABLED
+		float SceneDepth = SCENE_TEXTURES_DISABLED_SCENE_DEPTH_VALUE;
+		DeviceZ = ConvertToDeviceZ(SceneDepth);
+	#else
+		DeviceZ = Texture2DSampleLevel(SceneTexturesStruct.SceneDepthTexture, SceneTexturesStruct_SceneDepthTextureSampler, TexCoord, 0).r;
+		SceneDepth = ConvertFromDeviceZ(DeviceZ); // Fetch the depth buffer Z / W value, solve for W
+	#endif
+	}
+
+	bool bIsRendered = (DeviceZ != 0.0);
+
+#if 1
+	// Using SvPositionToTranslatedWorld is more stable and accurate as compared to the ScreenVector over large distance (SkyAtmosphere like).
+	// However, we do not to clamp DeviceZ to a reasinable FarZ in order to avoid Inf values.
+	float3 WorldPositionRelativeToCamera = SvPositionToTranslatedWorld(float4(SVPos.xy, max(1.5e-10, DeviceZ), 1.0));
+#else
+	float3 WorldPositionRelativeToCamera = ScreenVector.xyz * SceneDepth;
+#endif
+
+	float ZSlice = log2(SceneDepth * View.VolumetricFogGridZParams.x + View.VolumetricFogGridZParams.y) * View.VolumetricFogGridZParams.z * View.VolumetricFogInvGridSize.z;
+	
+	uint3 Rand16Bits = Rand3DPCG16(int3(SVPos.xy, View.StateFrameIndexMod8));	
+	float3 Rand3D = (float3(Rand16Bits) / float(uint(0xffff))) * 2.0f - 1.0f;
+	float3 CellOffset = UpsampleJitterMultiplier * Rand3D;
+
+	float3 VolumeUV = float3(((SVPos.xy - View.ViewRectMin.xy) + CellOffset.xy) * View.VolumetricFogSVPosToVolumeUV, ZSlice);
+	VolumeUV.xy = min(VolumeUV.xy, View.VolumetricFogUVMax);
+
+	float4 HeightFogInscatteringAndOpacity = CalculateHeightFog(WorldPositionRelativeToCamera);
+
+	float4 FogInscatteringAndOpacity = CombineVolumetricFog(HeightFogInscatteringAndOpacity, VolumeUV, 0, SceneDepth);
+	float2 OcclusionTexCoord = clamp(TexCoord, OcclusionTextureMinMaxUV.xy, OcclusionTextureMinMaxUV.zw);
+	float LightShaftMask = Texture2DSample(OcclusionTexture, OcclusionSampler, OcclusionTexCoord).x;
+	FogInscatteringAndOpacity.rgb *= LightShaftMask;
+
+	FogInscatteringAndOpacity.rgb *= View.PreExposure;
+
+	if (bOnlyOnRenderedOpaque > 0.0 && !bIsRendered)
+	{
+		FogInscatteringAndOpacity.rgb = 0;
+		FogInscatteringAndOpacity.a = 1;
+	}
+
+	OutColor = RETURN_COLOR(float4(FogInscatteringAndOpacity.rgb, FogInscatteringAndOpacity.w));
+}

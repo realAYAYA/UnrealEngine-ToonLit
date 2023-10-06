@@ -1,0 +1,64 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+#include "TextureSampling.ush" // GetBilinearSampleLevelInfos() and GetBilinearInterpolation()
+
+// Full shading quality, sampling both the color and depth behind the water surface and supporting refraction.
+// Used in BasePassPixelShader.usf.
+#define SINGLE_LAYER_WATER_SHADING_QUALITY_FULL							0
+
+// Reduced shading quality (same as mobile), sampling only the depth behind the water surface and does not support refraction.
+// Blended against the background using HW blending.
+// This quality level also causes BasePassPixelShader.usf to be compiled without forward directional light shadow and is likely to be used
+// together with DISABLE_FORWARD_LOCAL_LIGHTS to disable all local lights.
+// Used in BasePassPixelShader.usf.
+#define SINGLE_LAYER_WATER_SHADING_QUALITY_MOBILE_WITH_DEPTH_TEXTURE	1
+
+// Reduced shading quality for mobile platforms, sampling only the depth buffer behind the water using LookupDeviceZ(). Does not support refraction.
+// Blended against the background using HW blending.
+// Used in MobileBasePassPixelShader.usf.
+#define SINGLE_LAYER_WATER_SHADING_QUALITY_MOBILE_WITH_DEPTH_BUFFER		2
+
+#if MATERIAL_SHADINGMODEL_SINGLELAYERWATER
+	#if SUPPORTS_INDEPENDENT_SAMPLERS
+		#define SingleLayerWaterSceneColorSampler View.SharedBilinearClampedSampler
+		#if METAL_PROFILE
+			#define SingleLayerWaterSceneDepthSampler View.SharedPointClampedSampler
+		#else // TODO: Dynamically use a point sampler instead if the depth texture was not downsampled.
+			#define SingleLayerWaterSceneDepthSampler View.SharedBilinearClampedSampler
+		#endif // METAL_PROFILE
+	#else
+		#define SingleLayerWaterSceneColorSampler SingleLayerWater.SceneColorWithoutSingleLayerWaterSampler
+		#define SingleLayerWaterSceneDepthSampler SingleLayerWater.SceneDepthWithoutSingleLayerWaterSampler
+	#endif // SUPPORTS_INDEPENDENT_SAMPLERS
+#endif // MATERIAL_SHADINGMODEL_SINGLELAYERWATER
+
+// We use our own refract because the HLSL one was not working on all platforms (ES3.1 preview for instance)
+bool WaterRefract(float3 V, float3 N, float Eta, out float3 R)
+{
+	const float CosThetaI = dot(V, N);
+	const float CosThetaT2 = 1.f - Eta * Eta * (1.0f - CosThetaI * CosThetaI);
+	if (CosThetaT2 < 0.0f)
+	{
+		// Total internal reflection
+		R = reflect(-V, N);
+		return false;
+	}
+
+	const float CosThetaT = -(CosThetaI >= 0.0f ? 1.0f : -1.0f) * sqrt(CosThetaT2);
+	R = (Eta * CosThetaI + CosThetaT) * N - Eta * V;
+	return true;
+}
+
+float WaterSampleSceneDepthWithoutWater(Texture2D SceneDepthWithoutWaterTexture, SamplerState SceneDepthWithoutWaterSampler, float2 UV, float2 SceneDepthWithoutWaterTextureSize, float2 SceneDepthWithoutWaterTextureInvSize)
+{
+#if METAL_PROFILE
+	// On Metal we cannot do hardware bilinear sampling of float32 textures, so we need to do it manually.
+	FBilinearSampleInfos SampleInfos = GetBilinearSampleLevelInfos(UV, SceneDepthWithoutWaterTextureSize, SceneDepthWithoutWaterTextureInvSize);
+	float4 PixelSceneDepth4 = SceneDepthWithoutWaterTexture.Gather(SceneDepthWithoutWaterSampler, UV).wzxy;
+	return GetBilinearInterpolation(SampleInfos, PixelSceneDepth4);
+#else
+	// A linear sampler should be passed in here if downsampling was used.
+	return SceneDepthWithoutWaterTexture.SampleLevel(SceneDepthWithoutWaterSampler, UV, 0).x;
+#endif // METAL_PROFILE
+}

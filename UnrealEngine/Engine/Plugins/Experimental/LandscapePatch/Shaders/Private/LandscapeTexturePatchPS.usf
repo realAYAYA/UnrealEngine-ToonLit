@@ -1,0 +1,286 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/Landscape/LandscapeCommon.ush"
+
+#if defined (__INTELLISENSE__)
+// Uncomment the appropriate define for enabling syntax highlighting with HLSL Tools for Visual Studio : 
+//#define APPLY_HEIGHT_PATCH 1
+//#define OFFSET_HEIGHT_PATCH 1
+//#define SIMPLE_TEXTURE_COPY 1
+//#define CONVERT_TO_NATIVE_LANDSCAPE_PATCH 1
+//#define CONVERT_BACK_FROM_NATIVE_LANDSCAPE_PATCH 1
+//#define APPLY_WEIGHT_PATCH 1
+//#define REINITIALIZE_PATCH 1
+#endif // defined (__INTELLISENSE__)
+
+// This constant gets used in multiple shaders, hence it's out here.
+static const float LANDSCAPE_MID_VALUE = 32768.0f;
+
+#if APPLY_HEIGHT_PATCH || APPLY_WEIGHT_PATCH
+
+// Given the falloff settings, gives the alpha to use for a pixel at the given patch UV coordinates.
+float GetFalloffAlpha(float FalloffWorldMargin, float2 PatchWorldDimensions, float2 PatchUVCoordinates, float2 EdgeUVDeadBorder, bool bRectangularFalloff)
+{
+	static const float HALF_PI = 3.14159265f / 2;
+	static const float FLOAT_TOLERANCE = 0.0001;
+	
+	// The falloff starts at the edges and goes inward, and shouldn't be higher than 1/2 of the smaller dimension, or
+	// else it extends past the center. If it does extend past the center, we'll decrease the max alpha in the center
+	// (imagine shaving off a cube with progressively flatter slopes- once you get past the center of the top, you get
+	// a progressively shorter pyramid). Maybe we shouldn't even bother dealing with this case, but it's easy enough to do.
+	float ClampedFalloffMargin = clamp(FalloffWorldMargin, 0, min(PatchWorldDimensions.x, PatchWorldDimensions.y) / 2);
+	float bFalloffAlpha = FalloffWorldMargin > 0 ? ClampedFalloffMargin / FalloffWorldMargin : 1;
+	
+	// Alpha T is a parameter that we'll pass through a cos^2 function to get the alpha (to have it be smoother). It should be 
+	// 0 at the places where there is no falloff (ie alpha is 1), and go to 1 at places where falloff is complete (and falloff is 0)
+	float AlphaT = 1;
+	
+	if (bRectangularFalloff)
+	{
+		float2 DistancesFromEdges = PatchWorldDimensions * min(PatchUVCoordinates - EdgeUVDeadBorder, 1 - EdgeUVDeadBorder - PatchUVCoordinates);
+		bool bIsInsidePatch = all(DistancesFromEdges >= -FLOAT_TOLERANCE);
+		AlphaT = bIsInsidePatch ? 0 : 1;
+		
+		if (bIsInsidePatch && ClampedFalloffMargin > 0)
+		{
+			// Interpret distances as proportions of falloff margin
+			DistancesFromEdges = DistancesFromEdges / ClampedFalloffMargin;
+		
+			if (DistancesFromEdges.x > 0 && DistancesFromEdges.x < 1.0
+				&& DistancesFromEdges.y > 0 && DistancesFromEdges.y < 1.0)
+			{
+				AlphaT = min(1.0, length(float2(1, 1) - DistancesFromEdges));
+			}
+			else
+			{
+				AlphaT = 1 - min(1.0, min(DistancesFromEdges.x, DistancesFromEdges.y));
+			}
+		}
+	}
+	else
+	{
+		float OuterRadius = min(PatchWorldDimensions.x, PatchWorldDimensions.y) / 2;
+		float DistanceFromCenter = length(PatchWorldDimensions * (PatchUVCoordinates - float2(0.5, 0.5)));
+		float DistanceFromOuterCircle = OuterRadius - DistanceFromCenter;
+		
+		bool bIsInsideCircle = DistanceFromOuterCircle > 0;
+		AlphaT = bIsInsideCircle ? 0 : 1;
+		if (bIsInsideCircle && ClampedFalloffMargin > 0)
+		{
+			AlphaT = 1 - DistanceFromOuterCircle / ClampedFalloffMargin;
+			AlphaT = max(0, AlphaT); // clamp to 0 so we don't go past ClampedFalloffMargin
+		}
+	}
+	
+	float Alpha = cos(AlphaT * HALF_PI);
+	Alpha = Alpha * Alpha * bFalloffAlpha;
+	
+	return Alpha;
+}
+#endif // APPLY_HEIGHT_PATCH || APPLY_WEIGHT_PATCH
+
+#if APPLY_HEIGHT_PATCH
+Texture2D<float4> InSourceHeightmap;
+Texture2D<float4> InHeightPatch;
+SamplerState InHeightPatchSampler;
+float4x4 InHeightmapToPatch;
+float2 InPatchWorldDimensions;
+float2 InEdgeUVDeadBorder;
+float InFalloffWorldMargin;
+// Value that corresponds to 0 (i.e. to LANDSCAPE_MID_VALUE) in the patch data
+float InZeroInEncoding;
+// Scale to apply to patch values relative to the value representing zero
+float InHeightScale;
+// An offset to apply to the resulting height, after applying the height scale
+float InHeightOffset;
+// Enum defining blend modes, with values set in corresponding cpp file.
+uint InBlendMode;
+// A combination of flags, whose positions are set in the corresponding cpp file.
+uint InFlags;
+
+void ApplyLandscapeTextureHeightPatch(in float4 SVPos : SV_POSITION, out float2 OutColor : SV_Target0)
+{
+	// Unpack our flags. The flag choices are set in FApplyLandscapeTextureHeightPatchPS::ModifyCompilationEnvironment
+	// so that they match to the cpp file
+	bool bRectangularFalloff = InFlags & RECTANGULAR_FALLOFF_FLAG;
+	bool bApplyPatchAlpha = InFlags & APPLY_PATCH_ALPHA_FLAG;
+	bool bInputIsPackedHeight = InFlags & INPUT_IS_PACKED_HEIGHT_FLAG;
+	
+	// We need only the 2D affine transformation that goes from landscape XY heightmap integer coordinates
+	// to patch UV coordinates.
+	float2x2 HeightmapToPatchRotateScale = (float2x2) InHeightmapToPatch;
+	float2 HeightmapToPatchTranslate = InHeightmapToPatch._m03_m13;
+	
+	float2 PatchUVCoordinates = mul(HeightmapToPatchRotateScale, SVPos.xy) + HeightmapToPatchTranslate;
+	float4 PatchSampledValue = InHeightPatch.Sample(InHeightPatchSampler, PatchUVCoordinates);
+	float PatchStoredHeight = bInputIsPackedHeight ? UnpackHeight(PatchSampledValue.xy) : PatchSampledValue.x;
+	
+	float PatchSignedHeight = InHeightScale * (PatchStoredHeight - InZeroInEncoding) + InHeightOffset;
+	
+	int2 HeightmapCoordinates = floor(SVPos.xy);
+	float4 CurrentPackedHeight = InSourceHeightmap.Load(int3(HeightmapCoordinates, 0));
+	float CurrentHeight = UnpackHeight(CurrentPackedHeight.xy);
+	
+	float Alpha = GetFalloffAlpha(InFalloffWorldMargin, InPatchWorldDimensions, PatchUVCoordinates, InEdgeUVDeadBorder, bRectangularFalloff);
+	
+	if (bApplyPatchAlpha)
+	{
+		Alpha *= PatchSampledValue.a;
+	}
+	
+	float NewHeight = 0;
+	switch (InBlendMode)
+	{
+		case ADDITIVE_MODE:
+			NewHeight = CurrentHeight + Alpha * PatchSignedHeight;
+			break;
+		case ALPHA_BLEND_MODE:
+			NewHeight = lerp(CurrentHeight, LANDSCAPE_MID_VALUE + PatchSignedHeight, Alpha);
+			break;
+		case MIN_MODE:
+			NewHeight = lerp(CurrentHeight, min(CurrentHeight, LANDSCAPE_MID_VALUE + PatchSignedHeight), Alpha);
+			break;
+		case MAX_MODE:
+			NewHeight = lerp(CurrentHeight, max(CurrentHeight, LANDSCAPE_MID_VALUE + PatchSignedHeight), Alpha);
+			break;
+	}
+	
+	OutColor = PackHeight(NewHeight);
+}
+#endif // APPLY_HEIGHT_PATCH
+
+#if OFFSET_HEIGHT_PATCH
+Texture2D<float4> InHeightmap;
+float InHeightOffset;
+
+void ApplyOffsetToHeightmap(in float4 SVPos : SV_POSITION, out float2 OutColor : SV_Target0)
+{
+	float StoredHeight = UnpackHeight(InHeightmap.Load(int3(SVPos.xy, 0)).xy);
+	OutColor = PackHeight(StoredHeight + InHeightOffset);
+}
+#endif // OFFSET_HEIGHT_PATCH
+
+#if CONVERT_TO_NATIVE_LANDSCAPE_PATCH
+Texture2D<float4> InHeightmap;
+float InZeroInEncoding;
+float InHeightScale;
+float InHeightOffset;
+
+void ConvertToNativeLandscapePatch(in float4 SVPos : SV_POSITION, out float2 OutColor : SV_Target0)
+{
+	float StoredHeight = InHeightmap.Load(int3(SVPos.xy, 0)).x;
+	// Apply the same kinds of transformations that we would apply for alpha blend mode in ApplyLandscapeTextureHeightPatch
+	OutColor = PackHeight(InHeightScale * (StoredHeight - InZeroInEncoding) + InHeightOffset + LANDSCAPE_MID_VALUE);
+}
+#endif // CONVERT_TO_NATIVE_LANDSCAPE_PATCH
+
+#if CONVERT_BACK_FROM_NATIVE_LANDSCAPE_PATCH
+Texture2D<float4> InHeightmap;
+float InZeroInEncoding;
+float InHeightScale;
+float InHeightOffset;
+
+void ConvertBackFromNativeLandscapePatch(in float4 SVPos : SV_POSITION, out float OutColor : SV_Target0)
+{
+	float StoredHeight = UnpackHeight(InHeightmap.Load(int3(SVPos.xy, 0)).xy);
+	// Undo the transformation we do in ConvertToNativeLandscapePatch
+	OutColor = InHeightScale ? (StoredHeight - LANDSCAPE_MID_VALUE - InHeightOffset) / InHeightScale + InZeroInEncoding
+		: InZeroInEncoding;
+}
+#endif // CONVERT_BACK_FROM_NATIVE_LANDSCAPE_PATCH
+
+#if APPLY_WEIGHT_PATCH
+Texture2D<float4> InSourceWeightmap;
+Texture2D<float4> InWeightPatch;
+SamplerState InWeightPatchSampler;
+float4x4 InWeightmapToPatch;
+float2 InPatchWorldDimensions;
+float2 InEdgeUVDeadBorder;
+float InFalloffWorldMargin;
+// Enum defining blend modes, with values set in corresponding cpp file.
+uint InBlendMode;
+// A combination of flags, whose positions are set in the corresponding cpp file.
+uint InFlags;
+
+
+void ApplyLandscapeTextureWeightPatch(in float4 SVPos : SV_POSITION, out float OutColor : SV_Target0)
+{
+	// Unpack our flags. The flag choices are set in FApplyLandscapeTextureWeightPatchPS::ModifyCompilationEnvironment
+	// so that they match to the cpp file
+	bool bRectangularFalloff = InFlags & RECTANGULAR_FALLOFF_FLAG;
+	bool bApplyPatchAlpha = InFlags & APPLY_PATCH_ALPHA_FLAG;
+	
+	// We need only the 2D affine transformation that goes from landscape weightmap integer coordinates
+	// to patch UV coordinates.
+	float2x2 WeightmapToPatchRotateScale = (float2x2) InWeightmapToPatch;
+	float2 WeightmapToPatchTranslate = InWeightmapToPatch._m03_m13;
+	
+	float2 PatchUVCoordinates = mul(WeightmapToPatchRotateScale, SVPos.xy) + WeightmapToPatchTranslate;
+	float4 PatchSampledValue = InWeightPatch.Sample(InWeightPatchSampler, PatchUVCoordinates);
+	float PatchWeight = PatchSampledValue.x;
+	
+	int2 WeightmapCoordinates = floor(SVPos.xy);
+	float4 CurrentWeight = InSourceWeightmap.Load(int3(WeightmapCoordinates, 0)).x;
+	
+	float Alpha = GetFalloffAlpha(InFalloffWorldMargin, InPatchWorldDimensions, PatchUVCoordinates, InEdgeUVDeadBorder, bRectangularFalloff);
+	
+	if (bApplyPatchAlpha)
+	{
+		Alpha *= PatchSampledValue.a;
+	}
+	
+	float NewWeight = 0;
+	switch (InBlendMode)
+	{
+		case ADDITIVE_MODE:
+			NewWeight = clamp(CurrentWeight + Alpha * PatchWeight, 0, 1);
+			break;
+		case ALPHA_BLEND_MODE:
+			NewWeight = lerp(CurrentWeight, PatchWeight, Alpha);
+			break;
+		case MIN_MODE:
+			NewWeight = lerp(CurrentWeight, min(CurrentWeight, PatchWeight), Alpha);
+			break;
+		case MAX_MODE:
+			NewWeight = lerp(CurrentWeight, max(CurrentWeight, PatchWeight), Alpha);
+			break;
+	}
+	
+	OutColor = NewWeight;
+}
+
+
+#endif // APPLY_WEIGHT_PATCH
+
+#if REINITIALIZE_PATCH
+Texture2D<float4> InSource;
+SamplerState InSourceSampler;
+float4x4 InPatchToSource;
+
+void ReinitializePatch(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	// We need only the 2D affine transformation that goes from patch integer coordinates
+	// to source UV coordinates.
+	float2x2 PatchToSourceRotateScale = (float2x2) InPatchToSource;
+	float2 PatchToSourceTranslate = InPatchToSource._m03_m13;
+	
+	float2 SourceUVCoordinates = mul(PatchToSourceRotateScale, SVPos.xy) + PatchToSourceTranslate;
+	OutColor = InSource.Sample(InSourceSampler, SourceUVCoordinates);
+}
+
+#endif // REINITIALIZE_PATCH
+
+#if SIMPLE_TEXTURE_COPY
+Texture2D<float4> InSource;
+SamplerState InSourceSampler;
+float2 InDestinationResolution;
+
+void SimpleTextureCopy(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	float2 UV = SVPos.xy / InDestinationResolution;
+	OutColor = InSource.Sample(InSourceSampler, UV);
+}
+#endif // SIMPLE_TEXTURE_COPY

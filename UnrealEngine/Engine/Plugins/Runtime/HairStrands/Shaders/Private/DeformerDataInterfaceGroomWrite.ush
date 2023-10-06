@@ -1,0 +1,149 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+#include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
+
+HAIR_STRANDS_INSTANCE_PARAMETERS({DataInterfaceName})
+
+uint 				{DataInterfaceName}_OutputStreamStart;
+Buffer<float4>		{DataInterfaceName}_PositionOffsetBufferSRV;
+Buffer<uint4>   	{DataInterfaceName}_PositionBufferSRV;
+RWBuffer<uint4> 	{DataInterfaceName}_PositionBufferUAV;
+RWByteAddressBuffer {DataInterfaceName}_PointAttributeBufferUAV;
+RWByteAddressBuffer {DataInterfaceName}_CurveAttributeBufferUAV;
+
+uint ReadNumControlPoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_PointCount;
+}
+
+uint ReadNumCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_CurveCount;
+}
+
+void WritePosition_{DataInterfaceName}(uint ControlPointIndex, float3 Position)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + ControlPointIndex;
+	if (WriteIndex < {DataInterfaceName}_PointCount)
+	{
+		const uint4 PackedCP = {DataInterfaceName}_PositionBufferSRV[WriteIndex];
+		const uint4 NewPackedCP = PackHairControlPointPosition(PackedCP, Position, {DataInterfaceName}_PositionOffsetBufferSRV[0].xyz);
+		{DataInterfaceName}_PositionBufferUAV[WriteIndex] = NewPackedCP;
+	}
+}
+
+void WriteRadius_{DataInterfaceName}(uint ControlPointIndex, float Radius)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + ControlPointIndex;
+	if (WriteIndex < {DataInterfaceName}_PointCount)
+	{
+		const uint4 PackedCP = {DataInterfaceName}_PositionBufferSRV[WriteIndex];
+		const uint4 NewPackedCP = PackHairControlPointRadius(PackedCP, Radius, {DataInterfaceName}_Radius);
+		{DataInterfaceName}_PositionBufferUAV[WriteIndex] = NewPackedCP;
+	}
+}
+
+void WritePositionAndRadius_{DataInterfaceName}(uint ControlPointIndex, float4 PositionAndRadius)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + ControlPointIndex;
+	if (WriteIndex < {DataInterfaceName}_PointCount)
+	{
+		const uint4 PackedCP = {DataInterfaceName}_PositionBufferSRV[WriteIndex];
+		uint4 NewPackedCP = 0;
+		NewPackedCP = PackHairControlPointPosition(PackedCP, PositionAndRadius.xyz, {DataInterfaceName}_PositionOffsetBufferSRV[0].xyz);
+		NewPackedCP = PackHairControlPointRadius(NewPackedCP, PositionAndRadius.w, {DataInterfaceName}_Radius);
+		{DataInterfaceName}_PositionBufferUAV[WriteIndex] = NewPackedCP;
+	}
+}
+
+void InternalSetHairStrandsAttributes(uint Index, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, RWByteAddressBuffer InAttributeBuffer, uint In, uint InIndexToChunkDivAsShift, uint InChunkElementCount, uint InChunkStrideInBytes)
+{
+	// Adapt index and offset
+	const uint ChunkIndex   = Index >> InIndexToChunkDivAsShift;
+	Index                  -= ChunkIndex * InChunkElementCount;
+	AttributeOffsetInBytes += ChunkIndex * InChunkStrideInBytes;
+
+	// Ensure the reading address is 4-byte aligned
+	const uint Address 					= AttributeOffsetInBytes + Index * AttributeStrideInBytes;
+	const uint Address_4BytesAligned 	= Address & (~0x3);
+	const uint ElementIndex 			= Address - Address_4BytesAligned;
+
+	// Create a mask where the 
+	const uint Mask 		  = (1u<<(AttributeStrideInBytes*8u))-1u;
+	const uint AttributeMask  = Mask << (ElementIndex*8);
+	const uint AttributeValue = In   << (ElementIndex*8);
+
+	// Clear previous value, and then write the value
+	InAttributeBuffer.InterlockedAnd(Address_4BytesAligned, ~AttributeMask);
+	InAttributeBuffer.InterlockedOr(Address_4BytesAligned, AttributeValue);
+}
+
+void InternalSetHairStrandsAttributes32(uint Index, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, RWByteAddressBuffer InAttributeBuffer, uint In, uint InIndexToChunkDivAsShift, uint InChunkElementCount, uint InChunkStrideInBytes)
+{
+	// Adapt index and offset
+	const uint ChunkIndex   = Index >> InIndexToChunkDivAsShift;
+	Index                  -= ChunkIndex * InChunkElementCount;
+	AttributeOffsetInBytes += ChunkIndex * InChunkStrideInBytes;
+
+	// Ensure the reading address is 4-byte aligned
+	const uint Address = AttributeOffsetInBytes + Index * AttributeStrideInBytes;
+	const uint Address_4BytesAligned = Address & (~0x3);
+
+	// Clear previous value, and then write the value
+	InAttributeBuffer.Store(Address_4BytesAligned, In);
+}
+
+void WriteRootUV_{DataInterfaceName}(uint CurveIndex, float2 RootUV)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + CurveIndex;
+	if (WriteIndex < {DataInterfaceName}_CurveCount && HasHairStrandsRootUV())
+	{
+		InternalSetHairStrandsAttributes32(CurveIndex, HAIR_CURVE_ATTRIBUTE_OFFSET_ROOTUV({DataInterfaceName}_CurveAttributeOffsets), HAIR_CURVE_ATTRIBUTE_STRIDE_ROOTUV, {DataInterfaceName}_CurveAttributeBufferUAV, PackHairRootUV(RootUV), {DataInterfaceName}_CurveAttributeIndexToChunkDivAsShift, {DataInterfaceName}_CurveAttributeChunkElementCount), {DataInterfaceName}_CurveAttributeChunkStrideInBytes);
+	}
+}
+
+void WriteSeed_{DataInterfaceName}(uint CurveIndex, float Seed)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + CurveIndex;
+	if (WriteIndex < {DataInterfaceName}_CurveCount)
+	{
+		InternalSetHairStrandsAttributes(CurveIndex, HAIR_CURVE_ATTRIBUTE_OFFSET_SEED({DataInterfaceName}_CurveAttributeOffsets), HAIR_CURVE_ATTRIBUTE_STRIDE_SEED, {DataInterfaceName}_CurveAttributeBufferUAV, PackHairSeed(Seed), {DataInterfaceName}_CurveAttributeIndexToChunkDivAsShift, {DataInterfaceName}_CurveAttributeChunkElementCount), {DataInterfaceName}_CurveAttributeChunkStrideInBytes);
+	}
+}
+
+void WriteClumpId_{DataInterfaceName}(uint CurveIndex, uint ClumpId)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + CurveIndex;
+	if (WriteIndex < {DataInterfaceName}_CurveCount && HasHairStrandsClumpId())
+	{
+		InternalSetHairStrandsAttributes(CurveIndex, HAIR_CURVE_ATTRIBUTE_OFFSET_CLUMPID({DataInterfaceName}_CurveAttributeOffsets), HAIR_CURVE_ATTRIBUTE_STRIDE_CLUMPID, {DataInterfaceName}_CurveAttributeBufferUAV, PackHairClumpID(ClumpId), {DataInterfaceName}_CurveAttributeIndexToChunkDivAsShift, {DataInterfaceName}_CurveAttributeChunkElementCount), {DataInterfaceName}_CurveAttributeChunkStrideInBytes);
+	}
+}
+
+void WriteColor_{DataInterfaceName}(uint PointIndex, float3 Color)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + PointIndex;
+	if (WriteIndex < {DataInterfaceName}_PointCount && HasHairStrandsColor())
+	{
+		InternalSetHairStrandsAttributes32(PointIndex, HAIR_POINT_ATTRIBUTE_OFFSET_COLOR({DataInterfaceName}_PointAttributeOffsets), HAIR_POINT_ATTRIBUTE_STRIDE_COLOR, {DataInterfaceName}_PointAttributeBufferUAV, PackHairColor(Color), {DataInterfaceName}_PointAttributeIndexToChunkDivAsShift, {DataInterfaceName}_PointAttributeChunkElementCount), {DataInterfaceName}_PointAttributeChunkStrideInBytes);
+	}
+}
+
+void WriteRoughness_{DataInterfaceName}(uint PointIndex, float Roughness)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + PointIndex;
+	if (WriteIndex < {DataInterfaceName}_PointCount && HasHairStrandsRoughness())
+	{
+		InternalSetHairStrandsAttributes(PointIndex, HAIR_POINT_ATTRIBUTE_OFFSET_ROUGHNESS({DataInterfaceName}_PointAttributeOffsets), HAIR_POINT_ATTRIBUTE_STRIDE_ROUGHNESS, {DataInterfaceName}_PointAttributeBufferUAV, PackHairRoughness(Roughness), {DataInterfaceName}_PointAttributeIndexToChunkDivAsShift, {DataInterfaceName}_PointAttributeChunkElementCount), {DataInterfaceName}_PointAttributeChunkStrideInBytes);
+	}
+}
+
+void WriteAO_{DataInterfaceName}(uint PointIndex, float Ao)
+{
+	const uint WriteIndex = {DataInterfaceName}_OutputStreamStart + PointIndex;
+	if (WriteIndex < {DataInterfaceName}_PointCount && HasHairStrandsAO())
+	{
+		InternalSetHairStrandsAttributes(PointIndex, HAIR_POINT_ATTRIBUTE_OFFSET_AO({DataInterfaceName}_PointAttributeOffsets), HAIR_POINT_ATTRIBUTE_STRIDE_AO, {DataInterfaceName}_PointAttributeBufferUAV, PackHairAO(Ao), {DataInterfaceName}_PointAttributeIndexToChunkDivAsShift, {DataInterfaceName}_PointAttributeChunkElementCount), {DataInterfaceName}_PointAttributeChunkStrideInBytes);
+	}
+}

@@ -1,0 +1,45 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.2",
+	"FriendlyName": "Concert - Main",
+	"Description": "Allow collaborative multi-users sessions in the Editor",
+	"Category": "Networking",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"Hidden": true,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"SupportedPrograms": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ],
+	"Modules": [
+		{
+			"Name": "Concert",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PreDefault",
+			"ProgramAllowList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+		},
+		{
+			"Name": "ConcertClient",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PreDefault",
+			"ProgramDenyList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+		},
+		{
+			"Name": "ConcertServer",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PreDefault",
+			"ProgramAllowList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+		},
+		{
+			"Name": "ConcertTransport",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "PreDefault",
+			"ProgramAllowList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+		}
+	]
+}

@@ -1,0 +1,87 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "ScreenPass.ush"
+
+#if PERMUTATION_NEARESTDEPTHNEIGHBOR 
+	#include "SeparateTranslucency.ush"
+#endif // PERMUTATION_NEARESTDEPTHNEIGHBOR
+
+
+//------------------------------------------------------- PARAMETERS
+
+Texture2D    SceneColorTexture;
+SamplerState SceneColorSampler;
+
+Texture2D<float> LowResDepthTexture;
+Texture2D<float> FullResDepthTexture;
+
+Texture2D    SeparateTranslucencyPointTexture;
+SamplerState SeparateTranslucencyPointSampler;
+Texture2D    SeparateModulationPointTexture;
+SamplerState SeparateModulationPointSampler;
+
+Texture2D    SeparateTranslucencyBilinearTexture;
+SamplerState SeparateTranslucencyBilinearSampler;
+Texture2D    SeparateModulationBilinearTexture;
+SamplerState SeparateModulationBilinearSampler;
+
+FScreenTransform ScreenPosToSceneColorUV;
+FScreenTransform ScreenPosToSeparateTranslucencyUV;
+float2 SeparateTranslucencyUVMin;
+float2 SeparateTranslucencyUVMax;
+float2 SeparateTranslucencyExtentInverse;
+
+
+//------------------------------------------------------- ENTRY POINT
+
+void MainPS(
+	float4 SvPosition : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	float4 Debug = 0;
+
+	float2 SceneColorUV = ApplyScreenTransform(SvPosition.xy, ScreenPosToSceneColorUV);
+	float2 SeparateTranslucencyUV = ApplyScreenTransform(SvPosition.xy, ScreenPosToSeparateTranslucencyUV);
+
+	float4 SceneColorSample = SceneColorTexture.SampleLevel(SceneColorSampler, SceneColorUV, 0);
+	
+	SeparateTranslucencyUV = clamp(SeparateTranslucencyUV, SeparateTranslucencyUVMin, SeparateTranslucencyUVMax);
+
+#if PERMUTATION_NEARESTDEPTHNEIGHBOR 
+
+	NearestDepthNeighborUpsamplingResult UpsampleResult = NearestDepthNeighborUpsampling(
+		LowResDepthTexture,
+		FullResDepthTexture,
+		SvPosition.xy, SeparateTranslucencyUV, SeparateTranslucencyExtentInverse);
+
+	float4 SeparateTranslucencySample = 0;
+	float4 SeparateModulationSample = 0;
+	
+	float2 SeparateTranslucencySampleUV = clamp(UpsampleResult.UV, SeparateTranslucencyUVMin, SeparateTranslucencyUVMax);
+
+
+	if (UpsampleResult.bUsePointSampler)
+	{
+		SeparateTranslucencySample	= SeparateTranslucencyPointTexture.SampleLevel(	SeparateTranslucencyPointSampler, SeparateTranslucencySampleUV, 0);
+		SeparateModulationSample	= SeparateModulationPointTexture.SampleLevel(	SeparateModulationPointSampler, SeparateTranslucencySampleUV, 0);
+	}
+	else
+	{
+		SeparateTranslucencySample	= SeparateTranslucencyBilinearTexture.SampleLevel(	SeparateTranslucencyBilinearSampler, SeparateTranslucencySampleUV, 0);
+		SeparateModulationSample	= SeparateModulationBilinearTexture.SampleLevel(	SeparateModulationBilinearSampler, SeparateTranslucencySampleUV, 0);
+	}
+
+#else // PERMUTATION_NEARESTDEPTHNEIGHBOR
+	
+	float4 SeparateTranslucencySample = SeparateTranslucencyBilinearTexture.SampleLevel(SeparateTranslucencyBilinearSampler, SeparateTranslucencyUV, 0);
+	float4 SeparateModulationSample   = SeparateModulationBilinearTexture.SampleLevel(	SeparateModulationBilinearSampler, SeparateTranslucencyUV, 0);
+
+#endif // PERMUTATION_NEARESTDEPTHNEIGHBOR
+
+	// Final composition
+	OutColor.rgb = SceneColorSample.rgb * SeparateTranslucencySample.a * SeparateModulationSample.rgb + SeparateTranslucencySample.rgb;
+
+	float GreyScaleModulateColorBackgroundVisibility = dot(SeparateModulationSample.rgb, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
+	OutColor.a = SceneColorSample.a * SeparateTranslucencySample.a * GreyScaleModulateColorBackgroundVisibility;
+}

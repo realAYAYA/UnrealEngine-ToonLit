@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 80,
+	"VersionName": "1.8.0",
+	"FriendlyName": "Plastic SCM",
+	"Description": "Plastic source control management",
+	"Category": "Source Control",
+	"CreatedBy": "SRombauts for Codice Software.",
+	"CreatedByURL": "https://srombauts.github.io",
+	"DocsURL": "https://github.com/PlasticSCM/UEPlasticPlugin",
+	"MarketplaceURL": "",
+	"SupportURL": "https://plasticscm.com/support",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "PlasticSourceControl",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "EarliestPossible",
+			"PlatformAllowList": [
+				"Win64",
+				"Linux"
+			]
+		}
+	]
+}

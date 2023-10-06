@@ -1,0 +1,181 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "../StrataTile.ush"
+
+#define TILE_CLASSIFICATION_SIMPLE_DIFFUSE 0
+#define TILE_CLASSIFICATION_SUPPORT_IMPORTANCE_SAMPLE_BRDF 1
+#define TILE_CLASSIFICATION_SUPPORT_ALL 2
+#define TILE_CLASSIFICATION_NUM 3
+
+uint2 TranslateTileCoordIntoPrimarySpace(uint2 TileNCoord, bool bOverflow, inout uint TileIndex)
+{
+	uint2 Out = TileNCoord;
+	TileIndex = 0;
+	if (bOverflow)
+	{
+		const FStrataBSDFTile BSDFNTile = UnpackBSDFTile(Strata.BSDFTileTexture[TileNCoord]);
+		TileIndex = BSDFNTile.Index;
+		Out = BSDFNTile.TileCoord;
+	}
+
+	return Out;
+}
+
+uint GetTileDataOffset(uint2 InViewportIntegrateTileDimensions, uint InMode, bool bOverflow)
+{
+	const uint ViewportTileCount = InViewportIntegrateTileDimensions.x * InViewportIntegrateTileDimensions.y;
+	const uint ModeOffset = ViewportTileCount * InMode;
+	const uint OverflowOffset = ViewportTileCount * TILE_CLASSIFICATION_NUM * (bOverflow?1:0);
+	return OverflowOffset + ModeOffset;
+}
+
+#define TILE_SIZE 8
+
+uint2 UnpackTileData(uint In)
+{
+	return uint2(In & 0xFFFF, In >> 16);
+}
+
+int2 ViewportIntegrateTileDimensions;
+Buffer<uint> IntegrateIndirectArgs;
+StructuredBuffer<uint> IntegrateTileData;
+
+FFontColor GetValidColor(bool bIsValid)
+{
+	FFontColor C = FontLightRed;
+	if (bIsValid) { C = FontLightGreen; } 
+	return C;
+}
+
+uint GetCount(uint InMode, bool bOverflow)
+{
+	const uint Offset = InMode * DISPATCH_INDIRECT_UINT_COUNT + (bOverflow ? TILE_CLASSIFICATION_NUM * DISPATCH_INDIRECT_UINT_COUNT : 0);
+	return IntegrateIndirectArgs[Offset];
+}
+
+void PrintTile(inout FShaderPrintContext Context, uint LinearCoord, uint InMode, bool bOverflow, bool bOverflowLinear, int TileIndexFilter, float4 TileColor)
+{
+	if (LinearCoord < GetCount(InMode, bOverflow))
+	{
+		const uint TileDataOffset = LinearCoord + GetTileDataOffset(ViewportIntegrateTileDimensions, InMode, bOverflow);
+		uint2 TileCoord = UnpackTileData(IntegrateTileData[TileDataOffset]);
+		uint TileIndex = 0;
+		if (bOverflow)
+		{
+			if (bOverflowLinear)
+			{
+				TileCoord.y -= Strata.OverflowTileOffset.y;
+			}
+			else
+			{
+				TileCoord = TranslateTileCoordIntoPrimarySpace(TileCoord, bOverflow, TileIndex);
+			}
+		}
+
+		const bool bDraw = (TileIndexFilter < 0 || TileIndex == uint(TileIndexFilter));
+		if (bDraw)
+		{
+			AddFilledQuadSS(TileCoord * TILE_SIZE, TileCoord * TILE_SIZE + TILE_SIZE, TileColor);
+		}
+	}
+}
+
+void PrintTileLegend(inout FShaderPrintContext Context)
+{
+	Print(Context, TEXT("Simple           "), FontGreen);
+	Print(Context, TEXT("ImportanceSample "), FontOrange);
+	Print(Context, TEXT("All              "), FontRed);
+}
+
+void PrintTiles(inout FShaderPrintContext Context, uint LinearCoord, bool bOverflow, bool bOverflowLinear, int TileIndex)
+{
+	const float Alpha = 0.5f;
+	float4 TileColor_Simple = ColorGreen;  	TileColor_Simple.a = Alpha;
+	float4 TileColor_IS = ColorOrange; 		TileColor_IS.a = Alpha;
+	float4 TileColor_All = ColorRed;    	TileColor_All.a = Alpha;
+
+	PrintTile(Context, LinearCoord, TILE_CLASSIFICATION_SIMPLE_DIFFUSE,					bOverflow, bOverflowLinear, TileIndex, TileColor_Simple);
+	PrintTile(Context, LinearCoord, TILE_CLASSIFICATION_SUPPORT_IMPORTANCE_SAMPLE_BRDF, bOverflow, bOverflowLinear, TileIndex, TileColor_IS);
+	PrintTile(Context, LinearCoord, TILE_CLASSIFICATION_SUPPORT_ALL,					bOverflow, bOverflowLinear, TileIndex, TileColor_All);
+}
+
+void PrintTileStats(inout FShaderPrintContext Context, bool bOverflow)
+{
+	const uint Simple = GetCount(0, bOverflow);
+	const uint IS = GetCount(1, bOverflow);
+	const uint All = GetCount(2, bOverflow);
+	const uint Total = Simple + IS + All;
+	Print(Context, TEXT("Simple           : "), FontSilver); Print(Context, Simple, FontSilver); Newline(Context);
+	Print(Context, TEXT("ImportanceSample : "), FontSilver); Print(Context, IS, 	FontSilver); Newline(Context);
+	Print(Context, TEXT("All              : "), FontSilver); Print(Context, All, 	FontSilver); Newline(Context);
+	Print(Context, TEXT("Total            : "), FontSilver); Print(Context, Total, 	GetValidColor(Total>0)); Newline(Context);
+}
+
+[numthreads(1, 1, 1)]
+void ScreenProbeDebugMain(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const bool bOverflowValid = STRATA_ENABLED ? Strata.BSDFTileCountBuffer[0] > 0 : false;
+
+	FShaderPrintContext Context = InitShaderPrintContext(all(DispatchThreadId == 0), uint2(50, 100));
+	if (Context.bIsActive)
+	{
+		Print(Context, TEXT("Lumen Screen Probe"), FontOrange);
+		Newline(Context);
+
+		const FFontColor PrimaryResColor = GetValidColor(true);
+		const FFontColor OverflowResColor = GetValidColor(bOverflowValid);
+		uint2 TileRes_Primary  = Strata.TileCount;
+		uint2 TileRes_Overflow = Strata.OverflowTileCount;
+		Print(Context, TEXT("Primary  Tile Res: "), FontSilver); Print(Context, TileRes_Primary.x, PrimaryResColor, 3, 3); Print(Context, TEXT(" x "), PrimaryResColor); Print(Context, TileRes_Primary.y, PrimaryResColor); Newline(Context);
+		Print(Context, TEXT("Overflow Tile Res: "), FontSilver); Print(Context, TileRes_Overflow.x, OverflowResColor, 3, 3); Print(Context, TEXT(" x "), OverflowResColor); Print(Context, TileRes_Overflow.y, OverflowResColor); Newline(Context);
+		Newline(Context);
+
+		// Primary
+		{
+			Print(Context, TEXT("Primary "), FontOrange); Newline(Context);
+			PrintTileStats(Context, false);
+			Newline(Context);
+		}
+
+		// Overflow
+		if (bOverflowValid)
+		{
+			Print(Context, TEXT("Overflow "), FontOrange); Newline(Context);
+			PrintTileStats(Context, true);
+			Newline(Context);
+		}
+	}
+
+	PrintTileLegend(Context);
+	Newline(Context);
+	
+#if STRATA_ENABLED
+	const bool bPrimaryEnable = AddCheckbox(Context, TEXT("Primary Tiles"), true, FontOrange);
+	Newline(Context);
+	const bool bOverflowEnable = AddCheckbox(Context, TEXT("Overflow Tiles"), true, FontOrange);
+	Newline(Context);
+	const bool bOverflowLinear = AddCheckbox(Context, TEXT("Overflow Tiles as Linear"), true, FontSilver);
+	Newline(Context);
+	const int TileIndexFilter =  AddSlider(Context, TEXT("Tile index"), -1, FontSilver, -1, 3.f); Print(Context, TileIndexFilter, FontEmerald);
+	Newline(Context);
+#endif
+
+	// Draw tiles
+	{
+		const uint LinearCoord = DispatchThreadId.x + DispatchThreadId.y * ViewportIntegrateTileDimensions.x;
+		
+		// Primary
+		if (bPrimaryEnable)
+		{
+			PrintTiles(Context, LinearCoord, false, false, -1);
+		}
+
+		// Overflow
+		if (bOverflowValid && bOverflowEnable)
+		{
+			PrintTiles(Context, LinearCoord, true, bOverflowLinear, TileIndexFilter);
+		}
+	}
+}

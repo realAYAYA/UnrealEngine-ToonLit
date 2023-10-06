@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <PublishSingleFile>True</PublishSingleFile>
+    <SelfContained>True</SelfContained>
+    <!-- Supress CA1812: "Class" is an internal class that is apparently never instantiated.
+      With the change to dynamic instantiation this warning is triggered.
+      -->
+    <NoWarn>CA1812</NoWarn>
+  </PropertyGroup>
+
+    <PropertyGroup>
+      <IsWindows Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">true</IsWindows> 
+      <IsOSX Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">true</IsOSX> 
+      <IsLinux Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">true</IsLinux> 
+      <WithRestricted Condition="Exists('..\..\Restricted\NotForLicensees\Extras\P4VUtils\P4VUtils.ini')">true</WithRestricted> 
+      <NFLPrefix Condition="'$(WithRestricted)'=='true'">../../Restricted/NotForLicensees/Extras/P4VUtils/</NFLPrefix> 
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+      <OutputPath>bin\Release</OutputPath>
+    </PropertyGroup>
+    <Choose>
+    <When Condition="'$(IsWindows)'=='true'">
+      <PropertyGroup>
+        <TargetFramework>net6.0-windows</TargetFramework>
+        <UseWindowsForms>true</UseWindowsForms>
+        <UseWPF>true</UseWPF>
+        <DefineConstants>$(DefineConstants);IS_WINDOWS</DefineConstants>
+        <PublishDir>$(NFLPrefix)Binaries/Win64</PublishDir>
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+      </PropertyGroup>
+    </When>
+    <Otherwise>
+      <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+      </PropertyGroup>
+      <Choose>
+      <When Condition="'$(IsOSX)'=='true'">
+        <PropertyGroup>
+          <DefineConstants>$(DefineConstants);IS_MAC</DefineConstants>
+          <PublishDir>$(NFLPrefix)Binaries/Mac</PublishDir>
+          <RuntimeIdentifier>osx-x64</RuntimeIdentifier>
+        </PropertyGroup>
+      </When>
+      <Otherwise>
+        <PropertyGroup>
+          <DefineConstants>$(DefineConstants);IS_LINUX</DefineConstants>
+          <PublishDir>$(NFLPrefix)Binaries/Linux</PublishDir>
+          <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+        </PropertyGroup>
+      </Otherwise>
+      </Choose>
+    </Otherwise>
+  </Choose>
+  
+  <ItemGroup Condition="'$(WithRestricted)'=='true'">
+    <None Include="$(NFLPrefix)/P4VUtils.ini" Link="NotForLicensees/P4VUtils.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <Compile Include="..\..\Restricted\*\Extras\P4VUtils\Commands\*.cs">
+      <Link>Restricted\Commands\%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Source\Programs\Shared\EpicGames.Core\EpicGames.Core.csproj" />
+    <ProjectReference Include="..\..\Source\Programs\Shared\EpicGames.Perforce\EpicGames.Perforce.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <None Update="P4VUtils.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

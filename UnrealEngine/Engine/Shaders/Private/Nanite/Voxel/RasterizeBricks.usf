@@ -1,0 +1,222 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "Brick.ush"
+#include "Voxel.ush"
+
+void DrawBricksVS(
+	uint VertexID			: SV_VertexID,
+	uint InstanceID			: SV_InstanceID,
+	out nointerpolation uint   OutBrickOffset	: TEXCOORD0,
+	out nointerpolation float4 OutCubePos		: TEXCOORD1,
+	out nointerpolation uint   OutBounds		: TEXCOORD2,
+	out float4 OutPosition	: SV_POSITION
+	)
+{
+	uint LocalBrickID = VertexID / VertsPerBrick;
+	InstanceID = InstanceID * BricksPerInstance + LocalBrickID;
+	VertexID = VertexID - LocalBrickID * VertsPerBrick;
+
+	uint NumBricks = GetNumBricks();
+
+	BRANCH
+	if( InstanceID >= NumBricks )
+	{
+		OutPosition = float4(0,0,0,1);
+		return;
+	}
+
+	FBrick Brick = BrickBuffer[ InstanceID ];
+
+	float3 BrickPos;
+	float CubeSize;
+	DecodeBrickKey( Brick.Key, BrickPos, CubeSize );
+
+	float3 WorldMin = BrickPos * CubeSize;
+	float3 WorldMax = WorldMin + CubeSize;
+
+	if(1)
+	{
+		uint2 RootBlock = BlockBuffer.Load2( 8 * Brick.BlockOffset );
+
+		uint3 BrickMin, BrickMax;
+		BlockBounds( RootBlock, BrickMin, BrickMax );
+
+		BrickMax--;
+
+		uint BrickBounds;
+		BrickBounds  = BrickMin.x;
+		BrickBounds |= BrickMin.y << 2;
+		BrickBounds |= BrickMin.z << 4;
+		BrickBounds |= BrickMax.x << 6;
+		BrickBounds |= BrickMax.y << 8;
+		BrickBounds |= BrickMax.z << 10;
+		BrickMax++;
+
+		OutBounds = BrickBounds;
+		
+		float3 UnitMin = BrickMin * 0.25;
+		float3 UnitMax = BrickMax * 0.25;
+
+		float3 NewWorldMin = lerp( WorldMin, WorldMax, UnitMin );
+		float3 NewWorldMax = lerp( WorldMin, WorldMax, UnitMax );
+		
+		WorldMin = NewWorldMin;
+		WorldMax = NewWorldMax;
+	}
+
+	OutCubePos = float4( BrickPos, rcp(CubeSize) );
+	OutBrickOffset = Brick.BlockOffset;
+
+#if DRAW_RECTS
+	float3 Bounds[2] = { WorldMin, WorldMax };
+
+	// Screen rect from bounds
+	float3 RectMin = float3(  1,  1,  1 );
+	float3 RectMax = float3( -1, -1, -1 );
+
+	UNROLL for( uint i = 0; i < 8; i++ )
+	{
+		float3 PointWorld;
+		PointWorld.x = Bounds[ (i >> 0) & 1 ].x;
+		PointWorld.y = Bounds[ (i >> 1) & 1 ].y;
+		PointWorld.z = Bounds[ (i >> 2) & 1 ].z;
+
+		float4 PointClip = mul( float4( PointWorld, 1 ), View.TranslatedWorldToClip );
+		float3 PointScreen = PointClip.xyz / PointClip.w;
+
+		RectMin = min( RectMin, PointScreen );
+		RectMax = max( RectMax, PointScreen );
+	}
+
+#if PLATFORM_SUPPORTS_RECT_LIST
+	OutPosition.x = VertexID == 1 ? RectMax.x : RectMin.x;
+	OutPosition.y = VertexID == 2 ? RectMax.y : RectMin.y;
+	OutPosition.z = RectMax.z;
+	OutPosition.w = 1;
+#else
+	OutPosition.x = VertexID & 1 ? RectMax.x : RectMin.x;
+	OutPosition.y = VertexID & 2 ? RectMax.y : RectMin.y;
+	OutPosition.z = RectMax.z;
+	OutPosition.w = 1;
+#endif
+#else
+	bool3 Corner;
+	Corner.z = ( VertexID >> 0 ) & 1;
+	Corner.y = ( VertexID >> 1 ) & 1;
+	Corner.x = ( VertexID >> 2 ) & 1;
+
+	float3 Position = Corner ? WorldMax : WorldMin;
+
+	OutPosition = mul( float4( Position, 1 ), View.TranslatedWorldToClip );
+#endif
+}
+
+
+ENABLE_RE_Z
+void DrawBricksPS(
+	in uint   BrickOffset	: TEXCOORD0,
+	in float4 CubePos		: TEXCOORD1,
+	in uint   BrickBounds	: TEXCOORD2,
+	in float4 SvPosition	: SV_Position,
+	out float4 OutColor		: SV_Target0
+	)
+{
+	FRay Ray = GetViewRay( SvPosition );
+
+#if 0
+	OutColor = 0.1;
+#elif 0
+	float3 BrickPos = CubePos.xyz;
+	float  CubeSize = rcp(CubePos.w);
+	//float  CubeSize = CubePos.w;
+	
+	float3 WorldMin = BrickPos * CubeSize;
+	float3 WorldMax = WorldMin + CubeSize;
+
+	float3 Bounds[2] = { WorldMin, WorldMax };
+
+	// Ray intersect with box
+	float3 InvDir = rcp( Ray.Direction );
+	float3 PlaneIntersect0 = ( Bounds[0] - Ray.Origin ) * InvDir;
+	float3 PlaneIntersect1 = ( Bounds[1] - Ray.Origin ) * InvDir;
+	float3 MinIntersection = min( PlaneIntersect0, PlaneIntersect1 );
+	float3 MaxIntersection = max( PlaneIntersect0, PlaneIntersect1 );
+
+	Ray.Time[0] = max( Ray.Time[0], max3( MinIntersection.x, MinIntersection.y, MinIntersection.z ) );
+	Ray.Time[1] = min( Ray.Time[1], min3( MaxIntersection.x, MaxIntersection.y, MaxIntersection.z ) );
+
+	OutColor = Ray.Time[0] <= Ray.Time[1] ? 0.1 : 0;
+
+	if( Ray.Time[0] > Ray.Time[1] )
+		discard;
+#elif 0
+	// Transform to local space
+	Ray.Origin    = Ray.Origin    * CubePos.w - CubePos.xyz;
+	Ray.Direction = Ray.Direction * CubePos.w;
+
+	float3 Bounds[2] = { float3(0,0,0), float3(1,1,1) };
+
+	// Ray intersect with box
+	float3 InvDir = rcp( Ray.Direction );
+	float3 PlaneIntersect0 = ( Bounds[0] - Ray.Origin ) * InvDir;
+	float3 PlaneIntersect1 = ( Bounds[1] - Ray.Origin ) * InvDir;
+	float3 MinIntersection = min( PlaneIntersect0, PlaneIntersect1 );
+	float3 MaxIntersection = max( PlaneIntersect0, PlaneIntersect1 );
+
+	Ray.Time[0] = max( Ray.Time[0], max3( MinIntersection.x, MinIntersection.y, MinIntersection.z ) );
+	Ray.Time[1] = min( Ray.Time[1], min3( MaxIntersection.x, MaxIntersection.y, MaxIntersection.z ) );
+
+	OutColor = Ray.Time[0] <= Ray.Time[1] ? 0.1 : 0;
+
+	if( Ray.Time[0] > Ray.Time[1] )
+		discard;
+#else
+	// Transform to local space
+	Ray.Origin    = Ray.Origin    * CubePos.w - CubePos.xyz;
+	Ray.Direction = Ray.Direction * CubePos.w;
+
+	float3 Bounds[2] = { float3(0,0,0), float3(1,1,1) };
+
+	{
+		uint3 Min, Max;
+		Min.x = BitFieldExtractU32( BrickBounds, 2, 0 );
+		Min.y = BitFieldExtractU32( BrickBounds, 2, 2 );
+		Min.z = BitFieldExtractU32( BrickBounds, 2, 4 );
+		Max.x = BitFieldExtractU32( BrickBounds, 2, 6 );
+		Max.y = BitFieldExtractU32( BrickBounds, 2, 8 );
+		Max.z = BitFieldExtractU32( BrickBounds, 2, 10 );
+		Max++;
+
+		Bounds[0] = Min * 0.25;
+		Bounds[1] = Max * 0.25;
+	}
+
+	Ray.Time = Intersect( Ray, Bounds );
+
+	FRayCastCounters Counters = (FRayCastCounters)0;
+	if( Ray.Time[0] < Ray.Time[1] )
+	{
+#if VOXEL_NUM_LEVELS == 2
+		//Ray.Time[0] = RayCastBrick_L1( Ray, BrickOffset, Counters );
+		//Ray.Time[0] = RayCastBrick_L2( Ray, BrickOffset, Counters );
+		Ray.Time[0] = RayCastBrick_L2_WhileWhile( Ray, BrickOffset, Counters );
+		//Ray.Time[0] = RayCastBrick_L2_Flat( Ray, BrickOffset, Counters );
+#else
+		Ray.Time[0] = RayCastBrick_L1( Ray, BrickOffset, Counters );
+#endif
+		OutColor.r = Counters.Tests / 20.0;
+		OutColor.g = Counters.Steps / 20.0;
+		OutColor.g = Counters.StepIn / 10.0;
+		OutColor.b = Counters.StepOut / 10.0;
+
+		OutColor = OutColor.r;
+		//OutColor.rgb = VisualizeCount( Counters.StepOut );
+
+		//OutColor.rgb = frac( Ray.Time[1] / 1000 );
+	}
+	
+	if( Ray.Time[0] >= Ray.Time[1] )
+		discard;
+#endif
+}

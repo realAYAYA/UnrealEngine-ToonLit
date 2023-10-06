@@ -1,0 +1,38 @@
+#pragma once
+
+#define EYE_ADAPTATION_LOOSE_PARAMETERS 1
+#include "../EyeAdaptationCommon.ush"
+#include "../TonemapCommon.ush"
+
+uint VisualizeHiResSurface;
+uint2 InputViewSize;
+uint2 InputViewOffset;
+uint2 OutputViewSize;
+uint2 OutputViewOffset;
+int Tonemap;
+
+#define LUT_SCALING	1.05f
+#define LUT_SIZE	32.f
+Texture3D ColorGradingLUT;
+SamplerState ColorGradingLUTSampler;
+
+float3 ColorLookupTable(float3 LinearColor)
+{
+	//@todo - reuse with PostProcessTonemap.usf and handle OutputDevice
+	float3 LUTEncodedColor = LinToLog( LinearColor + LogToLin( 0 ) );
+	float3 UVW = LUTEncodedColor * ((LUT_SIZE - 1) / LUT_SIZE) + (0.5f / LUT_SIZE);
+	return ColorGradingLUT.SampleLevel(ColorGradingLUTSampler, UVW, 0).rgb * LUT_SCALING;
+}
+
+float3 VisualizeTonemap(float3 LinearColor)
+{
+	float3 OutColor = LinearColor;
+
+	// The overview outputs after the tonemapper to overwrite editor primitives and must apply its own tonemapping
+	if (Tonemap > 0)
+	{
+		OutColor = ColorLookupTable(LinearColor * View.OneOverPreExposure * EyeAdaptationLookup());
+	}
+
+	return OutColor;
+}

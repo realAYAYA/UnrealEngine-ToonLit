@@ -1,0 +1,201 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../MonteCarlo.ush"
+#include "../BlueNoise.ush"
+
+#define REFLECTION_THREADGROUP_SIZE_2D 8 
+#define REFLECTION_THREADGROUP_SIZE_1D 64
+
+uint2 ReflectionTracingViewSize;
+uint2 ReflectionTracingBufferSize;
+
+// Downsample factor from full res to tracing res
+uint ReflectionDownsampleFactor;
+float MaxRayIntensity;
+float ReflectionSmoothBias;
+
+// 0: Opaque, 1: SingleLayerWater, 2: FrontLayerTranslucency
+uint ReflectionPass;
+uint UseJitter;
+uint UseHighResSurface;
+
+// Note: negative if invalid ray
+Texture2D DownsampledDepth;
+Texture2D<float4> RayBuffer;
+// The distance to trace each ray before interpolating from the Radiance Cache
+Texture2D<uint> RayTraceDistance;
+
+Texture2D<float3> TraceRadiance;
+Texture2D<float> TraceHit;
+
+#if 1
+	#define SCREEN_TEMPORAL_INDEX			View.StateFrameIndexMod8
+#else
+	#define SCREEN_TEMPORAL_INDEX			0
+#endif
+
+#if 1
+	#define RAY_DIRECTION_TEMPORAL_INDEX	View.StateFrameIndex
+#else
+	#define RAY_DIRECTION_TEMPORAL_INDEX	0
+#endif
+
+// Returns the jitter offset in the range [0, ReflectionDownsampleFactor - 1]
+float2 GetScreenTileJitter(uint TemporalIndex)
+{
+	return 0;
+}
+
+float2 GetScreenUVFromReflectionTracingCoord(uint2 ReflectionTracingCoord)
+{
+	float2 ScreenCoord = ReflectionTracingCoord * ReflectionDownsampleFactor + View.ViewRectMin.xy + GetScreenTileJitter(SCREEN_TEMPORAL_INDEX) + 0.5f;
+	// ScreenUV can be outside of valid viewport, since viewport is downsampled with DivideAndRoundUp
+	ScreenCoord = min(ScreenCoord, View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy - 1.0f);
+	return ScreenCoord * View.BufferSizeAndInvSize.zw;
+}
+
+float2 GetReflectionTracingCoordFromScreenUV(float2 ScreenUV, uint TemporalIndex)
+{
+	float2 ReflectionTracingCoord = (ScreenUV - (View.ViewRectMin.xy + GetScreenTileJitter(TemporalIndex) + 0.5f) * View.BufferSizeAndInvSize.zw) / (ReflectionDownsampleFactor * View.BufferSizeAndInvSize.zw);
+	return ReflectionTracingCoord;
+}
+
+float3 GetWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+	return WorldPosition;
+}
+
+float3 GetTranslatedWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	return mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+}
+
+float GetMaxHitDistance()
+{
+	return MaxHalfFloat;
+}
+
+float EncodeRayDistance(float HitDistance, bool bHit)
+{
+	HitDistance = max(HitDistance, 0.0f);
+	return HitDistance * (bHit ? -1.0f : 1.0f);
+}
+
+float DecodeRayDistance(float Encoded, out bool bHit)
+{
+	bHit = asuint(Encoded) & 0x80000000;
+	return abs(Encoded);
+}
+
+float DecodeProbeRayDistance(float Encoded)
+{
+	return abs(Encoded);
+}
+
+struct FRayData
+{
+	float3 Direction;
+	float PDF;
+	float ConeHalfAngle;
+
+	// Radiance cache max trace distance. Don't need to load this data if radiance cache isn't used.
+	float RadianceCacheMaxTraceDistance;
+	bool bUseRadianceCache;
+};
+
+// Must be larger than FLOAT16_MIN
+const static float MinReflectionConeAngle = 0.00001f;
+
+uint PackRayTraceDistance(float RayTraceDistance, bool bUseRadianceCache)
+{
+	uint PackedData =
+		(f32tof16(RayTraceDistance) & 0x7FFF) |
+		(bUseRadianceCache << 15);
+	return PackedData;
+}
+
+void UnpackRayTraceDistance(uint PackedData, inout float RadianceCacheMaxTraceDistance, inout bool bUseRadianceCache)
+{
+	RadianceCacheMaxTraceDistance = f16tof32(PackedData & 0x7FFF);
+	bUseRadianceCache = (PackedData >> 15) != 0;
+}
+
+FRayData GetRayData(uint2 TracingCoord)
+{
+	float4 PackedRayData = RayBuffer[TracingCoord];
+
+	FRayData RayData;
+	RayData.Direction = PackedRayData.xyz;
+	RayData.ConeHalfAngle = PackedRayData.w;
+	RayData.PDF = 1.0f / PackedRayData.w;
+
+	UnpackRayTraceDistance(RayTraceDistance[TracingCoord], RayData.RadianceCacheMaxTraceDistance, RayData.bUseRadianceCache);
+
+	return RayData;
+}
+
+Buffer<uint> ReflectionResolveTileData;
+
+uint2 GetReflectionResolveScreenCoord(uint TileIndex, uint ThreadIndex)
+{
+	uint2 TileOffset = uint2(ReflectionResolveTileData[TileIndex] & 0xFFFF, (ReflectionResolveTileData[TileIndex] >> 16) & 0xFFFF);
+	return TileOffset * REFLECTION_THREADGROUP_SIZE_2D + uint2(ThreadIndex % REFLECTION_THREADGROUP_SIZE_2D, ThreadIndex / REFLECTION_THREADGROUP_SIZE_2D);
+}
+
+Buffer<uint> ReflectionTracingTileData;
+
+uint2 GetReflectionTracingScreenCoord(uint TileIndex, uint ThreadIndex)
+{
+	uint2 TileOffset = uint2(ReflectionTracingTileData[TileIndex] & 0xFFFF, (ReflectionTracingTileData[TileIndex] >> 16) & 0xFFFF);
+	return TileOffset * REFLECTION_THREADGROUP_SIZE_2D + uint2(ThreadIndex % REFLECTION_THREADGROUP_SIZE_2D, ThreadIndex / REFLECTION_THREADGROUP_SIZE_2D);
+}
+
+uint2 GetReflectionTracingScreenCoordZOrder(uint TileIndex, uint ThreadIndex)
+{
+	uint2 TileOffset = uint2(ReflectionTracingTileData[TileIndex] & 0xFFFF, (ReflectionTracingTileData[TileIndex] >> 16) & 0xFFFF);
+	return TileOffset * REFLECTION_THREADGROUP_SIZE_2D + ZOrder2D(ThreadIndex, log2(REFLECTION_THREADGROUP_SIZE_2D));
+}
+
+Buffer<uint> CompactedTraceTexelAllocator;
+Buffer<uint> CompactedTraceTexelData;
+
+struct FTraceMaterialId
+{
+	bool bNeedsHitLightingPass;
+	uint MaterialId;
+};
+
+uint PackTraceMaterialId(bool bNeedsHitLightingPass, uint MaterialShaderIndex)
+{
+	uint PackedMaterialId = MaterialShaderIndex & 0x7FFF;
+	PackedMaterialId |= bNeedsHitLightingPass ? 0x8000 : false;
+	return PackedMaterialId;
+}
+
+FTraceMaterialId UnpackTraceMaterialId(uint PackedMaterialId)
+{
+	FTraceMaterialId TraceMaterialId;
+	TraceMaterialId.bNeedsHitLightingPass = PackedMaterialId & 0x8000 ? true : false;
+	TraceMaterialId.MaterialId = PackedMaterialId & 0x7FFF;
+	return TraceMaterialId;
+}
+
+float ApplySmoothBias(float Roughness)
+{
+	float NewRoughness = Roughness;
+
+	if (ReflectionSmoothBias > 0)
+	{
+		// SmoothStep-like function up to SmoothBias, original value above
+		float X = saturate(Roughness / ReflectionSmoothBias);
+		NewRoughness = Roughness * X * X * (3.0 - 2.0 * X);
+	}
+
+	// Only opaque and translucent reflections get the denoiser, otherwise force to mirror
+	return ReflectionPass == 0 || ReflectionPass == 2 ? NewRoughness : 0.0f;
+}

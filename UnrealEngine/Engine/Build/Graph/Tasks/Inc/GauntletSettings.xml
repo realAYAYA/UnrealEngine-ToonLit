@@ -1,0 +1,46 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<!--
+		This script defines parameters passed to Gauntlet. It is expected that most licensees will need
+        to create a custom version of this scrupt due to things like the device service url
+
+		This script should be includedEng after CommonProperties.xml and PathSettings.xml where build
+        strings and paths are defines
+		
+        InProperty: ProjectName - Name of the project (e.g. <ProjectName>.uproject)
+
+        OutProperty: GauntletEditorTestArgs - Arguments to pass to Gauntlet tests executed under the editor
+		OutProperty: GauntletTargetTestArgs - Arguments to pass to Gauntlet tests executed using cooked builds
+	-->
+
+
+	<!-- How long to give Gauntlet before a test is considered timed out (some tests will time out earlier if they detect inactivity)-->
+	<Option Name="GauntletTimeout" DefaultValue="3600" Description="Max running time of a test in Gauntlet"/>
+	<Option Name="GauntletDevicePool" DefaultValue="UE4" Description="Gauntlet Device Pool to use to run target platform tests"/>
+	<Option Name="AlternateGauntletDevicePool" DefaultValue="UE5" Description="Alternate Gauntlet Device Pool to use to run target platform tests"/>
+	<Option Name="AlternateDevicePoolPlatforms" DefaultValue="XSX;PS5" Description="Platforms that need to use the Alternate Gauntlet Device Pool"/>
+	<Option Name="EnableDeviceLoginVerification" DefaultValue="$(IsBuildMachine)" Description="Verify a user is login on Devices that supports it, try to sign in if not."/>
+	<Option Name="ExtraGauntletCommonArgs" DefaultValue="" Description="Additional Common arguments passed to Gauntlet command line"/>
+	<Option Name="ExtraGauntletTargetTestArgs" DefaultValue="" Description="Additional Target test arguments passed to Gauntlet command line"/>
+	<Option Name="ExtraGauntletEditorTestArgs" DefaultValue="" Description="Additional Editor test arguments passed to Gauntlet command line"/>
+	
+	<Property Name="GauntletCommonArgs" Value="-maxduration=$(GauntletTimeOut) -unattended -verbose -ResumeOnCriticalFailure $(ExtraGauntletCommonArgs)" />
+	<Property Name="GauntletCommonArgs" Value="$(GauntletCommonArgs) -WriteTestResultsForHorde" If="'$(UE_HORDE_JOBID)' != ''"/>
+
+	<Property Name="GauntletDeviceArgs" Value="" />
+	<Property Name="GauntletDeviceArgs" Value="-deviceurl=https://horde.devtools.epicgames.com/ -reboot -cleardevices -sandbox=&quot;$(ProjectName)&quot;" If="$(IsBuildMachine)" />
+	<Property Name="GauntletDeviceArgs" Value="$(GauntletDeviceArgs) -VerifyLogin" If="$(EnableDeviceLoginVerification)"/>
+	<Property Name="GauntletDeviceAltArgs" Value="$(GauntletDeviceArgs)" />
+	<Property Name="GauntletDeviceArgs" Value="$(GauntletDeviceArgs) -devicepool=&quot;$(GauntletDevicePool)&quot;" If="$(IsBuildMachine)"/>
+	<Property Name="GauntletDeviceAltArgs" Value="$(GauntletDeviceAltArgs) -devicepool=&quot;$(AlternateGauntletDevicePool)&quot;" If="$(IsBuildMachine)"/>
+
+	<Property Name="GauntletTargetTestArgs" Value="$(GauntletCommonArgs) $(GauntletDeviceArgs) $(ExtraGauntletTargetTestArgs)" />
+	<Property Name="GauntletTargetTestAltArgs" Value="$(GauntletCommonArgs) $(GauntletDeviceAltArgs) $(ExtraGauntletTargetTestArgs)" />
+	<Property Name="GauntletEditorTestArgs" Value="-build=editor $(GauntletCommonArgs) $(ExtraGauntletEditorTestArgs)" />
+	<Property Name="GauntletCookedEditorTestArgs" Value="-cookededitor $(GauntletCommonArgs) $(ExtraGauntletEditorTestArgs)" />
+
+    <!-- this is fully generated dynamiclly when needed, it's simply here so it can be used without worrying if its set -->
+    <Property Name="GauntletReportArgs" Value="" />
+
+</BuildGraph>

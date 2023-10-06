@@ -1,0 +1,22 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HdStormRendererPlugin": {
+                        "bases": [
+                            "HdRendererPlugin"
+                        ],
+                        "displayName": "GL",
+                        "priority": 0
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/hdStorm.dylib",
+            "Name": "hdStorm",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

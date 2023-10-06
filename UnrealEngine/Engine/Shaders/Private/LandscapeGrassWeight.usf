@@ -1,0 +1,233 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+struct FLandscapeGrassWeightInterpolantsVSToPS
+{
+	float4 Position : SV_POSITION;
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+	float4 PositionPreOffset : TEXCOORD9;
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	float LocalPosZ : TEXCOORD10;
+#endif // VF_USE_PRIMITIVE_SCENE_DATA
+};
+
+#if VERTEXSHADER
+
+float2 RenderOffset;
+
+/** Vertex Shader */
+void VSMain(
+	FVertexFactoryInput Input,
+	out FLandscapeGrassWeightInterpolantsVSToPS Output
+	)
+{
+	ResolvedView = ResolveView();
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+	
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
+	
+	// We can't deal correctly with horizontal WPO. We can choose to either:
+	// (i) only take the offset in the direction of the heightfield which means that grass can mismatch on some slopes, or
+	// (ii) take the full offset which means that grass can be missing or corrupt at edges of each tile.
+	// We choose (i) here.
+	float3 WPO = GetMaterialWorldPositionOffset(VertexParameters);
+	WPO = LWCMultiplyVector(WPO, VertexFactoryGetWorldToLocal(VFIntermediates)) * float3(0, 0, 1);
+	WPO = LWCMultiplyVector(WPO, VertexFactoryGetLocalToWorld(VFIntermediates));
+	WorldPosition.xyz += WPO;
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	FLWCVector3 AbsoluteWorldPosition = LWCSubtract(WorldPosition.xyz, ResolvedView.PreViewTranslation);
+	Output.LocalPosZ = LWCMultiply(AbsoluteWorldPosition, VertexFactoryGetWorldToLocal(VFIntermediates)).z;
+#endif // VF_USE_PRIMITIVE_SCENE_DATA
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+
+	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
+	Output.PositionPreOffset = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+	Output.Position = Output.PositionPreOffset + float4(RenderOffset, 0, 0);
+}
+
+#elif PIXELSHADER
+
+int OutputPass;
+
+// Pixel Shader
+void PSMain( 
+	FLandscapeGrassWeightInterpolantsVSToPS Interpolants
+	OPTIONAL_IsFrontFace,
+	out HALF4_TYPE OutColor	: SV_Target0
+	)
+{
+	ResolvedView = ResolveView();
+
+	// Build the SvPosition without RenderOffset so that we correctly reproject WorldPosition etc.
+	float4 SvPositionPreOffset = Interpolants.PositionPreOffset / Interpolants.PositionPreOffset.w;
+	SvPositionPreOffset.xy = (SvPositionPreOffset.xy * float2(0.5f, -0.5f) + 0.5f) * ResolvedView.ViewSizeAndInvSize.xy;
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants.FactoryInterpolants, SvPositionPreOffset);
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPositionPreOffset, bIsFrontFace);
+
+	// Calculate and pack landscape height.
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	float Height = clamp(round(Interpolants.LocalPosZ / TERRAIN_ZSCALE) + 32768.0, 0, 65535);
+#else // !VF_USE_PRIMITIVE_SCENE_DATA
+	float3 LocalPos = LWCMultiply(MaterialParameters.AbsoluteWorldPosition, GetWorldToInstance(MaterialParameters));
+	float Height = clamp(round(LocalPos.z / TERRAIN_ZSCALE) + 32768.0, 0, 65535);
+#endif // VF_USE_PRIMITIVE_SCENE_DATA
+	float2 PackedHeight = float2(floor(Height / 256), fmod(Height, 256)) / 255;
+
+	// Height = first 2 outputs:
+	OutColor = float4(PackedHeight, 0.0, 0.0);
+
+	switch(OutputPass)
+	{
+	case 0:
+	{
+#if HAVE_GetGrassWeight0
+		OutColor[2] = GetGrassWeight0(MaterialParameters);
+#endif // HAVE_GetGrassWeight0
+#if HAVE_GetGrassWeight1
+		OutColor[3] = GetGrassWeight1(MaterialParameters);
+#endif // HAVE_GetGrassWeight1
+		break;
+	}
+	case 1:
+	{
+#if HAVE_GetGrassWeight2
+		OutColor[0] = GetGrassWeight2(MaterialParameters);
+#endif // HAVE_GetGrassWeight2
+#if HAVE_GetGrassWeight3
+		OutColor[1] = GetGrassWeight3(MaterialParameters);
+#endif // HAVE_GetGrassWeight3
+#if HAVE_GetGrassWeight4
+		OutColor[2] = GetGrassWeight4(MaterialParameters);
+#endif // HAVE_GetGrassWeight4
+#if HAVE_GetGrassWeight5
+		OutColor[3] = GetGrassWeight5(MaterialParameters);
+#endif // HAVE_GetGrassWeight5
+		break;
+	}
+	case 2:
+	{
+#if HAVE_GetGrassWeight6
+		OutColor[0] = GetGrassWeight6(MaterialParameters);
+#endif // HAVE_GetGrassWeight6
+#if HAVE_GetGrassWeight7
+		OutColor[1] = GetGrassWeight7(MaterialParameters);
+#endif // HAVE_GetGrassWeight7
+#if HAVE_GetGrassWeight8
+		OutColor[2] = GetGrassWeight8(MaterialParameters);
+#endif // HAVE_GetGrassWeight8
+#if HAVE_GetGrassWeight9
+		OutColor[3] = GetGrassWeight9(MaterialParameters);
+#endif // HAVE_GetGrassWeight9
+		break;
+	}
+	case 3:
+	{
+#if HAVE_GetGrassWeight10
+		OutColor[0] = GetGrassWeight10(MaterialParameters);
+#endif // HAVE_GetGrassWeight10
+#if HAVE_GetGrassWeight11
+		OutColor[1] = GetGrassWeight11(MaterialParameters);
+#endif // HAVE_GetGrassWeight11
+#if HAVE_GetGrassWeight12
+		OutColor[2] = GetGrassWeight12(MaterialParameters);
+#endif // HAVE_GetGrassWeight12
+#if HAVE_GetGrassWeight13
+		OutColor[3] = GetGrassWeight13(MaterialParameters);
+#endif // HAVE_GetGrassWeight13
+		break;
+	}
+	case 4:
+	{
+#if HAVE_GetGrassWeight14
+		OutColor[0] = GetGrassWeight14(MaterialParameters);
+#endif // HAVE_GetGrassWeight14
+#if HAVE_GetGrassWeight15
+		OutColor[1] = GetGrassWeight15(MaterialParameters);
+#endif // HAVE_GetGrassWeight15
+#if HAVE_GetGrassWeight16
+		OutColor[2] = GetGrassWeight16(MaterialParameters);
+#endif // HAVE_GetGrassWeight16
+#if HAVE_GetGrassWeight17
+		OutColor[3] = GetGrassWeight17(MaterialParameters);
+#endif // HAVE_GetGrassWeight17
+		break;
+	}
+	case 5:
+	{
+#if HAVE_GetGrassWeight18
+		OutColor[0] = GetGrassWeight18(MaterialParameters);
+#endif // HAVE_GetGrassWeight18
+#if HAVE_GetGrassWeight19
+		OutColor[1] = GetGrassWeight19(MaterialParameters);
+#endif // HAVE_GetGrassWeight19
+#if HAVE_GetGrassWeight20
+		OutColor[2] = GetGrassWeight20(MaterialParameters);
+#endif // HAVE_GetGrassWeight20
+#if HAVE_GetGrassWeight21
+		OutColor[3] = GetGrassWeight21(MaterialParameters);
+#endif // HAVE_GetGrassWeight21
+		break;
+	}
+	case 6:
+	{
+#if HAVE_GetGrassWeight22
+		OutColor[0] = GetGrassWeight22(MaterialParameters);
+#endif // HAVE_GetGrassWeight22
+#if HAVE_GetGrassWeight23
+		OutColor[1] = GetGrassWeight23(MaterialParameters);
+#endif // HAVE_GetGrassWeight23
+#if HAVE_GetGrassWeight24
+		OutColor[2] = GetGrassWeight24(MaterialParameters);
+#endif // HAVE_GetGrassWeight24
+#if HAVE_GetGrassWeight25
+		OutColor[3] = GetGrassWeight25(MaterialParameters);
+#endif // HAVE_GetGrassWeight25
+		break;
+	}
+	case 7:
+	{
+#if HAVE_GetGrassWeight26
+		OutColor[0] = GetGrassWeight26(MaterialParameters);
+#endif // HAVE_GetGrassWeight26
+#if HAVE_GetGrassWeight27
+		OutColor[1] = GetGrassWeight27(MaterialParameters);
+#endif // HAVE_GetGrassWeight27
+#if HAVE_GetGrassWeight28
+		OutColor[2] = GetGrassWeight28(MaterialParameters);
+#endif // HAVE_GetGrassWeight28
+#if HAVE_GetGrassWeight29
+		OutColor[3] = GetGrassWeight29(MaterialParameters);
+#endif // HAVE_GetGrassWeight29
+		break;
+	}
+	case 8:
+	{
+#if HAVE_GetGrassWeight30
+		OutColor[0] = GetGrassWeight30(MaterialParameters);
+#endif // HAVE_GetGrassWeight30
+#if HAVE_GetGrassWeight31
+		OutColor[1] = GetGrassWeight31(MaterialParameters);
+#endif // HAVE_GetGrassWeight31
+		break;
+
+// UMaterialExpressionLandscapeGrassOutput::MaxGrassTypes == 32. Uncomment this if it ever gets increased :
+//#if HAVE_GetGrassWeight32
+//		OutColor[2] = GetGrassWeight32(MaterialParameters);
+//#endif // HAVE_GetGrassWeight32
+//#if HAVE_GetGrassWeight33
+//		OutColor[3] = GetGrassWeight33(MaterialParameters);
+//#endif // HAVE_GetGrassWeight33
+	}
+	default:
+		break;
+	}
+}
+#endif

@@ -1,0 +1,104 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../AreaLightCommon.ush"
+
+// Sanity guard. 
+#ifndef STRATA_ENABLED
+	#define STRATA_ENABLED 1
+	#error STRATA_ENABLED needs to be defined
+#endif
+
+#if STRATA_ENABLED
+
+float4 StrataReadPrecomputedShadowFactors(FStrataPixelHeader StrataPixelHeader, int2 PixelPos, Texture2D PrecomputedShadowTexture)
+{
+	if (StrataPixelHeader.HasPrecShadowMask())
+	{
+	#if ALLOW_STATIC_LIGHTING
+		float4 GBufferE = PrecomputedShadowTexture.Load(int3(PixelPos, 0));
+	#else
+		float4 GBufferE = 1;
+	#endif
+		return GBufferE;
+	}
+	return StrataPixelHeader.HasZeroPrecShadowMask() ? 0.0f : 1.0f;
+}
+
+// Analytical lighting evaluation for strata material.
+// Unpack BSDF on-the-fly
+FStrataDeferredLighting StrataDeferredLighting(
+	FDeferredLightData LightData,
+	float3 V,
+	float3 L,
+	float3 ToLight,
+	float LightMask,
+	FShadowTerms ShadowTerms,
+	FStrataMaterialContainer MaterialBuffer,
+	FStrataAddressing StrataAddressing,
+	FStrataPixelHeader StrataPixelHeader)
+{
+	FStrataDeferredLighting StrataLighting = GetInitialisedStrataDeferredLighting();
+#if STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE
+	const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, Strata.bRoughDiffuse, Strata.PeelLayersAboveDepth, Strata.bRoughnessTracking);
+#else
+	const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings();
+#endif
+
+	FRectTexture RectTexture = ConvertToRectTexture(LightData);
+
+	Strata_for (uint BSDFIndex = 0, BSDFIndex < StrataPixelHeader.BSDFCount, ++BSDFIndex)
+	{
+		// Unpack BSDF data
+		FStrataBSDF BSDF = UnpackStrataBSDF(MaterialBuffer, StrataAddressing, StrataPixelHeader);
+
+		FStrataBSDFContext BSDFContext = StrataCreateBSDFContext(StrataPixelHeader, BSDF, StrataAddressing, V, L);
+
+		float Roughness = StrataGetBSDFRoughness(BSDFContext.BSDF);
+
+		FAreaLightIntegrateContext AreaLightContext = InitAreaLightIntegrateContext();
+		FStrataEvaluateResult BSDFEvaluate = (FStrataEvaluateResult)0;
+		if (LightData.bRectLight)
+		{
+			FRect Rect = GetRect(ToLight, LightData);
+			if (!IsRectVisible(Rect))
+			{
+				return GetInitialisedStrataDeferredLighting(); // Rect light can be non visible due to barn door occlusion
+			}
+			AreaLightContext = CreateRectIntegrateContext(Roughness, BSDFContext.N, BSDFContext.V, Rect, RectTexture);
+
+			// We must have the StrataIntegrateBSDF inside the if due to the rectlight texture: it must be non ambiguous which texture is going to be used.
+			// After the compilation, a local resource must map to a unique global resource (the default or the actual rect light texture).
+			BSDFEvaluate = StrataEvaluateBSDFCommon(BSDFContext, ShadowTerms, AreaLightContext, Settings, INTEGRATION_AREA_LIGHT_RECT);
+		}
+		else
+		{
+			FCapsuleLight Capsule = GetCapsule(ToLight, LightData);
+			AreaLightContext = CreateCapsuleIntegrateContext(Roughness, BSDFContext.N, BSDFContext.V, Capsule, LightData.bInverseSquared);
+
+			BRANCH
+			if(IsAreaLight(AreaLightContext.AreaLight))
+			{
+				BSDFEvaluate = StrataEvaluateBSDFCommon(BSDFContext, ShadowTerms, AreaLightContext, Settings, INTEGRATION_AREA_LIGHT_CAPSULE);
+			}
+			else
+			{
+				BSDFEvaluate = StrataEvaluateBSDFCommon(BSDFContext, ShadowTerms, AreaLightContext, Settings, INTEGRATION_PUNCTUAL_LIGHT);
+			}
+		}
+
+		float3 DiffuseLuminance = BSDFEvaluate.IntegratedDiffuseValue;
+		float3 SpecularLuminance = BSDFEvaluate.IntegratedSpecularValue * LightData.SpecularScale;
+
+		const float3 CommonMultiplier = LightData.Color * LightMask * LuminanceWeight(BSDFContext, BSDF);
+
+		FLightAccumulator Out = (FLightAccumulator)0;
+		LightAccumulator_AddSplit(Out, DiffuseLuminance, SpecularLuminance, DiffuseLuminance, CommonMultiplier, BSDFEvaluate.bSubsurface);
+		AccumulateStrataDeferredLighting(StrataLighting, Out, BSDFEvaluate.bSubsurface, BSDF_GETISTOPLAYER(BSDF));
+	}
+
+	return StrataLighting;
+}
+
+#endif // STRATA_ENABLED

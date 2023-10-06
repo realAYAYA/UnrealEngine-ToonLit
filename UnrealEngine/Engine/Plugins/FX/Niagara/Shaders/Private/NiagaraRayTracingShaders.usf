@@ -1,0 +1,136 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/SceneData.ush"
+#include "/Engine/Private/ShadingCommon.ush"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+#include "/Engine/Private/RayTracing/RayTracingHitGroupCommon.ush"
+#include "NiagaraAsyncGpuTraceCommon.ush"
+#include "/Engine/Private/HashTable.ush"
+#include "/Engine/Private/RayTracing/VFXTraceRay.ush"
+
+RaytracingAccelerationStructure					TLAS;
+StructuredBuffer<FNiagaraAsyncGpuTrace>			Rays;
+uint											RaysOffset;
+RWStructuredBuffer<FNiagaraAsyncGpuTraceResult>	CollisionOutput;
+uint											CollisionOutputOffset;
+
+#if NIAGARA_RAYTRACE_FAKE_INDIRECT
+Buffer<uint>                                  RayTraceCounts;
+#endif
+
+Buffer<uint> HashToCollisionGroups;
+uint MaxRetraces;
+
+#if NIAGARA_SUPPORTS_COLLISION_GROUPS
+bool FindCollisionGroup(int GPUSceneIndexId, out int CollisionGroup)
+{
+	int Index;
+	if (HashTableFind(GPUSceneIndexId, Index))
+	{
+		CollisionGroup = HashToCollisionGroups[Index];
+		return true;
+	}
+
+	return false;
+}
+#endif
+
+
+RAY_TRACING_ENTRY_RAYGEN(NiagaraCollisionRayTraceRG)
+{
+	const uint RayIndex = DispatchRaysIndex().x;
+
+#if NIAGARA_RAYTRACE_FAKE_INDIRECT
+	if (RayIndex >= RayTraceCounts[0]) 
+	{
+		return;
+	}
+#endif
+
+	FNiagaraAsyncGpuTrace InputRay = Rays[RayIndex + RaysOffset];
+
+	FRayDesc Ray;
+	Ray.Origin = InputRay.Origin + LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+	Ray.Direction = InputRay.Direction;
+	Ray.TMin = 0.0f;
+	Ray.TMax = InputRay.TFar;
+
+	uint RayFlags = RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES; // don't run anyhit shader
+
+	FVFXTracePayload Payload = (FVFXTracePayload) 0;
+	uint RayCollisionGroup = InputRay.CollisionGroup;
+
+#if NIAGARA_SUPPORTS_COLLISION_GROUPS
+	if (RayCollisionGroup != -1)
+	{
+		uint NumCasts = 0;
+		LOOP
+		while (NumCasts++ <= MaxRetraces)
+		{
+			Payload = (FVFXTracePayload)0;
+			VfxTraceRay(
+				TLAS,   // AccelerationStructure
+				RayFlags,
+				RAY_TRACING_MASK_OPAQUE,          // InstanceInclusionMask
+				RAY_TRACING_SHADER_SLOT_MATERIAL, // RayContributionToHitGroupIndex
+				RAY_TRACING_NUM_SHADER_SLOTS,     // MultiplierForGeometryContributionToShaderIndex
+				0,      // MissShaderIndex
+				Ray.GetNativeDesc(),    // RayDesc
+				Payload // Payload
+			); 
+
+			uint GPUSceneInstanceIndex = GetGPUSceneInstanceIndex(Payload.PrimitiveIndex, Payload.InstanceIndex);
+			uint PrimCollisionGroup; 
+			if (FindCollisionGroup(GPUSceneInstanceIndex, PrimCollisionGroup))
+			{
+				//If we collide with something of a different group to the Ray then break and allow the collision. Otherwise loop and attempt to recast just infront of the hit we're discarding.
+				if (PrimCollisionGroup == RayCollisionGroup)
+				{
+					Ray.TMin = asfloat(asuint(Payload.HitT) + 1);
+					//Clear the hit state on the payload in case we don't attempt a retrace
+					Payload.HitT = -1;
+				}
+				else
+				{
+					break;
+				}
+			}
+		}
+	}
+	else
+#endif
+	{
+		VfxTraceRay(
+			TLAS,   // AccelerationStructure
+			RayFlags,
+			RAY_TRACING_MASK_OPAQUE,          // InstanceInclusionMask
+			RAY_TRACING_SHADER_SLOT_MATERIAL, // RayContributionToHitGroupIndex
+			RAY_TRACING_NUM_SHADER_SLOTS,     // MultiplierForGeometryContributionToShaderIndex
+			0,      // MissShaderIndex
+			Ray.GetNativeDesc(),    // FRayDesc
+			Payload // Payload
+		);
+	}
+
+	uint OutputIndex = RayIndex + CollisionOutputOffset;
+	CollisionOutput[OutputIndex] = (FNiagaraAsyncGpuTraceResult) 0;
+	CollisionOutput[OutputIndex].HitT = Payload.HitT;
+	if (Payload.IsHit())
+	{
+		CollisionOutput[OutputIndex].WorldPosition = Payload.TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation); // LWC_TODO
+		CollisionOutput[OutputIndex].WorldNormal = Payload.WorldNormal;
+	}
+}
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(NiagaraCollisionRayTraceCH,
+	FVFXTracePayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	InitVFXTracePayloadFromHitShader(Attributes, Payload);
+}
+
+RAY_TRACING_ENTRY_MISS(NiagaraCollisionRayTraceMiss, FVFXTracePayload, Payload)
+{
+	Payload.SetMiss();
+}

@@ -1,0 +1,46 @@
+/*=============================================================================
+	GenerateConservativeDepth.usf
+=============================================================================*/
+
+#include "Common.ush"
+#include "Definitions.usf"
+
+#include "Nanite/NaniteHZBCull.ush"
+
+
+
+RWTexture2D<float> ConservativeDepthTextureUAV;
+
+int2 ConservativeDepthTextureSize;
+int DestinationPixelSizeAtFullRes;
+
+[numthreads(8, 8, 1)]
+void GenerateConservativeDepthBufferCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	ResolvedView = ResolveView();
+
+	if (all(DispatchThreadId.xy < uint2(ConservativeDepthTextureSize)))
+	{
+		FFrustumCullData CullData;
+		// Rect min and max as UVs x=>[0,1] y=>[0,1].
+		// We cover the pixel and the full extent due to bilinear filtering. We also take into account the fact that HZB starts at half resolution.
+		uint2 FullResMin = float2(float2(DispatchThreadId.xy) + float2(1.0f, -1.0f)) * DestinationPixelSizeAtFullRes - float2(DestinationPixelSizeAtFullRes,-DestinationPixelSizeAtFullRes) * 2.0f;
+		uint2 FullResMax = float2(float2(DispatchThreadId.xy) + float2(1.0f, -1.0f)) * DestinationPixelSizeAtFullRes + float2(DestinationPixelSizeAtFullRes,-DestinationPixelSizeAtFullRes) * 2.0f;
+		CullData.RectMin = float3(saturate(FullResMin * ResolvedView.ViewSizeAndInvSize.zw), 0.0f);
+		CullData.RectMax = float3(saturate(FullResMax * ResolvedView.ViewSizeAndInvSize.zw), 1.0f);
+		// clip x=>[-1,1] y=>[1,-1]
+		CullData.RectMin = CullData.RectMin * float3(2.0,-2.0, 1.0) + float3(-1.0f, 1.0f, 0.0f);
+		CullData.RectMax = CullData.RectMax * float3(2.0,-2.0, 1.0) + float3(-1.0f, 1.0f, 0.0f);
+		// Dummy data
+		CullData.bCrossesFarPlane = false;
+		CullData.bCrossesNearPlane= false;
+		CullData.bIsVisible = true;
+
+		const int DesiredFootprintPixels = 4; // Required bias avoid visual artefact in tiny gaps.
+		FScreenRect ScreenRect = GetScreenRect(int4(0,0,ResolvedView.ViewSizeAndInvSize.xy), CullData, DesiredFootprintPixels);
+
+		ConservativeDepthTextureUAV[DispatchThreadId.xy] = GetMinDepthFromHZB(ScreenRect, true);
+	}
+}
+
+

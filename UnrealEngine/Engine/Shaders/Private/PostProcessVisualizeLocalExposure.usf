@@ -1,0 +1,75 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "ScreenPass.ush"
+#include "PostProcessCommon.ush"
+#include "PostProcessHistogramCommon.ush"
+#include "DeferredShadingCommon.ush"
+#include "TonemapCommon.ush"
+
+StructuredBuffer<float4> EyeAdaptationBuffer;
+
+Texture2D HDRSceneColorTexture;
+
+Texture3D LumBilateralGrid;
+Texture2D BlurredLogLum;
+
+SamplerState TextureSampler;
+
+uint DebugMode;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+SCREEN_PASS_TEXTURE_VIEWPORT(Output)
+
+float4 MainPS(noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPosition : SV_POSITION) : SV_Target0
+{
+	float2 UV = UVAndScreenPos.xy;
+	float2 ViewportUV = (int2(SvPosition.xy) - Output_ViewportMin) * Output_ViewportSizeInverse;
+
+	float2 ExposureScaleMiddleGrey = EyeAdaptationBuffer[0].xw;
+
+	float4 SceneColor = Texture2DSample(HDRSceneColorTexture, TextureSampler, UV) * View.OneOverPreExposure;
+
+	float LuminanceVal = CalculateEyeAdaptationLuminance(SceneColor.rgb);
+	float LogLuminance = log2(LuminanceVal);
+	float MiddleGreyLumValue = log2(0.18 * ExposureScaleMiddleGrey.y * LocalExposure_MiddleGreyExposureCompensation);
+
+	float BaseLogLum = CalculateBaseLogLuminance(LogLuminance, LocalExposure_BlurredLuminanceBlend, ExposureScaleMiddleGrey.x, ViewportUV, LumBilateralGrid, BlurredLogLum, TextureSampler, TextureSampler);
+	float LocalExposure = CalculateLocalExposure(LogLuminance + log2(ExposureScaleMiddleGrey.x), BaseLogLum, MiddleGreyLumValue, LocalExposure_HighlightContrastScale, LocalExposure_ShadowContrastScale, LocalExposure_DetailStrength);
+	float DetailLogLum = (LogLuminance + log2(ExposureScaleMiddleGrey.x)) - BaseLogLum;
+
+	float3 OutValue;
+
+	if (DebugMode == 0)
+	{
+		OutValue = saturate(abs(log2(LocalExposure) / 2)) * lerp(float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), step(LocalExposure, 1));
+	}
+	else if (DebugMode == 1)
+	{
+		OutValue = exp2(BaseLogLum);
+	}
+	else if (DebugMode == 2)
+	{
+		OutValue = exp2(DetailLogLum);
+	}
+	else if (DebugMode == 3)
+	{
+		float3 BilateralGridUVW;
+		BilateralGridUVW.xy = ViewportUV * LocalExposure_BilateralGridUVScale;
+		BilateralGridUVW.z = (ComputeHistogramPositionFromLogLuminance(LogLuminance) * (BILATERAL_GRID_DEPTH - 1) + 0.5f) / BILATERAL_GRID_DEPTH;
+
+		float2 BilateralGridLum = Texture3DSample(LumBilateralGrid, TextureSampler, BilateralGridUVW).xy;
+
+		if (BilateralGridLum.y < 0.001)
+		{
+			// bilateral grid doesn't have valid data
+			OutValue = float3(1,0,0);
+		}
+		else
+		{
+			OutValue = float3(0,1,0);
+		}
+	}
+
+	return float4(OutValue, 1.0f);
+}

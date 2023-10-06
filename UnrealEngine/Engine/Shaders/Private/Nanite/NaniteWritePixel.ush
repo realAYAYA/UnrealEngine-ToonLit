@@ -1,0 +1,105 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "/Engine/Shared/NaniteDefinitions.h"
+#if VIRTUAL_TEXTURE_TARGET
+#include "../VirtualShadowMaps/VirtualShadowMapPageAccessCommon.ush"
+#endif
+
+RWTexture2D<uint>		OutDepthBuffer;
+RWTexture2DArray<uint>	OutDepthBufferArray;
+RWTexture2D<UlongType>	OutVisBuffer64;
+
+#if VISUALIZE
+RWTexture2D<UlongType>	OutDbgBuffer64;
+RWTexture2D<uint>		OutDbgBuffer32;
+#endif
+
+void WritePixel(
+	RWTexture2D<UlongType> OutBuffer,
+	uint PixelValue,
+	uint2 PixelPos,
+	uint DepthInt
+)
+{
+#if DEPTH_ONLY
+	InterlockedMax( OutDepthBuffer[ PixelPos ], DepthInt );
+#elif COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
+	const UlongType Pixel = PackUlongType(uint2(PixelValue, DepthInt));
+	ImageInterlockedMaxUInt64(OutBuffer, PixelPos, Pixel);
+#else
+	#error UNKNOWN_ATOMIC_PLATFORM
+#endif
+}
+
+struct FVisBufferPixel
+{
+	uint2	Position;
+	uint	Value;
+	uint2	VisualizeValues;
+	float	Depth;
+
+#if VIRTUAL_TEXTURE_TARGET
+	uint3	PhysicalPosition;
+#endif
+
+	bool EarlyDepthTest()
+	{
+		// When near clipping is disabled we need to move the geometry 
+		Depth = saturate( Depth );
+	
+		const uint DepthInt = asuint( Depth );
+
+#if VIRTUAL_TEXTURE_TARGET
+		return OutDepthBufferArray[ PhysicalPosition ] < DepthInt;
+#elif DEPTH_ONLY
+		return OutDepthBuffer[ Position ] < DepthInt;
+#elif COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
+		return UnpackUlongType( OutVisBuffer64[ Position ] ).y < DepthInt;
+#else
+		#error UNKNOWN_ATOMIC_PLATFORM
+		return false;
+#endif
+	}
+
+	void WriteOverdraw()
+	{
+	#if VISUALIZE && !VIRTUAL_TEXTURE_TARGET
+		InterlockedAdd(OutDbgBuffer32[Position], VisualizeValues.y);
+	#endif
+	}
+
+	void Write()
+	{
+		// When near clipping is disabled we need to move the geometry 
+		Depth = saturate( Depth );
+	
+		const uint DepthInt = asuint( Depth );
+
+#if VIRTUAL_TEXTURE_TARGET
+		InterlockedMax( OutDepthBufferArray[ PhysicalPosition ], DepthInt );
+#else
+		WritePixel( OutVisBuffer64, Value, Position, DepthInt );
+
+	#if VISUALIZE
+		WritePixel( OutDbgBuffer64, VisualizeValues.x, Position, DepthInt );
+	#endif
+#endif	// VIRTUAL_TEXTURE_TARGET
+	}
+};
+
+FVisBufferPixel CreateVisBufferPixel(
+	uint2	Position,
+	uint	Value,
+	float	Depth
+)
+{
+	FVisBufferPixel Pixel = (FVisBufferPixel)0;
+	Pixel.Position	= Position;
+	Pixel.Value		= Value;
+	Pixel.Depth		= Depth;
+
+	return Pixel;
+}

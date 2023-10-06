@@ -1,0 +1,156 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// If EnergyConservation flag is not enabled explicitly then:
+// * If strata is enabled: ON by default
+// * If strata is disabled: OFF by default
+#if STRATA_ENABLED || LEGACY_MATERIAL_ENERGYCONSERVATION
+	#undef USE_ENERGY_CONSERVATION
+	#define USE_ENERGY_CONSERVATION 1
+#else
+	#undef USE_ENERGY_CONSERVATION
+	#define USE_ENERGY_CONSERVATION 0
+#endif
+
+// Energy compensation/preservation for the various BxDFs. This file provides utility functions to tweak lobe weights
+// 
+// References:
+// [1] "Revisiting physically based shading at Imageworks" - Christopher Kulla & Alejandro Conty
+//   https://blog.selfshadow.com/publications/s2017-shading-course/imageworks/s2017_pbs_imageworks_slides_v2.pdf
+// [2] "Practical multiple scattering compensation for microfacet models" - Emmanuel Turquin
+//   https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
+// [3] "A Multiple-Scattering Microfacet Model for Real-Time Image Based Lighting" - Carmelo J. Fdez-Aguera
+//   http://jcgt.org/published/0008/01/03/
+// 
+// We follow the terminology from [1]:
+// Energy compensation: adjust individual BxDFs so that they have unit albedo from all viewing angles, compensating for (for example) the lack of multiple scattering in microfacet BxDFs
+// Energy preservation: adjust the combination of lobes (such as diffuse+specular) to ensure we never create additional energy from any angle
+
+// The suggested implementation in [1] is cumbersome for a GPU implementation because it requires table lookups during sampling to achieve low variance. We instead sacrifice reciprocity and
+// simply divide the BxDF by its (tabulated/fit) directional albedo to enforce conservation of energy. We follow the approach outlined in [2] to account for spec/cloth and glass, and use
+// the split-sum approach from [3] for the diffuse/specular energy preservation case (which generalizes to other lobes as well).
+
+// USE_ENERGY_CONSERVATION controls the implementation details of this file
+//    0: disable conservation, all bsdfs are assumed to already have unit albedo from all viewing angles
+//    1: use a small baked texture to store the directional albedo (and fresnel weighted albedo)
+//    2: use an analytic approximation to directional albedo (doesn't require any textures to be bound and can be faster -- WIP)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// LUT Lookups
+
+float2 GGXEnergyLookup(float Roughness, float NoV)
+{
+#if USE_ENERGY_CONSERVATION == 1
+	return View.ShadingEnergyGGXSpecTexture.SampleLevel(View.ShadingEnergySampler, float2(NoV, Roughness), 0);
+#elif USE_ENERGY_CONSERVATION == 2
+	const float r = Roughness;
+	const float c = NoV;
+	const float E = 1.0 - saturate(pow(r, c / r) * ((r * c + 0.0266916) / (0.466495 + c)));
+	const float Ef = Pow5(1 - c) * pow(2.36651 * pow(c, 4.7703 * r) + 0.0387332, r);
+	return float2(E, Ef);
+#else
+	return float2(1, 0);
+#endif
+}
+
+float GGXEnergyLookup(float Roughness, float NoV, float Eta)
+{
+	// Following [2] Eq 18, we simply divide the whole bsdf by its single scattering albedo to conserve energy
+	// This break reciprocity, but is much simpler than the approach outlined in [1] which requires substantially more computation.
+#if USE_ENERGY_CONSERVATION == 1
+	// NOTE: Eta is encoded for [1,3] range only, energy loss will happens above 3.0 - but this keeps more resolution on the visually significant portion of the range
+	float2 E = View.ShadingEnergyGGXGlassTexture.SampleLevel(View.ShadingEnergySampler, float3(NoV, Roughness, max(Eta, rcp(Eta)) * 0.5 - 0.5), 0);
+	return Eta >= 1.0 ? E.x : E.y;
+#else
+	// TODO: find an analytic fit for this case
+	return 1.0;
+#endif
+}
+
+float2 ClothEnergyLookup(float Roughness, float NoV)
+{
+#if USE_ENERGY_CONSERVATION == 1
+	return View.ShadingEnergyClothSpecTexture.SampleLevel(View.ShadingEnergySampler, float2(NoV, Roughness), 0);
+#elif USE_ENERGY_CONSERVATION == 2
+	// Simple analytical fit (avoids building a table)
+	// NOTE: this fit is not exact near grazing angles for roughness ~0.7
+	const float c = NoV;
+	const float r = Roughness;
+	return float2(
+		(0.526422 / ((-0.227114 + r) * (-0.968835 + r) * ((5.38869 - 20.2835 * c) * r) - (-1.18761 - ((2.58744 - c) * c)))) + 0.0615456,
+		0.0 // TODO: is it worth capturing this? this term is close to 0 (and experiments with the tabulated form show it doesn't have much impact)
+	);
+#else
+	return float2(1, 0);
+#endif
+}
+
+float DiffuseEnergyLookup(float Roughness, float NoV)
+{
+#if USE_ENERGY_CONSERVATION == 1
+	//return View.ShadingEnergyDiffuseTexture.SampleLevel(View.ShadingEnergySampler, float2(NoV, Roughness), 0);
+	// For now we do not apply Chan diffuse energy preservation on diffuse ambiant.
+	// This is because Chan is built for F=0.04 and unfortunately this causes ambient to darken a grazing angles.
+	// STRATA_TODO Apply the inverse of Fresnel with F=0.04 on Chan when building the table.
+	return 1.0f;
+#elif USE_ENERGY_CONSERVATION == 2
+	// TODO
+	return 1.f;
+#else
+	return 1.f;
+#endif
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// BxDFs Energy terms & Energy Preservation/Conservation utils
+
+// Note:
+// * For performance reason, we maintain both a *chromatic* and an *achromatic* version of the energy terms.
+// * Chromatic and achromatic version are respectively accessible with xxxRGB or xxxA suffix. 
+// * USE_ACHROMATIC_BXDF_ENERGY determines which version should be used by default
+
+// Chromatic version
+#define BXDF_ENERGY_TYPE float3
+#define BXDF_ENERGY_SUFFIX(N) N##RGB
+#define IS_BXDF_ENERGY_TYPE_ACHROMATIC 0
+#include "ShadingEnergyConservationTemplate.ush"
+#undef BXDF_ENERGY_TYPE
+#undef BXDF_ENERGY_TYPE_SUFFIX
+#undef IS_BXDF_ENERGY_TYPE_ACHROMATIC
+
+// Achromatic version
+#define BXDF_ENERGY_TYPE float
+#define BXDF_ENERGY_SUFFIX(N) N##A
+#define IS_BXDF_ENERGY_TYPE_ACHROMATIC 1
+#include "ShadingEnergyConservationTemplate.ush"
+#undef BXDF_ENERGY_TYPE
+#undef BXDF_ENERGY_TYPE_SUFFIX
+#undef IS_BXDF_ENERGY_TYPE_ACHROMATIC
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Default implementation
+
+#ifndef USE_ACHROMATIC_BXDF_ENERGY
+#define USE_ACHROMATIC_BXDF_ENERGY 0
+#endif
+
+#if USE_ACHROMATIC_BXDF_ENERGY
+#define FBxDFEnergyType  float 	
+#define FBxDFEnergyTerms FBxDFEnergyTermsA
+#define ComputeFresnelEnergyTerms ComputeFresnelEnergyTermsA
+#define ComputeGGXSpecEnergyTerms ComputeGGXSpecEnergyTermsA
+#define ComputeGGXSpecEnergyTerms ComputeGGXSpecEnergyTermsA
+#define ComputeClothEnergyTerms   ComputeClothEnergyTermsA
+#define ComputeClothEnergyTerms   ComputeClothEnergyTermsA
+#define ComputeDiffuseEnergyTerms ComputeDiffuseEnergyTermsA
+#else
+#define FBxDFEnergyType float3 
+#define FBxDFEnergyTerms FBxDFEnergyTermsRGB
+#define ComputeFresnelEnergyTerms ComputeFresnelEnergyTermsRGB
+#define ComputeGGXSpecEnergyTerms ComputeGGXSpecEnergyTermsRGB
+#define ComputeGGXSpecEnergyTerms ComputeGGXSpecEnergyTermsRGB
+#define ComputeClothEnergyTerms   ComputeClothEnergyTermsRGB
+#define ComputeClothEnergyTerms   ComputeClothEnergyTermsRGB
+#define ComputeDiffuseEnergyTerms ComputeDiffuseEnergyTermsRGB
+#endif

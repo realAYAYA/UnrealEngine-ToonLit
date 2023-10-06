@@ -1,0 +1,66 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30907.101
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DatasmithARCHICAD23Exporter", "VSProj23\DatasmithARCHICAD23Exporter.vcxproj", "{37856728-77DB-42E0-AD54-20803E4E2FC7}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DatasmithARCHICAD24Exporter", "VSProj24\DatasmithARCHICAD24Exporter.vcxproj", "{F162B5C4-142C-4173-8A62-091336BDA332}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DatasmithARCHICAD25Exporter", "VSProj25\DatasmithARCHICAD25Exporter.vcxproj", "{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Visualizers", "Visualizers", "{1CCEC849-CC72-4C59-8C36-2F7C38706D4C}"
+	ProjectSection(SolutionItems) = preProject
+		..\..\..\..\..\..\Extras\VisualStudioDebugging\Unreal.natvis = ..\..\..\..\..\..\Extras\VisualStudioDebugging\Unreal.natvis
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DatasmithARCHICAD26Exporter", "VSProj26\DatasmithARCHICAD26Exporter.vcxproj", "{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+		ReleaseUE|x64 = ReleaseUE|x64
+		ReleaseUEWDbg|x64 = ReleaseUEWDbg|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.Debug|x64.ActiveCfg = Debug|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.Debug|x64.Build.0 = Debug|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.Release|x64.ActiveCfg = Release|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.Release|x64.Build.0 = Release|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.ReleaseUEWDbg|x64.ActiveCfg = ReleaseUEWDbg|x64
+		{37856728-77DB-42E0-AD54-20803E4E2FC7}.ReleaseUEWDbg|x64.Build.0 = ReleaseUEWDbg|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.Debug|x64.ActiveCfg = Debug|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.Debug|x64.Build.0 = Debug|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.Release|x64.ActiveCfg = Release|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.Release|x64.Build.0 = Release|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.ReleaseUEWDbg|x64.ActiveCfg = ReleaseUEWDbg|x64
+		{F162B5C4-142C-4173-8A62-091336BDA332}.ReleaseUEWDbg|x64.Build.0 = ReleaseUEWDbg|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.Debug|x64.ActiveCfg = Debug|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.Debug|x64.Build.0 = Debug|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.Release|x64.ActiveCfg = Release|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.Release|x64.Build.0 = Release|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.ReleaseUEWDbg|x64.ActiveCfg = ReleaseUEWDbg|x64
+		{F0AD06C2-7FEB-4968-AD94-7650969CFDDF}.ReleaseUEWDbg|x64.Build.0 = ReleaseUEWDbg|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.Debug|x64.ActiveCfg = Debug|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.Debug|x64.Build.0 = Debug|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.Release|x64.ActiveCfg = Release|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.Release|x64.Build.0 = Release|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUE|x64.ActiveCfg = ReleaseUE|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUE|x64.Build.0 = ReleaseUE|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUEWDbg|x64.ActiveCfg = ReleaseUEWDbg|x64
+		{B3EBED6E-E2DD-4F24-8AFC-2EEAF6635883}.ReleaseUEWDbg|x64.Build.0 = ReleaseUEWDbg|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8679CAEC-564D-4DDE-91F1-34DCBFB39475}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+	<Property Name="Win64ExtraArgs" Value=""/>
+	<Property Name="LinuxExtraArgs" Value=""/>
+	<Property Name="MacExtraArgs" Value=""/>
+	<Property Name="IOSExtraArgs" Value=""/>
+	<Property Name="AndroidExtraArgs" Value=""/>
+	<Property Name="Win64RequiresSpecialAgent" Value="False"/>
+	<Property Name="LinuxRequiresSpecialAgent" Value="False"/>
+	<Property Name="MacRequiresSpecialAgent" Value="False"/>
+	<Property Name="IOSRequiresSpecialAgent" Value="False"/>
+	<Property Name="AndroidRequiresSpecialAgent" Value="False"/>
+	<Property Name="Win64RequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+	<Property Name="LinuxRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+	<Property Name="MacRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+	<Property Name="IOSRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+	<Property Name="AndroidRequiresCatch2BuildExtraCMakeArgs" Value="False"/>
+</BuildGraph>

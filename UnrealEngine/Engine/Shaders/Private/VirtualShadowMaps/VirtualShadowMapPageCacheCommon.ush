@@ -1,0 +1,32 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMapPageCacheCommon.ush:
+=============================================================================*/
+#pragma once
+
+// Flags buffer (one bit per PersistentPrimitiveIndex) to track statically cached primitives that are invalidating
+// Currently we use GPU messaging to send these primitives back for the CPU to handle as desired
+// in future frames, but this flags buffer ensures we only send one message per prim.
+RWStructuredBuffer<uint> OutStaticInvalidatingPrimitives;
+
+void RecordStaticPrimitiveInvalidation(uint PersistentPrimitiveIndex)
+{
+	uint PrimitiveIdWordOffset = PersistentPrimitiveIndex / 32U;
+	uint PrimitiveIdWordMask = 1U << (PersistentPrimitiveIndex % 32U);
+
+	InterlockedOr(OutStaticInvalidatingPrimitives[PrimitiveIdWordOffset], PrimitiveIdWordMask);
+}
+
+bool ShouldMaterialInvalidateShadowCache(FPrimitiveSceneData PrimitiveData, bool bEnableWPO)
+{
+	// Determine if this instance will cause page invalidations.
+	bool bInvalidate = bEnableWPO;
+	// Ignore WPO disable distance for this if any of the materials have bAlwaysEvaluateWorldPositionOffset = true.
+	bInvalidate |= ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_ALWAYS_EVALUATE_WPO_MATERIALS) != 0u);
+	// Unless, of course, the primitive opts to disable shadow cache invalidations.
+	bInvalidate &= ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_DISABLE_MATERIAL_INVALIDATIONS) == 0u);
+
+	return bInvalidate;
+}
+

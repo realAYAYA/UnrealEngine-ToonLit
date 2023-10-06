@@ -1,0 +1,19 @@
+# Local files
+.vs/
+*.user
+UpgradeLog.htm
+
+# Build output
+Win32/
+x64/
+
+# Source trees
+libplist/
+libusbmuxd/
+libimobiledevice/
+idevicerestore/
+libirecovery/
+usbmuxd/
+ideviceinstaller/
+libideviceactivation/
+ios-webkit-debug-proxy/

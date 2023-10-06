@@ -1,0 +1,55 @@
+1.84.3.2
+* Bug fix for compiling a single file when us
+
+1.84.3.1
+* Bug fix for leaving in debugging code
+
+1.84.3
+* Added command to generate assembly file while compiling single file
+
+1.84.2
+* Fix to Unreal.TestAdapater to output test results to a file
+
+1.84.1
+* P4 Commands now are more aggressive about finding your working directory
+
+1.83
+* Open for Edit now also Adds if the file is not already added
+* added Revert command
+* the File History command no longer hangs
+* the Timelapse command now scrolls to the current line
+
+1.80
+* updated Unreal.TestAdapater to report duration's
+* added a menu for extension to improve discover-ability of features
+* added option to use P4V diff instead of Visual Studio diff
+* refactored code to share files between VS2019 and VS2022 versions
+* chanaged the File Browser to handle paste of file names
+
+1.79
+* added Unreal.TestAdapter to run low level tests from the text explorer
+
+1.78
+* fixed race condition when starting async checkout
+
+1.77
+* added File Browser dialog (open with command UnrealVs.FileBrowser)
+* added so Visual Studio title/solution show folder name of UE5.sln when UE5.sln is opened (no other solutions)
+
+1.76
+* files scheduled for async checkout are now saved in a .p4checkout.txt file in the solution directory, to allow recovery if Perforce is down or VS terminates.
+* fixed some launch settings being deleted when using command line editor.
+
+1.72
+* fixed exception when opening project missing a referenced configuration
+* added exceptions to guard against code UI code not being accessed on the UI thread
+
+1.71
+* add p4FastReconcile
+* add ability to halt p4 output auto focus
+
+1.70
+* add option to allow async checkout
+* resolved concurrent command issues
+* fix issue with P4V commands waiting for exit
+* resolve issue where Checkout on Edit was not honoring the user option

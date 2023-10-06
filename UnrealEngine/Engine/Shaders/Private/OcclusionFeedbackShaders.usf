@@ -1,0 +1,40 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "Common.ush"
+
+#if SHADING_PATH_MOBILE 
+	#define OcclusionBuffer MobileBasePass.RWOcclusionBufferUAV
+#else
+	#define OcclusionBuffer DummyBuffer
+#endif
+
+uint StartIndex;
+
+void MainVS(
+	float4 InPosition	: ATTRIBUTE0,
+	float4 InOrigin		: ATTRIBUTE1,
+	float4 InExtent		: ATTRIBUTE2,
+	uint InstanceId		: SV_InstanceID,
+	out nointerpolation uint PrimitiveIdx : PRIMITIVE_ID,
+	out float4 OutPosition : SV_POSITION
+)
+{
+	ResolvedView = ResolveView();
+	float3 TransformedPosition = (InPosition.xyz * InExtent.xyz) + InOrigin.xyz;
+	OutPosition = mul(float4(TransformedPosition, 1), ResolvedView.TranslatedWorldToClip);
+	PrimitiveIdx = StartIndex + InstanceId;
+}
+
+EARLYDEPTHSTENCIL
+void MainPS(
+	in nointerpolation uint PrimitiveIdx : PRIMITIVE_ID,
+	out float4 OutColor : SV_Target0
+)
+{
+	// TODO: write only some pixels? 
+	OcclusionBuffer[PrimitiveIdx] = 1u;
+
+#if PERMUTATION_PIXEL_DISCARD
+	clip(-1.0f);
+#endif
+	OutColor = float4(1, 0, 0, 1);
+}

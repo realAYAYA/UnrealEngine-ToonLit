@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<root>
+	<!-- Friendly names for display purposes -->
+	<statDisplayNameMappings>
+		<mapping statName="RHI/Drawcalls" displayName="DrawCalls"/>
+		<mapping statName="DynamicResolutionPercentage" displayName="DynRes %"/>
+		<mapping statName="Basic/TicksQueued" displayName="TicksQueued"/>
+		<mapping statName="Ticks/PlayerPawns" displayName="PlayerPawns"/>
+        <mapping statName="Ticks/Vehicles" displayName="Vehicles"/>
+		<mapping statName="MemoryFreeMB" displayName="MemFreeMB"/>
+		<mapping statName="PhysicalUsedMB" displayName="MemUsedMB"/>
+		<mapping statName="buildversion" displayName="Build Version"/>
+		<mapping statName="config" displayName="Config"/>
+		<mapping statName="commandline" displayName="Commandline"/>
+		<mapping statName="syncLoads" displayName="Sync Loads"/>
+		<mapping statName="scalabilitylevel" displayName="Scaling"/>
+		<mapping statName="deviceprofile" displayName="DeviceProfile"/>
+		<mapping statName="TargetFPS" displayName="FPS"/>
+		<mapping statName="HitchTimePercent" displayName="HitchTime %"/>
+		<mapping statName="testname" displayName="Test Name"/>
+		<mapping statName="platform" displayName="Platform"/>
+		<mapping statName="csvfilename" displayName="CSV Filename"/>
+		<mapping statName="rhiname" displayName="RHI Name"/>
+		<mapping statName="desktophwinfo" displayName="Hardware"/>
+		<mapping statName="fmsglogf/fmsglogfcount" displayName="Logs/frame"/>
+	</statDisplayNameMappings>
+
+	<derivedMetadataMappings>
+		<mapping destName="deviceType" destValue="console" sourceName="platform" sourceValue="ps4"/>
+		<mapping destName="deviceType" destValue="console" sourceName="platform" sourceValue="ps5"/>
+		<mapping destName="deviceType" destValue="console" sourceName="platform" sourceValue="switch"/>
+		<mapping destName="deviceType" destValue="console" sourceName="platform" sourceValue="xboxone"/>
+		<mapping destName="deviceType" destValue="console" sourceName="platform" sourceValue="xboxonegdk"/>
+		<mapping destName="deviceType" destValue="console" sourceName="platform" sourceValue="xsx"/>
+		<mapping destName="devicetype" destValue="desktop" sourceName="platform" sourceValue="mac"/>
+		<mapping destName="devicetype" destValue="desktop" sourceName="platform" sourceValue="windows"/>
+		<mapping destName="devicetype" destValue="mobile" sourceName="platform" sourceValue="android"/>
+		<mapping destName="devicetype" destValue="mobile" sourceName="platform" sourceValue="ios"/>
+	</derivedMetadataMappings>
+
+	<!-- Strip Events - these delimit frames which will be excluded from stats computation -->
+	<!-- Note: order is important, since these are stripped in the order listed (with no handling for overlapping events) -->
+	<csvEventsToStrip>
+		<eventPair begin="App_WillDeactivate" end="App_HasReactivated"/>
+	</csvEventsToStrip>
+
+
+	<sharedSummaries>
+		<summary refName="mapOverlay" type="mapoverlay" useUnstrippedCsvStats="1" title="Map" framesPerLineSegment="15" 
+			width="600" height="600" destImage="Minimap.jpg" sourceImage="CitySample_Big_City_LVL_map.png" 
+			offsetX="0.0" offsetY="0.0" scale="1.0" lineSplitDistanceThreshold="500">
+			
+			<!-- TO DO - Look at tracking and drawing player states as part of movement across map ie walk, drone, drive-->
+			<!-- Note: summaryStatName/summaryStatNamePrefix is not yet supported! -->
+			<!--
+			<overlay xStat="view/posx" yStat="view/posy" zStat="view/posz" lineColor="#ff0000" summaryStatNamePrefix="view0">
+				<event name="CitySample/GamePhase Step: IntroCine" shortName="IntroCine" lineColor="#ffff00" isStartEvent="1"/>
+				<event name="FooBar begin" shortName="FooBar Begin" summaryStatName="FooBarBeginPos" lineColor="#ffa000"/>
+				<event name="FooBar end" shortName="FooBar End" summaryStatName="FooBarEndPos"/>
+			</overlay>
+			<overlay xStat="view1/posx" yStat="view1/posy" zStat="view1/posz" lineColor="#0000ff" summaryStatNamePrefix="view1">
+				<event name="FooBar begin 1" shortName="FooBar begin 1" summaryStatName="FooBarBeginPos" isStartEvent="1" lineColor="#fff311"/>
+				<event name="FooBar end 1" shortName="FooBar End 1" summaryStatName="FooBarEndPos"/>
+			</overlay>
+			-->
+		</summary>
+	</sharedSummaries>
+
+	<!-- Preset summary tables -->
+	<summaryTableColumnFormatInfo>
+		<columnInfo name="count" autoColorize="lowIsBad"/>
+        <columnInfo name="framecount" autoColorize="lowIsBad"/>
+		<columnInfo name="DynamicResolutionPercentage*" autoColorize="lowIsBad"/>
+		<columnInfo name="MemoryFreeMB*" autoColorize="lowIsBad"/>
+		<columnInfo name="Total Time*" autoColorize="lowIsBad"/>
+	</summaryTableColumnFormatInfo>
+
+<!--
+		<summary refName="psos" type="event" title="PSOs" metadataKey="PSOs">
+			<events>PSO/*</events>
+			<colourThresholds>0, 1, 2, 3</colourThresholds>
+		</summary>	
+
+		<summary refName="textureStreaming" type="boundedstatvalues" title="Texture Streaming" useUnstrippedCsvStats="1">
+			<column name="% Time textures over budget" formula="percentunderthreshold" threshold="15" metadataKey="texturestreaming_texturesOverPercent" stat="texturestreaming/cachedmips">
+				<colourThresholds>0,5,20,100</colourThresholds>
+			</column>
+			<column name="Cached mips (avg)" formula="average" threshold="15" metadataKey="textureStreaming_cachedMipsAvg" stat="texturestreaming/cachedmips">
+				<colourThresholds>300,200,100,50</colourThresholds>
+			</column>
+			<column name="Streaming pool (avg)" formula="average" threshold="15" metadataKey="textureStreaming_streamingPoolAvg" stat="texturestreaming/streamingpool"/>
+			<column name="Wanted mips (avg)" formula="average" threshold="15" metadataKey="textureStreaming_wantedMipsAvg" stat="texturestreaming/wantedmips"/>
+			<column name="Temporary pool" formula="average" threshold="15" stat="texturestreaming/temporarypool"/>
+			<column name="Safety pool" formula="average" threshold="15" stat="texturestreaming/safetypool"/>
+		</summary>	
+	</sharedSummaries>
+	-->
+
+	<!-- Preset summary tables -->
+	<!-- In bulk mode (-csvdir), summary table row data is produced for each CSV. This includes data from all active summaries -->
+	<!-- The preset Summary Tables below can be used to provide a filtered and sorted view of that data (see -summaryTable). -->
+	<summaryTables>
+		<summaryTable name="all" rowSort="buildversion,Platform,deviceprofile">
+			<filter>buildversion,Platform,DeviceProfile,scalabilitylevel,*</filter>
+		</summaryTable>
+
+		<summaryTable name="default" rowSort="buildversion,playlistid,Platform,deviceprofile,scalabilitylevel,TargetFPS">
+			<filter>Platform,DeviceProfile,scalabilitylevel,Report,TargetFPS,MVP*,Hitches/Min,HitchTimePercent,FrameTime*,GamethreadTime*,Renderthreadtime*,RHIThreadTime*,GPUTime*,MemoryFreeMB Min,PhysicalUsedMB Max,DynamicResolution*,RHI/Drawcalls*,Basic/TicksQueued*,Total Time*,Csv File,buildversion,config,playlistid,framecount*,syncloads</filter>
+		</summaryTable>
+
+		<summaryTable name="memory" rowSort="buildversion,Platform,deviceprofile,scalabilitylevel">
+			<filter>MemoryFreeMB*,PhysicalUsedMB*,Total Time*</filter>
+		</summaryTable>
+
+		<summaryTable name="condensed" rowSort="buildversion,Platform,deviceprofile,scalabilitylevel,TargetFPS">
+			<filter>DeviceProfile,scalabilitylevel,TargetFPS,MVP*,Hitches/Min,MemoryFreeMB Min,PhysicalUsedMB Max,GamethreadTime*,Renderthreadtime*,RHIThreadTime*,GPUTime*,DynamicResolution*,SyncLoads*</filter>
+		</summaryTable>
+
+		<summaryTable name="historical" rowSort="buildversion,platform,deviceprofile">
+			<filter>buildversion,Platform,DeviceProfile,scalabilitylevel, config,TargetFPS,testname,Report,MVP*,Hitches/Min,HitchTimePercent,FrameTime*,GamethreadTime*,Renderthreadtime*,RHIThreadTime*,GPUTime*,MemoryFreeMB Min,PhysicalUsedMB Max,DynamicResolution*,RHI/Drawcalls*,Ticks/PlayerPawns*,Basic/TicksQueued*,Total Time*,framecount*,fmsglogf/fmsglogfcount avg,syncloads</filter>
+		</summaryTable>
+
+		<!-- This table is used to produce the historic reports at the end of each Frosty.PerformanceReport Gauntlet test. -->
+		<summaryTable name="autoPerfReportStandard" rowSort="buildversion,Platform,deviceprofile" scrollableFormatting="1" reverseSortRows="1">
+			<filter>buildversion,DeviceProfile,config,count,testname,TargetFPS,MVP*,Hitches/Min,HitchTimePercent,FrameTime*,GamethreadTime*,Renderthreadtime*,RHIThreadTime*,GPUTime*,MemoryFreeMB Min,PhysicalUsedMB Max,DynamicResolution*,Total Time*,RHI/*,Basic/TicksQueued*,Ticks/Vehicles*,framecount*,Csv File,Report</filter>
+		</summaryTable>
+
+	</summaryTables>
+
+	<reporttypes reportGraphsFile="ReportGraphs.xml">
+
+		<!-- 60fps report -->
+		<reporttype name="Default60fps" title="60FPS Performance Report" vsync="1">
+			<autodetection requiredstats="frametime">
+				<requiredmetadata key="targetframerate" allowedValues="60" stopIfKeyFound="1" ignoreIfKeyNotFound="1"/>
+			</autodetection>
+			
+			<metadataToShow>buildversion,platform,deviceprofile,csvfilename,rhiname,desktophwinfo,testname</metadataToShow>
+
+			<summary type="fpschart" fps="60" hitchThreshold="60" useEngineHitchMetric="1">
+				<stats>Frametime,GameThreadtime,RenderThreadtime,RHIThreadTime,GPUtime,RHI/Drawcalls,DynamicResolutionPercentage,MemoryFreeMB(min),PhysicalUsedMB(max),Basic/TicksQueued,fmsglogf/fmsglogfcount</stats>
+				<colourThresholds stat="Hitches/Min"> 2, 3, 5, 6</colourThresholds>
+				<colourThresholds stat="HitchTimePercent"> 0.1, 0.5, 1, 2</colourThresholds>
+				<colourThresholds stat="MVP60"> 2, 3, 4, 5</colourThresholds>
+				<colourThresholds stat="MemoryFreeMB(min)">400,300,200,50</colourThresholds>
+				<colourThresholds stat="DynamicResolutionPercentage">90,80,70,60</colourThresholds>
+				<colourThresholds stat="Frametime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="GameThreadtime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="RHIThreadTime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="RenderThreadtime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="GPUtime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="Basic/TicksQueued"> 150, 200, 250, 300 </colourThresholds>
+				<colourThresholds stat="fmsglogf/fmsglogfcount">0.01,0.1,0.2,0.5</colourThresholds>
+			<!--<capture name="SkyDiving" startEvent="BusFlying" endEvent="SafeZones" includeFirstFrame="false" includeLastFrame="false"--> 
+			</summary>
+
+			<summary type="hitches">
+				<stats>Frametime,GameThreadtime,RenderThreadtime,RHIThreadTime,GPUtime</stats>
+				<colourThresholds>33, 20, 16.6, 16.2</colourThresholds>
+				<hitchThresholds>60, 150, 250, 500, 750, 1000, 2000</hitchThresholds>
+			</summary>
+
+			<!--
+			<summaryRef name="mapOverlay"/>
+			<summaryRef name="syncLoads"/>
+			<summaryRef name="textureStreaming"/>
+			<summaryRef name="psos"/>
+			-->
+
+			<graph title="Stat Unit" budget="16.66" />
+			<graph title="Stat Unit Raw" budget="16.66" />
+			<graph title="Gamethread Breakdown" budget="16.66"/>
+			<graph title="Gamethread Breakdown Raw" budget="16.66"/>
+			<graph title="Gamethread Waits" budget="2"/>
+			<graph title="Gamethread Physics" budget="2"/>
+			<graph title="Gamethread Breakdown Giant" budget="16.66" external="1"/>
+			<graph title="Ticks Breakdown" budget="200"/>
+			<graph title="Actor Counts" budget="0"/>
+			<graph title="Cmds DayaLayers" budget="300"/>
+			<graph title="Physical Memory" budget="300"/>
+			<graph title="Physical Memory Over Budget" budget="300"/>
+			<graph title="Dynamic Resolution" budget="80"/>
+			<graph title="GPU Breakdown" budget="16.66" />
+			<graph title="GPU Breakdown Raw" budget="16.66" />
+			<graph title="D3D12 Video Memory"  budget="0" />
+			<graph title="Niagara Breakdown" budget="33.33"/>
+			<graph title="Light Counts" budget="0" />
+			<graph title="RHI Drawcalls" budget="3000" />
+			<graph title="Renderthread Breakdown" budget="16.66"/>
+			<graph title="Renderthread Breakdown Raw" budget="16.66"/>
+			<graph title="FScene Breakdown" budget="33.33"/>
+			<graph title="FScene Breakdown Raw" budget="33.33"/>
+			<graph title="Render Targets Peak(MB)" budget="0" />
+			<graph title="Textures Peak(MB)" budget="0" />
+			<graph title="Virtual Texture" budget="0" />
+			<graph title="Animation Budget" budget="1.5" />
+			<graph title="Texture Streaming" budget="0" />
+			<graph title="Log Counts" budget="0" />
+			<graph title="CSV Profiler" budget="0" />
+		</reporttype>
+
+
+		<!-- 30 Fps report -->
+		<reporttype name="Default30fps" title="30FPS Performance Report" vsync="1">
+			<autodetection requiredstats="frametime">
+				<requiredmetadata key="targetframerate" allowedValues="30" stopIfKeyFound="1" ignoreIfKeyNotFound="1"/>
+			</autodetection>
+
+			<metadataToShow>buildversion,platform,deviceprofile,csvfilename,rhiname,desktophwinfo,testname</metadataToShow>
+
+			<summary type="fpschart" fps="30" hitchThreshold="60" useEngineHitchMetric="1">
+				<stats>Frametime,GameThreadtime,RenderThreadtime,RHIThreadTime,GPUtime,RHI/Drawcalls,DynamicResolutionPercentage,MemoryFreeMB(min),PhysicalUsedMB(max),Basic/TicksQueued</stats>
+				<colourThresholds stat="Hitches/Min"> 0, 2.5, 3.75, 5</colourThresholds>
+				<colourThresholds stat="HitchTimePercent"> 0.1, 0.5, 1, 2</colourThresholds>
+				<colourThresholds stat="MVP30"> 0, 2, 3, 4</colourThresholds>
+				<colourThresholds stat="MemoryFreeMB">400,300,200,100</colourThresholds>
+				<colourThresholds stat="MemoryFreeMB(min)">400,300,200,50</colourThresholds>
+				<colourThresholds stat="DynamicResolutionPercentage">90,80,70,60</colourThresholds>
+				<colourThresholds stat="Frametime"> 33.4, 35, 38, 45  </colourThresholds>
+				<colourThresholds stat="GameThreadtime"> 33.4, 35, 38, 45  </colourThresholds>
+				<colourThresholds stat="RHIThreadTime"> 33.4, 35, 38, 45  </colourThresholds>
+				<colourThresholds stat="RenderThreadtime"> 33.4, 35, 38, 45  </colourThresholds>
+				<colourThresholds stat="GPUtime"> 33.4, 35, 38, 45  </colourThresholds>
+				<colourThresholds stat="Basic/TicksQueued"> 150, 200, 250, 300 </colourThresholds>
+			</summary>
+
+			<summary type="hitches">
+				<stats>Frametime,GameThreadtime,RenderThreadtime,RHIThreadTime,GPUtime</stats>
+				<colourThresholds> 20, 16.6, 16.2</colourThresholds>
+				<hitchThresholds>60, 150, 250, 500, 750, 1000, 2000</hitchThresholds>
+			</summary>
+
+
+			<summaryRef name="mapOverlay"/>
+			<!--
+			<summaryRef name="syncLoads"/>
+			<summaryRef name="textureStreaming"/>
+			<summaryRef name="psos"/>
+			-->
+
+			<graph title="Stat Unit 30hz" budget="33.33" />
+			<graph title="Stat Unit Raw" budget="33.33" />
+			<graph title="Gamethread Breakdown" budget="33.33"/>
+			<graph title="Gamethread Breakdown Raw" budget="33.33"/>
+			<graph title="Gamethread Waits" budget="4"/>
+			<graph title="Gamethread Physics" budget="4"/>
+			<graph title="Gamethread Breakdown Giant" budget="33.33" external="1"/>
+			<graph title="Ticks Breakdown" budget="200"/>
+			<graph title="Actor Counts" budget="0"/>
+			<graph title="Physical Memory" budget="300"/>
+			<graph title="Cmds DayaLayers" budget="300"/>
+			<graph title="Physical Memory Over Budget" budget="300"/>
+			<graph title="Dynamic Resolution" budget="80"/>
+			<graph title="GPU Breakdown" budget="33.33" />
+			<graph title="GPU Breakdown Raw" budget="16.66" />
+			<graph title="Niagara Breakdown" budget="33.33"/>
+			<graph title="RHI Drawcalls" budget="2000" />
+			<graph title="Renderthread Breakdown" budget="33.33"/>
+			<graph title="Renderthread Breakdown Raw" budget="33.33"/>
+			<graph title="FScene Breakdown" budget="33.33"/>
+			<graph title="FScene Breakdown Raw" budget="33.33"/>
+			<graph title="Render Targets Peak(MB)" budget="0" />
+			<graph title="Textures Peak(MB)" budget="0" />
+			<graph title="Virtual Texture" budget="0" />
+			<graph title="Light Counts" budget="0" />
+			<graph title="Animation Budget" budget="3.0" />
+			<graph title="Texture Streaming" budget="0" />
+			<graph title="Log Counts" budget="0" />
+			<graph title="CSV Profiler" budget="0" />
+		</reporttype>
+
+
+		<!-- Memory report -->
+		<reporttype name="Memory" title="Physical Memory Report" vsync="1">
+			<autodetection requiredstats="memoryfreemb,physicalusedmb"/>
+			<summary type="fpschart" fps="60" hitchThreshold="60" useEngineHitchMetric="1">
+				<stats>MemoryFreeMB(min),PhysicalUsedMB(max),MemoryFreeMB,PhysicalUsedMB,PhysicalUsedMB(min)</stats>
+				<colourThresholds stat="MemoryFreeMB(min)">400,300,200,50</colourThresholds>
+			</summary>
+			<graph title="Physical Memory" budget="300"/>
+		</reporttype>
+
+
+		<!-- LLM Report -->
+		<reporttype name="LLM" title="LLM Generic Report" ignoreList="" stripEvents="0">
+			<autodetection requiredstats="llm/total">
+				<requiredmetadata key="llm" allowedValues="1"/>
+			</autodetection>
+
+			<summary type="peak" hideStatPrefix="llm/">
+				<summarySection title="Main">
+					<statFilter>LLM/Total,LLM/TrackedTotal,LLM/Untracked,LLM/Textures,LLM/Audio,LLM/Meshes,LLM/RenderTargets,LLM/UObject,LLM/Animation,LLM/Shaders,LLM/Filesystem,LLM/Physics,LLM/ProgramSize</statFilter>
+				</summarySection>
+
+				<summarySection title="Audio">
+					<statFilter>LLM/Audio/*</statFilter>
+				</summarySection>
+
+				<summarySection title="Mesh">
+					<statFilter>LLM/Meshes/*</statFilter>
+				</summarySection>
+
+				<summarySection title="Physics">
+					<statFilter>LLM/Physics/*</statFilter>
+				</summarySection>
+
+				<summarySection title="Other">
+					<statFilter>LLM/*</statFilter>
+				</summarySection>
+			</summary>
+
+			<!-- top-level LLM summary graphs -->
+			<graph title="Total Memory Stats"			inSummary="1"/>
+
+			<!-- Memory breakdowns -->
+			<graph title="Tracked Memory Breakdown"		inSummary="1"/>
+			<graph title="Content Memory Breakdown"/>
+			<graph title="Audio Memory Breakdown"		inSummary="1"/>
+			<graph title="Mesh Memory Breakdown"		inSummary="1"/>
+			<graph title="Physics Memory Breakdown"		inSummary="1"/>
+
+			<!-- Various collections -->
+			<graph title="Rendering Memory Stats"		/>
+			<graph title="Misc Memory Stats"			/>
+			<graph title="Development Memory Stats"		/>
+			<graph title="Initialization Memory Stats"  />
+			<graph title="Loading Memory Stats"			/>
+
+			<!-- Individual stats -->
+			<graph title="Tracked Total Memory"         />
+			<graph title="UObject Memory"				/>
+			<graph title="Animation Memory"             />
+			<graph title="EngineMisc Memory"            />
+			<graph title="Materials Memory"             />
+			<graph title="RenderTargets Memory"         />
+			<graph title="Shaders Memory"               />
+			<graph title="Textures Memory"              />
+			<graph title="Untagged Memory"				inSummary="1"  budget="12"/>
+			<graph title="Untracked Memory"				inSummary="1"  budget="300"/>
+		</reporttype>
+
+		<!-- FX report -->
+		<reporttype name="FXReport" title="Playtest FX Perf Report" vsync="1">
+			<autodetection requiredstats="frametime">
+				<requiredmetadata key="targetframerate" allowedValues="60" stopIfKeyFound="1" ignoreIfKeyNotFound="1"/>
+			</autodetection>
+
+			<metadataToShow>testname,buildversion,deviceprofile,csvfilename,rhiname,desktophwinfo</metadataToShow>
+
+			<summary type="fpschart" fps="60" hitchThreshold="60" useEngineHitchMetric="1">
+				<stats>Frametime,GameThreadtime,RenderThreadtime,GPUtime,exclusive/gamethread/effects</stats>
+				<colourThresholds stat="Hitches/Min"> 2, 3, 5, 6</colourThresholds>
+				<colourThresholds stat="HitchTimePercent"> 0.1, 0.5, 1, 2</colourThresholds>
+				<colourThresholds stat="MVP60"> 2, 3, 4, 5</colourThresholds>
+				<colourThresholds stat="MemoryFreeMB(min)">400,300,200,50</colourThresholds>
+				<colourThresholds stat="Frametime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="GameThreadtime"> 13, 15, 17, 22.5 </colourThresholds>
+				<colourThresholds stat="RenderThreadtime"> 13, 15, 17, 22.5 </colourThresholds>
+				<colourThresholds stat="GPUtime"> 16.7, 17.5, 19, 22.5 </colourThresholds>
+				<colourThresholds stat="exclusive/gamethread/effects"> 1.5, 2, 4, 6 </colourThresholds>			
+				<capture name="SkyDiving" startEvent="BusFlying" endEvent="SafeZones" includeFirstFrame="false" includeLastFrame="false" />
+				<capture name="OnTheGround" startEvent="SafeZones" endEvent="EndGame" includeFirstFrame="false" includeLastFrame="false" />
+				<capture name="MatchWithoutLobby" startEvent="BusFlying" endEvent="EndGame" includeFirstFrame="false" includeLastFrame="false" />
+			</summary>
+		
+			<summaryRef name="mapOverlay"/>
+			
+			<graph title="Gamethread Budget: Effects" budget="0.75"/>
+			<graph title="FX Breakdown Count" budget="50" />
+			<graph title="FX Breakdown Total" budget="2000.0" />
+			<graph title="FX Breakdown GTOnly" budget="1000.0" />			
+			<graph title="FX Breakdown RT" budget="1000.0" />	
+			<graph title="FX Breakdown GPU" budget="2000.0" />	
+			<graph title="FX Breakdown Activation" budget="300.0" />
+			<graph title="FX Breakdown Waits" budget="50.0" />
+			<graph title="FX Breakdown Per Inst Avg GT" budget="100.0" />
+			<graph title="FX Breakdown Per Inst Avg RT" budget="100.0" />
+			<graph title="FX Breakdown Per Inst Avg GPU" budget="100.0" />
+			<graph title="Niagara Culling" budget="0.0" />
+			<graph title="Niagara Culling Breakdown" budget="0.0" />
+			<graph title="Niagara Cull Proxy Breakdown" budget="0.0" />
+			<graph title="FX Budget Breakdown" budget="1.0" />
+			
+		</reporttype>
+
+	</reporttypes>
+</root>

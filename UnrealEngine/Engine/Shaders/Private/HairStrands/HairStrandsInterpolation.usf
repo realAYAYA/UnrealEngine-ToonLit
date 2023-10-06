@@ -1,0 +1,661 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "HairStrandsBindingCommon.ush"
+#include "HairStrandsVisibilityCommon.ush"
+#include "HairStrandsAABBCommon.ush" 
+#include "HairStrandsClusterCommon.ush"
+#include "HairStrandsVertexFactoryCommon.ush"
+
+#if COMPILER_METAL || COMPILER_VULKAN
+#define ALLOW_DEBUG_RENDERING 0
+#else
+#define ALLOW_DEBUG_RENDERING 1
+#endif
+
+#define DEBUG_ENABLE 0
+
+#if DEBUG_ENABLE && ALLOW_DEBUG_RENDERING
+#include "../ShaderPrint.ush"
+#include "../ColorMap.ush"
+#endif
+
+#pragma warning (default:7203) // downgrade 'not enough registers available for the entire program.' to a warning instead of error
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Guides
+
+#if SHADER_HAIRINTERPOLATION || SHADER_PATCHATTRIBUTE
+ByteAddressBuffer InterpolationBuffer;
+#endif
+
+struct FGuideDataWithOffset
+{
+	uint3  VertexIndices;
+	float3 VertexLerps;
+	float3 VertexWeights;
+	float3 OutPositionOffset;
+};
+
+FGuideDataWithOffset GetGuideData(uint InVertexIndex, bool bSingleGuide, float3 OutPositionOffset)
+{
+#if PERMUTATION_SIMULATION > 0
+	FGuideData GuideData;
+	if (bSingleGuide)
+	{
+		GuideData = UnpackGuideData(InterpolationBuffer.Load(InVertexIndex * HAIR_INTERPOLATION_1GUIDE_STRIDE));
+	}
+	else
+	{
+		GuideData = UnpackGuideData(InterpolationBuffer.Load4(InVertexIndex * HAIR_INTERPOLATION_3GUIDE_STRIDE));
+	}
+
+	FGuideDataWithOffset Out;
+	Out.VertexIndices     = GuideData.VertexIndices;
+	Out.VertexLerps       = GuideData.VertexLerps;
+	Out.VertexWeights     = GuideData.VertexWeights;
+	Out.OutPositionOffset = OutPositionOffset;
+	return Out;
+#else
+	return (FGuideDataWithOffset)0;
+#endif
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair interpolation 
+
+#define INTERPOLATION_RIGID 0
+#define INTERPOLATION_SKINNING_OFFSET 1
+#define INTERPOLATION_SKINNING_TRANSLATION 2
+#define INTERPOLATION_SKINNING_ROTATION 3
+#define INTERPOLATION_SKINNING_TRANSLATION_AND_ROTATION 4
+
+#if SHADER_HAIRINTERPOLATION
+
+uint VertexCount;
+uint HairDebugMode;
+float HairLengthScale;
+float3 InRenHairPositionOffset;
+float3 InSimHairPositionOffset;
+float4x4 LocalToWorldMatrix;
+
+Buffer<uint4> RenRestPosePositionBuffer;
+Buffer<uint4> SimRestPosePositionBuffer;
+Buffer<uint4> SimDeformedPositionBuffer;
+Buffer<uint>  SimRootPointIndexBuffer;
+
+uint HairStrandsVFTODO_bCullingEnable;
+#if PERMUTATION_CULLING == 1
+Buffer<uint>	HairStrandsVFTODO_CullingIndirectBuffer; 
+Buffer<uint>	HairStrandsVFTODO_CullingIndexBuffer;
+Buffer<float>	HairStrandsVFTODO_CullingRadiusScaleBuffer;
+Buffer<uint>	HairStrandsVFTODO_CullingIndirectBufferArgs;
+#endif
+
+#if PERMUTATION_DYNAMIC_GEOMETRY >= 1 || PERMUTATION_DEBUG == 1 
+Buffer<uint>   RenPointToCurveBuffer;
+Buffer<uint>   SimPointToCurveBuffer;
+#endif
+
+#if PERMUTATION_DEFORMER
+Buffer<uint4>  RenDeformerPositionBuffer;
+#endif
+RWBuffer<uint4> OutRenDeformedPositionBuffer; 
+
+#if PERMUTATION_DYNAMIC_GEOMETRY >= 1 
+
+// Compact all these buffers into 2 buffers: translation + quaternion
+Buffer<float4>  RenRootRestPositionBuffer;
+Buffer<float4>  RenRootDeformedPositionBuffer;
+Buffer<uint>	RenRootBarycentricBuffer;
+Buffer<uint>	RenRootToUniqueTriangleIndexBuffer;
+
+Buffer<float4>  SimRootRestPositionBuffer;
+Buffer<float4>  SimRootDeformedPositionBuffer;
+Buffer<uint>	SimRootBarycentricBuffer;
+Buffer<uint>	SimRootToUniqueTriangleIndexBuffer;
+#endif
+
+Buffer<float4> OutSimHairPositionOffsetBuffer;
+Buffer<float4> OutRenHairPositionOffsetBuffer;
+
+
+#ifndef GROUP_SIZE
+	#error Unknown group size	
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Deformation offset
+
+float3 ComputeStaticGeometryOffset(
+	uint GuideIndex, 
+	float GuideVertexWeight, 
+	float3 OutSimHairPositionOffset)
+{
+	const float3 RestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex], InSimHairPositionOffset);
+
+	const float3 DeformedGuidePoint = UnpackHairControlPointPosition(SimDeformedPositionBuffer[GuideIndex], OutSimHairPositionOffset);
+
+	return (DeformedGuidePoint - RestGuidePoint) * GuideVertexWeight;
+}
+
+float3 ComputeLocalGeometryOffset(
+	uint GuideIndex, 
+	float GuideVertexWeight)
+{
+	const uint RootIndex = SimRootPointIndexBuffer[GuideIndex];
+
+	const float3 RestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex]) - UnpackHairControlPointPosition(SimRestPosePositionBuffer[RootIndex]);
+
+	const float3 DeformedGuidePoint = UnpackHairControlPointPosition(SimDeformedPositionBuffer[GuideIndex]) - UnpackHairControlPointPosition(SimDeformedPositionBuffer[RootIndex]);
+
+	return (DeformedGuidePoint - RestGuidePoint) * GuideVertexWeight;
+}
+
+float3 ComputeDynamicGeometryOffset(
+	uint GuideIndex, 
+	float GuideVertexWeight, 
+	FHairMeshTriangle RestTriangle, 
+	FHairMeshTriangle DeformedTriangle,
+	float3 RootBarycentric,
+	float3 OutSimHairPositionOffset)
+{
+	const float3 RestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex], InSimHairPositionOffset);
+	const float3 LocalRestGuidePoint = ToTriangle(RestGuidePoint, RootBarycentric, RestTriangle);
+
+	const float3 DeformedGuidePoint = UnpackHairControlPointPosition(SimDeformedPositionBuffer[GuideIndex], OutSimHairPositionOffset);
+	const float3 LocalDeformedGuidePoint = ToTriangle(DeformedGuidePoint, RootBarycentric, DeformedTriangle);
+
+	return (LocalDeformedGuidePoint - LocalRestGuidePoint) * GuideVertexWeight;
+}
+
+float3 ComputeTranslateGeometryOffset(
+	uint GuideIndex, 
+	float GuideVertexWeight)
+{
+	const uint RootIndex = SimRootPointIndexBuffer[GuideIndex];
+
+	const float3 RestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex]) - UnpackHairControlPointPosition(SimRestPosePositionBuffer[RootIndex]) ;
+
+	const float3 DeformedGuidePoint = UnpackHairControlPointPosition(SimDeformedPositionBuffer[GuideIndex]) - UnpackHairControlPointPosition(SimDeformedPositionBuffer[RootIndex]) ;
+
+	return (DeformedGuidePoint - RestGuidePoint) * GuideVertexWeight;
+}
+
+float3 ComputeRotateGeometryOffset(
+	uint GuideIndex, 
+	float GuideVertexWeight,
+	FHairMeshTriangle RestTriangle, 
+	FHairMeshTriangle DeformedTriangle)
+{	
+	const uint RootIndex = SimRootPointIndexBuffer[GuideIndex];
+
+	const float3 RestGuidePoint = UnpackHairControlPointPosition(SimRestPosePositionBuffer[GuideIndex]) - UnpackHairControlPointPosition(SimRestPosePositionBuffer[RootIndex]) ;
+	const float3 LocalRestGuidePoint = VectorToTriangle(RestGuidePoint, RestTriangle);
+
+	const float3 DeformedGuidePoint = UnpackHairControlPointPosition(SimDeformedPositionBuffer[GuideIndex]) - UnpackHairControlPointPosition(SimDeformedPositionBuffer[RootIndex]) ;
+	const float3 LocalDeformedGuidePoint = VectorToTriangle(DeformedGuidePoint, DeformedTriangle);
+
+	return (LocalDeformedGuidePoint - LocalRestGuidePoint) * GuideVertexWeight;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Root triangles
+
+struct FRootTriangleData
+{
+	uint RootIndex;
+	uint TriangleIndex;
+	float3 RootBarycentric;
+	FHairMeshTriangle RestTriangle;
+	FHairMeshTriangle DeformedTriangle;
+};
+
+FRootTriangleData GetRootTriangleData(uint VertexIndex, bool bSim)
+{
+	FRootTriangleData Out = (FRootTriangleData)0;
+	#if PERMUTATION_DYNAMIC_GEOMETRY >= 1 
+	if (bSim)
+	{
+		Out.RootIndex		 = SimPointToCurveBuffer[VertexIndex];
+		Out.TriangleIndex	 = SimRootToUniqueTriangleIndexBuffer[Out.RootIndex];
+		Out.RootBarycentric  = UnpackBarycentrics(SimRootBarycentricBuffer[Out.RootIndex]);
+		Out.RestTriangle	 = GetTriangleTransformation(Out.TriangleIndex, SimRootRestPositionBuffer);
+		Out.DeformedTriangle = GetTriangleTransformation(Out.TriangleIndex, SimRootDeformedPositionBuffer);
+	}
+	else
+	{
+		Out.RootIndex		 = RenPointToCurveBuffer[VertexIndex];
+		Out.TriangleIndex	 = RenRootToUniqueTriangleIndexBuffer[Out.RootIndex];
+		Out.RootBarycentric  = UnpackBarycentrics(RenRootBarycentricBuffer[Out.RootIndex]);
+		Out.RestTriangle	 = GetTriangleTransformation(Out.TriangleIndex, RenRootRestPositionBuffer);
+		Out.DeformedTriangle = GetTriangleTransformation(Out.TriangleIndex, RenRootDeformedPositionBuffer);
+	}
+	#endif
+	return Out;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Rigid interpolation
+float3 ApplyRigidInterpolation(FGuideDataWithOffset GuideData, float3 InPosition)
+{
+	float3 CurrOffset = 0;
+#if PERMUTATION_SIMULATION == 1
+	#if PERMUTATION_USE_SINGLE_GUIDE == 1
+	const uint K = 0;
+	#else
+	[unroll]
+	for (uint K = 0; K < 3; ++K)
+	#endif
+	{
+		const uint GuideIndex0 = GuideData.VertexIndices[K];
+		const uint GuideIndex1 = GuideIndex0 + 1;
+
+		const float3 Offset0 = ComputeStaticGeometryOffset(GuideIndex0, GuideData.VertexWeights[K], GuideData.OutPositionOffset);
+		const float3 Offset1 = ComputeStaticGeometryOffset(GuideIndex1, GuideData.VertexWeights[K], GuideData.OutPositionOffset);
+
+		CurrOffset += lerp(Offset0, Offset1, GuideData.VertexLerps[K]);
+	}
+#endif
+
+	return InPosition + CurrOffset;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Skinning with offset
+float3 ApplySkinningWithOffset(const FGuideDataWithOffset GuideData, const FRootTriangleData RenTri, float3 InPosition)
+{
+	float3 CurrOffset = 0;
+
+	// Compute the simulation offset in hair local space (i.e., triangle)
+#if PERMUTATION_SIMULATION == 1
+	#if PERMUTATION_USE_SINGLE_GUIDE == 1
+	const uint K = 0;
+	#else
+	[unroll]
+	for (uint K = 0; K < 3; ++K)
+	#endif
+	{
+		const uint GuideIndex0 = GuideData.VertexIndices[K];
+		const uint GuideIndex1 = GuideIndex0 + 1;
+
+		const FRootTriangleData SimTri = GetRootTriangleData(GuideIndex0, true);
+
+		const float3 Offset0 = ComputeDynamicGeometryOffset(GuideIndex0, GuideData.VertexWeights[K], SimTri.RestTriangle, SimTri.DeformedTriangle, SimTri.RootBarycentric, GuideData.OutPositionOffset);
+		const float3 Offset1 = ComputeDynamicGeometryOffset(GuideIndex1, GuideData.VertexWeights[K], SimTri.RestTriangle, SimTri.DeformedTriangle, SimTri.RootBarycentric, GuideData.OutPositionOffset);
+
+		CurrOffset += VectorToWorld(lerp(Offset0, Offset1, GuideData.VertexLerps[K]), SimTri.DeformedTriangle);
+	}
+#endif		
+
+	InPosition = ToTriangle(InPosition, RenTri.RootBarycentric, RenTri.RestTriangle);
+	InPosition = ToWorld(InPosition, RenTri.RootBarycentric, RenTri.DeformedTriangle) + CurrOffset;
+
+	return InPosition;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Skinning with translantion
+float3 ApplySkinningWithTranslation(const FGuideDataWithOffset GuideData, const FRootTriangleData RenTri, float3 InPosition)
+{
+	InPosition -= RenTri.RootBarycentric.x * RenTri.RestTriangle.P0 + RenTri.RootBarycentric.y * RenTri.RestTriangle.P1 + RenTri.RootBarycentric.z * RenTri.RestTriangle.P2;
+
+	float3 CurrOffset = 0;
+
+#if PERMUTATION_SIMULATION == 1
+	#if PERMUTATION_USE_SINGLE_GUIDE == 1
+	const uint K = 0;
+	#else
+	[unroll]
+	for (uint K = 0; K < 3; ++K)
+	#endif
+	{
+		const uint GuideIndex0 = GuideData.VertexIndices[K];
+		const uint GuideIndex1 = GuideIndex0 + 1;
+
+		const float3 Offset0 = ComputeTranslateGeometryOffset(GuideIndex0, 1.0);
+		const float3 Offset1 = ComputeTranslateGeometryOffset(GuideIndex1, 1.0);
+
+		CurrOffset += GuideData.VertexWeights[K] * lerp(Offset0, Offset1, GuideData.VertexLerps[K]);
+	}
+#endif
+
+	InPosition += RenTri.RootBarycentric.x * RenTri.DeformedTriangle.P0 + RenTri.RootBarycentric.y * RenTri.DeformedTriangle.P1 + RenTri.RootBarycentric.z * RenTri.DeformedTriangle.P2;
+	return InPosition + CurrOffset;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Skinning with rotation
+float3 ApplySkinningWithRotation(const FGuideDataWithOffset GuideData, const FRootTriangleData RenTri, float3 InPosition)
+{
+	InPosition -= RenTri.RootBarycentric.x * RenTri.RestTriangle.P0 + RenTri.RootBarycentric.y * RenTri.RestTriangle.P1 + RenTri.RootBarycentric.z * RenTri.RestTriangle.P2;
+
+	float3 CurrOffset = 0;
+
+#if PERMUTATION_SIMULATION == 1
+	#if PERMUTATION_USE_SINGLE_GUIDE == 1
+	const uint K = 0;
+	#else
+	[unroll]
+	for (uint K = 0; K < 3; ++K)
+	#endif
+	{
+		const uint GuideIndex0 = GuideData.VertexIndices[K];
+		const uint GuideIndex1 = GuideIndex0 + 1;
+
+		const FRootTriangleData SimTri = GetRootTriangleData(GuideIndex0, true);
+
+		const float3 LocalPoint = VectorToTriangle(InPosition, SimTri.RestTriangle);
+
+		const float3 Offset0 = ComputeRotateGeometryOffset(GuideIndex0, 1.0, SimTri.RestTriangle, SimTri.DeformedTriangle/*, SimHairPositionOffset*/);
+		const float3 Offset1 = ComputeRotateGeometryOffset(GuideIndex1, 1.0, SimTri.RestTriangle, SimTri.DeformedTriangle/*, SimHairPositionOffset*/);
+
+		CurrOffset += GuideData.VertexWeights[K] * VectorToWorld(lerp(Offset0, Offset1, GuideData.VertexLerps[K]) + LocalPoint, SimTri.DeformedTriangle);
+	}
+#endif
+
+	InPosition = RenTri.RootBarycentric.x * RenTri.DeformedTriangle.P0 + RenTri.RootBarycentric.y * RenTri.DeformedTriangle.P1 + RenTri.RootBarycentric.z * RenTri.DeformedTriangle.P2;
+	return InPosition + CurrOffset;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Skinning with translation and rotation
+float3 ApplySkinningWithTranslationAndRotation(const FGuideDataWithOffset GuideData, const FRootTriangleData RenTri, float3 InPosition)
+{
+	float3 CurrOffset = 0;
+
+#if PERMUTATION_SIMULATION == 1
+	#if PERMUTATION_USE_SINGLE_GUIDE == 1
+	const uint K = 0;
+	#else
+	[unroll]
+	for (uint K = 0; K < 3; ++K)
+	#endif
+	{
+		const uint GuideIndex0 = GuideData.VertexIndices[K];
+		const uint GuideIndex1 = GuideIndex0 + 1;
+
+		const FRootTriangleData SimTri = GetRootTriangleData(GuideIndex0, true);
+
+		const float3 LocalPoint = ToTriangle(InPosition, SimTri.RootBarycentric, SimTri.RestTriangle);
+
+		const float3 Offset0 = ComputeDynamicGeometryOffset(GuideIndex0, 1.0, SimTri.RestTriangle, SimTri.DeformedTriangle, SimTri.RootBarycentric, GuideData.OutPositionOffset);
+		const float3 Offset1 = ComputeDynamicGeometryOffset(GuideIndex1, 1.0, SimTri.RestTriangle, SimTri.DeformedTriangle, SimTri.RootBarycentric, GuideData.OutPositionOffset);
+
+		CurrOffset += GuideData.VertexWeights[K] * ToWorld(lerp(Offset0, Offset1, GuideData.VertexLerps[K]) + LocalPoint, SimTri.RootBarycentric, SimTri.DeformedTriangle);
+	}
+#endif
+
+	return CurrOffset;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Deformer transformation
+float3 ApplyDeformer(const FRootTriangleData RenTri, float3 InRestPostion, float3 InDeformerPosition, float3 InDeformedPosition)
+{
+	float3 OutPosition = InDeformedPosition;
+#if PERMUTATION_DEFORMER
+	#if PERMUTATION_DYNAMIC_GEOMETRY == 0
+		OutPosition = InDeformedPosition + (InDeformerPosition - InRestPostion);
+	#else
+		const float3 LocalRestPoint     = ToTriangle(InRestPostion, RenTri.RootBarycentric, RenTri.RestTriangle);
+		const float3 LocalDeformerPoint = ToTriangle(InDeformerPosition, RenTri.RootBarycentric, RenTri.RestTriangle);
+
+		const float3 LocalOffset = LocalDeformerPoint - LocalRestPoint;
+		const float3 LocalDeformedPoint = ToTriangle(InDeformedPosition, RenTri.RootBarycentric, RenTri.DeformedTriangle);
+		OutPosition = ToWorld(LocalDeformedPoint + LocalOffset, RenTri.RootBarycentric, RenTri.DeformedTriangle);
+	#endif
+#endif
+	return OutPosition;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Interpolation
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	// 1. Find vertex index
+	uint VertexIndex = DispatchThreadId.x;
+#if PERMUTATION_CULLING
+	if (HairStrandsVFTODO_bCullingEnable)
+	{
+		const uint FetchIndex = DispatchThreadId.x;
+		const uint VertexCountAfterCulling = HairStrandsVFTODO_CullingIndirectBuffer[3];
+		if (FetchIndex >= VertexCountAfterCulling)
+		{
+			return;
+		}
+		VertexIndex = HairStrandsVFTODO_CullingIndexBuffer[FetchIndex];
+	}
+#endif
+
+
+	// 2. Appply deformation
+	if (VertexIndex < VertexCount)
+	{
+		const FGuideDataWithOffset GuideData = GetGuideData(VertexIndex, PERMUTATION_USE_SINGLE_GUIDE, OutSimHairPositionOffsetBuffer[0].xyz);
+		const FRootTriangleData RenTri = GetRootTriangleData(VertexIndex, false);
+
+		// Manual decoding of the rest position
+		uint4 PackedRestPosition = RenRestPosePositionBuffer[VertexIndex];
+		const float3 RestPosition = UnpackHairControlPointPosition(PackedRestPosition, InRenHairPositionOffset);
+
+		float3 OutPosition = 0.0f;
+
+		// 1. Rigid transformation
+		// ControlPoint is in the local hair referential
+		// CurrOffset takes only translation component into account, and is done in object local space (vs. triangle/hair local space)
+		#if PERMUTATION_DYNAMIC_GEOMETRY == INTERPOLATION_RIGID
+		{
+			OutPosition = ApplyRigidInterpolation(GuideData, RestPosition);
+		}
+		// 2. Skin transformation
+		// Apply dynamic mesh deformation (translation / rotation)
+		#elif PERMUTATION_DYNAMIC_GEOMETRY == INTERPOLATION_SKINNING_OFFSET
+		{
+			OutPosition = ApplySkinningWithOffset(GuideData, RenTri, RestPosition);
+		}
+		// 3. Linear blend skinning (translation)
+		#elif PERMUTATION_DYNAMIC_GEOMETRY == INTERPOLATION_SKINNING_TRANSLATION
+		{
+			OutPosition = ApplySkinningWithTranslation(GuideData, RenTri, RestPosition);
+		}
+		// 4. Linear blend skinning (rotation)
+		#elif PERMUTATION_DYNAMIC_GEOMETRY == INTERPOLATION_SKINNING_ROTATION
+		{
+			OutPosition = ApplySkinningWithRotation(GuideData, RenTri, RestPosition);
+		}
+		// 5. Linear blend skinning (translation + rotation)
+		#elif PERMUTATION_DYNAMIC_GEOMETRY == INTERPOLATION_SKINNING_TRANSLATION_AND_ROTATION
+		{
+			OutPosition = ApplySkinningWithTranslationAndRotation(GuideData, RenTri, RestPosition);
+		}
+		#endif
+
+		// 3. Apply deformer
+		#if PERMUTATION_DEFORMER
+		{
+			const uint4 PackedDeformerPosition = RenDeformerPositionBuffer[VertexIndex];
+			const float3 DeformerPosition = UnpackHairControlPointPosition(PackedDeformerPosition, InRenHairPositionOffset);
+			OutPosition = ApplyDeformer(RenTri, RestPosition, DeformerPosition, OutPosition);
+			PackedRestPosition.w = PackedDeformerPosition.w;
+		}
+		#endif
+
+		// 4. Write out the final position
+		// Optionally trim hair
+		if (HairLengthScale < 1.0f)
+		{
+			const float CoordU = UnpackHairControlPointCoordU(PackedRestPosition);
+			if (HairLengthScale < CoordU)
+			{
+				OutPosition = INFINITE_FLOAT;
+			}
+		}
+		OutRenDeformedPositionBuffer[VertexIndex] = PackHairControlPointPosition(PackedRestPosition, OutPosition, OutRenHairPositionOffsetBuffer[0].xyz);
+	}
+}
+#endif // SHADER_HAIRINTERPOLATION
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Patch attribute (for debug visualization)
+#if SHADER_PATCHATTRIBUTE
+
+#include "HairStrandsVertexFactoryCommon.ush"
+#include "HairStrandsAttributeCommon.ush"
+
+uint				CurveCount;
+
+Buffer<uint>		RenCurveBuffer;
+Buffer<uint>		RenCurveToClusterIdBuffer;
+RWByteAddressBuffer	OutRenAttributeBuffer;
+
+uint 				CurveAttributeIndexToChunkDivAsShift;
+uint 				CurveAttributeChunkElementCount;
+uint 				CurveAttributeChunkStrideInBytes;
+uint 				PointAttributeIndexToChunkDivAsShift;
+uint 				PointAttributeChunkElementCount;
+uint 				PointAttributeChunkStrideInBytes;
+uint4				CurveAttributeOffsets[HAIR_CURVE_ATTRIBUTE_OFFSET_COUNT];
+
+groupshared uint SeedValues[1024];
+
+uint ToSeedHash(uint In)
+{
+	const uint InLo8bits =  In & 0xFF;
+	const uint InHi8btis = (In >> 8) & 0xFF;
+
+	// Using FNV1 hash to break linearity of ClusterId (generated by linearly parsing cluster grid)
+	uint Hash = 0;
+	Hash = Hash * 17;
+	Hash = Hash ^ InLo8bits;
+	Hash = Hash * 17;
+	Hash = Hash ^ InHi8btis;
+	return (Hash & 0xFF);
+}
+
+[numthreads(1024, 1, 1)]
+void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID, uint GroupThread1D : SV_GroupIndex)
+{
+	SeedValues[GroupThread1D] = 0;
+
+	const uint CurveIndex = DispatchThreadId.x;
+	const bool bValid = CurveIndex < CurveCount;
+	if (bValid)
+	{
+		uint Out = 0;
+		#if PERMUTATION_SIMULATION == 0
+		{
+			const uint ClusterId		= RenCurveToClusterIdBuffer[CurveIndex];
+			SeedValues[GroupThread1D]	= ToSeedHash(ClusterId);
+		}
+		#else // if (PERMUTATION_SIMULATION > 0)
+		{
+			const uint VertexIndex0		= UnpackHairCurve(RenCurveBuffer[CurveIndex]).PointIndex;
+			const FGuideDataWithOffset GuideData = GetGuideData(VertexIndex0, PERMUTATION_SIMULATION == 1, 0 /*OutPositionOffset*/);
+			const uint GuideIndex		= GuideData.VertexIndices[0]; // Take the closest guide
+			SeedValues[GroupThread1D]	= ToSeedHash(GuideIndex);
+		}
+		#endif // PERMUTATION_SIMULATION
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// Write 4 values at a type since seed are encoded into 8bits, and data are written out as uint
+	if ((CurveIndex % 4) == 0)
+	{	
+		uint Out = 0;
+		Out |= (SeedValues[GroupThread1D]   & 0xFF);
+		Out |= (SeedValues[GroupThread1D+1] & 0xFF) << 8;
+		Out |= (SeedValues[GroupThread1D+2] & 0xFF) << 16;
+		Out |= (SeedValues[GroupThread1D+3] & 0xFF) << 24;
+
+		uint WriteIndex 				= CurveIndex;
+		uint WriteAttributOffsetInBytes = HAIR_CURVE_ATTRIBUTE_OFFSET_SEED(CurveAttributeOffsets);
+
+		const uint ChunkIndex   	= CurveIndex >> CurveAttributeIndexToChunkDivAsShift;
+		WriteIndex                 -= ChunkIndex * CurveAttributeChunkElementCount;
+		WriteAttributOffsetInBytes += ChunkIndex * CurveAttributeChunkStrideInBytes;
+
+		OutRenAttributeBuffer.Store(WriteAttributOffsetInBytes + WriteIndex, Out);
+	}
+}
+#endif // SHADER_PATCHATTRIBUTE
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Hair transfer prev. position
+
+#if SHADER_HAIRTRANSFER_PREV_POSITION
+
+uint ElementCount;
+Buffer<uint4> InBuffer;
+RWBuffer<uint4> OutBuffer;
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint Index = DispatchThreadId;
+	if (Index >= ElementCount)
+	{
+		return;
+	}
+	OutBuffer[Index] = InBuffer[Index];
+}
+
+#endif // SHADER_HAIRTRANSFER_PREV_POSITION
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Groom cache update
+
+#if SHADER_GROOMCACHE_UPDATE
+
+uint ElementCount;
+uint bHasRadiusData;
+float InterpolationFactor;
+
+Buffer<float> InPosition0Buffer;
+Buffer<float> InPosition1Buffer;
+Buffer<float> InRadius0Buffer;
+Buffer<float> InRadius1Buffer;
+
+Buffer<uint4>  InRestPoseBuffer;
+Buffer<float4> InDeformedOffsetBuffer;
+RWBuffer<uint4> OutDeformedBuffer;
+
+[numthreads(GROUP_SIZE, 1, 1)]
+void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint Index = DispatchThreadId;
+	if (Index >= ElementCount)
+	{
+		return;
+	}
+
+	const uint Index3 = Index * 3;
+	const float3 InPosition0 = float3(
+		InPosition0Buffer[Index3],
+		InPosition0Buffer[Index3+1],
+		InPosition0Buffer[Index3+2]);
+	
+	const float3 InPosition1 = float3(
+		InPosition1Buffer[Index3],
+		InPosition1Buffer[Index3+1],
+		InPosition1Buffer[Index3+2]);
+	
+	const float3 WorldVertexPosition = lerp(InPosition0, InPosition1, InterpolationFactor);
+
+	FHairControlPoint CP = UnpackHairControlPoint(InRestPoseBuffer[Index], float3(0, 0, 0), 1, 1, 1);
+	CP.Position = WorldVertexPosition;
+
+	if (bHasRadiusData == 1)
+	{
+		CP.WorldRadius = lerp(InRadius0Buffer[Index], InRadius1Buffer[Index], InterpolationFactor);
+	}
+
+	OutDeformedBuffer[Index] = PackHairControlPoint(CP, InDeformedOffsetBuffer[0].xyz, 1);
+}
+
+#endif // SHADER_GROOMCACHE_UPDATE

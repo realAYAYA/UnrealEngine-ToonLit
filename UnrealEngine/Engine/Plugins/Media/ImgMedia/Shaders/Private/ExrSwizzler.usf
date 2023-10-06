@@ -1,0 +1,193 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+
+#if PARTIAL_TILES
+struct FTileDesc
+{
+	int2 TileResolution;
+	uint BufferOffset;
+	int AlignPadding;
+};
+#endif
+
+/** The unswizzled buffer packed into 4 byte buffer stride. */
+StructuredBuffer<uint> UnswizzledBuffer;
+
+#if PARTIAL_TILES
+/** The unswizzled buffer packed into 4 byte buffer stride. */
+StructuredBuffer<FTileDesc> TileDescBuffer;
+#endif
+
+/** Texture size that the buffer is supposed to be unpacked to. */
+int2 TextureSize;
+
+/** Size of tiles that represent this texture. */
+int2 TileSize;
+
+/** Total number of tiles in X and Y direction for the current mip level. */
+int2 NumTiles;
+
+/** Number of channels per pixel. */
+int NumChannels;
+
+/**
+* This function extracts the 16bit (float) data stored in uint (32 bit)
+*/
+float UintContainingFloatToFloat(in uint Value)
+{
+	int Sign = (Value >> 15) & 0x00000001;
+	int Exponent = (Value >> 10) & 0x0000001f;
+	int Mantissa = Value & 0x000003ff;
+
+	Exponent = Exponent + (127 - 15);
+	Mantissa = Mantissa << 13;
+
+	return asfloat((Sign << 31) | (Exponent << 23) | Mantissa);
+}
+
+/** Unpacks data from the provided structured buffer. */
+int GetValueFromTheBuffer(int Offset, int2 TextureSize, int ChannelIndex)
+{
+#if CUSTOM_EXR
+	int UnpackedLocation = Offset + ChannelIndex;
+#else
+	// the location as if it would've been if the buffer was unpacked.
+	int UnpackedLocation = Offset + TextureSize.x * ChannelIndex;
+#endif
+	// Byte offset within the 4 byte packed value.
+	int Remainder = UnpackedLocation % 2;
+
+	// Position in a packed buffer.
+	int PackedPosition = (UnpackedLocation - Remainder) >> 1;
+
+
+	uint PackedFourByteValue = UnswizzledBuffer[PackedPosition];
+	int ReturnValue = ((PackedFourByteValue >> (16 * Remainder)) & 0xffff);
+	return ReturnValue;
+}
+
+
+/** Vertex Shader. */
+void MainVS(
+	in float4 InPosition : ATTRIBUTE0,
+	in float2 InTexCoord : ATTRIBUTE1,
+	out noperspective float4 OutUVAndScreenPos : TEXCOORD0,
+	out float4 OutPosition : SV_POSITION)
+{
+	DrawRectangle(InPosition, InTexCoord, OutPosition, OutUVAndScreenPos);
+}
+
+#if PARTIAL_TILES
+void GetStartScanlinePosition_PartialTiles(in int2 PixelPos, out int2 SampleSize, out int StartPosition)
+{
+	int2 TileCoord = int2(ceil(PixelPos.x / TileSize.x), ceil(PixelPos.y / TileSize.y));
+	FTileDesc TileDesc = TileDescBuffer[TileCoord.y * NumTiles.x + TileCoord.x];
+
+	SampleSize = TileDesc.TileResolution;
+
+	int xCoord = (PixelPos.x) % TileSize.x;
+	int yCoord = (PixelPos.y) % TileSize.y;
+
+	// Padding in buffer elements (uint)
+	const int TilePadding = 10;
+
+	// Offset is in bytes while our buffer is a packed uint16 into uint32. Therefore divide by 2. 
+	int PreviousTilesOffset = TileDesc.BufferOffset / 2;
+
+	// Current tile position.
+#if CUSTOM_EXR
+	StartPosition = PreviousTilesOffset + yCoord * TileDesc.TileResolution.x * NumChannels + xCoord * NumChannels;
+#else
+	StartPosition = PreviousTilesOffset + yCoord * TileDesc.TileResolution.x * NumChannels + xCoord + TilePadding;
+#endif //CUSTOM_EXR
+}
+#endif
+
+void GetStartScanlinePosition(in int2 PixelPos, out int2 SampleSize, out int StartPosition)
+{
+	// Depending on the EXR file it could contain multi-channel data.
+#if RENDER_TILES
+	SampleSize = TileSize;
+
+	int xCoord = (PixelPos.x) % TileSize.x;
+	int yCoord = (PixelPos.y) % TileSize.y;
+
+	int TileX = floor((PixelPos.x) / TileSize.x);
+	int TileY = floor((PixelPos.y) / TileSize.y);
+
+	// Padding in buffer elements (uint)
+	const int TilePadding = 10;
+
+	// Current tile position.
+#if CUSTOM_EXR
+	int TileBufferStride = TileSize.x * TileSize.y * NumChannels;
+	int PreviousTilesOffset = (NumTiles.x * TileY + TileX) * TileBufferStride;
+	StartPosition = PreviousTilesOffset + yCoord * TileSize.x * NumChannels + xCoord * NumChannels;
+#else
+	int TileBufferStride = TileSize.x * TileSize.y * NumChannels;
+	int PreviousTilesOffset = (NumTiles.x * TileY + TileX) * TileBufferStride;
+	StartPosition = PreviousTilesOffset + yCoord * TileSize.x * NumChannels + xCoord + (TileY * NumTiles.x + TileX + 1) * TilePadding;
+#endif
+
+#else
+	SampleSize.x = TextureSize.x;
+	SampleSize.y = TextureSize.y;
+
+	// Padding in bytes
+	const int TilePadding = 4;
+
+	// Current scanline position.
+	StartPosition = PixelPos.y * TextureSize.x * NumChannels + PixelPos.x + (PixelPos.y + 1) * 4;
+#endif //RENDER_TILES
+}
+
+/** Pixel Shader. */
+half4 MainPS(noperspective float4 UVAndScreenPos : TEXCOORD0) : SV_Target0
+{
+
+	float2 UV = UVAndScreenPos.xy;
+	
+	int2 SampleSize;
+
+	int2 PixelPos = UV * TextureSize;
+
+	int StartBufferPosition;
+
+#if PARTIAL_TILES
+	GetStartScanlinePosition_PartialTiles(PixelPos, SampleSize, StartBufferPosition);
+#else
+	GetStartScanlinePosition(PixelPos, SampleSize, StartBufferPosition);
+#endif
+
+	int ChannelIndex = 0;
+
+#if NUM_CHANNELS == 3
+	half A = UintContainingFloatToFloat(GetValueFromTheBuffer(StartBufferPosition, SampleSize, ChannelIndex++));
+#else
+	half A = 1.;
+#endif
+
+	half B = UintContainingFloatToFloat(GetValueFromTheBuffer(StartBufferPosition, SampleSize, ChannelIndex++));
+#if NUM_CHANNELS == 0
+	half G = B;
+#else
+	half G = UintContainingFloatToFloat(GetValueFromTheBuffer(StartBufferPosition, SampleSize, ChannelIndex++));
+#endif
+#if NUM_CHANNELS <= 1
+	half R = B;
+#else
+	half R = UintContainingFloatToFloat(GetValueFromTheBuffer(StartBufferPosition, SampleSize, ChannelIndex++));
+#endif
+	half3 Rgb = half3(R, G, B);
+
+#if CUSTOM_EXR
+	#if NUM_CHANNELS == 3
+		return half4(A, Rgb.zyx);
+	#else
+		return half4(Rgb.zyx, A);
+	#endif
+#else
+	return half4(Rgb, A);
+#endif
+}

@@ -1,0 +1,58 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "LumenSceneDirectLighting.ush"
+
+#if THREADGROUP_SIZE_32
+	#define THREADGROUP_SIZE_X 8
+	#define THREADGROUP_SIZE_Y 4
+#else
+	#define THREADGROUP_SIZE_X 8
+	#define THREADGROUP_SIZE_Y 8
+#endif
+
+StructuredBuffer<uint2> LightTiles;
+StructuredBuffer<uint> LightTileOffsetsPerLight;
+uint LightIndex;
+uint ViewIndex;
+uint NumViews;
+
+// Workaround for a console shader compiler bug generating incorrect code. Likely can be removed in next SDK.
+uint DummyZeroForFixingShaderCompilerBug;
+
+// 8 bits per texel
+groupshared uint SharedShadowMask[(SHADOW_MASK_RAY_BITS * THREADGROUP_SIZE_X * THREADGROUP_SIZE_Y) / 32];
+
+void ReadSharedShadowMaskRay(uint2 CoordInCardTile, inout FShadowMaskRay ShadowMaskRay)
+{
+	uint BitOffset = SHADOW_MASK_RAY_BITS * (CoordInCardTile.x + CoordInCardTile.y * CARD_TILE_SIZE);
+
+	uint ShadowMask = SharedShadowMask[BitOffset / 32];
+	ShadowMask = ShadowMask >> (BitOffset % 32);
+
+	ShadowMaskRay.ShadowFactor = float(ShadowMask & SHADOW_FACTOR_BITS_MASK) / SHADOW_FACTOR_BITS_MASK;
+	ShadowMaskRay.bShadowFactorComplete = (ShadowMask & SHADOW_FACTOR_COMPLETE_BITS_MASK) != 0;
+}
+
+void WriteSharedShadowMaskRay(FShadowMaskRay Ray, uint2 CoordInCardTile, const bool bClearExistingMask)
+{
+	uint Mask = uint(Ray.ShadowFactor * SHADOW_FACTOR_BITS_MASK);
+
+	if (Ray.bShadowFactorComplete)
+	{
+		Mask |= SHADOW_FACTOR_COMPLETE_BITS_MASK;
+	}
+
+	uint BitOffset = SHADOW_MASK_RAY_BITS * (CoordInCardTile.x + CoordInCardTile.y * CARD_TILE_SIZE);
+
+	if (bClearExistingMask)
+	{
+		InterlockedAnd(SharedShadowMask[BitOffset / 32], ~(SHADOW_MASK_RAY_BITS_MASK << (BitOffset % 32)));
+	}
+
+	if (Mask != 0)
+	{
+		InterlockedOr(SharedShadowMask[BitOffset / 32], Mask << (BitOffset % 32));
+	}
+}

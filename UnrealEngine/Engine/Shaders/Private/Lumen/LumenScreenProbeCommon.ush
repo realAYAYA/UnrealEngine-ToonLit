@@ -1,0 +1,328 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../MonteCarlo.ush"
+#include "../BlueNoise.ush"
+#include "../SceneTextureParameters.ush"
+
+//Note: Also have to change format on C++ side
+#define SH_QUANTIZE_DIRECTIONAL_COEFFICIENTS 0
+#define PROBE_THREADGROUP_SIZE_2D 8 
+#define PROBE_THREADGROUP_SIZE_1D 64
+
+#define PROBE_IRRADIANCE_FORMAT_SH3 0
+#define PROBE_IRRADIANCE_FORMAT_OCT 1
+#define IRRADIANCE_PROBE_RES 6
+#define IRRADIANCE_PROBE_WITH_BORDER_RES (IRRADIANCE_PROBE_RES + 2)
+
+// Main control for Screen Probe tracing resolution.  8 = 8x8 traces per probe
+uint ScreenProbeTracingOctahedronResolution;
+// Analytical light samples, in each dimension
+uint ScreenProbeLightSampleResolutionXY;
+// Screen probe traces are re-sampled to this resolution before filtering / BRDF integration
+uint ScreenProbeGatherOctahedronResolution;
+uint ScreenProbeGatherOctahedronResolutionWithBorder;
+
+// Size of the downsampled viewport, in probes.  This corresponds to the uniform placement viewport.
+uint2 ScreenProbeViewSize;
+
+// Size of the active viewport into the atlas, in probes
+uint2 ScreenProbeAtlasViewSize;
+// Size of all the probe atlas textures, in probes
+uint2 ScreenProbeAtlasBufferSize;
+
+float ScreenProbeGatherMaxMip;
+float RelativeSpeedDifferenceToConsiderLightingMoving;
+float ScreenTraceNoFallbackThicknessScale;
+
+// Used by InterpolateFromScreenProbes() to sample probe radiance with border
+float2 SampleRadianceProbeUVMul;
+float2 SampleRadianceProbeUVAdd;
+float2 SampleRadianceAtlasUVMul;
+
+// Downsample factor from full res to Screen Probe res
+uint ScreenProbeDownsampleFactor;
+// ScreenProbeViewSize.x * ScreenProbeViewSize.y
+uint NumUniformScreenProbes;
+uint MaxNumAdaptiveProbes;
+int FixedJitterIndex;
+
+// Screen Probe GBuffers.  These are indexed by ScreenProbeAtlasCoord and adaptive probes are placed at the bottom of the texture.
+// Note: negative if unlit
+Texture2D<uint> ScreenProbeSceneDepth;
+Texture2D<float2> ScreenProbeWorldNormal;
+Texture2D<uint> ScreenProbeWorldSpeed;
+
+// Single element, contains the number of adaptive screen probes placed
+StructuredBuffer<uint> NumAdaptiveScreenProbes;
+StructuredBuffer<uint> AdaptiveScreenProbeData;
+
+Texture2D<uint> ScreenTileAdaptiveProbeHeader;
+Texture2D<uint> ScreenTileAdaptiveProbeIndices;
+
+#define SCREEN_TEMPORAL_INDEX			(FixedJitterIndex < 0 ? View.StateFrameIndexMod8 : FixedJitterIndex)
+#define RAY_DIRECTION_TEMPORAL_INDEX	(FixedJitterIndex < 0 ? View.StateFrameIndex : FixedJitterIndex)
+#define GENERAL_TEMPORAL_INDEX			(FixedJitterIndex < 0 ? View.StateFrameIndexMod8 : FixedJitterIndex)
+
+// Returns the jitter offset in the range [0, ScreenProbeDownsampleFactor - 1]
+uint2 GetScreenTileJitter(uint TemporalIndex)
+{
+	return Hammersley16(TemporalIndex, 8, 0) * ScreenProbeDownsampleFactor;
+	//return R2Sequence(TemporalIndex) * ScreenProbeDownsampleFactor;
+}
+
+// Note: Returns negative depth for invalid probe
+float GetScreenProbeDepth(uint2 ScreenProbeAtlasCoord, Texture2D<uint> ProbeSceneDepthTexture)
+{
+	return asfloat(ScreenProbeSceneDepth[ScreenProbeAtlasCoord]);
+}
+
+float GetScreenProbeDepth(uint2 ScreenProbeAtlasCoord)
+{
+	return GetScreenProbeDepth(ScreenProbeAtlasCoord, ScreenProbeSceneDepth);
+}
+
+float3 GetScreenProbeNormal(uint2 ScreenProbeAtlasCoord)
+{
+	return OctahedronToUnitVector(ScreenProbeWorldNormal[ScreenProbeAtlasCoord] * 2.0 - 1.0);
+}
+
+uint GetNumAdaptiveScreenProbes()
+{
+	return min(NumAdaptiveScreenProbes[0], MaxNumAdaptiveProbes);
+}
+
+uint2 GetAdaptiveProbeCoord(uint2 ScreenTileCoord, uint AdaptiveProbeListIndex)
+{
+	uint2 AdaptiveProbeCoord = uint2(AdaptiveProbeListIndex % ScreenProbeDownsampleFactor, AdaptiveProbeListIndex / ScreenProbeDownsampleFactor);
+	//return ScreenTileCoord * ScreenProbeDownsampleFactor + AdaptiveProbeCoord;
+	return AdaptiveProbeCoord * ScreenProbeViewSize + ScreenTileCoord;
+}
+
+uint GetNumScreenProbes()
+{
+	return NumUniformScreenProbes + GetNumAdaptiveScreenProbes();
+}
+
+uint EncodeScreenProbeData(uint2 ScreenProbeScreenPosition)
+{
+	return (ScreenProbeScreenPosition.x & 0xFFFF) | ((ScreenProbeScreenPosition.y & 0xFFFF) << 16);
+}
+
+uint2 DecodeScreenProbeData(uint EncodedProbeData)
+{
+	return uint2(EncodedProbeData & 0xFFFF, (EncodedProbeData >> 16) & 0xFFFF);
+}
+
+// Note this can return a screen position outside of the valid viewport, since probes can be placed off-screen due to DivideAndRoundUp
+uint2 GetScreenProbeScreenPosition(uint ScreenProbeIndex)
+{
+	uint2 ScreenProbeAtlasCoord = uint2(ScreenProbeIndex % ScreenProbeViewSize.x, ScreenProbeIndex / ScreenProbeViewSize.x);
+	uint2 ScreenProbeScreenPosition = ScreenProbeAtlasCoord * ScreenProbeDownsampleFactor + GetScreenTileJitter(SCREEN_TEMPORAL_INDEX) + View.ViewRectMinAndSize.xy;
+
+	if (ScreenProbeIndex >= NumUniformScreenProbes)
+	{
+		ScreenProbeScreenPosition = DecodeScreenProbeData(AdaptiveScreenProbeData[ScreenProbeIndex - NumUniformScreenProbes]);
+	}
+
+	return ScreenProbeScreenPosition;
+}
+
+uint2 GetScreenTileCoord(uint2 ScreenProbeScreenPosition)
+{
+	return (ScreenProbeScreenPosition - GetScreenTileJitter(SCREEN_TEMPORAL_INDEX) - View.ViewRectMinAndSize.xy) / ScreenProbeDownsampleFactor;
+}
+
+uint2 GetUniformScreenProbeScreenPosition(uint2 ScreenTileCoord)
+{
+	uint2 ScreenJitter = GetScreenTileJitter(SCREEN_TEMPORAL_INDEX);
+	uint2 ScreenProbeScreenPosition = min((uint2)(View.ViewRectMinAndSize.xy + ScreenTileCoord * ScreenProbeDownsampleFactor + ScreenJitter), (uint2)(View.ViewRectMinAndSize.xy + View.ViewRectMinAndSize.zw) - 1);
+	return ScreenProbeScreenPosition;
+}
+
+float2 GetScreenTileCoordFromScreenUV(float2 ScreenUV, uint TemporalIndex)
+{
+	return (ScreenUV - (View.ViewRectMin.xy + GetScreenTileJitter(TemporalIndex) + 0.5f) * View.BufferSizeAndInvSize.zw) / (ScreenProbeDownsampleFactor * View.BufferSizeAndInvSize.zw);
+}
+
+float2 GetScreenUVFromScreenTileCoord(uint2 ScreenTileCoord)
+{
+	uint2 ScreenProbeScreenPosition = ScreenTileCoord * ScreenProbeDownsampleFactor + GetScreenTileJitter(SCREEN_TEMPORAL_INDEX) + View.ViewRectMinAndSize.xy;
+	return (ScreenProbeScreenPosition + .5f) * View.BufferSizeAndInvSize.zw;
+}
+
+float2 GetScreenUVFromScreenProbePosition(uint2 ScreenProbeScreenPosition)
+{
+	// Probe ScreenUV can be outside of valid viewport, since probes are downsampled with DivideAndRoundUp
+	float2 ScreenCoord = min((float2)ScreenProbeScreenPosition, View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy - 1.0f);
+	return (ScreenCoord + .5f) * View.BufferSizeAndInvSize.zw;
+}
+
+float3 GetWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+	return WorldPosition;
+}
+
+float3 GetTranslatedWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+	return TranslatedWorldPosition;
+}
+
+// This version ignores TAA jitter, use when sampling a history texture
+float3 GetHistoryScreenPosition(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
+{
+	float3 HistoryScreenPosition = float3(ScreenPosition, DeviceZ);
+	bool bIsDynamicPixel = false;
+
+	{
+		float4 ThisClip = float4(HistoryScreenPosition, 1);
+		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); //<=== doesn't contain AA offsets
+
+		float3 PrevScreen = PrevClip.xyz / PrevClip.w;
+		float3 Velocity = HistoryScreenPosition - PrevScreen;
+		float4 EncodedVelocity = GBufferVelocityTexture.SampleLevel(GlobalPointClampedSampler, ScreenUV, 0);
+		bIsDynamicPixel = EncodedVelocity.x > 0.0;
+
+		if (bIsDynamicPixel)
+		{
+			// Note: overwriting velocity, this only works if DeviceZ matches what's in the depth buffer
+			Velocity = DecodeVelocityFromTexture(EncodedVelocity);
+		}
+
+		HistoryScreenPosition -= Velocity;
+	}
+
+	return HistoryScreenPosition;
+}
+
+// This version accounts for TAA jitter, use when comparing positions like calculating world space velocity
+float3 GetHistoryScreenPositionIncludingTAAJitter(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
+{
+	float3 HistoryScreenPosition = GetHistoryScreenPosition(ScreenPosition - View.TemporalAAJitter.xy, ScreenUV, DeviceZ);
+	HistoryScreenPosition.xy += View.TemporalAAJitter.zw;
+	return HistoryScreenPosition;
+}
+
+float3 GetPrevTranslatedWorldPosition(float3 HistoryScreenPosition)
+{
+	float HistorySceneDepth = ConvertFromDeviceZ(HistoryScreenPosition.z);
+	float3 PrevPositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition.xy, HistorySceneDepth), HistorySceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz;
+	float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+	float3 PrevTranslatedWorldPosition = PrevPositionTranslatedWorld + PreViewTranslationOffset;
+	return PrevTranslatedWorldPosition;
+}
+
+uint EncodeScreenProbeSpeed(float ProbeSpeed, bool bTwoSidedFoliage)
+{
+	return f32tof16(ProbeSpeed) | (bTwoSidedFoliage ? 0x8000 : 0);
+}
+
+bool GetScreenProbeIsTwoSidedFoliage(uint2 ScreenProbeAtlasCoord)
+{
+	uint Encoded = ScreenProbeWorldSpeed.Load(int3(ScreenProbeAtlasCoord, 0));
+	return (Encoded & 0x8000) != 0;
+}
+
+float GetScreenProbeSpeed(uint2 ScreenProbeAtlasCoord)
+{
+	uint Encoded = ScreenProbeWorldSpeed.Load(int3(ScreenProbeAtlasCoord, 0));
+	return f16tof32(Encoded & 0x7FFF);
+}
+
+Texture2D<float> ScreenProbeMoving;
+
+float GetScreenProbeMoving(uint2 ScreenProbeAtlasCoord)
+{
+	return ScreenProbeMoving[ScreenProbeAtlasCoord];
+}
+
+StructuredBuffer<uint> CompactedTraceTexelAllocator;
+StructuredBuffer<uint> CompactedTraceTexelData;
+StructuredBuffer<uint> CompactedLightSampleTraceTexelData;
+
+uint EncodeScreenProbeTraceTexel(uint ScreenProbeIndex, uint2 TraceTexelCoord)
+{
+	return (ScreenProbeIndex & 0xFFFFF) | ((TraceTexelCoord.x & 0x1F) << 20) | ((TraceTexelCoord.y & 0x1F) << 25);
+}
+
+void DecodeScreenProbeTraceTexel(uint TraceTexelData, inout uint ScreenProbeIndex, inout uint2 TraceTexelCoord)
+{
+	ScreenProbeIndex = TraceTexelData & 0xFFFFF;
+	TraceTexelCoord.x = (TraceTexelData >> 20) & 0x1F;
+	TraceTexelCoord.y = (TraceTexelData >> 25) & 0x1F;
+}
+
+Texture2D<uint> LightingChannelsTexture;
+
+bool HasDistanceFieldRepresentation(float2 ScreenUV)
+{
+	return (LightingChannelsTexture[(int2)(ScreenUV * View.BufferSizeAndInvSize.xy)] & (1 << LIGHTING_CHANNELS_TEXTURE_DISTANCE_FIELD_REPRESENTATION_BIT)) != 0;
+}
+
+float GetScreenTraceDepthThresholdScale(float2 ScreenUV)
+{
+	if (HasDistanceFieldRepresentation(ScreenUV))
+	{
+		return View.ProjectionDepthThicknessScale;
+	}
+	return ScreenTraceNoFallbackThicknessScale;
+}
+
+Texture2D ScreenProbeLightSampleDirection;
+Texture2D<uint> ScreenProbeLightSampleFlags;
+Texture2D<float3> ScreenProbeLightSampleRadiance;
+Texture2D<uint> LightSampleTraceHit;
+
+
+float GetProbeMaxHitDistance()
+{
+	return MaxHalfFloat;
+}
+
+#define PROBE_RAY_DISTANCE_ENCODE_SCALE 0.1f
+
+uint EncodeProbeRayDistance(float HitDistance, bool bHit, bool bMoving, bool bReachedRadianceCache)
+{
+	HitDistance = max(HitDistance, 0.0f);
+
+	uint EncodedRay = 0;
+	EncodedRay = clamp(uint(HitDistance * PROBE_RAY_DISTANCE_ENCODE_SCALE + 0.5f), 0, 0x1FFFFFFF);
+	EncodedRay |= bHit ? (1 << 29) : 0;
+	EncodedRay |= bMoving ? (1 << 30) : 0;
+	EncodedRay |= bReachedRadianceCache ? (1 << 31) : 0;
+	return EncodedRay;
+}
+
+struct FProbeRayDistance
+{
+	float HitDistance;
+	bool bHit;
+	bool bMoving;
+	bool bReachedRadianceCache;
+};
+
+FProbeRayDistance DecodeProbeRayDistance(uint Encoded)
+{
+	FProbeRayDistance ProbeRayDistance;
+	ProbeRayDistance.bHit = (Encoded & (1 << 29)) != 0;
+	ProbeRayDistance.bMoving = (Encoded & (1 << 30)) != 0;
+	ProbeRayDistance.bReachedRadianceCache = (Encoded & (1 << 31)) != 0;
+	ProbeRayDistance.HitDistance = (Encoded & 0x1FFFFFFF) / PROBE_RAY_DISTANCE_ENCODE_SCALE;
+	return ProbeRayDistance;
+}
+
+uint EncodeLightSampleFlags(bool bValid, bool bCastShadow)
+{
+	return (bValid ? 1 : 0) | (bCastShadow ? 2 : 0);
+}
+
+void DecodeLightSampleFlags(uint Encoded, out bool bValid, out bool bCastShadow)
+{
+	bValid = (Encoded & 1) != 0;
+	bCastShadow = (Encoded & 2) != 0;
+}

@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0" AutodeskProduct="Naviswork" Name="Datasmith Navisworks Exporter" Description="Unreal Datasmith exporter for Navisworks" AppVersion="Unreal Engine 4.27.2" ProductCode="" upgradeCode="" OnlineDocumentation="https://www.unrealengine.com/en-US/datasmith/plugins" HelpFile="./Help.htm" Icon="./DatasmithIcon32.png">    
+	<CompanyDetails Name="Epic Games,  https://www.unrealengine.com/"/>
+    <Components Description="2019">
+	    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw16" SeriesMax="Nw16" />
+        <ComponentEntry AppName="Datasmith Exporter for Autodesk® Navisworks® 2019" AppType="ManagedPlugin" ModuleName="./DatasmithNavisworksPlugin2019.dll" />
+    </Components>
+    <Components Description="2020">
+	    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw17" SeriesMax="Nw17" />
+        <ComponentEntry AppName="Datasmith Exporter for Autodesk® Navisworks® 2020" AppType="ManagedPlugin" ModuleName="./DatasmithNavisworksPlugin2020.dll" />
+    </Components>
+    <Components Description="2021">
+	    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw18" SeriesMax="Nw18" />
+        <ComponentEntry AppName="Datasmith Exporter for Autodesk® Navisworks® 2021" AppType="ManagedPlugin" ModuleName="./DatasmithNavisworksPlugin2021.dll" />
+    </Components>
+    <Components Description="2022">
+	    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw19" SeriesMax="Nw19" />
+        <ComponentEntry AppName="Datasmith Exporter for Autodesk® Navisworks® 2022" AppType="ManagedPlugin" ModuleName="./DatasmithNavisworksPlugin2022.dll" />
+    </Components>
+    <Components Description="2023">
+	    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw20" SeriesMax="Nw20" />
+        <ComponentEntry AppName="Datasmith Exporter for Autodesk® Navisworks® 2023" AppType="ManagedPlugin" ModuleName="./DatasmithNavisworksPlugin2023.dll" />
+    </Components>
+    <Components Description="2024">
+	    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw21" SeriesMax="Nw21" />
+        <ComponentEntry AppName="Datasmith Exporter for Autodesk® Navisworks® 2024" AppType="ManagedPlugin" ModuleName="./DatasmithNavisworksPlugin2024.dll" />
+    </Components>
+</ApplicationPackage>

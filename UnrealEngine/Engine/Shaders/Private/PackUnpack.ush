@@ -1,0 +1,240 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	PackUnpack.ush: Common shader code for packing and unpacking data. 
+					Automatically included from Common.ush.
+=============================================================================*/
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+
+//
+//	float2 <-> u32 as Unorm16.Unorm16
+//
+
+uint PackUnorm2x16(float2 v)
+{
+	uint2 sv = uint2(round(clamp(v, 0.0, 1.0) * 65535.0));
+	return (sv.x | (sv.y << 16u));
+}
+
+float2 UnpackUnorm2x16(uint p)
+{
+	float2 Ret;
+	Ret.x = (p & 0xffff) * rcp(65535.0f);
+	Ret.y = (p >> 16u) * rcp(65535.0f);
+	return Ret;
+}
+
+//
+//	float2 <-> u32 as Snorm16.Snorm16 
+//
+
+uint PackSnorm2x16(float2 v)
+{
+	uint2 sv = uint2(round(clamp(v, -1.0, 1.0) * 32767.0) + 32767.0);
+	return (sv.x | (sv.y << 16u));
+}
+
+float2 UnpackSnorm2x16(uint p)
+{
+	float2 Ret;
+	Ret.x = clamp((float(p & 0xffff) - 32767.0f) * rcp(32767.0f), -1.0, 1.0);
+	Ret.y = clamp((float(p >> 16u) - 32767.0f) * rcp(32767.0f), -1.0, 1.0);
+	return Ret;
+}
+
+//
+//	uint2 <-> u32 as u16.u16
+//
+
+#ifndef COMPILER_SUPPORTS_PACK_INTRINSICS
+#define COMPILER_SUPPORTS_PACK_INTRINSICS 0
+
+uint PackUInt2ToUInt(uint X, uint Y)
+{
+	return X | (Y << 16u);
+}
+
+#endif
+
+uint PackUInt2ToUInt(uint2 XY)
+{
+	return PackUInt2ToUInt(XY.x, XY.y);
+}
+
+uint2 UnpackUInt2FromUInt(uint Packed)
+{
+	return uint2(Packed & 0xffff, Packed >> 16);
+}
+
+//
+//	float2 <-> u32 as f16.f16
+//
+
+#if !COMPILER_SUPPORTS_PACK_INTRINSICS
+uint PackFloat2ToUInt(float X, float Y)
+{
+	return PackUInt2ToUInt(f32tof16(X), f32tof16(Y));
+}
+#endif
+
+uint PackFloat2ToUInt(float2 XY)
+{
+	return PackFloat2ToUInt(XY.x, XY.y);
+}
+
+float2 UnpackFloat2FromUInt(uint In)
+{
+	return float2(f16tof32(In), f16tof32(In >> 16));
+}
+
+//
+//	float <-> u8
+//
+
+uint PackR8(float Value)
+{
+	return uint(saturate(Value) * 255.0f);
+}
+
+float UnpackR8(uint In)
+{
+#if COMPILER_SUPPORTS_UNPACKBYTEN
+	return UnpackByte0(In) * (1.0f / 255.0f);
+#else
+	return float(In & 0xFF) * (1.0f / 255.0f);
+#endif
+}
+
+//
+//	float4 <-> u32 as u8.u8.u8.u8
+//
+
+uint PackRGBA8(float4 In)
+{
+#if COMPILER_SUPPORTS_PACK_INTRINSICS
+	return PackFloat4ToUInt(saturate(In) * 255.0f);
+#else
+	uint r = (uint(saturate(In.r) * 255.0f) << 0);
+	uint g = (uint(saturate(In.g) * 255.0f) << 8);
+	uint b = (uint(saturate(In.b) * 255.0f) << 16);
+	uint a = (uint(saturate(In.a) * 255.0f) << 24);
+	return r | g | b | a;
+#endif
+}
+
+float4 UnpackRGBA8(uint In)
+{
+#if COMPILER_SUPPORTS_UNPACKBYTEN
+	return float4(
+		UnpackByte0(In),
+		UnpackByte1(In),
+		UnpackByte2(In),
+		UnpackByte3(In)) * (1.0f / 255.0f);
+#else
+	float4 Out;
+	Out.r = float((In >> 0) & 0xFF) * (1.0f / 255.0f);
+	Out.g = float((In >> 8) & 0xFF) * (1.0f / 255.0f);
+	Out.b = float((In >> 16) & 0xFF) * (1.0f / 255.0f);
+	Out.a = float((In >> 24) & 0xFF) * (1.0f / 255.0f);
+	return Out;
+#endif
+}
+
+//
+//	float <-> f10
+//
+
+uint Pack10F(float Value)
+{
+	return (f32tof16(Value) >> 5) & 0x000003FF;
+}
+
+float Unpack10F(uint Value)
+{
+	return f16tof32((Value << 5) & 0x7FE0);
+}
+
+//
+//	float3 <-> u32 as f11.f11.f10
+//
+
+uint PackR11G11B10F(float3 rgb)
+{
+	uint r = (f32tof16(rgb.r) << 17) & 0xFFE00000;
+	uint g = (f32tof16(rgb.g) << 6) & 0x001FFC00;
+	uint b = (f32tof16(rgb.b) >> 5) & 0x000003FF;
+	return r | g | b;
+}
+
+float3 UnpackR11G11B10F(uint rgb)
+{
+	float r = f16tof32((rgb >> 17) & 0x7FF0);
+	float g = f16tof32((rgb >> 6) & 0x7FF0);
+	float b = f16tof32((rgb << 5) & 0x7FE0);
+	return float3(r, g, b);
+}
+
+//
+//	float3 <-> f10.f10.f10
+//
+
+uint PackR10G10B10F(float3 rgb)
+{
+	uint r = (f32tof16(rgb.r) << 15) & 0x3FF00000;	// 0011 1111 1111 0000 0000 0000 0000 0000 
+	uint g = (f32tof16(rgb.g) << 5) & 0x000FFC00;	// 0000 0000 0000 1111 1111 1100 0000 0000 
+	uint b = (f32tof16(rgb.b) >> 5) & 0x000003FF;	// 0000 0000 0000 0000 0000 0011 1111 1111
+	return r | g | b;
+}
+
+float3 UnpackR10G10B10F(uint rgb)
+{
+	float r = f16tof32((rgb >> 15) & 0x7FE0);
+	float g = f16tof32((rgb >> 5) & 0x7FE0);
+	float b = f16tof32((rgb << 5) & 0x7FE0);
+	return float3(r, g, b);
+}
+
+//
+//	float4 <-> uint2 as f16.f16.f16.f16
+//
+
+uint2 PackR16G16B16A16F(float4 In)
+{
+	return uint2(PackFloat2ToUInt(In.xy), PackFloat2ToUInt(In.zw));
+}
+
+float4 UnpackR16G16B16A16F(uint2 In)
+{
+	return float4(UnpackFloat2FromUInt(In.x), UnpackFloat2FromUInt(In.y));
+}
+
+//
+//	float <-> 24bit float (8bit exp, 15 bit mantissa)
+//
+
+uint PackR24F(float In)
+{
+	return asuint(In) >> 8;
+}
+
+float UnpackR24F(uint In)
+{
+	return asfloat(In<<8);
+}
+
+//
+// Common tile coord encoding
+//
+
+#define PackTileCoordXXbits(In, InMask, InBits)  ((In.x & InMask) | ((In.y & InMask) << InBits))
+#define UnpackTileCoordXXbits(In,InMask, InBits) uint2(In & InMask, (In >> InBits) & InMask)
+
+uint  PackTileCoord10bits(uint2 In) { return PackTileCoordXXbits  (In, 0x3FF, 10u); }
+uint2 UnpackTileCoord10bits(uint In){ return UnpackTileCoordXXbits(In, 0x3FF, 10u); }
+uint  PackTileCoord12bits(uint2 In) { return PackTileCoordXXbits  (In, 0xFFF, 12u); }
+uint2 UnpackTileCoord12bits(uint In){ return UnpackTileCoordXXbits(In, 0xFFF, 12u); }
+uint  PackTileCoord16bits(uint2 In) { return PackTileCoordXXbits  (In, 0xFFFF,16u); }
+uint2 UnpackTileCoord16bits(uint In){ return UnpackTileCoordXXbits(In, 0xFFFF,16u); }

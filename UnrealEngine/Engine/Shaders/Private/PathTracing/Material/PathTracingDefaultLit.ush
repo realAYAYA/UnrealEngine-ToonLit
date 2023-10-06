@@ -1,0 +1,143 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	PathTracingDefaultLit.usf: Path tracing BRDF model for default lit material
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingFresnel.ush"
+#include "PathTracingEnergyConservation.ush"
+
+struct FDefaultLitData
+{
+	float3x3 Basis;
+	float2 Alpha;
+	float3 V;
+	FBxDFEnergyTermsRGB Spec;
+	float3 DiffuseWeight;
+
+	float LobeProb;
+};
+
+FDefaultLitData CreateDefaultLitData(FPathTracingPayload Payload, float3 V_World)
+{
+	FDefaultLitData Data = (FDefaultLitData)0;
+
+	Data.Basis = GetGGXBasis(Payload.Roughness, Payload.Anisotropy, Payload.WorldNormal, Payload.WorldTangent, Data.Alpha);
+	Data.V = mul(Data.Basis, V_World);
+	const float NoV = saturate(Data.V.z);
+	Data.Spec = ComputeGGXSpecEnergyTermsRGB(Payload.Roughness, NoV, Payload.SpecularColor);
+	Data.DiffuseWeight = Payload.DiffuseColor * (1 - Data.Spec.E);
+	// Probability of picking diffuse lobe vs. specular lobe
+	Data.LobeProb = LobeSelectionProb(Data.DiffuseWeight, Data.Spec.E);
+
+	return Data;
+}
+
+FMaterialEval DefaultLit_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	const FDefaultLitData Data = CreateDefaultLitData(Payload, V_World);
+
+	// move vectors into right shading frame
+	const float3 V = Data.V;
+	const float3 L = mul(Data.Basis, L_World);
+	const float3 H = normalize(V + L);
+
+	const float NoV = saturate(V.z);
+	const float NoL = saturate(L.z);
+	const float VoH = saturate(dot(V, H));
+	const float NoH = saturate(H.z);
+
+	FMaterialEval Result = NullMaterialEval();
+
+	// Diffuse Lobe
+	const float3 Diffuse = GetPathTracingDiffuseModel(Data.DiffuseWeight, Payload.Roughness, NoV, NoL, VoH, NoH);
+	Result.AddLobeWithMIS(DiffuseSpecularScale.x * Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal), NoL / PI, Data.LobeProb);
+
+	// Specular lobe
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+	const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+	const float3 SpecWeight = F * GGXResult.x * Data.Spec.W;
+	const float SpecPdf = GGXResult.y;
+
+	Result.AddLobeWithMIS(DiffuseSpecularScale.y * SpecWeight, SpecPdf, 1.0 - Data.LobeProb);
+
+	Result.Weight *= Payload.BSDFOpacity;
+
+	return Result;
+}
+
+FMaterialSample DefaultLit_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample
+)
+{
+	const FDefaultLitData Data = CreateDefaultLitData(Payload, V_World);
+
+	const float3 V = Data.V;
+	float3 L = 0, H = 0;
+
+	// Randomly choose to sample diffuse or specular
+	const bool bSampledDiffuse = RandSample.x < Data.LobeProb;
+	if (bSampledDiffuse)
+	{
+		RandSample.x = RescaleRandomNumber(RandSample.x, 0.0, Data.LobeProb);
+
+		// Lambert
+		// TODO: evaluate CosineSampleHemisphereConcentric
+		L = CosineSampleHemisphere(RandSample.xy).xyz;
+		H = normalize(L + V);
+	}
+	else
+	{
+		RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeProb, 1.0);
+
+		H = ImportanceSampleVisibleGGX(RandSample.xy, Data.Alpha, Data.V).xyz;
+		L = reflect(-V, H);
+		if (L.z <= 0)
+		{
+			// invalid output direction, exit early
+			return NullMaterialSample();
+		}
+	}
+
+	// transform to world space
+	const float3 L_World = normalize(mul(L, Data.Basis));
+
+	const float NoV = saturate(V.z);
+	const float NoL = saturate(L.z);
+	const float VoH = saturate(dot(V, H));
+	const float NoH = saturate(H.z);
+
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+	const float SpecPdf = GGXResult.y;
+	const float DiffPdf = NoL / PI;
+
+	FMaterialSample Result = CreateMaterialSample(L_World, 0.0, 0.0, 1.0, 1.0, PATHTRACER_SCATTER_DIFFUSE);
+	if (bSampledDiffuse)
+	{
+		const float3 Diffuse = GetPathTracingDiffuseModel(Data.DiffuseWeight, Payload.Roughness, NoV, NoL, VoH, NoH);
+		Result.AddLobeWithMIS(Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal), DiffPdf, Data.LobeProb);
+		Result.Pdf += (1.0 - Data.LobeProb) * SpecPdf;
+	}
+	else
+	{
+		const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+		const float3 SpecWeight = F * GGXResult.x * Data.Spec.W;
+
+		Result.AddLobeWithMIS(SpecWeight, SpecPdf, 1.0 - Data.LobeProb);
+		Result.Pdf += Data.LobeProb * DiffPdf;
+		Result.Roughness = Payload.Roughness;
+		Result.ScatterType = PATHTRACER_SCATTER_SPECULAR;
+	}
+	Result.Weight *= Payload.BSDFOpacity;
+	return Result;
+}

@@ -1,0 +1,86 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "Common.ush"
+
+// Reroute MobileSceneTextures uniform buffer references to the base pass uniform buffer 
+#define MobileSceneTextures MobileBasePass.SceneTextures
+#define FogStruct MobileBasePass.Fog
+
+#include "SceneTexturesCommon.ush"
+#include "HeightFogCommon.ush"
+#include "SkyAtmosphereCommon.ush"
+
+float StartDepthZ;
+
+void MobileFogVS(
+	in float2 InPosition : ATTRIBUTE0,
+	out float2 OutTexCoord : TEXCOORD0,
+	out float3 OutScreenVector : TEXCOORD1,
+	out float4 OutPosition : SV_POSITION
+	)
+{
+	ResolvedView = ResolveView();
+
+	// screenspace position from vb
+	OutPosition = float4(InPosition,StartDepthZ,1);
+	// texture coord from vb
+	OutTexCoord = InPosition * ResolvedView.ScreenPositionScaleBias.xy + ResolvedView.ScreenPositionScaleBias.wz;
+	// deproject to world space
+	OutScreenVector = mul(float4(InPosition,1,0), ResolvedView.ScreenToTranslatedWorld).xyz;
+}
+
+void MobileFogPS(
+	float2 TexCoord : TEXCOORD0,
+	float3 ScreenVector : TEXCOORD1,
+	float4 SVPos : SV_POSITION,
+	out float4 OutColor : SV_Target0
+	)
+{
+	ResolvedView = ResolveView();
+	half4 FinalFog = half4(0,0,0,1);
+	float SceneDepth = CalcSceneDepth(TexCoord);
+	float3 WorldPositionRelativeToCamera = ScreenVector.xyz * SceneDepth;
+	float3 WorldPosition = WorldPositionRelativeToCamera + ResolvedView.TranslatedWorldCameraOrigin - LWCHackToFloat(ResolvedView.PreViewTranslation);
+
+// at least one of these is active
+#if PERMUTATION_SUPPORT_HEIGHT_FOG
+	FinalFog = CalculateHeightFog(WorldPositionRelativeToCamera);
+#endif
+
+#if PERMUTATION_SUPPORT_VOLUMETRIC_FOG
+	if (FogStruct.ApplyVolumetricFog > 0) 
+		{
+			const uint EyeIndex = 0;
+			float3 VolumeUV = ComputeVolumeUV(LWCPromote(WorldPosition), ResolvedView.WorldToClip);
+			FinalFog = CombineVolumetricFog(FinalFog, VolumeUV, EyeIndex, SceneDepth);
+		}
+#endif
+
+#if PERMUTATION_SUPPORT_AERIAL_PERSPECTIVE
+	if (ResolvedView.SkyAtmosphereApplyCameraAerialPerspectiveVolume > 0.0f)
+	{
+		
+
+	//	float4 NDCPosition = LWCMultiply(MakeLWCVector4(WorldPosition, 1.0f), PrimaryView.WorldToClip);		// LWC_TODO: MakeLWCVector4 seems broken
+		float4 NDCPosition = LWCMultiply(LWCPromote(float4(WorldPosition, 1.0f)), PrimaryView.WorldToClip);	// Using LWCPromote make the math work as expected.
+
+		// Sample the aerial perspective (AP). It is also blended under the VertexFog parameter.
+		FinalFog = GetAerialPerspectiveLuminanceTransmittanceWithFogOver(
+			ResolvedView.RealTimeReflectionCapture, 
+			ResolvedView.SkyAtmosphereCameraAerialPerspectiveVolumeSizeAndInvSize,
+			NDCPosition, 
+			(WorldPositionRelativeToCamera.xyz - ResolvedView.TranslatedWorldCameraOrigin) * CM_TO_SKY_UNIT,
+			View.CameraAerialPerspectiveVolume, 
+			View.CameraAerialPerspectiveVolumeSampler,
+			ResolvedView.SkyAtmosphereCameraAerialPerspectiveVolumeDepthResolutionInv,
+			ResolvedView.SkyAtmosphereCameraAerialPerspectiveVolumeDepthResolution,
+			ResolvedView.SkyAtmosphereAerialPerspectiveStartDepthKm,
+			ResolvedView.SkyAtmosphereCameraAerialPerspectiveVolumeDepthSliceLengthKm,
+			ResolvedView.SkyAtmosphereCameraAerialPerspectiveVolumeDepthSliceLengthKmInv,
+			ResolvedView.OneOverPreExposure, 
+			FinalFog);
+	}
+#endif// PERMUTATION_SUPPORT_AERIAL_PERSPECTIVE
+
+	FinalFog.rgb *= ResolvedView.PreExposure;
+	OutColor = RETURN_COLOR(half4(FinalFog.rgb, FinalFog.w)); 
+}

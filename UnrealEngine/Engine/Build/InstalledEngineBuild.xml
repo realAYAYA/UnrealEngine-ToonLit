@@ -1,0 +1,1336 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Engine/Build/Graph/Schema.xsd" >
+
+	<!-- Helper option to make installed build for host platform only -->
+	<Option Name="HostPlatformOnly" Restrict="true|false" DefaultValue="false" Description="A helper option to make an installed build for your host platform only, so that you don't have to disable each platform individually"/>
+
+	<!-- Helper option to make an installed build with the host platform editor only -->
+	<Option Name="HostPlatformEditorOnly" Restrict="true|false" DefaultValue="false" Description="A helper option to make an installed build for your host platform only, so that you don't have to disable each platform individually"/>
+	
+	<!-- Option to enable all target platforms by default, as we ship in the launcher. Note that this will require cross-compiling IOS on Windows. -->
+	<Option Name="AllPlatforms" Restrict="true|false" DefaultValue="false" Description="Include all target platforms by default"/>
+
+	<Option Name="CompileDatasmithPlugins" Restrict="true|false" DefaultValue="false" Description="If Datasmith plugins should be compiled on a separate node."/>
+
+	<!-- Get default values for each platform being enabled -->
+	<Property Name="DefaultWithWin64" Value="true"/>
+	<Property Name="DefaultWithWin64" Value="false" If="$(HostPlatformEditorOnly) Or ($(HostPlatformOnly) And '$(HostPlatform)' != 'Win64')"/>
+
+	<Property Name="DefaultWithMac" Value="true"/>
+	<Property Name="DefaultWithMac" Value="false" If="$(HostPlatformEditorOnly) Or ($(HostPlatformOnly) And '$(HostPlatform)' != 'Mac')"/>
+
+	<Property Name="DefaultWithLinux" Value="true"/>
+	<Property Name="DefaultWithLinux" Value="false" If="$(HostPlatformEditorOnly) Or ($(HostPlatformOnly) And '$(HostPlatform)' != 'Linux')"/>
+
+	<Property Name="DefaultWithLinuxArm64" Value="true"/>
+	<Property Name="DefaultWithLinuxArm64" Value="false" If="$(HostPlatformEditorOnly) Or ($(HostPlatformOnly) And '$(HostPlatform)' != 'Linux')"/>
+
+	<Property Name="DefaultWithPlatform" Value="true"/>
+	<Property Name="DefaultWithPlatform" Value="false" If="$(HostPlatformEditorOnly) Or $(HostPlatformOnly)"/>
+
+	<Property Name="DefaultWithIOS" Value="$(DefaultWithPlatform)"/>
+	<Property Name="DefaultWithIOS" Value="false" If="'$(HostPlatform)' != 'Mac' And !$(AllPlatforms)"/>
+
+	<!-- Setup default target platforms for Installed build if they haven't been specified on the commandline -->
+	<Option Name="WithWin64" Restrict="true|false" DefaultValue="$(DefaultWithWin64)" Description="Include the Win64 target platform"/>
+	<Option Name="WithMac" Restrict="true|false" DefaultValue="$(DefaultWithMac)" Description="Include the Mac target platform"/>
+	<Option Name="WithAndroid" Restrict="true|false" DefaultValue="$(DefaultWithPlatform)" Description="Include the Android target platform"/>
+	<Option Name="WithIOS" Restrict="true|false" DefaultValue="$(DefaultWithIOS)" Description="Include the iOS target platform"/>
+	<Option Name="WithTVOS" Restrict="true|false" DefaultValue="$(DefaultWithIOS)" Description="Include the tvOS target platform"/>
+	<Option Name="WithLinux" Restrict="true|false" DefaultValue="$(DefaultWithLinux)" Description="Include the Linux target platform"/>
+	<Option Name="WithLinuxArm64" Restrict="true|false" DefaultValue="$(DefaultWithLinuxArm64)" Description="Include the Linux AArch64 target platform"/>
+
+	<!-- Set up target types -->
+	<Option Name="WithClient" Restrict="true|false" DefaultValue="false" Description="Include precompiled client targets"/>
+	<Option Name="WithServer" Restrict="true|false" DefaultValue="false" Description="Include precompiled server targets"/>
+	
+	<!-- Whether to create a prebuilt DDC -->
+	<Option Name="WithDDC" Restrict="true|false" DefaultValue="true" Description="Build a standalone derived-data cache for the engine content and templates" />
+
+	<!-- Whether to build DDC for the host platform only -->
+	<Option Name="HostPlatformDDCOnly" Restrict="true|false" DefaultValue="true" Description="Whether to include DDC for the host platform only"/>
+
+	<!-- Whether to sign any executables produced -->
+	<Option Name="SignExecutables" Restrict="true|false" DefaultValue="false" Description="Sign the executables produced where signing is available"/>
+
+	<!-- The analytics type -->
+	<Option Name="AnalyticsTypeOverride" DefaultValue="" Description="Identifier for analytic events to send"/>
+
+	<!-- The build identifier -->
+	<Option Name="BuildIdOverride" DefaultValue="" Description="Override unique identifier for this build"/>
+	<Property Name="BuildId" Value="" />
+	<Property Name="BuildId" Value="$(BuildIdOverride)" If="'$(BuildIdOverride)' != ''"/>
+
+	<!--- Create command line argument for build identifier -->
+	<Property Name="BuildIdentifierArg" Value="" />
+	<Property Name="BuildIdentifierArg" Value="-BuildId=&quot;$(BuildId)&quot;" If="'$(BuildId)' != ''"/>
+
+
+	<!-- Whether to embed source server info (ie. P4 paths) into PDB files -->
+	<Option Name="EmbedSrcSrvInfo" Restrict="true|false" DefaultValue="false" Description="Whether to add Source indexing to Windows game apps so they can be added to a symbol server"/>
+
+	<!-- Which game configurations to include for packaged applications -->
+	<Option Name="GameConfigurations" DefaultValue="Shipping;Development;DebugGame" Description="Which game configurations to include for packaged applications"/>
+
+	<!-- Generate full debug info for binary editor and packaged application builds -->
+	<Option Name="WithFullDebugInfo" Restrict="true|false" DefaultValue="false" Description="Generate full debug info for binary editor and packaged application builds"/>
+
+	<!-- Ouput directory for the build -->
+	<Option Name="BuiltDirectory" DefaultValue="$(RootDir)/LocalBuilds/Engine" Description="Directory for outputting the built engine"/>
+
+	<!-- Control ParallelExecutor -->
+	<Option	Name="AllowParallelExecutor" Restrict="true|false" DefaultValue="false" Description="Allow the use of UAT's ParallelExecutor when compiling"/>
+	<Property Name="bAllowParallelExecutor" Value="$(AllowParallelExecutor)" />
+
+	<!-- The local output directory -->
+	<Property Name="LocalInstalledDir" Value="$(BuiltDirectory)/Windows"/>
+	<Property Name="LocalInstalledDirMac" Value="$(BuiltDirectory)/Mac"/>
+	<Property Name="LocalInstalledDirLinux" Value="$(BuiltDirectory)/Linux"/>
+
+	<!-- Directory for storing build products like the Compressed DDC, Stripped and Signed files -->
+	<Property Name="SavedOutput" Value="$(RootDir)/Engine/Saved"/>
+
+	<!-- Directory for storing a stripped version of UAT for installed builds -->
+	<Property Name="CsToolsDir" Value="$(SavedOutput)/CsTools"/>
+
+	<!-- Directory for toolchains -->
+	<Property Name="ToolchainDir" Value="$(RootDir)/Engine/Extras/ThirdPartyNotUE/SDKs"/>
+
+	<!-- Architectures that we build for Android. NOTE: This should match the architectures specified in BuildPluginCommand. -->
+	<Property Name="AndroidArchitectures" Value="arm64"/>
+	
+	<Property Name="DefaultArchitectureCommandsWin64" Value=""/>
+
+
+	<!-- Compile flags for Windows Game binaries -->
+	<Property Name="TargetDebugInfoArg" Value="-nodebuginfo"/>
+	<Property Name="TargetDebugInfoArg" Value="" If="$(WithFullDebugInfo)"/>
+	<Property Name="TargetDebugInfoArgMac" Value="$(TargetDebugInfoArg)" />
+	<Property Name="TargetDebugInfoArgMac" Value="-EnableDSYM" If="$(WithFullDebugInfo)" />
+
+	<!-- Names of the client and server targets to build -->
+	<Property Name="OptionalClientTarget" Value=""/>
+	<Property Name="OptionalClientTarget" Value="UnrealClient" If="$(WithClient)"/>
+
+	<Property Name="OptionalServerTarget" Value=""/>
+	<Property Name="OptionalServerTarget" Value="UnrealServer" If="$(WithServer)"/>
+
+	<Property Name="ExtensionPlatformDirs" Value=""/>
+	<Macro Name="AddExtensionPlatform" Arguments="PlatformDir">
+		<Property Name="Found" Value="false"/>
+		<ForEach Name="Entry" Values="$(ExtensionPlatformDirs)">
+			<Property Name="Found" Value="true" If="'$(Entry)' == '$(PlatformDir)'"/>
+		</ForEach>
+		<Do If="!$(Found)">
+			<Property Name="ExtensionPlatformDirs" Value="$(ExtensionPlatformDirs);" If="'$(ExtensionPlatformDirs)' != ''"/>
+			<Property Name="ExtensionPlatformDirs" Value="$(ExtensionPlatformDirs)$(PlatformDir)"/>
+		</Do>
+	</Macro>
+
+	<!-- Create empty macros for platforms to extend -->
+	<Macro Name="Platform_FilterRestrictedFolders"/>
+	<Macro Name="Platform_FilterOverrides"/>
+	<Macro Name="Platform_Agent_Target_Win64_Licensee"/>
+	<Macro Name="Platform_AddInstalledRequirements"/>
+	<Macro Name="Platform_TagCsToolsRedistUATSource"/>
+	<Macro Name="Platform_Build_Tools_CS_Binaries"/>
+	<Macro Name="Platform_Append_DDCPlatformsWin64"/>
+	<Macro Name="Platform_TagDDCFiles"/>
+	<Macro Name="Platform_Tag_UnrealGame"/>
+	<Macro Name="Platform_ExtraSignFiles"/>
+
+	<!-- Include any scripts from platform extensions -->
+	<Property Name="ExtensionPlatforms" Value=""/>
+	<Include Script="../Platforms/*/Build/InstalledEngineBuild.xml"/>
+	
+	<!-- Include the script that lists files and patterns used when creating an installed build -->
+	<Include Script="InstalledEngineFilters.xml"/>
+
+	<Option Name="CrashReporterAPIURL" DefaultValue="" Description="The URL to use to talk to the CrashReporterClient API."/>
+	<Option Name="CrashReporterAPIKey" DefaultValue="" Description="The API key to use to talk to the CrashReporterClient API."/>
+	<Property Name="CrashReporterCompileArgs" Value=""/>
+	<Property Name="CrashReporterCompileArgs" Value="-define:CRC_TELEMETRY_URL=\&quot;$(CrashReporterAPIURL)\&quot; -define:CRC_TELEMETRY_KEY_DEV=\&quot;$(CrashReporterAPIKey)\&quot; -define:CRC_TELEMETRY_KEY_RELEASE=\&quot;$(CrashReporterAPIKey)\&quot; -OverrideBuildEnvironment" If="'$(CrashReporterAPIURL)' != '' And '$(CrashReporterAPIKey)' != ''" />
+
+	<Property Name="MacArchitectureArg" Value="-architecture=arm64+x64" />
+
+	<!-- Base editor and tools for compile on Windows -->
+	<Agent Name="Editor Win64" Type="Win64_Licensee">
+		<Node Name="Update Version Files">
+			<SetVersion Change="$(Change)" Branch="$(EscapedBranch)" If="$(IsBuildMachine)"/>
+		</Node>
+		<Node Name="Compile UnrealEditor Win64" Requires="Update Version Files" Produces="#UnrealEditor Win64;#UnrealEditor Win64 Unstripped;#UnrealEditor Win64 Stripped;#UnrealEditor Win64 Unsigned;#UnrealEditor Win64 Signed;#UnrealEditor Win64 WithExceptions">
+			<Compile Target="UnrealEditor" Platform="Win64" Configuration="DebugGame" Tag="#UnrealEditor Win64" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
+			<Compile Target="UnrealEditor" Platform="Win64" Configuration="Development" Tag="#UnrealEditor Win64" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
+
+			<Do If="$(EmbedSrcSrvInfo)">
+				<!-- Embed source info into the PDB files. Should be done from this machine to ensure that paths are correct. -->
+				<Log Message="Embedding source file information into PDB files..."/>
+				<Tag Files="Engine/Source/...;Engine/Plugins/..." Filter="*.c;*.h;*.cpp;*.hpp;*.inl" Except="Engine/Source/ThirdParty/..." With="#SourceFiles"/>
+				<SrcSrv BinaryFiles="#UnrealEditor Win64" SourceFiles="#SourceFiles" Branch="$(Branch)" Change="$(Change)"/>
+			</Do>
+
+			<Property Name="UnrealEditorExceptions" Value="$(Win64StripExceptions)"/>
+			<Property Name="UnrealEditorExceptions" Value="$(UnrealEditorExceptions);$(PluginsExceptions)" If="$(CompileDatasmithPlugins)"/>
+			<Tag Files="#UnrealEditor Win64" Filter="$(Win64StripFilter)" Except="$(Win64StripExceptions)" With="#UnrealEditor Win64 Unstripped"/>
+
+			<Switch>
+				<Case If="'$(WithFullDebugInfo)' == true">
+					<!-- Copy files for local debug builds -->
+					<Copy Files="#UnrealEditor Win64 Unstripped" From="$(RootDir)" To="$(SavedOutput)"/>
+				</Case>
+				<Default>
+					<!-- Otherwise, strip the files for distribution -->
+					<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Win64" Files="#UnrealEditor Win64 Unstripped" Tag="#UnrealEditor Win64 Stripped"/>
+				</Default>
+			</Switch>
+
+			<Do If="'$(SignExecutables)' == true">
+				<Tag Files="#UnrealEditor Win64" Filter="$(WindowsSignFilter)" Except="$(PluginsExceptions)" With="#UnrealEditor Win64 Unsigned"/>
+				<Copy Files="#UnrealEditor Win64 Unsigned" From="$(RootDir)" To="$(SavedOutput)" Tag="#Editor_ToSign_Win64"/>
+				<Sign Files="#Editor_ToSign_Win64" Tag="#UnrealEditor Win64 Signed"/>
+			</Do>
+			<Tag Files="#UnrealEditor Win64" Except="$(PluginsExceptions)" With="#UnrealEditor Win64 WithExceptions"/>
+
+		</Node>
+	</Agent>
+	<Aggregate Name="Win64 Editor" Label="Editors/Win64" Requires="Compile UnrealEditor Win64" Include="Editor Win64"/>
+
+	<!-- Base editor and tools for compile on Mac -->
+	<Agent Name="Editor Mac" Type="Mac_Licensee">
+		<Node Name="Compile UnrealEditor Mac" Requires="Update Version Files" Produces="#UnrealEditor Mac;#UnrealEditor Mac Unstripped;#UnrealEditor Mac Stripped;#UnrealEditor Mac Unsigned;#UnrealEditor Mac Signed;#UnrealEditor Mac WithExceptions">
+			<Property Name="AllModulesArg" Value="-allmodules"/>
+			<Compile Target="UnrealEditor" Platform="Mac" Configuration="DebugGame" Tag="#UnrealEditor Mac" Arguments="-precompile -EnableDSYM $(AllModulesArg) $(CrashReporterCompileArgs) $(MacArchitectureArg)"/>
+			<Compile Target="UnrealEditor" Platform="Mac" Configuration="Development" Tag="#UnrealEditor Mac" Arguments="-precompile -EnableDSYM $(AllModulesArg) $(CrashReporterCompileArgs) $(MacArchitectureArg)"/>
+
+			<Property Name="UnrealEditorExceptions" Value=""/>
+			<Property Name="UnrealEditorExceptions" Value="$(PluginsExceptions)" If="$(CompileDatasmithPlugins)"/>
+			<Tag Files="#UnrealEditor Mac" Filter="$(MacStripFilter)" Except="$(UnrealEditorExceptions)" With="#UnrealEditor Mac Unstripped"/>
+
+			<Switch>
+				<Case If="'$(WithFullDebugInfo)' == true">
+					<!-- Copy files for local debug builds -->
+					<Copy Files="#UnrealEditor Mac Unstripped" From="$(RootDir)" To="$(SavedOutput)"/>
+				</Case>
+				<Default>
+					<!-- Otherwise, strip the files for distribution -->
+					<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Mac" Files="#UnrealEditor Mac Unstripped" Tag="#UnrealEditor Mac Stripped"/>
+				</Default>
+			</Switch>
+
+			<Do If="'$(SignExecutables)' == true">
+				<Tag Files="#UnrealEditor Mac" Filter="$(MacSignFilter)" Except="$(PluginsExceptions)" With="#UnrealEditor Mac Unsigned"/>
+				<Copy Files="#UnrealEditor Mac Unsigned" From="$(RootDir)" To="$(SavedOutput)" Tag="#Editor_ToSign_Mac"/>
+				<Sign Files="#Editor_ToSign_Mac" Tag="#UnrealEditor Mac Signed"/>
+			</Do>
+
+			<Tag Files="#UnrealEditor Mac" Except="$(PluginsExceptions)" With="#UnrealEditor Mac WithExceptions"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="Mac Editor" Label="Editors/Mac" Requires="Compile UnrealEditor Mac" Include="Editor Mac"/>
+
+	<!-- Base editor and tools for compile on Linux -->
+	<Agent Name="Editor Linux" Type="Linux_Licensee">
+		<Node Name="Compile UnrealEditor Linux" Requires="Update Version Files" Produces="#UnrealEditor Linux;#UnrealEditor Linux Unstripped;#UnrealEditor Linux Stripped;#UnrealEditor Linux WithExceptions">
+			<Compile Target="UnrealEditor" Platform="Linux" Configuration="DebugGame" Tag="#UnrealEditor Linux" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
+			<Compile Target="UnrealEditor" Platform="Linux" Configuration="Development" Tag="#UnrealEditor Linux" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
+
+			<Tag Files="#UnrealEditor Linux" Filter="$(LinuxStripFilter)" With="#UnrealEditor Linux Unstripped"/>
+			<Tag Files="#UnrealEditor Linux" Except="$(PluginsExceptions)" With="#UnrealEditor Linux WithExceptions"/>
+
+			<Switch>
+				<Case If="'$(WithFullDebugInfo)' == true">
+					<!-- Copy files for local debug builds -->
+					<Copy Files="#UnrealEditor Linux Unstripped" From="$(RootDir)" To="$(SavedOutput)" Tag="#UnrealEditor Linux Stripped"/>
+				</Case>
+				<Default>
+					<!-- Otherwise, strip the files for distribution -->
+					<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Linux" Files="#UnrealEditor Linux Unstripped" Tag="#UnrealEditor Linux Stripped"/>
+				</Default>
+			</Switch>
+		</Node>
+	</Agent>
+	<Aggregate Name="Linux Editor Linux" Label="Editors/Linux" Requires="Compile UnrealEditor Linux" Include="Editor Linux"/>
+
+	<!-- Target Platforms normally built from a Win64 machine -->
+	<Agent Name="Target Win64" Type="Win64_Licensee">
+		<Property Name="OptionalTargetTags" Value=""/>
+		<ForEach Name="Target" Values="$(OptionalClientTarget);$(OptionalServerTarget)">
+			<Node Name="Compile $(Target) Win64" Requires="Update Version Files" Produces="#$(Target) Win64">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="Win64" Configuration="$(Configuration)" Tag="#$(Target) Win64" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
+					<Compile Target="$(Target)" Platform="Win64" Configuration="$(Configuration)" Tag="#$(Target) Win64" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+					<Property Name="OptionalTargetTags" Value="$(OptionalTargetTags);#$(Target) Win64"/>
+				</ForEach>
+			</Node>
+		</ForEach>
+		<Node Name="Compile UnrealGame Win64" Requires="Update Version Files;$(OptionalTargetTags)" Produces="#UnrealGame Win64;#UnrealGame Win64 Unstripped;#UnrealGame Win64 Stripped;#UnrealGame Win64 Unsigned;#UnrealGame Win64 Signed">
+			<ForEach Name="Tag" Values="$(OptionalTargetTags)" If="'$(OptionalTargetTags)' != ''">
+				<Tag Files="$(Tag)" With="#UnrealGame Win64"/>
+			</ForEach>
+			<ForEach Name="Configuration" Values="$(GameConfigurations)">
+				<Compile Target="UnrealGame" Platform="Win64" Configuration="$(Configuration)" Tag="#UnrealGame Win64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
+				<Compile Target="UnrealGame" Platform="Win64" Configuration="$(Configuration)" Tag="#UnrealGame Win64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+			</ForEach>
+
+			<Do If="$(EmbedSrcSrvInfo)">
+				<!-- Embed source info into the PDB files. Should be done from this machine to ensure that paths are correct. -->
+				<Log Message="Embedding source file information into PDB files..."/>
+				<Tag Files="Engine/Source/...;Engine/Plugins/..." Filter="*.c;*.h;*.cpp;*.hpp;*.inl" Except="Engine/Source/ThirdParty/..." With="#SourceFiles"/>
+				<SrcSrv BinaryFiles="#UnrealGame Win64" SourceFiles="#SourceFiles" Branch="$(Branch)" Change="$(Change)"/>
+			</Do>
+
+			<Tag Files="#UnrealGame Win64" Filter="$(Win64StripFilter)" Except="$(Win64StripExceptions)" With="#UnrealGame Win64 Unstripped"/>
+
+			<Switch>
+				<Case If="'$(WithFullDebugInfo)' == true">
+					<!-- Copy files for local debug builds -->
+					<Copy Files="#UnrealGame Win64 Unstripped" From="$(RootDir)" To="$(SavedOutput)"/>
+				</Case>
+				<Default>
+					<!-- Otherwise, strip the files for distribution -->
+					<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Win64" Files="#UnrealGame Win64 Unstripped" Tag="#UnrealGame Win64 Stripped"/>
+				</Default>
+			</Switch>
+
+			<Do If="'$(SignExecutables)' == true">
+				<Tag Files="#UnrealGame Win64" Filter="$(WindowsSignFilter)" With="#UnrealGame Win64 Unsigned"/>
+				<Copy Files="#UnrealGame Win64 Unsigned" From="$(RootDir)" To="$(SavedOutput)" Tag="#Game_ToSign_Win64"/>
+				<Sign Files="#Game_ToSign_Win64" Tag="#UnrealGame Win64 Signed"/>
+			</Do>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_Win64" Requires="Compile UnrealGame Win64"/>
+
+	<Agent Name="Target Linux" Type="Win64_Licensee">
+		<Node Name="Compile UnrealGame Linux" Requires="Update Version Files" Produces="#UnrealGame Linux;#UnrealGame Linux Unstripped;#UnrealGame Linux Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget);$(OptionalServerTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="Linux" Configuration="$(Configuration)" Tag="#UnrealGame Linux" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
+					<Compile Target="$(Target)" Platform="Linux" Configuration="$(Configuration)" Tag="#UnrealGame Linux" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame Linux" Filter="$(LinuxStripFilter)" With="#UnrealGame Linux Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Linux" Files="#UnrealGame Linux Unstripped" Tag="#UnrealGame Linux Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_Linux" Requires="Compile UnrealGame Linux"/>
+
+	<Agent Name="Target LinuxNative" Type="Linux_Licensee">
+		<Node Name="Compile UnrealGame LinuxNative" Requires="Update Version Files" Produces="#UnrealGame LinuxNative;#UnrealGame LinuxNative Unstripped;#UnrealGame LinuxNative Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget);$(OptionalServerTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="Linux" Configuration="$(Configuration)" Tag="#UnrealGame LinuxNative" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
+					<Compile Target="$(Target)" Platform="Linux" Configuration="$(Configuration)" Tag="#UnrealGame LinuxNative" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame LinuxNative Linux" Filter="$(LinuxStripFilter)" With="#UnrealGame LinuxNative Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Linux" Files="#UnrealGame LinuxNative Unstripped" Tag="#UnrealGame LinuxNative Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_LinuxNative" Requires="Compile UnrealGame LinuxNative"/>
+
+	<Agent Name="Target LinuxArm64" Type="Win64_Licensee">
+		<Node Name="Compile UnrealGame LinuxArm64" Requires="Update Version Files" Produces="#UnrealGame LinuxArm64;#UnrealGame LinuxArm64 Unstripped;#UnrealGame LinuxArm64 Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget);$(OptionalServerTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="LinuxArm64" Configuration="$(Configuration)" Tag="#UnrealGame LinuxArm64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
+					<Compile Target="$(Target)" Platform="LinuxArm64" Configuration="$(Configuration)" Tag="#UnrealGame LinuxArm64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame LinuxArm64" Filter="$(LinuxStripFilter)" With="#UnrealGame LinuxArm64 Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="LinuxArm64" Files="#UnrealGame LinuxArm64 Unstripped" Tag="#UnrealGame LinuxArm64 Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_LinuxArm64" Label="Platforms/Linux (AArch64)" Requires="Compile UnrealGame LinuxArm64"/>
+
+	<Agent Name="Target LinuxArm64 LinuxNative" Type="Linux_Licensee">
+		<Node Name="Compile UnrealGame LinuxArm64 LinuxNative" Requires="Update Version Files" Produces="#UnrealGame LinuxArm64 LinuxNative;#UnrealGame LinuxArm64 LinuxNative Unstripped;#UnrealGame LinuxArm64 LinuxNative Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget);$(OptionalServerTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="LinuxArm64" Configuration="$(Configuration)" Tag="#UnrealGame LinuxArm64 LinuxNative" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
+					<Compile Target="$(Target)" Platform="LinuxArm64" Configuration="$(Configuration)" Tag="#UnrealGame LinuxArm64 LinuxNative" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame LinuxArm6 LinuxNative" Filter="$(LinuxStripFilter)" With="#UnrealGame LinuxArm64 LinuxNative Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="LinuxArm64" Files="#UnrealGame LinuxArm64 LinuxNative Unstripped" Tag="#UnrealGame LinuxArm64 LinuxNative Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_LinuxArm64LinuxNative" Label="Platforms/Linux (AArch64)" Requires="Compile UnrealGame LinuxArm64 LinuxNative"/>
+
+	<Agent Name="Target Android" Type="Win64_Licensee">
+		<Node Name="Compile UnrealGame Android" Requires="Update Version Files" Produces="#UnrealGame Android;#UnrealGame Android Unstripped;#UnrealGame Android Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="Android" Configuration="$(Configuration)" Tag="#UnrealGame Android" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink -architectures=$(AndroidArchitectures) $(TargetDebugInfoArg)"/>
+					<Compile Target="$(Target)" Platform="Android" Configuration="$(Configuration)" Tag="#UnrealGame Android" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -architectures=$(AndroidArchitectures) $(TargetDebugInfoArg)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame Android" Filter="$(AndroidStripFilter)" With="#UnrealGame Android Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Android" Files="#UnrealGame Android Unstripped" Tag="#UnrealGame Android Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_Android" Label="Platforms/Android" Requires="Compile UnrealGame Android"/>
+
+	<Expand Name="Platform_Agent_Target_Win64_Licensee"/>
+
+	<!-- Target Platforms normally built from a Mac machine -->
+	<Agent Name="Target Mac" Type="Mac_Licensee">
+		<Property Name="OptionalTargetTags" Value=""/>
+		<ForEach Name="Target" Values="$(OptionalClientTarget);$(OptionalServerTarget)">
+			<Node Name="Compile $(Target) Mac" Requires="Update Version Files" Produces="#$(Target) Mac">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="Mac" Configuration="$(Configuration)" Tag="#$(Target) Mac" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArgMac)"/>
+					<Compile Target="$(Target)" Platform="Mac" Configuration="$(Configuration)" Tag="#$(Target) Mac" Arguments="-precompile $(TargetDebugInfoArgMac)" Clean="false"/>
+					<Property Name="OptionalTargetTags" Value="$(OptionalTargetTags);#$(Target) Mac"/>
+				</ForEach>
+			</Node>
+		</ForEach>
+
+		<Node Name="Compile UnrealGame Mac" Requires="Update Version Files;$(OptionalTargetTags)" Produces="#UnrealGame Mac;#UnrealGame Mac Unstripped;#UnrealGame Mac Stripped;#UnrealGame Mac Unsigned;#UnrealGame Mac Signed">
+			<ForEach Name="Tag" Values="$(OptionalTargetTags)" If="'$(OptionalTargetTags)' != ''">
+				<Tag Files="$(Tag)" With="#UnrealGame Mac"/>
+			</ForEach>
+			<ForEach Name="Configuration" Values="$(GameConfigurations)">
+				<Compile Target="UnrealGame" Platform="Mac" Configuration="$(Configuration)" Tag="#UnrealGame Mac" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArgMac)"/>
+				<Compile Target="UnrealGame" Platform="Mac" Configuration="$(Configuration)" Tag="#UnrealGame Mac" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArgMac)" Clean="false"/>
+			</ForEach>
+
+			<Tag Files="#UnrealGame Mac" Filter="$(MacStripFilter)" With="#UnrealGame Mac Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="Mac" Files="#UnrealGame Mac Unstripped" Tag="#UnrealGame Mac Stripped"/>
+
+			<Do If="'$(SignExecutables)' == true">
+				<Tag Files="#UnrealGame Mac" Filter="$(MacSignFilter)" Except=";Engine/Binaries/Mac/*.app/Contents/MacOS/*" With="#UnrealGame Mac Unsigned"/>
+				<Copy Files="#UnrealGame Mac Unsigned" From="$(RootDir)" To="$(SavedOutput)" Tag="#Game_ToSign_Mac"/>
+				<Sign Files="#Game_ToSign_Mac" Tag="#UnrealGame Mac Signed"/>
+			</Do>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_Mac" Requires="Compile UnrealGame Mac"/>
+
+	<Agent Name="Target IOS" Type="Mac_Licensee">
+		<Node Name="Compile UnrealGame IOS" Requires="Update Version Files" Produces="#UnrealGame IOS;#UnrealGame IOS Unstripped;#UnrealGame IOS Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="IOS" Configuration="$(Configuration)" Tag="#UnrealGame IOS" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArgMac)"/>
+					<Compile Target="$(Target)" Platform="IOS" Configuration="$(Configuration)" Tag="#UnrealGame IOS" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -createstub $(TargetDebugInfoArgMac)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame IOS" Filter="$(IOSStripFilter)" With="#UnrealGame IOS Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="IOS" Files="#UnrealGame IOS Unstripped" Tag="#UnrealGame IOS Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_IOS" Label="Platforms/IOS" Requires="Compile UnrealGame IOS"/>
+
+	<Agent Name="Target TVOS" Type="Mac_Licensee">
+		<Node Name="Compile UnrealGame TVOS" Requires="Update Version Files" Produces="#UnrealGame TVOS;#UnrealGame TVOS Unstripped;#UnrealGame TVOS Stripped">
+			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget)">
+				<ForEach Name="Configuration" Values="$(GameConfigurations)">
+					<Compile Target="$(Target)" Platform="TVOS" Configuration="$(Configuration)" Tag="#UnrealGame TVOS" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArgMac)"/>
+					<Compile Target="$(Target)" Platform="TVOS" Configuration="$(Configuration)" Tag="#UnrealGame TVOS" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -createstub $(TargetDebugInfoArgMac)" Clean="false"/>
+				</ForEach>
+			</ForEach>
+
+			<Tag Files="#UnrealGame TVOS" Filter="$(TVOSStripFilter)" With="#UnrealGame TVOS Unstripped"/>
+			<Strip BaseDir="$(RootDir)" OutputDir="$(SavedOutput)" Platform="TVOS" Files="#UnrealGame TVOS Unstripped" Tag="#UnrealGame TVOS Stripped"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="TargetPlatforms_TVOS" Label="Platforms/TVOS" Requires="Compile UnrealGame TVOS"/>
+
+	<Agent Name="NotForLicensee Tools Group Win64" Type="Win64">
+		<Node Name="Build NotForLicensee Tools Win64" Requires="Update Version Files" Produces="#NotForLicensee Build Tools Win64">
+			<Compile Target="DatasmithCADWorker" Configuration="Development" Platform="Win64" Tag="#NotForLicensee Build Tools Win64"/>
+			<!-- Temporarily removing the compilation of DatasmithCADRuntime from the installed build
+			<Compile Target="DatasmithCADRuntime" Configuration="Development" Platform="Win64" Tag="#NotForLicensee Build Tools Win64"/>
+			-->
+		</Node>
+	</Agent>
+	
+	<Agent Name="BuildRules" Type="Win64_Licensee">
+		<Node Name="Compile Rules Assemblies" Produces="#Rules Assemblies">
+			<Property Name="UBTPath" Value="Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe"/>
+			<Property Name="UBTPath" Value="Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool" If="'$(HostPlatform)' != 'Win64'"/>
+
+			<Spawn Exe="$(UBTPath)" Arguments="-Mode=QueryTargets"/>
+			<Tag Files="Engine/Intermediate/Build/BuildRules/..." With="#Rules Assemblies"/>
+		</Node>
+	</Agent>
+
+	<Agent Name="Tools Group Win64" Type="Win64_Licensee">
+		<Node Name="Build Tools Win64" Requires="Update Version Files;#NotForLicensee Build Tools Win64" Produces="#Tools Win64 Complete">
+			<Compile Target="CrashReportClient" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(CrashReporterCompileArgs)"/>
+			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(CrashReporterCompileArgs)"/>
+			<Tag Files="#NotForLicensee Build Tools Win64" With="#Build Tools Win64"/>
+			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealInsights" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealFrontend" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealLightmass" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="InterchangeWorker" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealMultiUserServer" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealMultiUserSlateServer" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealRecoverySvc" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="LiveCodingConsole" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="BootstrapPackagedGame" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="BuildPatchTool" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+
+			<Tag Files="Engine/Binaries/Win64/XGEControlWorker.exe" With="#Build Tools Win64"/>
+			<Tag Files="$(RootDir)/Engine/Saved/UnrealBuildTool/BuildConfiguration.Schema.xsd" With="#Build Tools Win64"/>
+
+			<Do If="$(EmbedSrcSrvInfo)">
+				<!-- Embed source info into the PDB files. Should be done from this machine to ensure that paths are correct. -->
+				<Log Message="Embedding source file information into PDB files..."/>
+				<Tag Files="Engine/Source/...;Engine/Plugins/..." Filter="*.c;*.h;*.cpp;*.hpp;*.inl" Except="Engine/Source/ThirdParty/..." With="#SourceFiles"/>
+				<SrcSrv BinaryFiles="#Build Tools Win64" SourceFiles="#SourceFiles" Branch="$(Branch)" Change="$(Change)"/>
+			</Do>
+
+			<WriteTextFile File="ToolComplete.txt" Tag="#Tools Win64 Complete"/>
+		</Node>
+		<!-- Compile the C# tools. Copies files to a temporary directory first, to strip out all confidential folders and avoid sharing violations with the running version of UAT. -->
+		<Node Name="Build Tools CS" Requires="Update Version Files" Produces="#Build Tools CS Binaries;#SourceForDocumentation">
+			<Delete Files="$(CsToolsDir)/..."/>
+
+			<!-- Copy Source and referenced libraries to a new location with Confidential folders removed-->
+			<Tag Files="$(AutomationToolPaths)" Filter="*.csproj" Except="$(ConfidentialExceptions)"  With="#UAT Projects"/>
+			<CsCompile Project="#UAT Projects" Configuration="Development" Platform="AnyCPU" TagReferences="#UATReferences" EnumerateOnly="true"/>
+			<Tag Files="Engine/Binaries/DotNET/...;Engine/Binaries/ThirdParty/Newtonsoft/...;Engine/Binaries/ThirdParty/IOS/...;Engine/Binaries/ThirdParty/VisualStudio/...;Engine/Source/Programs/...;Engine/Platforms/*/Source/Programs/...;Engine/Source/Editor/SwarmInterface/...;Engine/Intermediate/ScriptModules/...;#UATReferences" Except="$(ConfidentialExceptions)" With="#RedistUATSource"/>
+			<Expand Name="Platform_TagCsToolsRedistUATSource"/>
+			<Copy Files="#RedistUATSource" From="$(RootDir)" To="$(CsToolsDir)"/>
+
+			<Property Name="RedistAutomationToolPaths" Value=""/>
+			<ForEach Name="AutomationToolPath" Values="$(AutomationToolPaths)">
+				<Property Name="RedistAutomationToolPaths" Value="$(RedistAutomationToolPaths)$(CsToolsDir)/$(AutomationToolPath);"/>
+			</ForEach>
+			<Tag Files="$(RedistAutomationToolPaths)" Filter="*.csproj" With="#RedistUATProjects"/>
+
+			<!-- Compile all the tools -->
+			<CsCompile Project="#RedistUATProjects" Configuration="Development" Platform="AnyCPU" Tag="#Build Tools CS Binaries;#Sign Binaries" TagReferences="#Build Tools CS Binaries"/>
+			<Do If="'$(HostPlatform)' == 'Win64'">
+				<CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/UnrealSwarm/SwarmCoordinator/SwarmCoordinator.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Tag="#Build Tools CS Binaries;#Sign Binaries" TagReferences="#Build Tools CS Binaries"/>
+				<CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/UnrealSwarm/Agent/Agent.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Tag="#Build Tools CS Binaries;#Sign Binaries" TagReferences="#Build Tools CS Binaries"/>
+				<CsCompile Project="$(CsToolsDir)/Engine/Source/Editor/SwarmInterface/DotNET/SwarmInterface.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Tag="#Build Tools CS Binaries;#Sign Binaries" TagReferences="#Build Tools CS Binaries"/>
+				<CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/UnrealControls/UnrealControls.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Tag="#Build Tools CS Binaries;#Sign Binaries" TagReferences="#Build Tools CS Binaries"/>
+				<CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/IOS/iPhonePackager/iPhonePackager.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Arguments="/verbosity:minimal /target:Rebuild" Tag="#Build Tools CS Binaries;#Sign Binaries" TagReferences="#Build Tools CS Binaries"/>
+				<CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/NetworkProfiler/NetworkProfiler/NetworkProfiler.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Tag="#Build Tools CS Binaries" TagReferences="#Build Tools CS Binaries;#Sign Binaries"/>
+				<Expand Name="Platform_Build_Tools_CS_Binaries"/>
+			</Do>
+			
+			<!-- Tag AutomationTool and UnrealBuildTool folders recursively as NET Core dependencies are not currently handled by CsCompile -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/AutomationTool/..." With="#Build Tools CS Binaries" />
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/UnrealBuildTool/..." With="#Build Tools CS Binaries" />
+
+			<!-- Tag AutomationTool Script module build records, so that prebuilt modules may be discovered in the absence of source code -->
+			<Tag Files="$(CsToolsDir)/Engine/Intermediate/ScriptModules/..." With="#Build Tools CS Binaries" />
+
+			<!-- Tag the native P4 libraries as they are not a C# project so not a reference project -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/EpicGames.Perforce.Native/..." With="#Build Tools CS Binaries" />
+
+			<!-- Tag OidcToken which is already built for all platforms and just needs to be copied  -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/OidcToken/..." With="#Build Tools CS Binaries" />
+
+			<!-- Create tag set for saved source needed for documentation -->
+			<Tag Files="$(CsToolsDir)/Engine/..." With="#SourceForDocumentation" />
+
+			<!-- Sign the binaries -->
+			<Sign Files="#Sign Binaries" If="'$(SignExecutables)' == true"/>
+		</Node>
+		<Node Name="Build Tools Linux" Requires="Update Version Files">
+			<Compile Target="CrashReportClient" Platform="Linux" Configuration="Shipping" Tag="#Build Tools Linux" Arguments="$(CrashReporterCompileArgs)"/>
+			<Compile Target="CrashReportClientEditor" Platform="Linux" Configuration="Shipping" Tag="#Build Tools Linux" Arguments="$(CrashReporterCompileArgs)"/>
+			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealInsights" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealLightmass" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="InterchangeWorker" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealMultiUserServer" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealMultiUserSlateServer" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="BuildPatchTool" Configuration="Shipping" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealRecoverySvc" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+		</Node>
+	</Agent>
+
+	<Agent Name="Tools Group Mac" Type="Mac_Licensee">
+	
+		<!-- Compile the C# tools. Copies files to a temporary directory first, to strip out all confidential folders and avoid sharing violations with the running version of UAT. -->
+		<Node Name="Build Tools CS Mac" Requires="Update Version Files" Produces="#Build Tools CS Binaries Mac">
+		
+			<Delete Files="$(CsToolsDir)/..."/>
+
+			<!-- Copy Source and referenced libraries to a new location with Confidential folders removed-->
+			<Tag Files="$(AutomationToolPaths)" Filter="*.csproj" Except="$(ConfidentialExceptions)"  With="#UAT Projects Mac"/>
+			<CsCompile Project="#UAT Projects Mac" Configuration="Development" Platform="AnyCPU" TagReferences="#UATReferencesMac" EnumerateOnly="true"/>
+			<Tag Files="Engine/Binaries/DotNET/...;Engine/Binaries/ThirdParty/Newtonsoft/...;Engine/Binaries/ThirdParty/IOS/...;Engine/Binaries/ThirdParty/VisualStudio/...;Engine/Source/Programs/...;Engine/Platforms/*/Source/Programs/...;Engine/Source/Editor/SwarmInterface/...;Engine/Intermediate/ScriptModules/...;#UATReferencesMac" Except="$(ConfidentialExceptions)" With="#RedistUATSourceMac"/>
+			<Expand Name="Platform_TagCsToolsRedistUATSource"/>
+			<Copy Files="#RedistUATSourceMac" From="$(RootDir)" To="$(CsToolsDir)"/>
+
+			<Property Name="RedistAutomationToolPaths" Value=""/>
+			<ForEach Name="AutomationToolPath" Values="$(AutomationToolPaths)">
+				<Property Name="RedistAutomationToolPaths" Value="$(RedistAutomationToolPaths)$(CsToolsDir)/$(AutomationToolPath);"/>
+			</ForEach>
+			<Tag Files="$(RedistAutomationToolPaths)" Filter="*.csproj" With="#RedistUATProjectsMac"/>
+
+			<CsCompile Project="#RedistUATProjectsMac" Configuration="Development" Platform="AnyCPU" Tag="#Build Tools CS Binaries Mac;#Sign Binaries Mac" TagReferences="#Build Tools CS Binaries Mac"/>
+
+			<!-- Tag AutomationTool and UnrealBuildTool folders recursively as NET Core dependencies are not currently handled by CsCompile -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/AutomationTool/..." With="#Build Tools CS Binaries Mac" />
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/UnrealBuildTool/..." With="#Build Tools CS Binaries Mac" />
+
+			<!-- Tag AutomationTool Script module build records, so that prebuilt modules may be discovered in the absence of source code -->
+			<Tag Files="$(CsToolsDir)/Engine/Intermediate/ScriptModules/..." With="#Build Tools CS Binaries Mac" />
+						
+			<!-- Tag the native P4 libraries as they are not a C# project so not a reference project -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/EpicGames.Perforce.Native/..." With="#Build Tools CS Binaries Mac" />
+			
+			<!-- Tag OidcToken which is already built for all platforms and just needs to be copied  -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/OidcToken/..." With="#Build Tools CS Binaries Mac" />
+
+			<!-- IPP doesn't currently compile with the bundled Mono. -->
+			<!-- CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/UnrealControls/UnrealControls.csproj" Configuration="Development" Platform="AnyCPU" Tag="#Build Tools CS Binaries Mac;#Sign Binaries Mac" TagReferences="#Build Tools CS Binaries Mac"/-->
+			<!-- CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/IOS/iPhonePackager/iPhonePackager.csproj" Configuration="Development" Platform="AnyCPU" Arguments="/verbosity:minimal /target:Rebuild" Tag="#Build Tools CS Binaries Mac;#Sign Binaries Mac" TagReferences="#Build Tools CS Binaries Mac"/-->
+		
+			<!-- Instead we will ship the binary out of Perforce for now. -->
+			<Tag Files="Engine/Binaries/DotNET/IOS/IPhonePackager.exe" With="#CopyIPPBinaries"/>
+			<Tag Files="Engine/Binaries/DotNET/IOS/IPhonePackager.exe.config" With="#CopyIPPBinaries"/>
+			<Copy Files="#CopyIPPBinaries" From="$(RootDir)" To="$(CsToolsDir)"/>
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/IOS/IPhonePackager.exe" With="#Build Tools CS Binaries Mac;#Sign Binaries Mac"/>
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/IOS/IPhonePackager.exe.config" With="#Build Tools CS Binaries Mac;#Sign Binaries Mac"/>
+			
+			<!-- Sign the binaries -->
+			<Sign Files="#Sign Binaries Mac" If="'$(SignExecutables)' == true"/>
+		</Node>
+	
+		<Node Name="Build Tools Mac" Requires="Update Version Files">
+			<Compile Target="CrashReportClient" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM $(CrashReporterCompileArgs)"/>
+			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM $(CrashReporterCompileArgs)"/>
+			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealInsights" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealFrontend" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealLightmass" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="InterchangeWorker" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealMultiUserServer" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealMultiUserSlateServer" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealRecoverySvc" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="BuildPatchTool" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="DsymExporter" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealEditorServices" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealAtoS" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+		</Node>
+	</Agent>
+
+	<Agent Name="Tools Group LinuxNative" Type="Linux_Licensee">
+		<Node Name="Build Tools LinuxNative" Requires="Update Version Files">
+			<Compile Target="CrashReportClient" Platform="Linux" Configuration="Shipping" Tag="#Build Tools LinuxNative" Arguments="$(CrashReporterCompileArgs)"/>
+			<Compile Target="CrashReportClientEditor" Platform="Linux" Configuration="Shipping"  Tag="#Build Tools LinuxNative" Arguments="$(CrashReporterCompileArgs)"/>
+			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealInsights" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealLightmass" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="InterchangeWorker" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealMultiUserServer" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealMultiUserSlateServer" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="BuildPatchTool" Configuration="Shipping" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealRecoverySvc" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+		</Node>
+
+		<!-- Compile the C# tools. Copies files to a temporary directory first, to strip out all confidential folders and avoid sharing violations with the running version of UAT. -->
+		<Node Name="Build Tools CS LinuxNative" Requires="Update Version Files" Produces="#Build Tools CS Binaries LinuxNative">
+			<Delete Files="$(CsToolsDir)/..."/>
+
+			<!-- Copy Source and referenced libraries to a new location with Confidential folders removed-->
+			<Tag Files="$(AutomationToolPaths)" Filter="*.csproj" Except="$(ConfidentialExceptions)"  With="#UAT Projects"/>
+			<CsCompile Project="#UAT Projects" Configuration="Development" Platform="AnyCPU" TagReferences="#UATReferences" EnumerateOnly="true"/>
+			<Tag Files="Engine/Binaries/DotNET/...;Engine/Binaries/ThirdParty/Newtonsoft/...;Engine/Binaries/ThirdParty/IOS/...;Engine/Binaries/ThirdParty/VisualStudio/...;Engine/Source/Programs/...;Engine/Platforms/*/Source/Programs/...;Engine/Source/Editor/SwarmInterface/...;Engine/Intermediate/ScriptModules/...;#UATReferences" Except="$(ConfidentialExceptions)" With="#RedistUATSource"/>
+			<Expand Name="Platform_TagCsToolsRedistUATSource"/>
+			<Copy Files="#RedistUATSource" From="$(RootDir)" To="$(CsToolsDir)"/>
+
+			<Property Name="RedistAutomationToolPaths" Value=""/>
+			<ForEach Name="AutomationToolPath" Values="$(AutomationToolPaths)">
+				<Property Name="RedistAutomationToolPaths" Value="$(RedistAutomationToolPaths)$(CsToolsDir)/$(AutomationToolPath);"/>
+			</ForEach>
+			<Tag Files="$(RedistAutomationToolPaths)" Filter="*.csproj" With="#RedistUATProjects"/>
+			<CsCompile Project="#RedistUATProjects" Configuration="Development" Platform="AnyCPU" Tag="#Build Tools CS Binaries LinuxNative;#Sign Binaries LinuxNative" TagReferences="#Build Tools CS Binaries LinuxNative"/>
+
+			<!-- Tag AutomationTool and UnrealBuildTool folders recursively as NET Core dependencies are not currently handled by CsCompile -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/AutomationTool/..." With="#Build Tools CS Binaries LinuxNative" />
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/UnrealBuildTool/..." With="#Build Tools CS Binaries LinuxNative" />
+
+			<!-- Tag the native P4 libraries as they are not a C# project so not a reference project -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/EpicGames.Perforce.Native/..." With="#Build Tools CS Binaries LinuxNative" />
+
+			<!-- Tag OidcToken which is already built for all platforms and just needs to be copied  -->
+			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/OidcToken/..." With="#Build Tools CS Binaries LinuxNative" />
+
+			<!-- Tag AutomationTool Script module build records, so that prebuilt modules may be discovered in the absence of source code -->
+			<Tag Files="$(CsToolsDir)/Engine/Intermediate/ScriptModules/..." With="#Build Tools CS Binaries LinuxNative" />
+
+			<!-- Sign the binaries -->
+			<Sign Files="#Sign Binaries LinuxNative" If="'$(SignExecutables)' == true"/>
+		</Node>
+	</Agent>
+
+	<Agent Name="FeaturePacks Group" Type="Win64_Licensee">
+		<Node Name="Make Feature Packs" Requires="Update Version Files;Build Tools $(HostPlatform)">
+			<!--Delete any pre-existing feature packs-->
+			<Delete Files="FeaturePacks/..."/>
+			<ForEach Name="TemplateName" Values="$(ProjectsToFeaturePack)">
+				<PakFile Output="FeaturePacks/$(TemplateName).upack" Files="" ResponseFile="Templates/$(TemplateName)/contents.txt"/>
+			</ForEach>
+			<ForEach Name="SampleName" Values="StarterContent">
+				<PakFile Output="FeaturePacks/$(SampleName).upack" Files="" ResponseFile="Samples/$(SampleName)/contents.txt"/>
+			</ForEach>
+		</Node>
+	</Agent>
+
+	<Agent Name="FeaturePacks Group Mac" Type="Mac_Licensee">
+		<Node Name="Make Feature Packs Mac" Requires="Update Version Files;Build Tools Mac">
+			<!--Delete any pre-existing feature packs-->
+			<Delete Files="FeaturePacks/..."/>
+			<ForEach Name="TemplateName" Values="$(ProjectsToFeaturePack)">
+				<PakFile Output="FeaturePacks/$(TemplateName).upack" Files="" ResponseFile="Templates/$(TemplateName)/contents.txt"/>
+			</ForEach>
+			<ForEach Name="SampleName" Values="StarterContent">
+				<PakFile Output="FeaturePacks/$(SampleName).upack" Files="" ResponseFile="Samples/$(SampleName)/contents.txt"/>
+			</ForEach>
+		</Node>
+	</Agent>
+
+	<Agent Name="FeaturePacks Group LinuxNative" Type="Linux_Licensee">
+		<Node Name="Make Feature Packs LinuxNative" Requires="Update Version Files;Build Tools LinuxNative">
+			<!--Delete any pre-existing feature packs-->
+			<Delete Files="FeaturePacks/..."/>
+			<ForEach Name="TemplateName" Values="$(ProjectsToFeaturePack)">
+				<PakFile Output="FeaturePacks/$(TemplateName).upack" Files="" ResponseFile="Templates/$(TemplateName)/contents.txt"/>
+			</ForEach>
+			<ForEach Name="SampleName" Values="StarterContent">
+				<PakFile Output="FeaturePacks/$(SampleName).upack" Files="" ResponseFile="Samples/$(SampleName)/contents.txt"/>
+			</ForEach>
+		</Node>
+	</Agent>
+
+	<Property Name="DDCPlatformsWin64" Value="WindowsEditor"/>
+	<Property Name="DDCPlatformsWin64" Value="$(DDCPlatformsWin64)+Windows" If="'$(WithWin64)' == true"/>
+	<Do If="'$(HostPlatformDDCOnly)' == false">
+		<Property Name="DDCPlatformsWin64" Value="$(DDCPlatformsWin64)+Android_ATC" If="'$(WithAndroid)' == true"/>
+		<Property Name="DDCPlatformsWin64" Value="$(DDCPlatformsWin64)+IOS" If="'$(WithIOS)' == true"/>
+		<Property Name="DDCPlatformsWin64" Value="$(DDCPlatformsWin64)+TVOS" If="'$(WithTVOS)' == true"/>
+		<Property Name="DDCPlatformsWin64" Value="$(DDCPlatformsWin64)+Linux" If="'$(WithLinux)' == true"/>
+		<Property Name="DDCPlatformsWin64" Value="$(DDCPlatformsWin64)+LinuxArm64" If="'$(WithLinuxArm64)' == true"/>
+		<Expand Name="Platform_Append_DDCPlatformsWin64"/>
+	</Do>
+
+	<Macro Name="GenerateEngineDirList" Arguments="InList">
+		<Property Name="EngineDirList" Value=""/>
+		<ForEach Name="EngineDir" Values="$(InList)">
+			<Property Name="EngineDirList" Value="$(EngineDirList);" If="'$(EngineDirList)' != ''"/>
+			<Property Name="EngineDirList" Value="$(EngineDirList)Engine\$(EngineDir)"/>
+			<ForEach Name="ExtensionDir" Values="$(ExtensionPlatformDirs)">
+				<Property Name="EngineDirList" Value="$(EngineDirList);Engine\Platforms\$(ExtensionDir)\$(EngineDir)"/>
+			</ForEach>
+		</ForEach>
+	</Macro>
+
+	<Macro Name="TagDDCEngineFiles" Arguments="ExceptPlugins">
+		<Property Name="EngineDirList" Value=""/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEngineContent)"/>
+		<Property Name="DDCCopyEngineContent" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEngineContentExcept)"/>
+		<Property Name="DDCCopyEngineContentExcept" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEngineConfig)"/>
+		<Property Name="DDCCopyEngineConfig" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEngineConfigExcept)"/>
+		<Property Name="DDCCopyEngineConfigExcept" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEnginePlugins);$(ExceptPlugins)"/>
+		<Property Name="DDCCopyEnginePlugins" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEnginePluginsExcept)"/>
+		<Property Name="DDCCopyEnginePluginsExcept" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEngineShaders)"/>
+		<Property Name="DDCCopyEngineShaders" Value="$(EngineDirList)"/>
+		<Expand Name="GenerateEngineDirList" InList="$(InstalledDDCEngineShadersExcept)"/>
+		<Property Name="DDCCopyEngineShadersExcept" Value="$(EngineDirList)"/>
+		
+		<Expand Name="Platform_TagDDCFiles"/>
+		
+		<Tag Files="$(DDCCopyEngineContent)" Except="$(DDCCopyEngineContentExcept)" With="#ToCopy"/>
+		<Tag Files="$(DDCCopyEngineConfig)" Except="$(DDCCopyEngineConfigExcept)" With="#ToCopy"/>
+		<Tag Files="$(DDCCopyEnginePlugins)" Except="$(DDCCopyEnginePluginsExcept)" With="#ToCopy"/>
+		<Tag Files="$(DDCCopyEngineShaders)" Except="$(DDCCopyEngineShadersExcept)" With="#ToCopy"/>
+	</Macro>
+
+	<Agent Name="DDC Group Win64" Type="Win64_Licensee">
+		<Node Name="Build DDC Win64" Requires="#UnrealEditor Win64;Build Tools Win64;#Build Tools CS Binaries" Produces="#CompressedDDCWin64">
+			<!-- Get our temp dir -->
+			<Property Name="DDCDir" Value="$(RootDir)\LocalBuilds\InstalledDDC"/>
+			<Property Name="SavedDir" Value="$(SavedOutput)\Installed\Win64"/>
+			<!-- Delete all the old files -->
+			<Delete Files="$(DDCDir)\..."/>
+			<!-- Build up a list of files needed to build DDC -->
+			<CsCompile Project="Engine/Source/Programs/UnrealBuildTool/UnrealBuildTool.csproj" Configuration="Development" Platform="AnyCPU" Tag="#ToCopy" TagReferences="#ToCopy" EnumerateOnly="true"/>
+			<Tag Files="#UnrealEditor Win64;#Build Tools Win64" With="#ToCopy"/>
+			<Tag Files="#ToCopy" Filter="*.target" With="#TargetReceipts"/>
+			<TagReceipt Files="#TargetReceipts" RuntimeDependencies="true" With="#ToCopy"/>
+			<Tag Files="Engine\Build\Build.version" With="#ToCopy"/>
+			<Tag Files="Engine\Build\BatchFiles\..."  With="#ToCopy"/>
+			<Tag Files="Engine\Binaries\DotNET\Ionic.Zip.Reduced.dll" With="#ToCopy"/>
+			<Tag Files="Engine\Binaries\DotNET\OneSky.dll" With="#ToCopy"/>
+			<Tag Files="Templates\TemplateResources\..." With="#ToCopy"/>
+			<Expand Name="TagDDCEngineFiles" ExceptPlugins="Plugins\...\Binaries\Mac\..."/>
+			<!-- Filter out the files not needed to build DDC. Removing confidential folders can affect DDC keys, so we want to be sure that we're making DDC with a build that can use it. -->
+			<Tag Files="#ToCopy" Except="$(ConfidentialExceptions);$(RootDir)/.../Source/...;$(RootDir)/.../Intermediate/..." With="#FilteredCopyList"/>
+			
+			<!-- Copy everything to a temporary directory -->
+			<Copy From="$(RootDir)" To="$(DDCDir)" Files="#FilteredCopyList"/>
+			<Copy From="$(CsToolsDir)" To="$(DDCDir)" Files="#Build Tools CS Binaries"/>
+
+			<!-- Force enable D3D SM6 format; this is not enabled by default in engine settings but is used by various template content -->
+			<!-- As such we must ensure we compile engine shaders for SM6 as well -->
+			<Property Name="EngineExtraArgs" Value="&quot;-ini:Engine:[/Script/WindowsTargetPlatform.WindowsTargetSettings]:D3D12TargetedShaderFormats=PCD3D_SM6&quot;"/>
+
+			<Command Name="BuildDerivedDataCache" Arguments="-TempDir=&quot;$(DDCDir)&quot; -FeaturePacks=&quot;$(ProjectsToBuildDDCWin64)&quot; -TargetPlatforms=$(DDCPlatformsWin64) -HostPlatform=Win64 -SavedDir=&quot;$(SavedDir)&quot; -EngineContentExtraArgs=$(EngineExtraArgs)"/>
+
+			<!-- Store off the generated pack csv file for later debugging -->
+			<!-- D:\build\++UE5\Sync\LocalBuilds\InstalledDDC\Engine\DerivedDataCache\ -->
+			<Copy From="$(DDCDir)/Engine/DerivedDataCache" To="$(RootDir)/Engine/Programs/AutomationTool/Saved/Logs/DerivedDataCache" Files="Compressed-*.csv" />
+
+			<Tag Files="$(SavedDir)/Engine/DerivedDataCache/Compressed.ddp" With="#CompressedDDCWin64"/>
+		</Node>
+	</Agent>
+
+	<Property Name="DDCPlatformsMac" Value="MacEditor"/>
+	<Property Name="DDCPlatformsMac" Value="$(DDCPlatformsMac)+Mac" If="'$(WithMac)' == true"/>
+	<Do If="'$(HostPlatformDDCOnly)' == false">
+		<Property Name="DDCPlatformsMac" Value="$(DDCPlatformsMac)+Android_ATC" If="'$(WithAndroid)' == true"/>
+		<Property Name="DDCPlatformsMac" Value="$(DDCPlatformsMac)+IOS" If="'$(WithIOS)' == true"/>
+		<Property Name="DDCPlatformsMac" Value="$(DDCPlatformsMac)+TVOS" If="'$(WithTVOS)' == true"/>
+	</Do>
+
+	<Property Name="MacDDCAgentType" Value="Mac" />
+	<Agent Name="DDC Group Mac" Type="$(MacDDCAgentType)">
+		<Node Name="Build DDC Mac" Requires="#UnrealEditor Mac;Build Tools Mac;#Build Tools CS Binaries Mac" Produces="#CompressedDDCMac">
+			<!-- Get our temp dir -->
+			<Property Name="DDCDir" Value="$(RootDir)/LocalBuilds/InstalledDDC"/>
+			<Property Name="SavedDir" Value="$(SavedOutput)/Installed/Mac"/>
+			<!-- Delete all the old files -->
+			<Delete Files="$(DDCDir)/..."/>
+			<!-- Build up a list of files needed to build DDC -->
+			<CsCompile Project="Engine/Source/Programs/UnrealBuildTool/UnrealBuildTool.csproj" Configuration="Development" Platform="AnyCPU" Tag="#ToCopy" TagReferences="#ToCopy" EnumerateOnly="true"/>
+			<Tag Files="#UnrealEditor Mac;#Build Tools Mac" With="#ToCopy"/>
+			<Tag Files="#ToCopy" Filter="*.target" With="#TargetReceipts"/>
+			<TagReceipt Files="#TargetReceipts" RuntimeDependencies="true" With="#ToCopy"/>
+			<Tag Files="Engine/Build/Build.version" With="#ToCopy"/>
+			<Tag Files="Engine/Build/BatchFiles/Mac/..."  With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/DotNET/Ionic.Zip.Reduced.dll" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/DotNET/OneSky.dll" With="#ToCopy"/>
+			<Tag Files="Templates/TemplateResources/..." With="#ToCopy"/>
+			<Expand Name="TagDDCEngineFiles" ExceptPlugins="Plugins/.../Binaries/Win64/..."/>
+			<!-- Filter out the files not needed to build DDC. Removing confidential folders can affect DDC keys, so we want to be sure that we're making DDC with a build that can use it. -->
+			<Tag Files="#ToCopy" Except="$(ConfidentialExceptions);$(RootDir)/.../Source/...;$(RootDir)/.../Intermediate/..." With="#FilteredCopyList"/>
+			
+			<!-- Copy everything to a temporary directory -->
+			<Copy From="$(RootDir)" To="$(DDCDir)" Files="#FilteredCopyList"/>
+			<Copy From="$(CsToolsDir)" To="$(DDCDir)" Files="#Build Tools CS Binaries Mac"/>
+
+			<Command Name="BuildDerivedDataCache" Arguments="-TempDir=&quot;$(DDCDir)&quot; -FeaturePacks=&quot;$(ProjectsToBuildDDC)&quot; -TargetPlatforms=$(DDCPlatformsMac) -HostPlatform=Mac -SavedDir=&quot;$(SavedDir)&quot;"/>
+
+			<Tag Files="$(SavedDir)/Engine/DerivedDataCache/Compressed.ddp" With="#CompressedDDCMac"/>
+		</Node>
+	</Agent>
+
+	<Property Name="DDCPlatformsLinux" Value="LinuxEditor"/>
+	<Property Name="DDCPlatformsLinux" Value="$(DDCPlatformsLinux)+Linux" If="'$(WithLinux)' == true"/>
+	<Do If="'$(HostPlatformDDCOnly)' == false">
+		<Property Name="DDCPlatformsLinux" Value="$(DDCPlatformsLinux)+LinuxArm64" If="'$(WithLinuxArm64)' == true"/>
+		<Property Name="DDCPlatformsLinux" Value="$(DDCPlatformsLinux)+Android_ATC" If="'$(WithAndroid)' == true"/>
+	</Do>
+
+	<Agent Name="DDC Group Linux" Type="Linux">
+		<Property Name="DDCLinuxRequires" Value="#UnrealEditor Linux;Build Tools LinuxNative;#Build Tools CS Binaries LinuxNative"/>
+		<Node Name="Build DDC Linux" Requires="$(DDCLinuxRequires)" Produces="#CompressedDDCLinux">
+			<!-- Get our temp dir -->
+			<Property Name="DDCDir" Value="$(RootDir)/LocalBuilds/InstalledDDC"/>
+			<Property Name="SavedDir" Value="$(SavedOutput)/Installed/Linux"/>
+			<!-- Delete all the old files -->
+			<Delete Files="$(DDCDir)/..."/>
+			<!-- Build up a list of files needed to build DDC -->
+			<CsCompile Project="Engine/Source/Programs/UnrealBuildTool/UnrealBuildTool.csproj" Configuration="Development" Platform="AnyCPU" Tag="#ToCopy" TagReferences="#ToCopy" EnumerateOnly="true"/>
+			<Tag Files="#UnrealEditor Linux;#Build Tools LinuxNative" With="#ToCopy"/>
+			<Tag Files="#ToCopy" Filter="*.target" With="#TargetReceipts"/>
+			<TagReceipt Files="#TargetReceipts" RuntimeDependencies="true" With="#ToCopy"/>
+			<Tag Files="Engine/Content/..." Except="*.psd;*.pdn;*.fbx;*.po" With="#ToCopy"/>
+			<Tag Files="Engine/Build/Build.version" With="#ToCopy"/>
+			<Tag Files="Engine/Build/BatchFiles/Linux/..."  With="#ToCopy"/>
+			<Tag Files="Engine/Config/..." Except="*.vdf" With="#ToCopy"/>
+			<Tag Files="Engine/Plugins/....uplugin;Engine/Plugins/.../Config/...;Engine/Plugins/.../Content/...;Engine/Plugins/.../Resources/...;Engine/Plugins/.../Shaders/...;Engine/Plugins/.../Templates/..." Except="Engine/Plugins/Runtime/TwitchLiveStreaming/...;Engine/Plugins/.../Binaries/Mac/..." With="#ToCopy"/>
+			<Tag Files="Engine/Shaders/..." With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/DotNET/Ionic.Zip.Reduced.dll" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/DotNET/OneSky.dll" With="#ToCopy"/>
+			<Tag Files="Templates/TemplateResources/..." With="#ToCopy"/>
+			<Expand Name="TagDDCEngineFiles" ExceptPlugins="Plugins/.../Binaries/Mac/..."/>
+			<!-- Filter out the files not needed to build DDC. Removing confidential folders can affect DDC keys, so we want to be sure that we're making DDC with a build that can use it. -->
+			<Tag Files="#ToCopy" Except="$(ConfidentialExceptions);$(RootDir)/.../Source/...;$(RootDir)/.../Intermediate/..." With="#FilteredCopyList"/>
+
+			<!-- Copy everything to a temporary directory -->
+			<Copy From="$(RootDir)" To="$(DDCDir)" Files="#FilteredCopyList"/>
+			<Copy From="$(CsToolsDir)" To="$(DDCDir)" Files="#Build Tools CS Binaries LinuxNative"/>
+
+			<Command Name="BuildDerivedDataCache" Arguments="-TempDir=&quot;$(DDCDir)&quot; -FeaturePacks=$(ProjectsToBuildDDC) -TargetPlatforms=$(DDCPlatformsLinux) -SavedDir=&quot;$(SavedDir)&quot;"/>
+
+			<Tag Files="$(SavedDir)/Engine/DerivedDataCache/Compressed.ddp" With="#CompressedDDCLinux"/>
+		</Node>
+	</Agent>
+
+	<!-- These are plugins that need to be compiled with a full workspace rather than $(Platform)_Licensee. -->
+	<Agent Name="Extra Plugins Agent Win64" Type="Win64">
+		<Node Name="Compile Datasmith Plugins Win64" Requires="Update Version Files" Produces="#DatasmithPluginBinaries Win64">
+			<Do If="$(WithWin64) And $(CompileDatasmithPlugins) == 'True'">
+				<Property Name="DatasmithPlugins" Value="DatasmithCADImporter;DatasmithC4DImporter;AxFImporter;MDLImporter"/>
+				<ForEach Name="Plugin" Values="$(DatasmithPlugins)">
+					<Compile Target="UnrealEditor" Configuration="Development" Platform="Win64" Arguments="-Plugin=&quot;$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/$(Plugin).uplugin&quot;"/>
+					<Tag Files="$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/Binaries/Win64/..." With="#DatasmithPluginBinaries Win64"/>
+				</ForEach>
+			</Do>
+		</Node>
+	</Agent>
+
+	<Agent Name="Extra Plugins Agent Mac" Type="Mac">
+		<Node Name="Compile Datasmith Plugins Mac" Requires="Update Version Files" Produces="#DatasmithPluginBinaries Mac">
+			<Do If="$(WithMac) And $(CompileDatasmithPlugins) == 'True'">
+				<Property Name="DatasmithPlugins" Value="DatasmithCADImporter;DatasmithC4DImporter;AxFImporter;MDLImporter"/>
+				<ForEach Name="Plugin" Values="$(DatasmithPlugins)">
+					<Compile Target="UnrealEditor" Configuration="Development" Platform="Mac" Arguments="-Plugin=&quot;$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/$(Plugin).uplugin&quot; $(MacArchitectureArg)"/>
+					<Tag Files="$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/Binaries/Mac/..." With="#DatasmithPluginBinaries Mac"/>
+				</ForEach>
+			</Do>
+		</Node>
+	</Agent>
+
+	<Agent Name="Extra Plugins Agent Linux" Type="Linux">
+		<Node Name="Compile Datasmith Plugins Linux" Requires="Update Version Files" Produces="#DatasmithPluginBinaries Linux">
+			<Do If="$(WithLinux) And $(CompileDatasmithPlugins) == 'True'">
+				<Property Name="DatasmithPlugins" Value="DatasmithCADImporter;MDLImporter"/>
+				<ForEach Name="Plugin" Values="$(DatasmithPlugins)">
+					<Compile Target="UnrealEditor" Configuration="Development" Platform="Linux" Arguments="-Plugin=&quot;$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/$(Plugin).uplugin&quot;"/>
+					<Tag Files="$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/Binaries/Linux/..." With="#DatasmithPluginBinaries Linux"/>
+				</ForEach>
+			</Do>
+		</Node>
+	</Agent>
+
+	<Agent Name="Installed Build Group Win64" Type="Win64_Licensee">
+		<!-- Build up a list of requirements as some can be optional -->
+		<Property Name="UnrealEditor" Value="#UnrealEditor Win64" />
+		<Property Name="UnrealEditor" Value="#UnrealEditor Win64 WithExceptions" If="$(CompileDatasmithPlugins)" />
+		<Property Name="InstalledRequirements" Value="Update Version Files;$(UnrealEditor);#UnrealEditor Win64 Unstripped;#UnrealEditor Win64 Stripped;#UnrealEditor Win64 Unsigned;#UnrealEditor Win64 Signed;#Build Tools Win64;#Build Tools CS Binaries;#Rules Assemblies"/>
+		<!-- Optional Target Platform requirements -->
+		<Expand Name="Platform_AddInstalledRequirements"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame Win64;#UnrealGame Win64 Unstripped;#UnrealGame Win64 Stripped;#UnrealGame Win64 Unsigned;#UnrealGame Win64 Signed" If="'$(WithWin64)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame Android;#UnrealGame Android Unstripped;#UnrealGame Android Stripped" If="'$(WithAndroid)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame IOS;#UnrealGame IOS Unstripped;#UnrealGame IOS Stripped;#Update Version Files" If="'$(WithIOS)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame TVOS;#UnrealGame TVOS Unstripped;#UnrealGame TVOS Stripped" If="'$(WithTVOS)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame Linux;#UnrealGame Linux Unstripped;#UnrealGame Linux Stripped;#Build Tools Linux" If="'$(WithLinux)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame LinuxArm64;#UnrealGame LinuxArm64 Unstripped;#UnrealGame LinuxArm64 Stripped" If="'$(WithLinuxArm64)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#CompressedDDCWin64" If="$(WithDDC) And $(WithWin64)"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#Compile Datasmith Plugins Win64;#DatasmithPluginBinaries Win64" If="$(WithWin64) And $(CompileDatasmithPlugins)"/>
+		<!-- Feature packs -->
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);Make Feature Packs"/>
+
+		<!-- Filters the build products required for an installed build into groups depending on whether they need to be stripped, signed or just copied -->
+		<Node Name="Make Installed Build Win64" Requires="$(InstalledRequirements)" Produces="#Installed Build Win64 Files">
+
+			<!-- Clear any existing files from the final location -->
+			<Delete Files="$(LocalInstalledDir)\..."/>
+
+			<!-- List of platform names -->
+			<Property Name="Platforms" Value=""/>
+			
+			<!-- Define filter and exception properties for the installed build -->
+			<Property Name="CopyInstalledFilter" Value="$(CopyEditorFilterWin64)"/>
+			<Property Name="CopyInstalledExceptions" Value="$(CopyEditorExceptionsWin64)"/>
+			<Property Name="ExtraSignFiles" Value="$(ExtraSignFilesWin64)"/>
+
+			<!-- Tag files that always need to be part of an installed build -->
+			<Tag Files="$(UnrealEditor)" Except="#UnrealEditor Win64 Unstripped;#UnrealEditor Win64 Unsigned" With="#Installed Win64"/>
+			<Tag Files="#UnrealEditor Win64 Stripped;#UnrealEditor Win64 Signed" With="#Saved Output"/>
+			<Tag Files="#Build Tools Win64;#Make Feature Packs;#Rules Assemblies" With="#Installed Win64"/>
+			<Tag Files="#DatasmithPluginBinaries Win64" With="#Installed Win64" If="$(WithWin64) And $(CompileDatasmithPlugins)"/>
+
+			<!-- Tag enabled target platforms -->
+			<Do If="'$(WithWin64)' == true">
+				<Tag Files="#UnrealGame Win64" Except="#UnrealGame Win64 Unstripped;#UnrealGame Win64 Unsigned" With="#Installed Win64"/>
+				<Tag Files="#UnrealGame Win64 Stripped;#UnrealGame Win64 Signed" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)Win64;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyWin64Filter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyWin64Exceptions)"/>
+			</Do>
+			<Do If="'$(WithAndroid)' == true">
+				<Tag Files="#UnrealGame Android" Except="#UnrealGame Android Unstripped" With="#Installed Win64"/>
+				<Tag Files="#UnrealGame Android Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)Android;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyAndroidFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyAndroidExceptions)"/>
+				<Property Name="ExtraSignFiles" Value="$(ExtraSignFiles);$(ExtraSignFilesAndroid)"/>
+			</Do>
+			<Do If="'$(WithIOS)' == true">
+				<Tag Files="#UnrealGame IOS" Except="#UnrealGame IOS Unstripped" With="#Installed Win64"/>
+				<Tag Files="#UnrealGame IOS Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)IOS;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyIOSFilterWin64)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyIOSExceptions)"/>
+				<Property Name="ExtraSignFiles" Value="$(ExtraSignFiles);$(ExtraSignFilesIOS)"/>
+			</Do>
+			<Do If="'$(WithTVOS)' == true">
+				<Tag Files="#UnrealGame TVOS" Except="#UnrealGame TVOS Unstripped" With="#Installed Win64"/>
+				<Tag Files="#UnrealGame TVOS Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)TVOS;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyTVOSFilterWin64)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyTVOSExceptions)"/>
+				<Property Name="ExtraSignFiles" Value="$(ExtraSignFiles);$(ExtraSignFilesTVOS)"/>
+			</Do>
+			<Do If="'$(WithLinux)' == true">
+				<Tag Files="#UnrealGame Linux;#Build Tools Linux" Except="#UnrealGame Linux Unstripped" With="#Installed Win64"/>
+				<Tag Files="#UnrealGame Linux Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)Linux;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyLinuxFilterWin64)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyLinuxExceptions)"/>
+				<Property Name="ExtraSignFiles" Value="$(ExtraSignFiles);$(ExtraSignFilesLinux)"/>
+			</Do>
+			<Do If="'$(WithLinuxArm64)' == true">
+				<Tag Files="#UnrealGame LinuxArm64" Except="#UnrealGame LinuxArm64 Unstripped" With="#Installed Win64"/>
+				<Tag Files="#UnrealGame LinuxArm64 Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)LinuxArm64;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyLinuxFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyLinuxExceptions)"/>
+				<Property Name="ExtraSignFiles" Value="$(ExtraSignFiles);$(ExtraSignFilesLinux)"/>
+			</Do>
+			<Expand Name="Platform_Tag_UnrealGame"/>
+			<Expand Name="Platform_ExtraSignFiles"/>
+
+			<!-- Tag any dependencies from all previous build products -->
+			<Tag Files="#Installed Win64" Filter="*.target" With="#TargetReceipts"/>
+			<TagReceipt Files="#TargetReceipts" RuntimeDependencies="true" With="#Installed Win64"/>
+
+			<!-- Tag any additional dependencies -->
+			<Tag Files="#Installed Win64" Filter=".../DependencyList.txt;.../DependencyList-AllModules.txt" With="#DependencyLists"/>
+			<Tag FileLists="#DependencyLists" With="#Installed Win64" />
+
+			<!-- Confidential Exceptions - done last to ensure they never get overwritten -->
+			<Property Name="SignCopyExceptions" Value="$(CopyInstalledExceptions);$(ConfidentialExceptions)"/>
+			<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);#DependencyLists;$(ConfidentialExceptions)"/>
+			
+			<!-- Tag additional files needed for installed build -->
+			<Tag Files="$(CopyInstalledFilter)" With="#Installed Win64"/>
+
+			<!-- Tag Win64 files that need to be stripped -->
+			<Tag Files="#Build Tools Win64" Filter="$(Win64StripFilter)" Except="$(Win64StripExceptions);$(CopyInstalledExceptions)" With="#Strip Tools for Installed Win64"/>
+
+			<Do If="'$(SignExecutables)' == true">
+				<!-- Tag files that need to be signed -->
+				<Tag Files="#Build Tools Win64;#Rules Assemblies" Filter="$(WindowsSignFilter)" Except="$(SignCopyExceptions);$(SignExceptions)" With="#Sign Tools for Installed Win64"/>
+				<Tag Files="$(CopyInstalledFilter)" Filter="$(WindowsSignFilter)" Except="$(SignCopyExceptions)" With="#Sign Tools for Installed Win64"/>
+				<Tag FileLists="#DependencyLists" Filter="$(WindowsSignFilter)" Except="$(SignCopyExceptions)" With="#Sign Tools for Installed Win64"/>
+				<Tag Files="$(ExtraSignFiles)" Filter="$(WindowsSignFilter)" Except="$(SignCopyExceptions)" With="#Sign Tools for Installed Win64"/>
+				<Tag Files="#DatasmithPluginBinaries Win64" Filter="$(WindowsSignFilter)" Except="$(SignCopyExceptions)" With="#Sign Tools for Installed Win64" If="$(WithWin64) And $(CompileDatasmithPlugins)"/>
+				<Tag Files="#Build Tools CS Binaries;" Filter="$(WindowsSignFilter)" Except="$(CopyWin64CsToolsExceptions);" With="#Sign CS Tools for Installed Win64"/>
+			</Do>
+
+			<!-- Tag files that need to be copied directly -->
+			<Tag Files="#Installed Win64" Except="$(CopyInstalledExceptions);#Strip Tools for Installed Win64;#Sign Tools for Installed Win64" With="#Copy for Installed Win64"/>
+			<Tag Files="#Build Tools CS Binaries" Except="$(CopyWin64CsToolsExceptions)" With="#Installed Build Tools CS Binaries"/>
+			<Copy Files="#Copy for Installed Win64" From="$(RootDir)" To="$(LocalInstalledDir)" Tag="#Installed Build Win64 Files"/>
+			<Copy Files="#Installed Build Tools CS Binaries" From="$(CsToolsDir)" To="$(LocalInstalledDir)" Tag="#Installed Build Win64 Files"/>
+			
+			<!-- Tag saved output that needs to be copied directly -->
+			<Tag BaseDir="$(SavedOutput)" Files="#Saved Output" Except="$(CopyInstalledExceptions)" With="#Copy Saved Output"/>
+			<Copy Files="#Copy Saved Output" From="$(SavedOutput)" To="$(LocalInstalledDir)" Tag="#Installed Build Win64 Files"/>
+
+			<!-- Strip required files into their final location -->
+			<Strip Files="#Strip Tools for Installed Win64" BaseDir="$(RootDir)" OutputDir="$(LocalInstalledDir)" Platform="Win64" Tag="#Installed Build Win64 Files"/>
+
+			<Do If="'$(SignExecutables)' == true">
+				<!-- Copy then Sign required files in their final location -->
+				<Copy Files="#Sign Tools for Installed Win64" From="$(RootDir)" To="$(LocalInstalledDir)" Tag="#Files to Sign"/>
+				<Copy Files="#Sign CS Tools for Installed Win64" From="$(CsToolsDir)" To="$(LocalInstalledDir)" Tag="#Files to Sign"/>
+				<Sign Files="#Files to Sign" Tag="#Installed Build Win64 Files"/>
+			</Do>
+
+			<!-- Copy the compressed DDC -->
+			<Property Name="SavedDir" Value="$(SavedOutput)\Installed\Win64"/>
+			<Copy Files="#CompressedDDCWin64" From="$(SavedDir)" To="$(LocalInstalledDir)" If="$(WithDDC) And $(WithWin64)" Tag="#Installed Build Win64 Files"/>
+
+			<!-- List all of the platforms that we only allow for content projects -->
+			<Property Name="ContentOnlyPlatforms" Value=""/>
+
+			<!-- Create command line arguments for any platforms that were built with additional architectures -->
+			<Property Name="ArchitectureCommands" Value="$(DefaultArchitectureCommandsWin64)"/>
+			<Property Name="ArchitectureCommands" Value="$(ArchitectureCommands) -AndroidArchitectures=$(AndroidArchitectures)" If="'$(WithAndroid)' == true"/>
+
+			<!-- Finalize the build and then tag the text file that this process creates -->
+			<Command Name="FinalizeInstalledBuild" Arguments="-OutputDir=&quot;$(LocalInstalledDir)&quot; $(BuildIdentifierArg) -Platforms=$(Platforms) -ContentOnlyPlatforms=$(ContentOnlyPlatforms) $(ArchitectureCommands) -AnalyticsTypeOverride=$(AnalyticsTypeOverride)"/>
+			<Tag Files="$(LocalInstalledDir)/Engine/Build/InstalledBuild.txt" With="#Installed Build Win64 Files"/>
+			
+			<!-- Sanitize all the receipts in the target directory -->
+			<Tag Files="#Installed Build Win64 Files" Filter="*.target" With="#Installed Build Win64 Receipts"/>
+			<SanitizeReceipt Files="#Installed Build Win64 Receipts" EngineDir="$(LocalInstalledDir)\Engine"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="HostPlatforms_Win64" Label="Builds/Win64" Requires="Make Installed Build Win64" Exclude="Update Version Files"/>
+
+	<Agent Name="Installed Build Group Mac" Type="Mac_Licensee">
+		<!-- Build up a list of requirements as some can be optional -->
+		<Property Name="UnrealEditor" Value="#UnrealEditor Mac" />
+		<Property Name="UnrealEditor" Value="#UnrealEditor Mac WithExceptions" If="$(CompileDatasmithPlugins)" />
+		<Property Name="FilterRequirements" Value="#Update Version Files;$(UnrealEditor);#UnrealEditor Mac Unstripped;#UnrealEditor Mac Stripped;#UnrealEditor Mac Unsigned;#UnrealEditor Mac Signed;#Build Tools Mac;#Build Tools CS Binaries Mac;#Rules Assemblies"/>
+
+		<!-- Optional Target Platform requirements -->
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);#UnrealGame Mac;#UnrealGame Mac Unstripped;#UnrealGame Mac Stripped;#UnrealGame Mac Unsigned;#UnrealGame Mac Signed" If="'$(WithMac)' == true"/>
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);#UnrealGame Android;#UnrealGame Android Unstripped;#UnrealGame Android Stripped" If="'$(WithAndroid)' == true"/>
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);#UnrealGame IOS;#UnrealGame IOS Unstripped;#UnrealGame IOS Stripped" If="'$(WithIOS)' == true"/>
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);#UnrealGame TVOS;#UnrealGame TVOS Unstripped;#UnrealGame TVOS Stripped" If="'$(WithTVOS)' == true"/>
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);#CompressedDDCMac" If="$(WithDDC) And $(WithMac)"/>
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);#Compile Datasmith Plugins Mac;#DatasmithPluginBinaries Mac" If="$(WithMac) And $(CompileDatasmithPlugins)"/>
+
+		<!-- Feature packs -->
+		<Property Name="FilterRequirements" Value="$(FilterRequirements);Make Feature Packs Mac"/>
+
+		<!-- Filters the build products required for an installed build into groups depending on whether they need to be stripped, signed or just copied-->
+		<Node Name="Make Installed Build Mac" Requires="$(FilterRequirements)" Produces="#Installed Build Mac Files">
+			<!-- Clear any existing files from the final location -->
+			<Delete Files="$(LocalInstalledDirMac)/..."/>
+
+			<!-- List of platform names -->
+			<Property Name="Platforms" Value=""/>
+			
+			<!-- Define filter and exception properties for the installed build -->
+			<Property Name="CopyInstalledFilter" Value="$(CopyEditorFilterMac)"/>
+			<Property Name="CopyInstalledExceptions" Value="$(CopyEditorExceptionsMac)"/>
+
+			<!-- Tag files that always need to be part of an installed build -->
+			<Tag Files="$(UnrealEditor)" Except="#UnrealEditor Mac Unstripped;#UnrealEditor Mac Unsigned" With="#Installed Mac"/>
+			<Tag Files="#UnrealEditor Mac Stripped;#UnrealEditor Mac Signed" With="#Saved Output"/>
+			<Tag Files="#Build Tools Mac;#Make Feature Packs Mac;#Rules Assemblies" With="#Installed Mac"/>
+			<Tag Files="#DatasmithPluginBinaries Mac" With="#Installed Mac" If="$(WithMac) And $(CompileDatasmithPlugins)"/>
+
+			<!-- Tag enabled target platforms -->
+			<Do If="'$(WithMac)' == true">
+				<Tag Files="#UnrealGame Mac" Except="#UnrealGame Mac Unstripped;#UnrealGame Mac Unsigned" With="#Installed Mac"/>
+				<Tag Files="#UnrealGame Mac Stripped;#UnrealGame Mac Signed" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)Mac;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyMacFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyMacExceptions)"/>
+			</Do>
+			<Do  If="'$(WithAndroid)' == true">
+				<Tag Files="#UnrealGame Android" Except="#UnrealGame Android Unstripped" With="#Installed Mac"/>
+				<Tag Files="#UnrealGame Android Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)Android;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyAndroidFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyAndroidExceptions)"/>
+			</Do>
+			<Do If="'$(WithIOS)' == true">
+				<Tag Files="#UnrealGame IOS" Except="#UnrealGame IOS Unstripped" With="#Installed Mac"/>
+				<Tag Files="#UnrealGame IOS Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)IOS;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyIOSFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyIOSExceptions)"/>
+			</Do>
+			<Do If="'$(WithTVOS)' == true">
+				<Tag Files="#UnrealGame TVOS" Except="#UnrealGame TVOS Unstripped" With="#Installed Mac"/>
+				<Tag Files="#UnrealGame TVOS Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)TVOS;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyTVOSFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyTVOSExceptions)"/>
+			</Do>
+
+			<!-- Tag any dependencies from all previous build products -->
+			<Tag Files="#Installed Mac" Filter="*.target" With="#TargetReceipts"/>
+			<TagReceipt Files="#TargetReceipts" RuntimeDependencies="true" With="#Installed Mac"/>
+
+			<!-- Tag any additional dependencies -->
+			<Tag Files="#Installed Mac" Filter=".../DependencyList.txt;.../DependencyList-AllModules.txt" With="#DependencyLists"/>
+			<Tag FileLists="#DependencyLists" With="#Installed Mac" />
+
+			<!-- Confidential Exceptions - done last to ensure they never get overwritten -->
+			<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(ConfidentialExceptions);#DependencyLists"/>
+			
+			<!-- Tag additional files needed for editor and platforms -->
+			<Tag Files="$(CopyInstalledFilter)" With="#Installed Mac"/>
+
+			<!-- Tag Mac files that need to be stripped -->
+			<Tag Files="#Build Tools Mac" Filter="$(MacStripFilter)" Except="$(CopyInstalledExceptions)" With="#Strip Tools for Installed Mac"/>
+
+			<Do If="'$(SignExecutables)' == true">
+				<!-- Tag files that need to be signed -->
+				<Tag Files="#Build Tools Mac" Filter="$(MacSignFilter)" Except="$(CopyInstalledExceptions);$(SignExceptions)" With="#Sign Tools for Installed Mac"/>
+			</Do>
+
+			<!-- Tag files that need to be copied directly -->
+			<Tag Files="#Installed Mac" Except="$(CopyInstalledExceptions);#Strip Tools for Installed Mac;#Sign Tools for Installed Mac" With="#Copy for Installed Mac"/>
+			<Tag Files="#Build Tools CS Binaries Mac" Except="$(CopyMacCsToolsExceptions)" With="#Installed Build Tools CS Binaries Mac"/>
+			<Copy Files="#Copy for Installed Mac" From="$(RootDir)" To="$(LocalInstalledDirMac)" Tag="#Installed Build Mac Files"/>
+			<Copy Files="#Installed Build Tools CS Binaries Mac" From="$(CsToolsDir)" To="$(LocalInstalledDirMac)" Tag="#Installed Build Mac Files"/>
+			
+			<!-- Tag saved output that needs to be copied directly -->
+			<Tag BaseDir="$(SavedOutput)" Files="#Saved Output" Except="$(CopyInstalledExceptions)" With="#Copy Saved Output"/>
+			<Copy Files="#Copy Saved Output" From="$(SavedOutput)" To="$(LocalInstalledDirMac)" Tag="#Installed Build Mac Files"/>
+
+			<!-- Strip required files into their final location -->
+			<Strip Files="#Strip Tools for Installed Mac" BaseDir="$(RootDir)" OutputDir="$(LocalInstalledDirMac)" Platform="Mac" Tag="#Installed Build Mac Files"/>
+
+			<Do If="'$(SignExecutables)' == true">
+				<!-- Copy then Sign required files in their final location -->
+				<Copy Files="#Sign Tools for Installed Mac" From="$(RootDir)" To="$(LocalInstalledDirMac)" Tag="#Files to Sign"/>
+				<Sign Files="#Files to Sign" Tag="#Installed Build Mac Files"/>
+			</Do>
+
+			<!-- Copy the compressed DDC -->
+			<Property Name="SavedDir" Value="$(SavedOutput)/Installed/Mac"/>
+			<Copy Files="#CompressedDDCMac" From="$(SavedDir)" To="$(LocalInstalledDirMac)" If="$(WithDDC) And $(WithMac)" Tag="#Installed Build Mac Files"/>
+
+			<!-- Create command line arguments for any platforms that were built with additional architectures -->
+			<Property Name="ArchitectureCommands" Value=""/>
+			<Property Name="ArchitectureCommands" Value="$(ArchitectureCommands) -AndroidArchitectures=$(AndroidArchitectures)" If="'$(WithAndroid)' == true"/>
+			<!-- Finalize the build and then tag the text file that this process creates -->
+			<Command Name="FinalizeInstalledBuild" Arguments="-OutputDir=$(LocalInstalledDirMac) -Platforms=$(Platforms) $(ArchitectureCommands) -AnalyticsTypeOverride=$(AnalyticsTypeOverride)"/>
+			<Tag Files="$(LocalInstalledDirMac)/Engine/Build/InstalledBuild.txt" With="#Installed Build Mac Files"/>
+
+			<!-- Sanitize all the receipts in the target directory -->
+			<Tag Files="#Installed Build Mac Files" Filter="*.target" With="#Installed Build Mac Receipts"/>
+			<SanitizeReceipt Files="#Installed Build Mac Receipts" EngineDir="$(LocalInstalledDirMac)/Engine"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="HostPlatforms_Mac" Label="Builds/Mac" Requires="Make Installed Build Mac"/>
+
+	<Agent Name="Installed Build Group Linux" Type="Linux_Licensee">
+		<!-- Build up a list of requirements as some can be optional -->
+		<Property Name="UnrealEditor" Value="#UnrealEditor Linux" />
+		<Property Name="UnrealEditor" Value="#UnrealEditor Linux WithExceptions" If="$(CompileDatasmithPlugins)" />
+		<Property Name="InstalledRequirements" Value="#Update Version Files;$(UnrealEditor);#UnrealEditor Linux Unstripped;#UnrealEditor Linux Stripped;#Build Tools LinuxNative;#Build Tools CS Binaries LinuxNative;#Rules Assemblies"/>
+
+		<!-- Optional Target Platform requirements -->
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame LinuxNative;#UnrealGame LinuxNative Unstripped;#UnrealGame LinuxNative Stripped" If="'$(WithLinux)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame LinuxArm64 LinuxNative;#UnrealGame LinuxArm64 LinuxNative Unstripped;#UnrealGame LinuxArm64 LinuxNative Stripped" If="'$(WithLinuxArm64)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#UnrealGame Android;#UnrealGame Android Unstripped;#UnrealGame Android Stripped" If="'$(WithAndroid)' == true"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#CompressedDDCLinux" If="'$(WithDDC)' == true And $(WithLinux)"/>
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);#Compile Datasmith Plugins Linux;#DatasmithPluginBinaries Linux" If="$(WithLinux) And $(CompileDatasmithPlugins)"/>
+
+		<!-- Feature packs -->
+		<Property Name="InstalledRequirements" Value="$(InstalledRequirements);Make Feature Packs LinuxNative"/>
+
+		<!-- Filters the build products required for an installed build into groups depending on whether they need to be stripped or just copied -->
+		<Node Name="Make Installed Build Linux" Requires="$(InstalledRequirements)" Produces="#Installed Build Linux Files">
+
+			<!-- Clear any existing files from the final location -->
+			<Delete Files="$(LocalInstalledDirLinux)\..."/>
+
+			<!-- List of platform names -->
+			<Property Name="Platforms" Value=""/>
+
+			<!-- Define filter and exception properties for the installed build -->
+			<Property Name="CopyInstalledFilter" Value="$(CopyEditorFilterLinux)"/>
+			<Property Name="CopyInstalledExceptions" Value="$(CopyEditorExceptionsLinux)"/>
+
+			<!-- Tag files that always need to be part of an installed build -->
+			<Tag Files="$(UnrealEditor)" Except="#UnrealEditor Linux Unstripped" With="#Installed Linux"/>
+			<Tag Files="#UnrealEditor Linux Stripped" With="#Saved Output"/>
+			<Tag Files="#Build Tools LinuxNative;#Make Feature Packs LinuxNative;#Rules Assemblies" With="#Installed Linux"/>
+
+			<!-- Tag enabled target platforms -->
+			<Do If="'$(WithLinux)' == true">
+				<Tag Files="#UnrealGame LinuxNative;#Build Tools LinuxNative" Except="#UnrealGame LinuxNative Unstripped" With="#Installed Linux"/>
+				<Tag Files="#UnrealGame LinuxNative Stripped" With="#Saved Output"/>
+				<Tag Files="#DatasmithPluginBinaries Linux" With="#Installed Linux" If="$(WithLinux) And $(CompileDatasmithPlugins)"/>
+				<Property Name="Platforms" Value="$(Platforms)Linux;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyLinuxFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyLinuxExceptions)"/>
+			</Do>
+			<Do If="'$(WithLinuxArm64)' == true">
+				<Tag Files="#UnrealGame LinuxArm64 LinuxNative" Except="#UnrealGame LinuxArm64 LinuxNative Unstripped" With="#Installed Linux"/>
+				<Tag Files="#UnrealGame LinuxArm64 LinuxNative Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)LinuxArm64;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyLinuxFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyLinuxExceptions)"/>
+			</Do>
+			<Do If="'$(WithAndroid)' == true">
+				<Tag Files="#UnrealGame Android" Except="#UnrealGame Android Unstripped" With="#Installed Linux"/>
+				<Tag Files="#UnrealGame Android Stripped" With="#Saved Output"/>
+				<Property Name="Platforms" Value="$(Platforms)Android;"/>
+				<Property Name="CopyInstalledFilter" Value="$(CopyInstalledFilter);$(CopyAndroidFilter)"/>
+				<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(CopyAndroidExceptions)"/>
+			</Do>
+
+			<!-- Tag any dependencies from all previous build products -->
+			<Tag Files="#Installed Linux" Filter="*.target" With="#TargetReceipts"/>
+			<TagReceipt Files="#TargetReceipts" RuntimeDependencies="true" With="#Installed Linux"/>
+
+			<!-- Tag any additional dependencies -->
+			<Tag Files="#Installed Linux" Filter=".../DependencyList.txt;.../DependencyList-AllModules.txt" With="#DependencyLists"/>
+			<Tag FileLists="#DependencyLists" With="#Installed Linux" />
+
+			<!-- Confidential Exceptions - done last to ensure they never get overwritten -->
+			<Property Name="CopyInstalledExceptions" Value="$(CopyInstalledExceptions);$(ConfidentialExceptions);#DependencyLists"/>
+
+			<!-- Tag additional files needed for installed build -->
+			<Tag Files="$(CopyInstalledFilter)" With="#Installed Linux"/>
+
+			<!-- Tag Linux files that need to be stripped -->
+			<Tag Files="#Build Tools LinuxNative" Filter="$(LinuxStripFilter)" Except="$(CopyInstalledExceptions)" With="#Strip Tools for Installed Linux"/>
+
+			<!-- Tag files that need to be copied directly -->
+			<Tag Files="#Installed Linux" Except="$(CopyInstalledExceptions);#Strip Tools for Installed Linux" With="#Copy for Installed Linux"/>
+			<Copy Files="#Copy for Installed Linux" From="$(RootDir)" To="$(LocalInstalledDirLinux)" Tag="#Installed Build Linux Files"/>
+
+			<!-- Tag saved output that needs to be copied directly -->
+			<Tag BaseDir="$(SavedOutput)" Files="#Saved Output" Except="$(CopyInstalledExceptions)" With="#Copy Saved Output"/>
+			<Tag Files="#Build Tools CS Binaries LinuxNative" Except="$(CopyLinuxCsToolsExceptions)" With="#Installed Build Tools CS Binaries LinuxNative"/>
+			<Copy Files="#Copy Saved Output" From="$(SavedOutput)" To="$(LocalInstalledDirLinux)" Tag="#Installed Build Linux Files"/>
+			<Copy Files="#Installed Build Tools CS Binaries LinuxNative" From="$(CsToolsDir)" To="$(LocalInstalledDirLinux)" Tag="#Installed Build Linux Files"/>
+			
+			<!-- Strip required files into their final location -->
+			<Strip Files="#Strip Tools for Installed Linux" BaseDir="$(RootDir)" OutputDir="$(LocalInstalledDirLinux)" Platform="Linux" Tag="#Installed Build Linux Files"/>
+
+			<!-- Copy the compressed DDC -->
+			<Property Name="SavedDir" Value="$(SavedOutput)\Installed\Linux"/>
+			<Copy Files="#CompressedDDCLinux" From="$(SavedDir)" To="$(LocalInstalledDirLinux)" If="'$(WithDDC)' == true And $(WithLinux)" Tag="#Installed Build Linux Files"/>
+
+			<!-- Setup and Copy the toolchain -->
+			<Spawn Exe="$(RootDir)/Engine/Build/BatchFiles/Linux/SetupToolchain.sh"/>
+			<Property Name="LinuxToolchainDir" Value="$(ToolchainDir)/HostLinux"/>
+			<Copy Files="$(LinuxToolchainDir)/..." From="$(LinuxToolchainDir)" To="$(LocalInstalledDirLinux)/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux" Tag="#Installed Build Linux Files"/>
+
+			<!-- List all of the platforms that we only allow for content projects -->
+			<Property Name="ContentOnlyPlatforms" Value=""/>
+
+			<!-- Create command line arguments for any platforms that were built with additional architectures -->
+			<Property Name="ArchitectureCommands" Value=""/>
+			<Property Name="ArchitectureCommands" Value="$(ArchitectureCommands) -AndroidArchitectures=$(AndroidArchitectures)" If="'$(WithAndroid)' == true"/>
+
+			<!-- Finalize the build and then tag the text file that this process creates -->
+			<Command Name="FinalizeInstalledBuild" Arguments="-OutputDir=$(LocalInstalledDirLinux) $(BuildIdentifierArg) -Platforms=$(Platforms) -ContentOnlyPlatforms=$(ContentOnlyPlatforms) $(ArchitectureCommands) -AnalyticsTypeOverride=$(AnalyticsTypeOverride)"/>
+			<Tag Files="$(LocalInstalledDirLinux)/Engine/Build/InstalledBuild.txt" With="#Installed Build Linux Files"/>
+
+			<!-- Sanitize all the receipts in the target directory -->
+			<Tag Files="#Installed Build Linux Files" Filter="*.target" With="#Installed Build Linux Receipts"/>
+			<SanitizeReceipt Files="#Installed Build Linux Receipts" EngineDir="$(LocalInstalledDirLinux)/Engine"/>
+		</Node>
+	</Agent>
+	<Aggregate Name="HostPlatforms_Linux" Label="Builds/Linux" Requires="Make Installed Build Linux"/>
+
+</BuildGraph>

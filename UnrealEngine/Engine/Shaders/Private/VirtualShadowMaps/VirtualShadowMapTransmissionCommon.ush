@@ -1,0 +1,76 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMaps/VirtualShadowMapTransmissionCommon.ush:
+=============================================================================*/
+#pragma once
+
+#include "../Common.ush"
+#include "../SceneTexturesCommon.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../TransmissionCommon.ush"
+#include "VirtualShadowMapProjectionCommon.ush"
+#include "../Strata/StrataSubsurface.ush"
+
+FSubsurfaceOpacityMFP GetSubsurfaceOpacityFromGbuffer(uint2 PixelPos)
+{
+	FSubsurfaceOpacityMFP SubsurfaceOpacityMFP = GetInitialisedSubsurfaceOpacityMFP();
+
+#if STRATA_ENABLED
+
+	FStrataSubsurfaceData LoadStrat = StrataLoadSubsurfaceData(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelPos);
+
+	SubsurfaceOpacityMFP = StrataGetSubsurfaceOpacityMFP(LoadStrat.Header);
+
+#else // STRATA_ENABLED
+	FGBufferData GBufferData = GetGBufferDataUint(PixelPos);
+
+	// TODO: SUBSURFACE_PROFILE with fancy transmission
+	if (GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE ||
+		GBufferData.ShadingModelID == SHADINGMODELID_PREINTEGRATED_SKIN ||
+		GBufferData.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE)
+	{
+		// This clamp aligns with SubsurfaceDensityFromOpacity
+		// Various engine paths treat these subsurface materials differently
+		// even when they have Opacity = 1 in the material shader, so this is
+		// important to avoid things like backface transmission being shadowed by
+		// contact shadows and so on.
+		SubsurfaceOpacityMFP.bDataIsOpacity = true;
+		SubsurfaceOpacityMFP.Data = min(GBufferData.CustomData.a, 0.99f);
+		SubsurfaceOpacityMFP.Density = SubsurfaceDensityFromOpacity(SubsurfaceOpacityMFP.Data);
+	}
+#endif // STRATA_ENABLED
+
+	return SubsurfaceOpacityMFP;
+}
+
+/* Compute Subsurface transmission */
+float GetShadowFactorSubsurface(float ShadowFactor, float OccluderDistance, FSubsurfaceOpacityMFP SubsurfaceOpacityMFP)
+{
+	if (ShadowFactor < 1.0f)
+	{
+#if STRATA_ENABLED
+		float SSSTransmission = 1.0f;
+		if (SubsurfaceOpacityMFP.bDataIsOpacity)
+		{
+			// Opacity from subsurface profile and subsurface legacy shading model
+			SSSTransmission = GetSubSurfaceTransmission(OccluderDistance, SubsurfaceOpacityMFP.Density);
+		}
+		else
+		{
+			const float MFP = SubsurfaceOpacityMFP.Data;
+			const float Extinction = StrataShadowMFPToExtinction(MFP);
+			const float OpticalDepth = OccluderDistance * Extinction;
+			SSSTransmission = saturate(FastExp(-OpticalDepth));
+		}
+#else
+		// Only opacity in this path
+		float SSSTransmission = GetSubSurfaceTransmission(OccluderDistance, SubsurfaceOpacityMFP.Density);
+#endif
+
+		// NOTE: This 'square' is to compensate the ShadowMask encoding (i.e., sqrt) applied when compositing VSM to shadow mask. 
+		//       This allows to be consistent with the PCF path
+		return Square(lerp(SSSTransmission, 1, ShadowFactor));
+	}
+	return ShadowFactor;
+}

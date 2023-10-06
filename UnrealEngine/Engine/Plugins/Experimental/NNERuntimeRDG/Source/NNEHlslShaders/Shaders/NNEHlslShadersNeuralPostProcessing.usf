@@ -1,0 +1,154 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+
+int InputTextureWidth;
+int InputTextureHeight;
+Texture2D InputTexture;
+SamplerState InputTextureSampler;
+RWBuffer<float> AccumulationBuffer;
+
+int InputBufferWidth;
+int InputBufferHeight;
+RWBuffer<float> InputBuffer;
+
+int OutputBufferWidth;
+int OutputBufferHeight;
+RWBuffer<float> OutputBuffer;
+
+float Weight;
+float RangeScale;
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ReadInput(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	if (DispatchThreadID.x >= InputTextureWidth || DispatchThreadID.y >= InputTextureHeight)
+	{
+		return;
+	}
+
+	float4 InputColor = InputTexture.SampleLevel(InputTextureSampler, float2((float(DispatchThreadID.x) + 0.5) / float(InputTextureWidth), (float(DispatchThreadID.y) + 0.5) / float(InputTextureHeight)), 0);
+
+	int Idx = (DispatchThreadID.y * InputTextureWidth + DispatchThreadID.x) * 3;
+	AccumulationBuffer[Idx + 0] = Weight * InputColor.r;
+	AccumulationBuffer[Idx + 1] = Weight * InputColor.g;
+	AccumulationBuffer[Idx + 2] = Weight * InputColor.b;
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void PreStep(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	if (DispatchThreadID.x >= InputBufferWidth || DispatchThreadID.y >= InputBufferHeight)
+	{
+		return;
+	}
+
+	float WidthFactor = (float)InputTextureWidth / (float)InputBufferWidth;
+	int LoX = (int)floor(WidthFactor * (float)DispatchThreadID.x);
+	int HiX = (int)ceil(WidthFactor * (float)(DispatchThreadID.x + 1));
+
+	float HeightFactor = (float)InputTextureHeight / (float)InputBufferHeight;
+	int LoY = (int)floor(HeightFactor * (float)DispatchThreadID.y);
+	int HiY = (int)ceil(HeightFactor * (float)(DispatchThreadID.y + 1));
+
+	float4 Result = float4(0.0, 0.0, 0.0, 0.0);
+	float Div = 0.0;
+	for (int x = LoX; x < HiX; x++)
+	{
+		if (x < InputTextureWidth)
+		{
+			for (int y = LoY; y < HiY; y++)
+			{
+				if (y < InputTextureHeight)
+				{
+					Result += InputTexture.SampleLevel(InputTextureSampler, float2((x + 0.5) / float(InputTextureWidth), (y + 0.5) / float(InputTextureHeight)), 0);
+					Div += 1.0;
+				}
+			}
+		}
+	}
+	Result /= Div;
+
+	int Idx = DispatchThreadID.y * InputBufferWidth + DispatchThreadID.x;
+	int Offset1 = InputBufferWidth * InputBufferHeight;
+	int Offset2 = Offset1 + Offset1;
+	InputBuffer[Idx] = RangeScale * Result.r;
+	InputBuffer[Idx + Offset1] = RangeScale * Result.g;
+	InputBuffer[Idx + Offset2] = RangeScale * Result.b;
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void PostStep(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	if (DispatchThreadID.x >= InputTextureWidth || DispatchThreadID.y >= InputTextureHeight)
+	{
+		return;
+	}
+
+	float WidthFactor = (float)OutputBufferWidth / (float)InputTextureWidth;
+	float X = WidthFactor * ((float)DispatchThreadID.x + 0.5);
+
+	float HeightFactor = (float)OutputBufferHeight / (float)InputTextureHeight;
+	float Y = HeightFactor * ((float)DispatchThreadID.y + 0.5);
+
+	int Offset1 = OutputBufferWidth * OutputBufferHeight;
+	int Offset2 = Offset1 + Offset1;
+
+	float3 Result;
+#if INTERPOLATE == 0
+	int Idx = (int)Y * OutputBufferWidth + (int)X;
+	Result.r = OutputBuffer[Idx];
+	Result.g = OutputBuffer[Idx + Offset1];
+	Result.b = OutputBuffer[Idx + Offset2];
+#else
+	int LoX = (int)clamp(floor(X - 0.5), 0.0, float(OutputBufferWidth - 1));
+	int HiX = (int)clamp(floor(X + 0.5), 0.0, float(OutputBufferWidth - 1));
+
+	int LoY = (int)clamp(floor(Y - 0.5), 0.0, float(OutputBufferHeight - 1));
+	int HiY = (int)clamp(floor(Y + 0.5), 0.0, float(OutputBufferHeight - 1));
+
+	int Idx;
+	
+	Idx = LoY * OutputBufferWidth + LoX;
+	float3 A = float3(OutputBuffer[Idx], OutputBuffer[Idx + Offset1], OutputBuffer[Idx + Offset2]);
+
+	Idx = LoY * OutputBufferWidth + HiX;
+	float3 B = float3(OutputBuffer[Idx], OutputBuffer[Idx + Offset1], OutputBuffer[Idx + Offset2]);
+
+	Idx = HiY * OutputBufferWidth + LoX;
+	float3 C = float3(OutputBuffer[Idx], OutputBuffer[Idx + Offset1], OutputBuffer[Idx + Offset2]);
+
+	Idx = HiY * OutputBufferWidth + HiX;
+	float3 D = float3(OutputBuffer[Idx], OutputBuffer[Idx + Offset1], OutputBuffer[Idx + Offset2]);
+
+	float Alpha = clamp((X - 0.5) - ((float)LoX), 0.0, 1.0);
+	float Beta = clamp((Y - 0.5) - ((float)LoY), 0.0, 1.0);
+	
+	Result = (1.0 - Beta) * ((1.0 - Alpha) * A + Alpha * B) + Beta * ((1.0 - Alpha) * C + Alpha * D);
+#endif
+
+	int ResultIdx = (DispatchThreadID.y * InputTextureWidth + DispatchThreadID.x) * 3;
+#if OVERWRITE == 0
+	AccumulationBuffer[ResultIdx + 0] += Weight * Result.r / RangeScale;
+	AccumulationBuffer[ResultIdx + 1] += Weight * Result.g / RangeScale;
+	AccumulationBuffer[ResultIdx + 2] += Weight * Result.b / RangeScale;
+#else
+	AccumulationBuffer[ResultIdx + 0] = Weight * Result.r / RangeScale;
+	AccumulationBuffer[ResultIdx + 1] = Weight * Result.g / RangeScale;
+	AccumulationBuffer[ResultIdx + 2] = Weight * Result.b / RangeScale;
+#endif
+}
+
+float4 WriteOutput(float4 Position : SV_POSITION) : SV_Target0
+{
+	int Idx = ((int)Position.y * InputTextureWidth + (int)Position.x) * 3;
+
+	float4 Result;
+	Result.r = AccumulationBuffer[Idx + 0];
+	Result.g = AccumulationBuffer[Idx + 1];
+	Result.b = AccumulationBuffer[Idx + 2];
+	Result.a = 1.0;
+
+	return Result;
+}

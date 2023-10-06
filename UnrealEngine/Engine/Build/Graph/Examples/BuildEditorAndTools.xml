@@ -1,0 +1,171 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+	<!-- 
+		This script shows how to compile the tools and editor binaries required for artists to work with the engine, copy them to a staging directory for distribution, and optionally 
+		submit them to Perforce. 
+		
+		If the -buildmachine option is specified on the command line, the build changelist will be updated in the engine version files (Engine/Source/Runtime/Launch/Resources/Version.h,
+		Engine/Build/Build.version, and Engine/Source/Programs/DotNETCommon/MetaData.cs). This will allow assets to be versioned correctly, preventing data loss if they are opened
+		in an older editor version.
+		
+		Example usage to copy to staging directory:
+		
+			RunUAT.bat BuildGraph -Script=Engine/Build/Graph/Examples/BuildEditorAndTools.xml -Target="Copy To Staging Directory" -P4
+
+		Example usage to submit to Perforce:
+		
+			RunUAT.bat BuildGraph -Script=Engine/Build/Graph/Examples/BuildEditorAndTools.xml -Target="Submit To Perforce" -P4 -Submit
+
+		Example usage to submit a zip file containing binaries to Perforce, for use by UnrealGameSync:
+		
+			RunUAT.bat BuildGraph -Script=Engine/Build/Graph/Examples/BuildEditorAndTools.xml -Target="Submit To Perforce For UGS" -P4 -Submit
+			
+		Other options:
+			-set:EditorTarget=<TargetName>		Specifies the editor target to be built (defaults to UnrealEditor)
+			-set:UProjectPath=<ProjectPath>		Specifies the uproject path to pass as -Project in the compile args (defaults to none)
+			-set:GameTargets=<TargetName>		Specifies the game targets to be built (defaults to none)
+			-set:AdditionalTools=<A>;<B>;<C>..	Specifies the additional tool targets to be built (defaults to none)
+			-set:TargetPlatforms=<A>;<B>;<C>... Specifies the target platforms to build the game for (defaults to Win64)
+			-set:OutputDir=<Path>				Specifies the output directory for the compiled binaries
+			-set:Licensee=true/false			Whether to mark the changelist number as being from a licensee Perforce server (this prevents conflicts with Epic CL's being a higher number)
+			-set:Versioned=true/false			Whether to embed version information in the compiled binaries. This is true by default for build machines.
+			-set:ArchiveStream=<Path>			Stream that will contain zip file of the compiled binaries, for use by UnrealGameSync.
+			-set:ArchiveName=<ArchiveName>		Names of archive to generate instead of using the GameTarget, when the GameTarget may be UnrealEditor and result in a clash.
+			-set:ForceSubmit=true/false			Whether to force submit to happen even if another change has been submitted (resolves in favor of local files)
+			-set:PreferredAgent=<AgentName>		Specifies the agent to use for job, defaults to CompileWin64
+	-->
+
+	<Option Name="EditorTarget" Restrict="[^ ]+" DefaultValue="UnrealEditor" Description="Name of the editor target to be built"/>
+	<Option Name="UProjectPath" Restrict="[^ ]*" DefaultValue="" Description="Optional Uproject path to include in the arguments"/>
+	<Option Name="GameTargets" Restrict="[^ ]*" DefaultValue="" Description="Names of game targets to build separated by semicolons, eg. UnrealClient;UnrealServer"/>
+	<Option Name="AdditionalTools" Restrict="[^ ]*" DefaultValue="" Description="Tool Compiles to build seperated by semicolons, eg. UnrealMultiUserServer;BuildPatchTool"/>
+	<Option Name="TargetPlatforms" Restrict="[^ ]*" DefaultValue="Win64" Description="List of the target platforms to build for, separated by semicolons, eg. Win64;Android"/>
+	<Option Name="OutputDir" DefaultValue="$(RootDir)\LocalBuilds\$(EditorTarget)Binaries" Description ="Output directory for compiled binaries"/>
+	<Option Name="Licensee" Restrict="true|false" DefaultValue="true" Description="Whether to treat the changelist number as being from a licensee Perforce server"/>
+	<Option Name="Versioned" Restrict="true|false" DefaultValue="$(IsBuildMachine)" Description="Whether to embed changelist number into binaries"/>
+	<Option Name="Promoted" Restrict="true|false" DefaultValue="true" Description="Whether to set the promoted flag in version files, allowing the editor to run without UBT."/>
+	<Option Name="ArchiveStream" Restrict="(?://.*)?" DefaultValue="" Description="Stream path that will contain zip file of the compiled binaries, for use by UnrealGameSync"/>
+	<Option Name="ForceSubmit" Restrict="true|false" DefaultValue="false" Description="Forces the submit to happen even if another change has been submitted (resolves in favor of local files)"/>
+	<Option Name="PreferredAgent" DefaultValue="CompileWin64" Description ="Agent type to use for job"/>
+	<Option Name="ArchiveName" Restrict="[^ ]*" DefaultValue="$(EditorTarget)" Description="Names of archive to generate instead of using the GameTarget, when the GameTarget may be UnrealEditor and result in a clash"/>
+	<Option Name="SymbolStorePath" DefaultValue="" Description ="Output directory for symbol storage"/>
+
+	<EnvVar Name="COMPUTERNAME"/>
+	<EnvVar Name="P4CLIENT"/>
+	
+	<Agent Name="Default Agent" Type="$(PreferredAgent)">
+	
+		<!-- Update the engine version files -->
+		<Node Name="Update Version Files">
+			<SetVersion Change="$(Change)" Branch="$(EscapedBranch)" Licensee="$(Licensee)" If="$(Versioned)"/>
+			<SetVersion Change="0" Branch="$(EscapedBranch)" Licensee="$(Licensee)" If="!$(Versioned) and $(Promoted)"/>
+		</Node>
+		
+		<!-- Compile the tool executables -->
+		<Node Name="Compile Tools Win64" Requires="Update Version Files" Produces="#ToolBinaries">
+			<Compile Target="ShaderCompileWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealLightmass" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			<Compile Target="InterchangeWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Win64" Tag="#ToolBinaries"/>
+			<ForEach Name="AdditonalTool" Values="$(AdditionalTools)">
+				<Compile Target="$(AdditonalTool)" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+			</ForEach>
+			
+			<!-- 
+				This exe is a copy of ShaderCompileWorker.exe, created as a post-build step. See \Engine\Source\Programs\ShaderCompileWorker\ShaderCompileWorker.Target.cs.
+				It's needed for shader compilation to work with Incredibuild.
+			-->
+			<Tag Files="$(RootDir)\Engine\Binaries\Win64\XGEControlWorker.exe" With="#ToolBinaries"/>
+		</Node>
+		
+		<!-- Compile the editor executable -->
+		<Node Name="Compile $(EditorTarget) Win64" Produces="#EditorBinaries;#TargetInfo">
+			<Compile Target="$(EditorTarget)" Platform="Win64" Configuration="Development" Project="$(UProjectPath)" Tag="#EditorBinaries"/>
+			<QueryTargets ProjectFile="$(UProjectPath)" Tag="#TargetInfo"/>
+		</Node>
+		
+		<!-- Compile the game targets -->
+		<Property Name="GameBinaries" Value=""/>
+		<ForEach Name="GameTarget" Values="$(GameTargets)">
+			<ForEach Name="TargetPlatform" Values="$(TargetPlatforms)">
+				<Node Name="Compile $(GameTarget) $(TargetPlatform)" Requires="Compile Tools Win64" Produces="#GameBinaries_$(GameTarget)_$(TargetPlatform)">
+					<Compile Target="$(GameTarget)" Platform="$(TargetPlatform)" Configuration="Development" Tag="#GameBinaries_$(GameTarget)_$(TargetPlatform)"/>
+					<Compile Target="$(GameTarget)" Platform="$(TargetPlatform)" Configuration="Shipping" Tag="#GameBinaries_$(GameTarget)_$(TargetPlatform)"/>
+				</Node>
+				<Property Name="GameBinaries" Value="$(GameBinaries)#GameBinaries_$(GameTarget)_$(TargetPlatform);"/>
+			</ForEach>
+		</ForEach>
+		
+		<!-- Copy all the files to the output directory -->
+		<Node Name="Tag Output Files" Requires="#ToolBinaries;#EditorBinaries;#TargetInfo;$(GameBinaries)" Produces="#OutputFiles">
+			<Tag Files="#ToolBinaries;#EditorBinaries;$(GameBinaries)" Except=".../Intermediate/..." With="#OutputFiles"/>
+			<Tag Files="#TargetInfo" With="#OutputFiles"/>
+		</Node>
+
+		<!-- Copy all the files to the output directory -->
+		<Node Name="Copy To Staging Directory" Requires="#OutputFiles">
+			<Delete Files="$(OutputDir)/..."/>
+			<Copy Files="#OutputFiles" From="$(RootDir)" To="$(OutputDir)"/>			
+		</Node>
+
+		<!-- Tag PDBs with source information and write them to a symbol store. Only called if SymbolStorage option supplies a path  -->
+		<Node Name="Store Symbols" Requires="#OutputFiles">			
+			<!-- Embed source info into the PDB files. Should be done from this machine to ensure that paths are correct. -->
+			<Log Message="Embedding source file information into PDB files..." />
+			<Tag Files="Engine/Source/...;Engine/Plugins/..." Filter="*.c;*.h;*.cpp;*.hpp;*.inl" Except="Engine/Source/ThirdParty/..." With="#SourceFiles"/>
+			<SrcSrv BinaryFiles="#BinaryFiles" SourceFiles="#SourceFiles" Branch="$(Branch)" Change="$(CodeChange)"/>
+			<Log Message="Writing symbols to $(SymbolStorePath)"/>
+			<SymStore Platform="Win64" Files="#OutputFiles" StoreDir="$(SymbolStorePath)" Product="UGSEditor" BuildVersion="$(CodeChange)"/>
+		</Node>
+
+		<!-- Dependencies required for submitting binaries -->
+		<Property Name="SubmissionDependencies" Value="#OutputFiles" />
+		<Property Name="SubmissionDependencies" Value="$(SubmissionDependencies); Store Symbols" If="'$(SymbolStorePath)' != ''" />
+
+		<!-- Submit the build products to Perforce. -->
+		<Node Name="Submit To Perforce" Requires="$(SubmissionDependencies)">
+			<Submit Description="[CL $(CodeChange)] Updated binaries" Files="#OutputFiles" FileType="binary+FS32"/>
+		</Node>	
+		
+		<!-- Create a zip archive and submit that to Perforce for use by UGS -->
+		<Node Name="Submit To Perforce For UGS" Requires="$(SubmissionDependencies)">
+			<!-- Clear out the archive directory -->
+			<Property Name="ArchiveDir" Value="$(RootDir)\LocalBuilds\ArchiveForUGS"/>
+			<Delete Files="$(ArchiveDir)\..."/>
+
+			<!-- Tag AutomationTool build folder recursively -->
+			<Tag Files="Engine/Binaries/DotNET/AutomationTool/..." With="#ArchiveBinaries"/>
+			
+			<!-- Write a text file marker indicating that we're using precompiled binaries -->
+			<Spawn Exe="cmd.exe" Arguments="/C echo. &gt;&quot;$(RootDir)/Engine/Build/PrecompiledBinaries.txt&quot;"/>
+			<Tag Files="$(RootDir)/Engine/Build/PrecompiledBinaries.txt" With="#ArchiveFiles"/>
+
+			<!-- Partition all the binaries and symbols -->
+			<Tag Files="#OutputFiles" Except=".../Intermediate/..." With="#ArchiveFiles"/>
+			<Tag Files="#ArchiveFiles" Except="*.pdb" With="#ArchiveBinaries"/>
+			<Tag Files="#ArchiveFiles" Filter="*.pdb" With="#ArchiveSymbols"/>
+
+			<!-- List all the files being archived -->
+			<Log Message="Archive binaries:" Files="#ArchiveBinaries"/>
+			<Log Message="Archive symbols:" Files="#ArchiveSymbols"/>
+
+			<!-- Stage all the files to be archived -->
+			<Property Name="ArchiveStagingDir" Value="$(ArchiveDir)\Staging"/>
+			<Copy Files="#ArchiveBinaries" From="$(RootDir)" To="$(ArchiveStagingDir)"/>
+			<Strip Files="#ArchiveSymbols" BaseDir="$(RootDir)" OutputDir="$(ArchiveStagingDir)" Platform="Win64"/>
+
+
+			<!-- Create the zip file and submit it to Perforce -->
+			<Property Name="ArchivePerforceDir" Value="$(ArchiveDir)\Perforce"/>
+			<Property Name="ArchiveFile" Value="$(ArchivePerforceDir)\$(EscapedBranch)-$(ArchiveName).zip"/>
+			<Zip FromDir="$(ArchiveStagingDir)" ZipFile="$(ArchiveFile)"/>
+			<Warning Message="The 'ArchiveStream' argument is not set. Binaries will not be submitted." If="'$(ArchiveStream)' == ''"/>
+			<Property Name="SubmitClient" Value="$(COMPUTERNAME)_ArchiveForUGS"/>
+			<Property Name="SubmitClient" Value="$(P4CLIENT)_ArchiveForUGS" If="'$(P4CLIENT)' != ''"/>
+			<Submit Description="[CL $(CodeChange)] Updated binaries" Files="$(ArchiveFile)" FileType="binary+FS32" Workspace="$(SubmitClient)" Stream="$(ArchiveStream)" RootDir="$(ArchivePerforceDir)" Force="$(ForceSubmit)" If="'$(ArchiveStream)' != ''"/>
+		</Node>
+		
+	</Agent>
+
+</BuildGraph>

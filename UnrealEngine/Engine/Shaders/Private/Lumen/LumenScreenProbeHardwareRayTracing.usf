@@ -1,0 +1,172 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../MonteCarlo.ush"
+#include "../SceneTextureParameters.ush"
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#define RADIANCE_CACHE_DEPTH_TEST_SPHERE_PARALLAX 1
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenScreenProbeCommon.ush"
+#include "LumenScreenProbeTracingCommon.ush"
+
+#ifndef THREADGROUP_SIZE_2D
+	#define THREADGROUP_SIZE_2D 8
+#endif
+
+#ifndef THREADGROUP_SIZE_1D
+	#define THREADGROUP_SIZE_1D THREADGROUP_SIZE_2D * THREADGROUP_SIZE_2D
+#endif
+
+RWBuffer<uint> RWHardwareRayTracingIndirectArgs;
+uint2 OutputThreadGroupSize;
+
+[numthreads(1, 1, 1)]
+void FLumenScreenProbeHardwareRayTracingIndirectArgsCS()
+{
+	WriteDispatchIndirectArgs(RWHardwareRayTracingIndirectArgs, 0, (CompactedTraceTexelAllocator[0] + OutputThreadGroupSize.x - 1) / OutputThreadGroupSize.x, 1, 1);
+}
+
+
+#if LUMEN_HARDWARE_RAYTRACING || LUMEN_HARDWARE_INLINE_RAYTRACING
+
+float3 FarFieldReferencePos;
+
+#include "LumenHardwareRayTracingCommon.ush"
+
+RaytracingAccelerationStructure TLAS;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+StructuredBuffer<FHitGroupRootConstants> HitGroupData;
+StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+float MaxTraceDistance;
+float NearFieldSceneRadius;
+float NearFieldMaxTraceDistance;
+float FarFieldBias;
+float FarFieldMaxTraceDistance;
+float PullbackBias;
+float NormalBias;
+float AvoidSelfIntersectionTraceDistance;
+float SkipFirstTwoSidedHitDistance;
+uint MaxTraversalIterations;
+float MinTraceDistanceToSampleSurfaceCache;
+
+LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenScreenProbeGatherHardwareRayTracing)
+{
+	uint ThreadIndex = DispatchThreadIndex.x;
+	uint GroupIndex = DispatchThreadIndex.y;
+	uint CompactedTraceIndex = GroupIndex * THREADGROUP_SIZE_1D + ThreadIndex;
+
+	if (CompactedTraceIndex < CompactedTraceTexelAllocator[0])
+	{
+		uint ScreenProbeIndex;
+		uint2 TraceTexelCoord;
+		DecodeScreenProbeTraceTexel(CompactedTraceTexelData[CompactedTraceIndex], ScreenProbeIndex, TraceTexelCoord);
+
+		uint2 ScreenProbeScreenPosition = GetScreenProbeScreenPosition(ScreenProbeIndex);
+		uint2 ScreenTileCoord = GetScreenTileCoord(ScreenProbeScreenPosition);
+		uint LinearCoord = ScreenTileCoord.y * ScreenProbeViewSize.x + ScreenTileCoord.x;
+
+		float2 ScreenUV = GetScreenUVFromScreenProbePosition(ScreenProbeScreenPosition);
+		uint2 ScreenProbeAtlasCoord = uint2(ScreenProbeIndex % ScreenProbeAtlasViewSize.x, ScreenProbeIndex / ScreenProbeAtlasViewSize.x);
+		uint2 ScreenProbeTraceCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
+
+		float TraceHitDistance = DecodeProbeRayDistance(RWTraceHit[ScreenProbeTraceCoord]).HitDistance;
+
+		float SceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+
+		float2 ProbeUV;
+		float ConeHalfAngle;
+		GetProbeTracingUV(ScreenProbeTraceCoord, TraceTexelCoord, GetProbeTexelCenter(ScreenTileCoord), 1, ProbeUV, ConeHalfAngle);
+
+		FRayDesc Ray;
+		Ray.Origin = TranslatedWorldPosition;
+		Ray.Direction = EquiAreaSphericalMapping(ProbeUV);
+		Ray.TMin = max(TraceHitDistance - PullbackBias, 0.0);
+
+		#if ENABLE_FAR_FIELD_TRACING
+		{
+			Ray.TMin = max(Ray.TMin, FarFieldBias);
+		}
+		#endif
+
+		bool bBackfaceRay;
+		float3 ProbeWorldNormalForBiasing = GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, Ray.Direction, bBackfaceRay);
+		Ray.Origin += NormalBias * ProbeWorldNormalForBiasing;
+
+		FRayCone RayCone = (FRayCone)0;
+		RayCone = PropagateRayCone(RayCone, ConeHalfAngle, 0.0);
+
+		uint CullingMode = 0;
+		FRayTracedLightingContext Context = CreateRayTracedLightingContext(
+			RayCone,
+			ScreenTileCoord,
+			ScreenTileCoord.y * ScreenProbeViewSize.x + ScreenTileCoord.x,
+			CullingMode,
+			MaxTraversalIterations);
+		Context.bCalculateHitVelocity = true;
+		Context.MinTraceDistanceToSampleSurfaceCache = MinTraceDistanceToSampleSurfaceCache;
+
+		#if LUMEN_HARDWARE_INLINE_RAYTRACING
+		{
+			Context.HitGroupData = HitGroupData;
+			Context.RayTracingSceneMetadata = RayTracingSceneMetadata;
+		}
+		#endif
+
+		bool bReachedRadianceCache = false;
+
+		float ClippedNearFieldMaxTraceDistance = ClipAndDitherNearFieldMaxTraceDistance(
+			Ray.Origin,
+			Ray.Direction,
+			ScreenTileCoord,
+			NearFieldSceneRadius,
+			NearFieldMaxTraceDistance,
+			/*NearFieldMaxTraceDistanceDitherScale*/ 0.0f);
+
+		Ray.TMax = max(ClippedNearFieldMaxTraceDistance, Ray.TMin);
+
+		#if DIM_RADIANCE_CACHE
+		{
+			float3 RayOriginWorldPos = Ray.Origin - LWCHackToFloat(PrimaryView.PreViewTranslation);
+			FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(RayOriginWorldPos, Ray.Direction, 0); // LUMEN_LWC_TODO
+			if (Coverage.bValid)
+			{
+				Ray.TMax = min(Ray.TMax, Coverage.MinTraceDistanceBeforeInterpolation);
+				bReachedRadianceCache = true;
+			}
+		}
+		#endif
+
+		// Set far-field context specialization
+		Context.FarFieldMaxTraceDistance = FarFieldMaxTraceDistance;
+		Context.FarFieldReferencePos = FarFieldReferencePos;
+		
+		FRayTracedLightingResult Result = TraceAndCalculateRayTracedLightingFromSurfaceCache(TLAS, Ray, Context);
+
+		bool bMoving = false;
+		if (Result.bIsHit)
+		{
+			float3 HitTranslatedWorldPosition = Ray.Origin + Ray.Direction * Result.TraceHitDistance;
+			bMoving = IsTraceMoving(TranslatedWorldPosition, SceneDepth, ScreenProbeAtlasCoord, HitTranslatedWorldPosition, Result.WorldVelocity);
+		}
+
+		Result.Radiance += GetSkylightLeaking(Ray.Direction, Result.TraceHitDistance);
+		Result.Radiance *= View.PreExposure;
+
+		if (SampleHeightFog > 0)
+		{
+			float3 OriginToCollider = Ray.Direction * Result.TraceHitDistance;
+			float CoverageForFog = 1.0; // There is always something or the sky fallback.
+			Result.Radiance.rgb = GetFogOnLuminance(Result.Radiance.rgb, CoverageForFog, OriginToCollider);
+		}
+
+		RWTraceRadiance[ScreenProbeTraceCoord] = Result.Radiance;
+		RWTraceHit[ScreenProbeTraceCoord] = EncodeProbeRayDistance(min(Result.TraceHitDistance, MaxTraceDistance), Result.bIsHit, bMoving, bReachedRadianceCache);
+	}
+}
+
+#endif // LUMEN_HARDWARE_RAYTRACING || LUMEN_HARDWARE_INLINE_RAYTRACING

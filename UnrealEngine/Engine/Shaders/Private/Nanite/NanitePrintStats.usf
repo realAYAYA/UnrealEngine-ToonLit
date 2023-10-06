@@ -1,0 +1,444 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+#if SHADER_PRINT_STATS
+#include "../ShaderPrint.ush"
+#endif
+
+#include "NaniteCulling.ush"
+
+#ifndef VIRTUAL_TEXTURE_TARGET
+#define VIRTUAL_TEXTURE_TARGET 0
+#endif
+
+uint PackedClusterSize;
+
+uint NumMainPassRasterBins;
+uint NumPostPassRasterBins;
+uint NumShadingBins;
+
+StructuredBuffer<FQueueState>				QueueState;
+Buffer<uint>								MainPassRasterizeArgsSWHW;
+Buffer<uint>								PostPassRasterizeArgsSWHW;
+
+StructuredBuffer<FNaniteRasterBinMeta>		MainPassRasterBinMeta;
+StructuredBuffer<FNaniteRasterBinMeta>		PostPassRasterBinMeta;
+Buffer<uint>								MaterialIndirectArgs;
+
+StructuredBuffer<FNaniteShadingBinMeta>		ShadingBinMeta;
+StructuredBuffer<FNaniteShadingBinStats>	ShadingBinStats;
+
+StructuredBuffer<FNaniteStats>				InStatsBuffer;
+RWStructuredBuffer<FNaniteStats>			OutStatsBuffer;
+
+RWBuffer<uint>								OutClusterStatsArgs;
+
+#if SHADER_PRINT_STATS
+
+void PrintLeftAlign(inout FShaderPrintContext Context, uint Value)
+{
+	int Len = 9;
+	
+	uint Tmp = Value;
+	while (Tmp >= 10)
+	{
+		Tmp /= 10;
+		Len--;
+	}
+
+	while (Len > 0)
+	{
+		PrintSymbol(Context, _SPC_);
+		Len--;
+	}
+		
+
+	Print(Context, Value);
+}
+
+[numthreads(1, 1, 1)]
+void PrintStats()
+{
+	const uint HWClusterCounterIndex = GetHWClusterCounterIndex(RenderFlags);
+
+	const float TopMargin = 0.05f;
+	const float HeadlineX = 0.77f;
+	const float ItemX = 0.78f;
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(HeadlineX, TopMargin));
+
+#if PRINT_PASS == 0
+	// Main Pass
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Main"), FontOrange);
+	Newline(Context);
+
+	if (InStatsBuffer[0].NumPrimaryViews > 0)
+	{
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Pri Views "), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].NumPrimaryViews);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Views     "), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].NumTotalViews);
+		Newline(Context);
+	}
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   H-Cells"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainHierarchyCellsPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Pre-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainInstancesPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT(" Post-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainInstancesPostCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("NodeVisits"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainVisitedNodes);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Candidates"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainCandidateClusters);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersSW"), FontYellow);
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0]);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersHW"), FontYellow);
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+	
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+	Newline(Context);
+#else
+	Context.Pos.y += (InStatsBuffer[0].NumPrimaryViews > 0 ? 11 : 9) * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 0
+
+#if TWO_PASS_CULLING
+#if PRINT_PASS == 1
+	// Post Pass
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Post"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   H-Cells"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostHierarchyCellsPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Pre-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostInstancesPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT(" Post-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostInstancesPostCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("NodeVisits"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostVisitedNodes);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Candidates"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostCandidateClusters);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersSW"), FontYellow);
+	PrintLeftAlign(Context, PostPassRasterizeArgsSWHW[0]);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersHW"), FontYellow);
+	PrintLeftAlign(Context, PostPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+	PrintLeftAlign(Context, PostPassRasterizeArgsSWHW[0] + PostPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+	Newline(Context);
+#else
+	Context.Pos.y += 9 * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 1
+#endif
+
+#if PRINT_PASS == 2
+	// Total
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Total"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+#if TWO_PASS_CULLING
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex] + PostPassRasterizeArgsSWHW[0] + PostPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+#else
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+#endif
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("      Tris"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumTris);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Verts"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumVerts);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("LGE P-RECT"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumLargePageRectClusters);
+#else
+	Context.Pos.y += 6 * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 2
+
+#if PRINT_PASS == 3
+	// Materials: Raster Bins
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Raster Bins"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Total"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumTotalRasterBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Empty"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumEmptyRasterBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   MainInd"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainPassIndirections);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   PostInd"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostPassIndirections);
+	Newline(Context);
+	Newline(Context);
+
+	// Materials: Shading Bins
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Shading Bins"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Total"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumTotalShadingBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Empty"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumEmptyShadingBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Quads"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumShadedQuads);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("    Pixels"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumShadedPixels);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   Helpers"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumHelperLanes);
+	Newline(Context);
+
+	const float InactivePct = float(InStatsBuffer[0].NumHelperLanes) / float(InStatsBuffer[0].NumShadedPixels);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Inactive %"), FontYellow);
+	PrintLeftAlign(Context, uint(round(InactivePct * 100.0f)));
+#endif // PRINT_PASS == 3
+}
+
+#endif // SHADER_PRINT_STATS
+
+#if SHADER_CALCULATE_STATS
+
+[numthreads(1, 1, 1)]
+void CalculateRasterStats()
+{
+	const uint HWClusterCounterIndex = GetHWClusterCounterIndex(RenderFlags);
+	uint NumClusters = MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex];
+#if TWO_PASS_CULLING
+	NumClusters += PostPassRasterizeArgsSWHW[0] + PostPassRasterizeArgsSWHW[HWClusterCounterIndex];
+#endif
+	
+	OutClusterStatsArgs[0] = (NumClusters + 63) / 64;
+	OutClusterStatsArgs[1] = 1;
+	OutClusterStatsArgs[2] = 1;
+
+	// Other stuff that needs to happen only once
+	OutStatsBuffer[0].NumMainVisitedNodes		= QueueState[0].PassState[0].NodeWriteOffset;
+	OutStatsBuffer[0].NumMainCandidateClusters	= QueueState[0].PassState[0].ClusterWriteOffset;
+	OutStatsBuffer[0].NumPostVisitedNodes		= QueueState[0].PassState[1].NodeWriteOffset;
+	OutStatsBuffer[0].NumPostCandidateClusters	= QueueState[0].PassState[1].ClusterWriteOffset;
+
+	uint NumEmptyRasterBins = 0;
+	uint NumTotalRasterBins = NumMainPassRasterBins;
+	uint NumMainPassIndirections = 0;
+	uint NumPostPassIndirections = 0;
+
+	LOOP
+	for (uint RasterBinIndex = 0; RasterBinIndex < NumMainPassRasterBins; ++RasterBinIndex)
+	{
+		const uint BinSWCount = MainPassRasterBinMeta[RasterBinIndex].BinSWCount;
+		const uint BinHWCount = MainPassRasterBinMeta[RasterBinIndex].BinHWCount;
+
+		const uint BinIndirections = BinSWCount + BinHWCount;
+
+		if (BinIndirections == 0)
+		{
+			++NumEmptyRasterBins;
+		}
+		else
+		{
+			NumMainPassIndirections += BinIndirections;
+		}
+	}
+
+#if TWO_PASS_CULLING
+	NumTotalRasterBins += NumPostPassRasterBins;
+
+	LOOP
+	for (uint RasterBinIndex = 0; RasterBinIndex < NumPostPassRasterBins; ++RasterBinIndex)
+	{
+		const uint BinSWCount = PostPassRasterBinMeta[RasterBinIndex].BinSWCount;
+		const uint BinHWCount = PostPassRasterBinMeta[RasterBinIndex].BinHWCount;
+
+		const uint BinIndirections = BinSWCount + BinHWCount;
+
+		if (BinIndirections == 0)
+		{
+			++NumEmptyRasterBins;
+		}
+		else
+		{
+			NumPostPassIndirections += BinIndirections;
+		}
+	}
+#endif
+
+	OutStatsBuffer[0].NumTotalRasterBins		= NumTotalRasterBins;
+	OutStatsBuffer[0].NumEmptyRasterBins		= NumEmptyRasterBins;
+	OutStatsBuffer[0].NumTotalShadingBins		= 0;
+	OutStatsBuffer[0].NumEmptyShadingBins		= 0;
+	OutStatsBuffer[0].NumShadedQuads			= 0;
+	OutStatsBuffer[0].NumShadedPixels			= 0;
+	OutStatsBuffer[0].NumHelperLanes			= 0;
+	OutStatsBuffer[0].NumMainPassIndirections	= NumMainPassIndirections;
+	OutStatsBuffer[0].NumPostPassIndirections	= NumPostPassIndirections;
+}
+
+[numthreads(1, 1, 1)]
+void CalculateShadingStats()
+{
+	uint NumEmptyShadingBins = 0;
+
+	LOOP
+	for (uint ShadingBinIndex = 0; ShadingBinIndex < NumShadingBins; ++ShadingBinIndex)
+	{
+	#if LEGACY_CULLING
+		static const uint ArgCount = DRAW_INDEXED_INDIRECT_UINT_COUNT + DISPATCH_INDIRECT_NO_PADDING_UINT_COUNT;
+		if (MaterialIndirectArgs[ShadingBinIndex * ArgCount + 1] == 0)
+	#else
+		static const uint ArgCount = 4u;
+		if (MaterialIndirectArgs[ShadingBinIndex * ArgCount] == 0)
+	#endif
+		{
+			++NumEmptyShadingBins;
+		}
+	}
+
+	OutStatsBuffer[0].NumTotalShadingBins = NumShadingBins;
+	OutStatsBuffer[0].NumEmptyShadingBins = NumEmptyShadingBins;
+
+	OutStatsBuffer[0].NumShadedQuads  = ShadingBinStats[0].TotalQuadCount;
+	OutStatsBuffer[0].NumShadedPixels = ShadingBinStats[0].TotalPixelCount - ShadingBinStats[0].TotalHelperCount; // Don't count helper lanes as pixels
+	OutStatsBuffer[0].NumHelperLanes  = ShadingBinStats[0].TotalHelperCount;
+}
+
+#endif // SHADER_CALCULATE_STATS
+
+#if SHADER_CALCULATE_CLUSTER_STATS
+
+groupshared uint GroupNumTris;
+groupshared uint GroupNumVerts;
+groupshared uint GroupIndexDataSize;
+groupshared uint GroupPositionDataSize;
+groupshared uint GroupAttribDataSize;
+
+[numthreads(64, 1, 1)]
+void CalculateClusterStats(
+	uint DispatchThreadIndex : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex
+	)
+{
+	const uint HWClusterCounterIndex = GetHWClusterCounterIndex(RenderFlags);
+
+	if (GroupIndex == 0)
+	{
+		GroupNumTris = 0;
+		GroupNumVerts = 0;
+		GroupIndexDataSize = 0;
+		GroupPositionDataSize = 0;
+		GroupAttribDataSize = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	uint NumClustersSW = MainPassRasterizeArgsSWHW[0];
+	uint NumClustersHW = MainPassRasterizeArgsSWHW[HWClusterCounterIndex];
+
+#if TWO_PASS_CULLING
+	NumClustersSW += PostPassRasterizeArgsSWHW[0];
+	NumClustersHW += PostPassRasterizeArgsSWHW[HWClusterCounterIndex];
+#endif
+
+	if (DispatchThreadIndex < NumClustersSW + NumClustersHW)
+	{
+		FVisibleCluster VisCluster = GetVisibleCluster((DispatchThreadIndex < NumClustersSW) ? DispatchThreadIndex : ( (MaxVisibleClusters - 1) - (DispatchThreadIndex - NumClustersSW) ), VIRTUAL_TEXTURE_TARGET != 0);
+		
+		FCluster Cluster = GetCluster(VisCluster.PageIndex, VisCluster.ClusterIndex);
+
+		InterlockedAdd(GroupNumTris,  Cluster.NumTris);
+		InterlockedAdd(GroupNumVerts, Cluster.NumVerts);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupIndex == 0)
+	{
+		InterlockedAdd(OutStatsBuffer[0].NumTris,  GroupNumTris);
+		InterlockedAdd(OutStatsBuffer[0].NumVerts, GroupNumVerts);
+	}
+}
+
+#endif // SHADER_CALCULATE_CLUSTER_STATS

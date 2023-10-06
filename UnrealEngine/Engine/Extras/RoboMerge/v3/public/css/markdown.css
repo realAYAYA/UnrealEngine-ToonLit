@@ -1,0 +1,46 @@
+.rendered-markdown {
+    /* If we surround this class's <div> with the .text class, we don't need to specify a width ourselves.
+    width: 90%;
+    */
+    display: block;
+}
+
+.rendered-markdown code {
+    border: 1px grey solid;
+    padding: .5em;
+    background-color: #E8E8E8;
+    display: inline-block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
+
+.rendered-markdown code,
+.rendered-markdown td {
+    overflow: hidden;
+    min-width: 4em;
+    /*width:100%;*/
+}
+
+.rendered-markdown h1,
+.rendered-markdown h2,
+.rendered-markdown h3,
+.rendered-markdown h4,
+.rendered-markdown h5,
+.rendered-markdown h6 {
+    margin-top: 1em;
+    text-decoration: underline;
+}
+
+.rendered-markdown li p {
+    margin: 0;
+}
+
+.rendered-markdown em {
+    text-decoration: underline;
+}
+
+/* Fixing some strange display issues with Bootstrap responsive tables */
+.rendered-markdown .table-responsive {
+    display: table
+}

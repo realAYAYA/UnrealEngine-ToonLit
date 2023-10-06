@@ -1,0 +1,90 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../HTileEncoding.ush"
+#include "../VelocityCommon.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+
+#if PLATFORM_SUPPORTS_HTILE_LOOKUP
+
+uint4 ViewRect;
+uint4 HTileConfig;
+
+Texture2D<float> SceneDepth;
+
+Texture2D<uint>   ShadingMask;
+ByteAddressBuffer MaterialDepthTable;
+
+StructuredBuffer<uint> SceneHTileBuffer;
+StructuredBuffer<uint> MaterialHTileBuffer;
+
+RWTexture2D<float> SceneZDecoded;
+RWTexture2D<uint4> SceneZLayout;
+
+RWTexture2D<float> MaterialZDecoded;
+RWTexture2D<uint4> MaterialZLayout;
+
+// TODO: Need to adjust this to properly support dynamic res scaling on SceneDepth
+
+[numthreads(8, 8, 1)]
+void DepthDecode(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
+{
+	const uint2 PixelLocalPos = SwizzleThreadIndex(ThreadIndex & 63u);
+	const uint2 PixelPos = ((GroupId << 3) | PixelLocalPos) + uint2(ViewRect.xy);
+
+	if (any(PixelPos.xy >= ViewRect.zw)) // TODO: Support offset views
+	{
+		return;
+	}
+
+	const uint PlatformConfig		= HTileConfig.x;
+	const uint PixelsWide			= HTileConfig.y;
+	const bool HiStencil			= IsHiStencilTileConfig(PlatformConfig);
+	const bool Is32BytePadded		= Is32BytePaddedTileConfig(PlatformConfig);
+	const bool CompareMinZ			= true;
+	const uint TileIndex			= ToScalarMemory(ComputeTileOffset(PixelPos.xy, PixelsWide, PlatformConfig));
+
+	// Reverse Z Clear Value
+	const float ClearValue = 0.0f;
+	
+	// Material Depth
+	{
+		const uint  MaterialHTileEnc		= MaterialHTileBuffer[TileIndex];
+		const uint2 MaterialTileMinMaxFP	= DecodeTileMinMax(MaterialHTileEnc, HiStencil, CompareMinZ);
+		const float2 MaterialTileMinMax		= MaterialTileMinMaxFP / (float2)((1 << 14) - 1); // 14bit fixed point
+		const uint MaterialTileZMask		= BitFieldExtractU32(MaterialHTileEnc, 4u, 0u);
+
+		FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PixelPos.xy]);
+
+		const uint MaterialDepthId = GetMaterialDepthId(UnpackedMask.ShadingBin, MaterialDepthTable);
+		MaterialZDecoded[PixelPos.xy] = asfloat(MaterialDepthId);
+
+		// Raw, Packed Min/Max, ZMask, TileIndex
+		MaterialZLayout[PixelPos.xy] = uint4(MaterialHTileEnc, f32tof16(MaterialTileMinMax.x) | (f32tof16(MaterialTileMinMax.y) << 16), MaterialTileZMask, TileIndex);
+	}
+
+	// Scene Depth
+	{
+		const uint  SceneHTileEnc			= SceneHTileBuffer[TileIndex];
+		const uint2 SceneTileMinMaxFP		= DecodeTileMinMax(SceneHTileEnc, HiStencil, CompareMinZ);
+		const float2 SceneTileMinMax		= SceneTileMinMaxFP / (float2)((1 << 14) - 1); // 14bit fixed point
+		const uint SceneTileZMask			= BitFieldExtractU32(SceneHTileEnc, 4u, 0u);
+
+		SceneZDecoded[PixelPos.xy] = DecompressDepthValue(SceneDepth, SceneTileZMask, PixelPos.xy, ThreadIndex, ClearValue, PlatformConfig);
+
+		// Raw, Packed Min/Max, ZMask, TileIndex
+		SceneZLayout[PixelPos.xy] = uint4(SceneHTileEnc, f32tof16(SceneTileMinMax.x) | (f32tof16(SceneTileMinMax.y) << 16), SceneTileZMask, TileIndex);
+	}
+}
+
+#else
+
+[numthreads(8, 8, 1)]
+void DepthDecode(uint3 PixelPos : SV_DispatchThreadID, uint ThreadIndex : SV_GroupIndex)
+{
+}
+
+#endif

@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+  <Property Name="TestNames" Value="$(TestNames);HeadlessChaos" />
+  <Property Name="HeadlessChaosUsesCatch2" Value="False" />
+  <Property Name="HeadlessChaosDisabled" Value="False" />
+  <Property Name="HeadlessChaosShort" Value="Headless Chaos" />
+  <Property Name="HeadlessChaosStagesWithProjectFile" Value="False" />
+  <Property Name="HeadlessChaosTarget" Value="HeadlessChaos" />
+  <Property Name="HeadlessChaosBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="HeadlessChaosReportType" Value="console" />
+  <Property Name="HeadlessChaosInitialExtraArgs" />
+  <Property Name="HeadlessChaosHasAfterSteps" Value="False" />
+  <Property Name="HeadlessChaosUsesCatch2" Value="False" />
+  <Option Name="RunHeadlessChaosTests" DefaultValue="False" Description="Run Headless Chaos Tests" />
+  <Property Name="HeadlessChaosSupportedPlatforms" Value="Win64" />
+  <Property Name="Win64HeadlessChaosTags" Value="" />
+  <Property Name="MacHeadlessChaosTags" Value="" />
+  <Property Name="IOSHeadlessChaosTags" Value="" />
+  <Property Name="AndroidHeadlessChaosTags" Value="" />
+  <Property Name="LinuxHeadlessChaosTags" Value="" />
+  <Property Name="LinuxArm64HeadlessChaosTags" Value="" />
+  <Property Name="TVOSHeadlessChaosTags" Value="" />
+  <Property Name="Win64HeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="MacHeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="IOSHeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="AndroidHeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="LinuxHeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="LinuxArm64HeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="TVOSHeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="Win64HeadlessChaosRunSupported" Value="True" />
+  <Property Name="MacHeadlessChaosRunSupported" Value="True" />
+  <Property Name="IOSHeadlessChaosRunSupported" Value="False" />
+  <Property Name="AndroidHeadlessChaosRunSupported" Value="False" />
+  <Property Name="LinuxHeadlessChaosRunSupported" Value="True" />
+  <Property Name="LinuxArm64HeadlessChaosRunSupported" Value="True" />
+  <Property Name="TVOSHeadlessChaosRunSupported" Value="True" />
+</BuildGraph>

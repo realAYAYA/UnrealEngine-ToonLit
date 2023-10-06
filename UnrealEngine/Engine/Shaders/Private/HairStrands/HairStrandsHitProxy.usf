@@ -1,0 +1,92 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+float3 DecodeVelocityFromTexture(float4 EncodedV);
+#include "HairStrandsVisibilityCommon.ush" 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if SHADER_HITPROXY_ID
+
+float 							 CoverageThreshold;
+uint							 MaxMaterialCount;
+Buffer<uint>					 MaterialIdToHitProxyIdBuffer;
+Texture2D<uint>					 VisNodeIndex;
+StructuredBuffer<FPackedHairVis> VisNodeData;
+Texture2D<float>				 CoverageTexture;
+
+void EmitPS(
+	in float4 SvPosition : SV_Position,
+	out float4 OutHitProxyId : SV_Target0,
+	out float OutDepth : SV_Depth)
+{
+	const uint2 PixelCoord = (uint2)SvPosition.xy;
+
+	// Take the first sample
+	const FNodeDesc NodeDesc = DecodeNodeDesc(VisNodeIndex.Load(uint3(PixelCoord,0)));
+	const float Coverage = CoverageTexture.Load(uint3(PixelCoord, 0));
+	if (NodeDesc.Count > 0 && Coverage >= CoverageThreshold)
+	{
+		const uint SampleIndex = NodeDesc.Offset + 0;
+		const FHairVis InNode  = UnpackHairVis(VisNodeData[SampleIndex]);
+		const uint MaterialId  = clamp(InNode.MaterialId, 0, MaxMaterialCount-1);
+		const uint MaterialHitProxyId = MaterialIdToHitProxyIdBuffer[MaterialId];
+
+		float4 HitProxyId = float4(
+			float((MaterialHitProxyId >> 16) & 0xFF) / 255.0f,
+			float((MaterialHitProxyId >> 8) & 0xFF) / 255.0f,
+			float((MaterialHitProxyId >> 0) & 0xFF) / 255.0f,
+			0);
+		OutHitProxyId = HitProxyId;
+		OutDepth = InNode.Depth;
+	}
+	else
+	{
+		discard;
+	}
+}
+
+#endif // SHADER_HITPROXY_ID
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if SHADER_SELECTION
+
+float							 CoverageThreshold;
+float2							 InvViewportResolution;
+uint							 MaxMaterialCount;
+Buffer<uint>					 SelectionMaterialIdBuffer;
+Texture2D<uint>					 VisNodeIndex;
+StructuredBuffer<FPackedHairVis> VisNodeData;
+Texture2D<float>				 CoverageTexture;
+
+void EmitPS(
+	in float4 SvPosition : SV_Position,
+	out float OutDepth : SV_Depth)
+{
+	const float2 UV = SvPosition.xy * InvViewportResolution;
+	const uint2 PixelCoord = UV * View.ViewSizeAndInvSize.xy;
+
+	// Take the first sample
+	const FNodeDesc NodeDesc = DecodeNodeDesc(VisNodeIndex.Load(uint3(PixelCoord, 0)));
+	bool bIsSelected = false;
+	if (NodeDesc.Count > 0)
+	{
+		const float Coverage = CoverageTexture.Load(uint3(PixelCoord, 0));
+		const uint SampleIndex = NodeDesc.Offset + 0;
+		const FHairVis InNode = UnpackHairVis(VisNodeData[SampleIndex]);
+		const uint MaterialId = clamp(InNode.MaterialId, 0, MaxMaterialCount - 1);
+		if (SelectionMaterialIdBuffer[MaterialId] > 0 && Coverage >= CoverageThreshold)
+		{
+			bIsSelected = true;
+			OutDepth = InNode.Depth;
+		}
+	}
+
+	if (!bIsSelected)
+	{
+		discard;
+	}
+}
+
+#endif // SHADER_SELECTION

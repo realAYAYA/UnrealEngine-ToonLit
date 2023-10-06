@@ -1,0 +1,107 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp2.0</TargetFramework>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <AssemblyName>p4api.net</AssemblyName>
+    <RootNamespace>Perforce.P4</RootNamespace>
+    <PackageId>p4api.net.core</PackageId>
+    <RunPostBuildEvent>OnBuildSuccess</RunPostBuildEvent>
+    <Copyright>Copyright (C) 2020 Perforce Software, Inc.</Copyright>
+    <Version>2020.2.207.5590</Version>
+    <FileVersion>2020.2.207.5590</FileVersion>
+    <AssemblyVersion>2020.2.207.5590</AssemblyVersion>
+    <InformationalVersion>2020.2.207.5590</InformationalVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <OutputPath>..\bin\Release</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\p4api.net\BranchSpec.cs" Link="BranchSpec.cs" />
+    <Compile Include="..\p4api.net\BridgeInterfaceClasses.cs" Link="BridgeInterfaceClasses.cs" />
+    <Compile Include="..\p4api.net\Changelist.cs" Link="Changelist.cs" />
+    <Compile Include="..\p4api.net\Client.cs" Link="Client.cs" />
+    <Compile Include="..\p4api.net\ClientMetadata.cs" Link="ClientMetadata.cs" />
+    <Compile Include="..\p4api.net\Connection.cs" Link="Connection.cs" />
+    <Compile Include="..\p4api.net\Counter.cs" Link="Counter.cs" />
+    <Compile Include="..\p4api.net\Credential.cs" Link="Credential.cs" />
+    <Compile Include="..\p4api.net\Debug.cs" Link="Debug.cs" />
+    <Compile Include="..\p4api.net\Depot.cs" Link="Depot.cs" />
+    <Compile Include="..\p4api.net\DepotFileDiff.cs" Link="DepotFileDiff.cs" />
+    <Compile Include="..\p4api.net\errors\clientmain.cs" Link="clientmain.cs" />
+    <Compile Include="..\p4api.net\errors\clientservice.cs" Link="clientservice.cs" />
+    <Compile Include="..\p4api.net\errors\mergetest.cs" Link="mergetest.cs" />
+    <Compile Include="..\p4api.net\errors\msgclient.cs" Link="msgclient.cs" />
+    <Compile Include="..\p4api.net\errors\msgdb.cs" Link="msgdb.cs" />
+    <Compile Include="..\p4api.net\errors\msgdm.cs" Link="msgdm.cs" />
+    <Compile Include="..\p4api.net\errors\msggraph.cs" Link="msggraph.cs" />
+    <Compile Include="..\p4api.net\errors\msghelp.cs" Link="msghelp.cs" />
+    <Compile Include="..\p4api.net\errors\msglbr.cs" Link="msglbr.cs" />
+    <Compile Include="..\p4api.net\errors\msgos.cs" Link="msgos.cs" />
+    <Compile Include="..\p4api.net\errors\msgrpc.cs" Link="msgrpc.cs" />
+    <Compile Include="..\p4api.net\errors\msgserver.cs" Link="msgserver.cs" />
+    <Compile Include="..\p4api.net\errors\msgspec.cs" Link="msgspec.cs" />
+    <Compile Include="..\p4api.net\errors\msgsupp.cs" Link="msgsupp.cs" />
+    <Compile Include="..\p4api.net\File.cs" Link="File.cs" />
+    <Compile Include="..\p4api.net\FileAnnotation.cs" Link="FileAnnotation.cs" />
+    <Compile Include="..\p4api.net\FileDiff.cs" Link="FileDiff.cs" />
+    <Compile Include="..\p4api.net\FileHistory.cs" Link="FileHistory.cs" />
+    <Compile Include="..\p4api.net\FileIntegrationRecord.cs" Link="FileIntegrationRecord.cs" />
+    <Compile Include="..\p4api.net\FileLineMatch.cs" Link="FileLineMatch.cs" />
+    <Compile Include="..\p4api.net\FileMetaData.cs" Link="FileMetaData.cs" />
+    <Compile Include="..\p4api.net\FileResolveRecord.cs" Link="FileResolveRecord.cs" />
+    <Compile Include="..\p4api.net\FileSpec.cs" Link="FileSpec.cs" />
+    <Compile Include="..\p4api.net\FileType.cs" Link="FileType.cs" />
+    <Compile Include="..\p4api.net\Fix.cs" Link="Fix.cs" />
+    <Compile Include="..\p4api.net\FormBase.cs" Link="FormBase.cs" />
+    <Compile Include="..\p4api.net\FormSpec.cs" Link="FormSpec.cs" />
+    <Compile Include="..\p4api.net\Group.cs" Link="Group.cs" />
+    <Compile Include="..\p4api.net\Job.cs" Link="Job.cs" />
+    <Compile Include="..\p4api.net\Label.cs" Link="Label.cs" />
+    <Compile Include="..\p4api.net\LogFile.cs" Link="LogFile.cs" />
+    <Compile Include="..\p4api.net\Options.cs" Link="Options.cs" />
+    <Compile Include="..\p4api.net\P4Bridge.cs" Link="P4Bridge.cs" />
+    <Compile Include="..\p4api.net\P4Command.cs" Link="P4Command.cs" />
+    <Compile Include="..\p4api.net\P4CommandResult.cs" Link="P4CommandResult.cs" />
+    <Compile Include="..\p4api.net\P4Exception.cs" Link="P4Exception.cs" />
+    <Compile Include="..\p4api.net\P4MapApi.cs" Link="P4MapApi.cs" />
+    <Compile Include="..\p4api.net\P4Server.cs" Link="P4Server.cs" />
+    <Compile Include="..\p4api.net\P4Server.internal.cs" Link="P4Server.internal.cs" />
+    <Compile Include="..\p4api.net\P4ServerMT.cs" Link="P4ServerMT.cs" />
+    <Compile Include="..\p4api.net\PathSpec.cs" Link="PathSpec.cs" />
+    <Compile Include="..\p4api.net\ProtectionEntry.cs" Link="ProtectionEntry.cs" />
+    <Compile Include="..\p4api.net\ProtectionTable.cs" Link="ProtectionTable.cs" />
+    <Compile Include="..\p4api.net\Repository.BranchSpec.cs" Link="Repository.BranchSpec.cs" />
+    <Compile Include="..\p4api.net\Repository.Changelist.cs" Link="Repository.Changelist.cs" />
+    <Compile Include="..\p4api.net\Repository.Client.cs" Link="Repository.Client.cs" />
+    <Compile Include="..\p4api.net\Repository.ClientMetadata.cs" Link="Repository.ClientMetadata.cs" />
+    <Compile Include="..\p4api.net\Repository.cs" Link="Repository.cs" />
+    <Compile Include="..\p4api.net\Repository.Depot.cs" Link="Repository.Depot.cs" />
+    <Compile Include="..\p4api.net\Repository.Group.cs" Link="Repository.Group.cs" />
+    <Compile Include="..\p4api.net\Repository.Job.cs" Link="Repository.Job.cs" />
+    <Compile Include="..\p4api.net\Repository.Label.cs" Link="Repository.Label.cs" />
+    <Compile Include="..\p4api.net\Repository.ServerMetaData.cs" Link="Repository.ServerMetaData.cs" />
+    <Compile Include="..\p4api.net\Repository.Stream.cs" Link="Repository.Stream.cs" />
+    <Compile Include="..\p4api.net\Repository.User.cs" Link="Repository.User.cs" />
+    <Compile Include="..\p4api.net\Server.cs" Link="Server.cs" />
+    <Compile Include="..\p4api.net\SimpleList.cs" Link="SimpleList.cs" />
+    <Compile Include="..\p4api.net\Stream.cs" Link="Stream.cs" />
+    <Compile Include="..\p4api.net\StreamMetaData.cs" Link="StreamMetaData.cs" />
+    <Compile Include="..\p4api.net\StringEnum.cs" Link="StringEnum.cs" />
+    <Compile Include="..\p4api.net\StringList.cs" Link="StringList.cs" />
+    <Compile Include="..\p4api.net\SubmitResults.cs" Link="SubmitResults.cs" />
+    <Compile Include="..\p4api.net\TaggedObject.cs" Link="TaggedObject.cs" />
+    <Compile Include="..\p4api.net\TriggerTable.cs" Link="TriggerTable.cs" />
+    <Compile Include="..\p4api.net\TypeMap.cs" Link="TypeMap.cs" />
+    <Compile Include="..\p4api.net\User.cs" Link="User.cs" />
+    <Compile Include="..\p4api.net\VersionSpec.cs" Link="VersionSpec.cs" />
+    <Compile Include="..\p4api.net\ViewMap.cs" Link="ViewMap.cs" />
+  </ItemGroup>
+
+</Project>

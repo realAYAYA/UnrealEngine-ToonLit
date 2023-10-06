@@ -1,0 +1,22 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HdStormRendererPlugin": {
+                        "bases": [
+                            "HdRendererPlugin"
+                        ],
+                        "displayName": "GL",
+                        "priority": 0
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../../../../Binaries/Win64/hdStorm.dll",
+            "Name": "hdStorm",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

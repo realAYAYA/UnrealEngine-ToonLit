@@ -1,0 +1,47 @@
+{
+	"FileVersion": 1,
+	"Version": 1,
+	"VersionName": "0.1",
+	"FriendlyName": "Struct Utils",
+	"Description": "Experimental Struct Utilities supplying InstancedStruct type",
+	"Category": "Gameplay",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "StructUtils",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		},
+		{
+			"Name": "StructUtilsEngine",
+			"Type": "Runtime"
+		},
+		{
+			"Name" : "StructUtilsEditor",
+			"Type" : "Editor"
+		},
+		{
+			"Name": "StructUtilsNodes",
+			"Type": "UncookedOnly"
+		},
+		{
+			"Name": "StructUtilsTestSuite",
+			"Type": "UncookedOnly"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PropertyAccessEditor",
+			"Enabled": true
+		}
+	]
+}

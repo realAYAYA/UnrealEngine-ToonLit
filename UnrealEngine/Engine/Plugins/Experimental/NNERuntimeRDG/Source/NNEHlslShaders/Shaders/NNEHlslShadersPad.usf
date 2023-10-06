@@ -1,0 +1,70 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "NNEHlslShadersBroadcastHelper.ush"
+
+Buffer<float> Input;
+RWBuffer<float> Output;
+uint4 TensorInfo[NUM_DIMENSIONS];
+float Value;
+uint Num;
+uint ThreadCountX;
+
+#define INPUT_STRIDE 0
+#define OUTPUT_STRIDE 1
+#define INPUT_SIZE 2
+#define PRE_PAD 3
+
+// Must correspond to EPadMode defined in NNEHlslShadersPadCS.h
+#define CONSTANT_MODE 0
+#define REFLECT_MODE 1
+#define EDGE_MODE 2
+
+[numthreads(THREADGROUP_SIZE_X, 1, 1)]
+void Pad(in const uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint Index = DispatchThreadID.y * ThreadCountX + DispatchThreadID.x;
+	
+	if (Index < Num)
+	{
+		uint InputIndex = 0;
+
+		uint Offset = Index;
+		for (uint dim = 0; dim < NUM_DIMENSIONS; ++dim)
+		{
+			uint OutDimIdx, R;
+			DivMod(Offset, TensorInfo[dim][OUTPUT_STRIDE], OutDimIdx, R);
+			
+			int PrePad = TensorInfo[dim][PRE_PAD];
+			int InputDimIdx = (int)OutDimIdx - PrePad;
+			int InputDimSize = (int) TensorInfo[dim][INPUT_SIZE];
+			
+			if (InputDimIdx < 0 || InputDimIdx >= InputDimSize)
+			{
+				#if MODE == CONSTANT_MODE
+				Output[Index] = Value;
+				return;
+				#elif MODE == REFLECT_MODE
+				if (InputDimIdx >= InputDimSize)
+				{
+					int OverCnt = InputDimIdx - (InputDimSize - 2);
+					InputDimIdx = InputDimSize - OverCnt;
+				}
+				else if (InputDimIdx < 0)
+				{
+					InputDimIdx = -InputDimIdx;
+				}
+				#endif
+				//MODE == EDGE_MODE + clamping large reflect indices
+				InputDimIdx = min(InputDimIdx, InputDimSize - 1);
+				InputDimIdx = max(InputDimIdx, 0);
+			}
+			
+			InputIndex += TensorInfo[dim][INPUT_STRIDE] * InputDimIdx;
+			Offset = R;
+		}
+
+		float X = Input[InputIndex];
+		Output[Index] = X;
+	}
+}

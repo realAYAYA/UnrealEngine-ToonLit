@@ -1,0 +1,996 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../DeferredShadingCommon.ush"
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#include "LumenSoftwareRayTracing.ush"
+#define RADIANCE_CACHE_DEPTH_TEST_SPHERE_PARALLAX 1
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenScreenProbeCommon.ush"
+#include "LumenScreenProbeTracingCommon.ush"
+#include "LumenVisualizeTraces.ush"
+
+#define IS_SSGI_SHADER 0
+#include "../SHCommon.ush"
+#include "LumenScreenTracing.ush"
+#include "LumenHairTracing.ush"
+#include "../SceneTextureParameters.ush"
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 0
+#endif
+
+#define DEBUG_VISUALIZE_TRACE_TYPES 0
+
+[numthreads(PROBE_THREADGROUP_SIZE_2D, PROBE_THREADGROUP_SIZE_2D, 1)]
+void ClearTracesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	RWTraceRadiance[DispatchThreadId.xy] = 0.0f;
+	RWTraceHit[DispatchThreadId.xy] = EncodeProbeRayDistance(0.0f, false, false, /*bReachedRadianceCache*/ false);
+}
+
+[numthreads(PROBE_THREADGROUP_SIZE_2D, PROBE_THREADGROUP_SIZE_2D, 1)]
+void ClearLightSampleTracesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	RWLightSampleTraceHit[DispatchThreadId.xy] = EncodeProbeRayDistance(0.0f, false, false, /*bReachedRadianceCache*/ false);
+}
+
+float MaxTraceDistance;
+
+Texture2D FurthestHZBTexture;
+#define FurthestHZBTextureSampler GlobalPointClampedSampler
+
+float4 HZBUvFactorAndInvFactor;
+float MaxHierarchicalScreenTraceIterations;
+float RelativeDepthThickness;
+float HistoryDepthTestRelativeThickness;
+float NumThicknessStepsToDetermineCertainty;
+uint MinimumTracingThreadOccupancy;
+uint SkipFoliageHits;
+
+[numthreads(PROBE_THREADGROUP_SIZE_2D, PROBE_THREADGROUP_SIZE_2D, 1)]
+void ScreenProbeTraceScreenTexturesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint ProbeTracingResolution = TRACE_LIGHT_SAMPLES ? ScreenProbeLightSampleResolutionXY : ScreenProbeTracingOctahedronResolution;
+	uint2 ScreenProbeAtlasCoord = DispatchThreadId.xy / ProbeTracingResolution;
+	uint2 TraceTexelCoord = DispatchThreadId.xy - ScreenProbeAtlasCoord * ProbeTracingResolution;
+
+	uint ScreenProbeIndex = ScreenProbeAtlasCoord.y * ScreenProbeAtlasViewSize.x + ScreenProbeAtlasCoord.x;
+
+	uint2 ScreenProbeScreenPosition = GetScreenProbeScreenPosition(ScreenProbeIndex);
+	uint2 ScreenTileCoord = GetScreenTileCoord(ScreenProbeScreenPosition);
+
+	if (ScreenProbeIndex < GetNumScreenProbes() 
+		&& ScreenProbeAtlasCoord.x < ScreenProbeAtlasViewSize.x
+		&& all(TraceTexelCoord < ProbeTracingResolution))
+	{
+		float2 ScreenUV = GetScreenUVFromScreenProbePosition(ScreenProbeScreenPosition);
+		float SceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+		uint2 TraceBufferCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
+
+		if (ShouldTraceScreenProbeTexel(TraceBufferCoord, SceneDepth))
+		{
+			float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+
+			float3 RayWorldDirection = 0;
+			float TraceDistance = MaxTraceDistance;
+			float ConeHalfAngle = 0;
+
+			GetScreenProbeTexelRay(
+				TraceBufferCoord,
+				TraceTexelCoord,
+				ScreenTileCoord,
+				TranslatedWorldPosition,
+				RayWorldDirection,
+				TraceDistance,
+				ConeHalfAngle);
+
+			bool bBackfaceRay;
+			float3 ScreenProbeNormal = GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, RayWorldDirection, bBackfaceRay);
+			
+			// Skip screen traces for backfacing rays for two-sided foliage, as they immediately self-intersect and cause a feedback loop
+			if (bBackfaceRay && GetScreenProbeIsTwoSidedFoliage(ScreenProbeAtlasCoord))
+			{
+				return;
+			}
+
+			float NormalBias = 0;
+
+			// Bias along the normal to avoid self-intersecting camera facing scene depth texels
+			// HZB traversal uses point filtering, so scene depth texels stick out from the plane they are representing
+			{
+				float2 CornerScreenUV = ScreenUV + .5f * View.BufferSizeAndInvSize.zw;
+				float2 CornerScreenPosition = (CornerScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+				float3 CornerTranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+
+				// Project texel corner onto normal
+				NormalBias = abs(dot(CornerTranslatedWorldPosition - TranslatedWorldPosition, ScreenProbeNormal)) * 2;
+			}
+
+			float3 TranslatedRayOrigin = TranslatedWorldPosition + NormalBias * ScreenProbeNormal;
+			float4 RayStartClip = mul(float4(TranslatedRayOrigin, 1.0f), View.TranslatedWorldToClip);
+
+			// Skip screen traces if the normal bias pushed our starting point off-screen, as TraceScreen() doesn't handle this
+			if (any(RayStartClip.xy < -RayStartClip.w) || any(RayStartClip.xy > RayStartClip.w))
+			{
+				return;
+			}
+
+			//@todo - this should be applied with the hit UV, not the origin, but still works for self-shadowing
+			float DepthThresholdScale = GetScreenTraceDepthThresholdScale(ScreenUV);
+
+			{
+				bool bCoveredByRadianceCache = false;
+				#if RADIANCE_CACHE
+					FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation), RayWorldDirection, 0);
+
+					if (Coverage.bValid)
+					{
+						TraceDistance = min(TraceDistance, Coverage.MinTraceDistanceBeforeInterpolation);
+					}
+				#endif
+
+
+#if HIERARCHICAL_SCREEN_TRACING
+
+				bool bHit;
+				bool bUncertain;
+				float3 HitUVz;
+				float3 LastVisibleHitUVz;
+				float Unused;
+
+				TraceScreen(
+					TranslatedRayOrigin,
+					RayWorldDirection,
+					TraceDistance,
+					HZBUvFactorAndInvFactor,
+					MaxHierarchicalScreenTraceIterations, 
+					RelativeDepthThickness * DepthThresholdScale,
+					NumThicknessStepsToDetermineCertainty,
+					MinimumTracingThreadOccupancy,
+					bHit,
+					bUncertain,
+					HitUVz,
+					LastVisibleHitUVz,
+					Unused);
+				
+				#if USE_HAIRSTRANDS_SCREEN
+				if (!bHit)
+				{
+					bool   Hair_bHit;
+					bool   Hair_bUncertain;
+					float3 Hair_HitUVz;
+					float3 Hair_LastVisibleHitUVz;
+
+					TraceHairScreen(
+						TranslatedWorldPosition,
+						RayWorldDirection,
+						TraceDistance,
+						HZBUvFactorAndInvFactor,
+						MaxHierarchicalScreenTraceIterations,
+						RelativeDepthThickness * DepthThresholdScale,
+						NumThicknessStepsToDetermineCertainty,
+						Hair_bHit,
+						Hair_bUncertain,
+						Hair_HitUVz,
+						Hair_LastVisibleHitUVz,
+						Unused);
+
+					if (Hair_bHit && !Hair_bUncertain)
+					{
+						bHit				= Hair_bHit;
+						HitUVz				= Hair_HitUVz;
+						LastVisibleHitUVz	= Hair_LastVisibleHitUVz;
+						bUncertain			= Hair_bUncertain;
+					}
+				}
+				#endif
+
+				float Level = 1;
+				bool bWriteDepthOnMiss = true;
+#else
+	
+				uint NumSteps = 16;
+				float StartMipLevel = 1.0f;
+				float MaxScreenTraceFraction = .2f;
+
+				// Can only get decent quality out of fixed step count screen traces by limiting the trace distance
+				float MaxWorldTraceDistance = SceneDepth * MaxScreenTraceFraction * 2.0 * GetTanHalfFieldOfView().x;
+				TraceDistance = min(TraceDistance, MaxWorldTraceDistance);
+
+				uint2 NoiseCoord = ScreenProbeAtlasCoord * ProbeTracingResolution + TraceTexelCoord;
+				float StepOffset = InterleavedGradientNoise(NoiseCoord + 0.5f, 0);
+
+				float RayRoughness = .2f;
+				StepOffset = StepOffset - .9f;
+
+				FSSRTCastingSettings CastSettings = CreateDefaultCastSettings();
+				CastSettings.bStopWhenUncertain = true;
+
+				bool bHit = false;
+				float Level;
+				float3 HitUVz;
+				bool bRayWasClipped;
+
+				FSSRTRay Ray = InitScreenSpaceRayFromWorldSpace(
+					TranslatedWorldPosition, RayWorldDirection,
+					/* WorldTMax = */ TraceDistance,
+					/* SceneDepth = */ SceneDepth,
+					/* SlopeCompareToleranceScale */ 2.0f * DepthThresholdScale,
+					/* bExtendRayToScreenBorder = */ false,
+					/* out */ bRayWasClipped);
+
+				bool bUncertain;
+				float3 DebugOutput;
+
+				CastScreenSpaceRay(
+					FurthestHZBTexture, FurthestHZBTextureSampler,
+					StartMipLevel,
+					CastSettings,
+					Ray, RayRoughness, NumSteps, StepOffset,
+					HZBUvFactorAndInvFactor, false,
+					/* out */ DebugOutput,
+					/* out */ HitUVz,
+					/* out */ Level,
+					/* out */ bHit,
+					/* out */ bUncertain);
+
+				#if USE_HAIRSTRANDS_SCREEN
+				if (!bHit)
+				{
+					float3 Hair_DebugOutput;
+					float3 Hair_HitUVz;
+					float Hair_Level;
+					bool Hair_bHit = false;
+					bool Hair_bUncertain = bUncertain;
+
+					CastScreenSpaceRay(
+						HairStrands.HairOnlyDepthFurthestHZBTexture, FurthestHZBTextureSampler,
+						StartMipLevel,
+						CastSettings,
+						Ray, RayRoughness, NumSteps, StepOffset,
+						HZBUvFactorAndInvFactor, false,
+						/* out */ Hair_DebugOutput,
+						/* out */ Hair_HitUVz,
+						/* out */ Hair_Level,
+						/* out */ Hair_bHit,
+						/* out */ Hair_bUncertain);
+
+					if (Hair_bHit && !Hair_bUncertain)
+					{
+						DebugOutput = Hair_DebugOutput;
+						HitUVz	    = Hair_HitUVz;
+						Level	    = Hair_Level;
+						bHit	    = Hair_bHit;
+						bUncertain  = Hair_bUncertain;
+					}
+				}
+				#endif
+
+				// CastScreenSpaceRay skips Mesh SDF tracing in a lot of places where it shouldn't, in particular missing thin occluders due to low NumSteps.  
+				bool bWriteDepthOnMiss = !bUncertain;
+
+#endif
+				bHit = bHit && !bUncertain;
+
+				bool bFastMoving = false;
+				float HitDistance = min(sqrt(ComputeRayHitSqrDistance(TranslatedRayOrigin, HitUVz)), MaxTraceDistance);
+
+				if (bHit)
+				{
+					float2 HitScreenUV = HitUVz.xy;
+					float2 HitScreenPosition = (HitUVz.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+					float HitDeviceZ = HitUVz.z;
+
+					float3 HitHistoryScreenPosition = GetPrevScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+
+					float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
+					float Noise = InterleavedGradientNoise(TraceBufferCoord + 0.5f, View.StateFrameIndexMod8);
+
+					// Skip reporting a hit if near the edge of the screen
+					if (Vignette < Noise)
+					{
+						bHit = false;
+					}
+
+					if (bHit)
+					{
+						// Calculate the expected depth of the pixel last frame
+						float PrevDeviceZ = HitHistoryScreenPosition.z;
+
+						// Lookup the actual depth at the same screen position last frame
+						float2 HitHistoryScreenUVForDepth = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBiasForDepth.xy + PrevScreenPositionScaleBiasForDepth.zw;
+						float HistoryDeviceZ = Texture2DSampleLevel(HistorySceneDepth, GlobalPointClampedSampler, HitHistoryScreenUVForDepth, 0).x;
+
+						bHit = abs(HistoryDeviceZ - PrevDeviceZ) < HistoryDepthTestRelativeThickness * lerp(.5f, 2.0f, Noise);
+					}
+
+					if (bHit && SkipFoliageHits > 0)
+					{
+						FLumenMaterialData LumenMaterial = ReadMaterialDataFromSceneTextures(HitScreenUV * View.BufferSizeAndInvSize.xy, HitScreenUV);
+						if (LumenMaterial.bHasBackfaceDiffuse)
+						{
+							bHit = false;
+						}
+					}
+
+#if !TRACE_LIGHT_SAMPLES
+					if (bHit)
+					{
+						float2 HitHistoryScreenUV = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBias.xy + PrevScreenPositionScaleBias.zw;
+						HitHistoryScreenUV = clamp(HitHistoryScreenUV, PrevSceneColorBilinearUVMin, PrevSceneColorBilinearUVMax);
+						float3 Lighting = SampleScreenColor(PrevSceneColorTexture, GlobalPointClampedSampler, HitHistoryScreenUV).xyz * PrevSceneColorPreExposureCorrection;
+
+						Lighting += GetSkylightLeaking(RayWorldDirection, HitDistance) * View.PreExposure;
+
+						#if DEBUG_VISUALIZE_TRACE_TYPES
+							RWTraceRadiance[TraceBufferCoord] = float3(.5f, 0, 0) * View.PreExposure;
+						#else
+							RWTraceRadiance[TraceBufferCoord] = Lighting;
+						#endif
+
+						{
+							float HitSceneDepth = ConvertFromDeviceZ(HitUVz.z);
+							float3 HitTranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(HitScreenPosition, HitSceneDepth), HitSceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+							//Note: this will be affected by TAA jitter, should use GetHistoryScreenPositionIncludingTAAJitter instead but costs too much
+							float3 HitWorldVelocity = HitTranslatedWorldPosition - GetPrevTranslatedWorldPosition(HitHistoryScreenPosition);
+
+							bFastMoving = IsTraceMoving(TranslatedWorldPosition, SceneDepth, ScreenProbeAtlasCoord, HitTranslatedWorldPosition, HitWorldVelocity);
+						}
+					}
+#endif
+				}
+
+				if (bHit || bWriteDepthOnMiss)
+				{
+					WriteTraceHit(TraceBufferCoord, HitDistance, bHit, bFastMoving, /*bReachedRadianceCache*/ false);
+				}
+			}
+		}
+	}
+}
+
+RWStructuredBuffer<uint> RWCompactedTraceTexelAllocator;
+RWStructuredBuffer<uint> RWCompactedTraceTexelData;
+
+uint CullByDistanceFromCamera;
+float CompactionTracingEndDistanceFromCamera;
+float CompactionMaxTraceDistance;
+uint CompactForFarField;
+
+groupshared uint SharedTraceTexelAllocator;
+groupshared uint SharedGlobalTraceTexelStartOffset;
+groupshared uint SharedTraceTexels[PROBE_THREADGROUP_SIZE_2D * PROBE_THREADGROUP_SIZE_2D];
+
+[numthreads(PROBE_THREADGROUP_SIZE_2D, PROBE_THREADGROUP_SIZE_2D, 1)]
+void ScreenProbeCompactTracesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	SharedTraceTexelAllocator = 0;
+
+	GroupMemoryBarrierWithGroupSync();
+
+	uint ProbeTracingResolution = TRACE_LIGHT_SAMPLES ? ScreenProbeLightSampleResolutionXY : ScreenProbeTracingOctahedronResolution;
+	uint2 ScreenProbeAtlasCoord = DispatchThreadId.xy / ProbeTracingResolution;
+	uint2 TraceTexelCoord = DispatchThreadId.xy - ScreenProbeAtlasCoord * ProbeTracingResolution;
+	uint ScreenProbeIndex = ScreenProbeAtlasCoord.y * ScreenProbeAtlasViewSize.x + ScreenProbeAtlasCoord.x;
+
+	if (ScreenProbeIndex < GetNumScreenProbes() 
+		&& ScreenProbeAtlasCoord.x < ScreenProbeAtlasViewSize.x
+		&& all(TraceTexelCoord <= ProbeTracingResolution))
+	{
+		float SceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+
+		uint2 TraceBufferCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
+
+		FProbeRayDistance ProbeRayDistance = ReadTraceHit(TraceBufferCoord);
+
+		bool bAcceptTrace = false;
+		if (CompactForFarField != 0)
+		{
+			bAcceptTrace = !(ProbeRayDistance.bHit || ProbeRayDistance.bReachedRadianceCache);
+		}
+		else
+		{
+			bAcceptTrace = !ProbeRayDistance.bHit;
+		}
+
+		if (ShouldTraceScreenProbeTexel(TraceBufferCoord, SceneDepth)
+			&& bAcceptTrace
+			&& (CullByDistanceFromCamera == 0 || SceneDepth < CompactionTracingEndDistanceFromCamera)
+			&& ProbeRayDistance.HitDistance < CompactionMaxTraceDistance)
+		{
+			uint SharedTexelOffset;
+			InterlockedAdd(SharedTraceTexelAllocator, 1, SharedTexelOffset);
+			SharedTraceTexels[SharedTexelOffset] = EncodeScreenProbeTraceTexel(ScreenProbeIndex, TraceTexelCoord);
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	uint ThreadIndex = GroupThreadId.y * PROBE_THREADGROUP_SIZE_2D + GroupThreadId.x;
+
+	if (ThreadIndex == 0)
+	{
+		uint AllocatorIndex = TRACE_LIGHT_SAMPLES ? 1 : 0;
+		InterlockedAdd(RWCompactedTraceTexelAllocator[AllocatorIndex], SharedTraceTexelAllocator, SharedGlobalTraceTexelStartOffset);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (ThreadIndex < SharedTraceTexelAllocator)
+	{
+		RWCompactedTraceTexelData[SharedGlobalTraceTexelStartOffset + ThreadIndex] = SharedTraceTexels[ThreadIndex];
+	}
+}
+
+RWBuffer<uint> RWScreenProbeCompactTracingIndirectArgs;
+
+[numthreads(1, 1, 1)]
+void SetupCompactedTracesIndirectArgsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	// THREADGROUP_SIZE_64
+	WriteDispatchIndirectArgs(RWScreenProbeCompactTracingIndirectArgs, 0, (CompactedTraceTexelAllocator[0] + 64 - 1) / 64, 1, 1);
+
+	// THREADGROUP_SIZE_32
+	WriteDispatchIndirectArgs(RWScreenProbeCompactTracingIndirectArgs, 1, (CompactedTraceTexelAllocator[0] + 32 - 1) / 32, 1, 1);
+
+	// LightSample THREADGROUP_SIZE_64
+	WriteDispatchIndirectArgs(RWScreenProbeCompactTracingIndirectArgs, 2, (CompactedTraceTexelAllocator[1] + 64 - 1) / 64, 1, 1);
+
+	// LightSample THREADGROUP_SIZE_32
+	WriteDispatchIndirectArgs(RWScreenProbeCompactTracingIndirectArgs, 3, (CompactedTraceTexelAllocator[1] + 32 - 1) / 32, 1, 1);
+}
+
+uint CardGridPixelSizeShift;
+float3 CardGridZParams;
+uint3 CullGridSize;
+
+uint ComputeCardGridCellIndex(uint2 PixelPos, float SceneDepth)
+{
+	uint ZSlice = (uint)(max(0, log2(SceneDepth * CardGridZParams.x + CardGridZParams.y) * CardGridZParams.z));
+	ZSlice = min(ZSlice, (uint)(CullGridSize.z - 1));
+	uint3 GridCoordinate = uint3(PixelPos >> CardGridPixelSizeShift, ZSlice);
+	uint GridIndex = (GridCoordinate.z * CullGridSize.y + GridCoordinate.y) * CullGridSize.x + GridCoordinate.x;
+	return GridIndex;
+}
+
+float StepFactor;
+float MinSampleRadius;
+float MinTraceDistance;
+float SurfaceBias;
+float CardInterpolateInfluenceRadius;
+float CardTraceEndDistanceFromCamera;
+float MaxMeshSDFTraceDistance;
+
+void TraceMeshSDFs(
+	uint2 ScreenProbeAtlasCoord,
+	uint2 TraceTexelCoord,
+	uint ScreenProbeIndex)
+{
+	uint2 ScreenProbeScreenPosition = GetScreenProbeScreenPosition(ScreenProbeIndex);
+	uint2 ScreenTileCoord = GetScreenTileCoord(ScreenProbeScreenPosition);
+	uint ProbeTracingResolution = TRACE_LIGHT_SAMPLES ? ScreenProbeLightSampleResolutionXY : ScreenProbeTracingOctahedronResolution;
+
+	{
+		float2 ScreenUV = GetScreenUVFromScreenProbePosition(ScreenProbeScreenPosition);
+		float SceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+
+		uint2 TraceBufferCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
+		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+		float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+
+		float TraceHitDistance = DecodeProbeRayDistance(RWTraceHit[TraceBufferCoord]).HitDistance;
+
+		bool bHit = false;
+		bool bMoving = false;
+
+		{
+			float3 RayWorldDirection = 0;
+			float TraceDistance = MaxTraceDistance;
+			float ConeHalfAngle = 0;
+
+			GetScreenProbeTexelRay(
+				TraceBufferCoord,
+				TraceTexelCoord,
+				ScreenTileCoord,
+				TranslatedWorldPosition,
+				RayWorldDirection,
+				TraceDistance,
+				ConeHalfAngle);
+
+			float3 TranslatedSamplePosition = TranslatedWorldPosition + SurfaceBias * RayWorldDirection;
+			TranslatedSamplePosition += SurfaceBias * GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, RayWorldDirection);
+
+			float3 SamplePosition = TranslatedSamplePosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+
+			FConeTraceInput TraceInput;
+			TraceInput.Setup(SamplePosition, TranslatedSamplePosition, RayWorldDirection, ConeHalfAngle, MinSampleRadius, max(MinTraceDistance, TraceHitDistance - SurfaceBias * 2), MaxTraceDistance, StepFactor);
+			TraceInput.VoxelTraceStartDistance = min(MaxMeshSDFTraceDistance, TraceDistance);
+			TraceInput.bDitheredTransparency = true;
+			TraceInput.DitherScreenCoord = ScreenTileCoord * ProbeTracingResolution + TraceTexelCoord;
+
+			uint CardGridCellIndex = ComputeCardGridCellIndex(ScreenProbeScreenPosition - PrimaryView.ViewRectMinAndSize.xy, SceneDepth);
+			TraceInput.NumMeshSDFs = NumGridCulledMeshSDFObjects[CardGridCellIndex];
+			TraceInput.MeshSDFStartOffset = GridCulledMeshSDFObjectStartOffsetArray[CardGridCellIndex];
+			TraceInput.CardInterpolateInfluenceRadius = CardInterpolateInfluenceRadius;
+			TraceInput.bCalculateHitVelocity = true;
+
+			FConeTraceResult TraceResult;
+			ConeTraceLumenSceneCards(TraceInput, TraceResult);
+
+			TraceInput.NumHeightfields = NumGridCulledHeightfieldObjects[CardGridCellIndex];
+			TraceInput.HeightfieldStartOffset = GridCulledHeightfieldObjectStartOffsetArray[CardGridCellIndex];
+			ConeTraceLumenSceneHeightfields(TraceInput, TraceResult);
+
+			// Trace against hair voxel structure, if enabled and not already done by other tracing method
+			#if USE_HAIRSTRANDS_VOXEL
+			{
+				float HairTraceDistance = min(TraceInput.MaxTraceDistance, TraceResult.OpaqueHitDistance);
+
+				bool bHairHit;
+				float HairTransparency;
+				float HairHitT;
+
+				TraceHairVoxels(
+					ScreenProbeScreenPosition,
+					SceneDepth,
+					// Use (Translated)WorldPosition instead of SamplePosition, as the bias is too strong otherwise. This is not an issue as 
+					// the voxel structure does not cause any self shadowing issue
+					TranslatedWorldPosition,
+					RayWorldDirection,
+					HairTraceDistance,
+					false,
+					bHairHit,
+					HairTransparency,
+					HairHitT);
+
+				if (bHairHit && HairHitT < HairTraceDistance)
+				{
+					TraceResult.Lighting *= HairTransparency;
+					TraceResult.Transparency *= HairTransparency;
+					TraceResult.OpaqueHitDistance = min(HairHitT, TraceResult.OpaqueHitDistance);
+				}
+			}
+			#endif
+
+			float3 Lighting = TraceResult.Lighting;
+			float Transparency = TraceResult.Transparency;
+			float OpaqueHitDistance = TraceResult.OpaqueHitDistance;
+
+			{
+				float3 HitWorldPosition = SamplePosition + RayWorldDirection * OpaqueHitDistance;
+				bMoving = IsTraceMoving(WorldPosition, SceneDepth, ScreenProbeAtlasCoord, HitWorldPosition, TraceResult.WorldVelocity);
+			}
+
+			float DistanceFromViewpoint = length(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
+			float DistanceFade = saturate(6 * DistanceFromViewpoint / CardTraceEndDistanceFromCamera - 5);
+
+			float CoverageForFog = saturate(1.0 - Transparency);	// LUMEN_TODO single evaluation for now even if we can hit translucent hair above.
+			Transparency = lerp(Transparency, 1, DistanceFade);
+
+			if (Transparency < InterleavedGradientNoise(TraceBufferCoord + 0.5f, 0))
+			{
+				bHit = true;
+			}
+
+#if !TRACE_LIGHT_SAMPLES
+			if (bHit)
+			{
+				Lighting *= 1 - DistanceFade;
+				Lighting += GetSkylightLeaking(RayWorldDirection, OpaqueHitDistance);
+				Lighting *= View.PreExposure;
+
+				if (SampleHeightFog > 0)
+				{
+					float3 OriginToCollider = RayWorldDirection * OpaqueHitDistance;
+					Lighting.rgb = GetFogOnLuminance(Lighting.rgb, CoverageForFog, OriginToCollider);
+				}
+
+				#if DEBUG_VISUALIZE_TRACE_TYPES
+					RWTraceRadiance[TraceBufferCoord] = float3(0, .5f, 0) * View.PreExposure;
+				#else
+					RWTraceRadiance[TraceBufferCoord] = Lighting;
+				#endif
+			}
+#endif
+
+			TraceHitDistance = OpaqueHitDistance + length(WorldPosition - SamplePosition);
+		}
+
+		//@todo - set bMoving based on hit object velocity
+		WriteTraceHit(TraceBufferCoord, min(TraceHitDistance, MaxTraceDistance), bHit, bMoving, /*bReachedRadianceCache*/ false);
+	}
+}
+
+#if THREADGROUP_SIZE_32
+	#define PROBE_TRACE_THREADGROUP_SIZE_1D 32
+#else
+	#define PROBE_TRACE_THREADGROUP_SIZE_1D 64
+#endif
+
+[numthreads(PROBE_TRACE_THREADGROUP_SIZE_1D, 1, 1)]
+void ScreenProbeTraceMeshSDFsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint AllocatorIndex = TRACE_LIGHT_SAMPLES ? 1 : 0;
+
+	if (DispatchThreadId.x < CompactedTraceTexelAllocator[AllocatorIndex])
+	{
+		uint ScreenProbeIndex;
+		uint2 TraceTexelCoord;
+		ReadTraceTexel(DispatchThreadId.x, ScreenProbeIndex, TraceTexelCoord);
+
+		uint2 ScreenProbeAtlasCoord = uint2(ScreenProbeIndex % ScreenProbeAtlasViewSize.x, ScreenProbeIndex / ScreenProbeAtlasViewSize.x);
+		TraceMeshSDFs(ScreenProbeAtlasCoord, TraceTexelCoord, ScreenProbeIndex);
+	}
+}
+
+void TraceVoxels(
+	uint2 ScreenProbeAtlasCoord,
+	uint2 TraceTexelCoord,
+	uint ScreenProbeIndex)
+{
+	uint2 ScreenProbeScreenPosition = GetScreenProbeScreenPosition(ScreenProbeIndex);
+	uint2 ScreenTileCoord = GetScreenTileCoord(ScreenProbeScreenPosition);
+	uint ProbeTracingResolution = TRACE_LIGHT_SAMPLES ? ScreenProbeLightSampleResolutionXY : ScreenProbeTracingOctahedronResolution;
+	uint2 TraceBufferCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
+
+	float TraceHitDistance = DecodeProbeRayDistance(RWTraceHit[TraceBufferCoord]).HitDistance;
+
+	{
+		float2 ScreenUV = GetScreenUVFromScreenProbePosition(ScreenProbeScreenPosition);
+		float SceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+
+		bool bHit = false;
+
+		{
+			float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+			float3 WorldPosition = TranslatedWorldPosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+
+			float3 RayWorldDirection = 0;
+			float TraceDistance = MaxTraceDistance;
+			float ConeHalfAngle = 0;
+
+			GetScreenProbeTexelRay(
+				TraceBufferCoord,
+				TraceTexelCoord,
+				ScreenTileCoord,
+				TranslatedWorldPosition,
+				RayWorldDirection,
+				TraceDistance,
+				ConeHalfAngle);
+
+			float3 TranslatedSamplePosition = TranslatedWorldPosition + SurfaceBias * RayWorldDirection;
+			TranslatedSamplePosition += SurfaceBias * GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, RayWorldDirection);
+
+			float3 SamplePosition = TranslatedSamplePosition - LWCHackToFloat(PrimaryView.PreViewTranslation);
+
+			FRadianceCacheCoverage Coverage;
+			Coverage.bValid = false;
+#if RADIANCE_CACHE
+			Coverage = GetRadianceCacheCoverage(WorldPosition, RayWorldDirection, 0);
+
+			if (Coverage.bValid)
+			{
+				TraceDistance = min(TraceDistance, Coverage.MinTraceDistanceBeforeInterpolation);
+			}
+#endif
+
+			FConeTraceInput TraceInput;
+			TraceInput.Setup(SamplePosition, TranslatedSamplePosition, RayWorldDirection, ConeHalfAngle, MinSampleRadius, MinTraceDistance, TraceDistance, StepFactor);
+			TraceInput.VoxelTraceStartDistance = max(MinTraceDistance, TraceHitDistance - SurfaceBias * 2);
+			TraceInput.bDitheredTransparency = true;
+			TraceInput.DitherScreenCoord = ScreenTileCoord * ProbeTracingResolution + TraceTexelCoord;
+
+			FConeTraceResult TraceResult = (FConeTraceResult)0;
+			TraceResult.Lighting = 0;
+			TraceResult.Transparency = 1;
+			TraceResult.OpaqueHitDistance = TraceInput.MaxTraceDistance;
+
+			#if TRACE_VOXELS
+				ConeTraceLumenSceneVoxels(TraceInput, TraceResult);
+			#endif
+
+			// Trace against hair voxel structure, if enabled and not already done by other tracing method
+			#if USE_HAIRSTRANDS_VOXEL
+			{
+				float HairTraceDistance = min(TraceDistance, TraceResult.OpaqueHitDistance);
+
+				bool bHairHit;
+				float HairTransparency;
+				float HairHitT;
+
+				TraceHairVoxels(
+					ScreenProbeScreenPosition,
+					SceneDepth,
+					// Use (Translated)WorldPosition instead of SamplePosition, as the bias is too strong otherwise. This is not an issue as 
+					// the voxel structure does not cause any self shadowing issue
+					TranslatedWorldPosition,
+					RayWorldDirection,
+					HairTraceDistance,
+					false,
+					bHairHit,
+					HairTransparency,
+					HairHitT);
+
+				if (bHairHit && HairHitT < HairTraceDistance)
+				{
+					TraceResult.Lighting *= HairTransparency;
+					TraceResult.Transparency *= HairTransparency;
+					TraceResult.OpaqueHitDistance = min(HairHitT, TraceResult.OpaqueHitDistance);
+				}
+			}
+			#endif
+
+			float TraceHitDistanceForSkyLeaking = TraceHitDistance;
+
+			if (TraceResult.Transparency <= .5f)
+			{
+				// Self intersection from grazing angle traces causes noise that can't be removed by the spatial filter
+				#define USE_VOXEL_TRACE_HIT_DISTANCE 0
+				#if USE_VOXEL_TRACE_HIT_DISTANCE
+					TraceHitDistance = TraceResult.OpaqueHitDistance;
+				#else
+					TraceHitDistance = TraceDistance;
+				#endif
+
+				TraceHitDistanceForSkyLeaking = TraceResult.OpaqueHitDistance;
+				bHit = true;
+			}
+
+#if !TRACE_LIGHT_SAMPLES
+
+			float CoverageForFog = bHit ? 1.0f - TraceResult.Transparency : 0.0f;
+
+#if RADIANCE_CACHE
+			if (Coverage.bValid)
+			{
+				if (TraceResult.Transparency > .5f)
+				{
+					// We don't store depth of Radiance Cache hits
+					TraceHitDistance = MaxTraceDistance;
+					TraceHitDistanceForSkyLeaking = MaxTraceDistance;
+				}
+
+				SampleRadianceCacheAndApply(Coverage, WorldPosition, RayWorldDirection, ConeHalfAngle, TraceResult.Lighting, TraceResult.Transparency);
+			}
+			else
+#endif
+			{
+				if (TraceResult.Transparency > .5f)
+				{
+					TraceHitDistance = MaxTraceDistance;
+					TraceHitDistanceForSkyLeaking = MaxTraceDistance;
+				}
+
+				ApplySkylightToTraceResult(RayWorldDirection, TraceResult);
+
+				if (TraceHitDistance >= GetProbeMaxHitDistance())
+				{
+					TraceHitDistance = MaxTraceDistance;
+				}
+			}
+
+			TraceResult.Lighting += GetSkylightLeaking(RayWorldDirection, TraceHitDistanceForSkyLeaking);
+
+			TraceResult.Lighting *= View.PreExposure;
+
+			if (SampleHeightFog > 0)
+			{
+				float3 OriginToCollider = RayWorldDirection * TraceHitDistance;
+				TraceResult.Lighting.rgb = GetFogOnLuminance(TraceResult.Lighting.rgb, CoverageForFog, OriginToCollider);
+			}
+
+			#if DEBUG_VISUALIZE_TRACE_TYPES
+				RWTraceRadiance[TraceBufferCoord] = float3(0, 0, .5f) * View.PreExposure;
+			#else
+				RWTraceRadiance[TraceBufferCoord] = TraceResult.Lighting;
+			#endif
+#endif
+		}
+
+		WriteTraceHit(TraceBufferCoord, TraceHitDistance, bHit, false, /*bReachedRadianceCache*/ false);
+	}
+}
+
+[numthreads(PROBE_TRACE_THREADGROUP_SIZE_1D, 1, 1)]
+void ScreenProbeTraceVoxelsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint AllocatorIndex = TRACE_LIGHT_SAMPLES ? 1 : 0;
+
+	if (DispatchThreadId.x < CompactedTraceTexelAllocator[AllocatorIndex])
+	{
+		uint ScreenProbeIndex;
+		uint2 TraceTexelCoord;
+		ReadTraceTexel(DispatchThreadId.x, ScreenProbeIndex, TraceTexelCoord);
+
+		uint2 ScreenProbeAtlasCoord = uint2(ScreenProbeIndex % ScreenProbeAtlasViewSize.x, ScreenProbeIndex / ScreenProbeAtlasViewSize.x);
+		TraceVoxels(ScreenProbeAtlasCoord, TraceTexelCoord, ScreenProbeIndex);
+	}
+}
+
+Texture2D TraceRadiance;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ScreenProbeSetupVisualizeTraces(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint2 QueryProbeScreenPosition = View.CursorPosition.x >= 0 ? View.CursorPosition * View.ViewResolutionFraction : ScreenProbeViewSize / 2 * ScreenProbeDownsampleFactor;
+	uint2 ScreenTileCoord = clamp(GetScreenTileCoord(QueryProbeScreenPosition), (uint2)0, ScreenProbeViewSize - 1);
+
+	uint2 ScreenProbeAtlasCoord = ScreenTileCoord;
+	uint2 UniformScreenProbeScreenPosition = GetUniformScreenProbeScreenPosition(ScreenTileCoord);
+	uint2 ScreenProbeScreenPosition = UniformScreenProbeScreenPosition;
+	{
+		
+		float MinDistance = length(QueryProbeScreenPosition - UniformScreenProbeScreenPosition);
+		uint NumAdaptiveProbes = ScreenTileAdaptiveProbeHeader[ScreenTileCoord];
+
+		for (uint AdaptiveProbeListIndex = 0; AdaptiveProbeListIndex < NumAdaptiveProbes; AdaptiveProbeListIndex++)
+		{
+			uint2 AdaptiveProbeCoord = GetAdaptiveProbeCoord(ScreenTileCoord, AdaptiveProbeListIndex);
+			uint AdaptiveProbeIndex = ScreenTileAdaptiveProbeIndices[AdaptiveProbeCoord];
+			uint ScreenProbeIndex = AdaptiveProbeIndex + NumUniformScreenProbes;
+
+			uint2 AdaptiveProbeScreenPosition = GetScreenProbeScreenPosition(ScreenProbeIndex);
+			float AdaptiveProbeDistance = length(QueryProbeScreenPosition - AdaptiveProbeScreenPosition);
+
+			if (AdaptiveProbeDistance < MinDistance)
+			{
+				MinDistance = AdaptiveProbeDistance;
+				ScreenProbeAtlasCoord = uint2(ScreenProbeIndex % ScreenProbeAtlasViewSize.x, ScreenProbeIndex / ScreenProbeAtlasViewSize.x);
+				ScreenProbeScreenPosition = AdaptiveProbeScreenPosition;
+			}
+		}
+	}
+
+	float2 ProbeScreenUV = GetScreenUVFromScreenProbePosition(ScreenProbeScreenPosition);
+	float ProbeSceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+
+	float3 ProbeWorldPosition = 0;
+	float3 ProbeTranslatedWorldPosition = 0;
+
+	if (ProbeSceneDepth > 0.0f)
+	{
+		ProbeWorldPosition = GetWorldPositionFromScreenUV(ProbeScreenUV, ProbeSceneDepth);
+		ProbeTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ProbeScreenUV, ProbeSceneDepth);
+	}
+
+	float3 PreViewTranslation = LWCToFloat(MakeLWCVector3(View.ViewTilePosition, View.RelativePreViewTranslation));
+
+	{
+		float2 CursorSceneBufferUV = SvPositionToBufferUV(float4(floor((View.CursorPosition) * View.ViewResolutionFraction) + .5f, 0, 0)).xy;
+		float2 CursorScreenPosition = (CursorSceneBufferUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		float CursorSceneDepth = ConvertFromDeviceZ(Texture2DSampleLevel(SceneTexturesStruct.SceneDepthTexture, SceneTexturesStruct_SceneDepthTextureSampler, CursorSceneBufferUV, 0).r);
+		float3 CursorTranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(CursorScreenPosition, CursorSceneDepth), CursorSceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+		float3 CursorWorldPosition = CursorTranslatedWorldPosition - PreViewTranslation;
+	}
+
+	uint2 TraceTexelCoord = DispatchThreadId.xy;
+
+#define VISUALIZE_SCENE_DEPTH_TEXEL 0
+#if VISUALIZE_SCENE_DEPTH_TEXEL
+
+	float3 Corner00WorldPosition;
+	{
+		float2 CornerSceneBufferUV = ProbeScreenUV - .5f * View.BufferSizeAndInvSize.zw;
+		float2 CornerScreenPosition = (CornerSceneBufferUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		Corner00WorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, ProbeSceneDepth), ProbeSceneDepth, 1), View.ScreenToTranslatedWorld).xyz - PreViewTranslation;
+	}
+
+	float3 Corner01WorldPosition;
+	{
+		float2 CornerSceneBufferUV = ProbeScreenUV + float2(-.5f, .5f) * View.BufferSizeAndInvSize.zw;
+		float2 CornerScreenPosition = (CornerSceneBufferUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		Corner01WorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, ProbeSceneDepth), ProbeSceneDepth, 1), View.ScreenToTranslatedWorld).xyz - PreViewTranslation;
+	}
+
+	float3 Corner10WorldPosition;
+	{
+		float2 CornerSceneBufferUV = ProbeScreenUV + float2(.5f, -.5f) * View.BufferSizeAndInvSize.zw;
+		float2 CornerScreenPosition = (CornerSceneBufferUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		Corner10WorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, ProbeSceneDepth), ProbeSceneDepth, 1), View.ScreenToTranslatedWorld).xyz - PreViewTranslation;
+	}
+
+	float3 Corner11WorldPosition;
+	{
+		float2 CornerSceneBufferUV = ProbeScreenUV + float2(.5f, .5f) * View.BufferSizeAndInvSize.zw;
+		float2 CornerScreenPosition = (CornerSceneBufferUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		Corner11WorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, ProbeSceneDepth), ProbeSceneDepth, 1), View.ScreenToTranslatedWorld).xyz - PreViewTranslation;
+	}
+
+	if (DispatchThreadId.x == 0 && DispatchThreadId.y == 0)
+	{
+		WriteTraceForVisualization(0, Corner00WorldPosition, (Corner10WorldPosition - Corner00WorldPosition), 1, float3(1, 0, 0));
+		WriteTraceForVisualization(1, Corner10WorldPosition, (Corner11WorldPosition - Corner10WorldPosition), 1, float3(1, 0, 0));
+		WriteTraceForVisualization(2, Corner11WorldPosition, (Corner01WorldPosition - Corner11WorldPosition), 1, float3(1, 0, 0));
+		WriteTraceForVisualization(3, Corner01WorldPosition, (Corner00WorldPosition - Corner01WorldPosition), 1, float3(1, 0, 0));
+	}
+
+	float2 CornerScreenUV = ProbeScreenUV + .5f * View.BufferSizeAndInvSize.zw;
+	float2 CornerScreenPosition = (CornerScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 CornerTranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(CornerScreenPosition, ProbeSceneDepth), ProbeSceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+
+	float3 ScreenProbeNormal = GetScreenProbeNormalForBiasing(ScreenProbeAtlasCoord, CornerTranslatedWorldPosition - ProbeTranslatedWorldPosition);
+	float NormalBias = abs(dot(CornerTranslatedWorldPosition - ProbeTranslatedWorldPosition, ScreenProbeNormal));
+
+	if (DispatchThreadId.x == 0 && DispatchThreadId.y == 0)
+	{
+		// Diagonal that will be projected to measure texel size
+		WriteTraceForVisualization(4, ProbeWorldPosition, (CornerTranslatedWorldPosition - ProbeTranslatedWorldPosition), 0, float3(1, 0, 1));
+		// Probe normal from GBuffer
+		WriteTraceForVisualization(5, ProbeWorldPosition, 1 * ScreenProbeNormal, 0, float3(0, 0, 1));
+		// Calculated bias along probe normal needed to avoid screen trace self-intersection
+		WriteTraceForVisualization(6, ProbeWorldPosition, NormalBias * ScreenProbeNormal, 1, float3(1, 1, 0));
+	}
+
+	uint TraceIndex = TraceTexelCoord.y * ScreenProbeTracingOctahedronResolution + TraceTexelCoord.x + 7;
+
+	if (TraceIndex < ScreenProbeTracingOctahedronResolution * ScreenProbeTracingOctahedronResolution)
+	{
+		WriteTraceForVisualization(TraceIndex, 0, 0, 0, float3(1, 0, 0));
+	}
+
+#else
+	if (all(TraceTexelCoord < ScreenProbeTracingOctahedronResolution))
+	{
+		uint2 TraceBufferCoord = GetTraceBufferCoord(ScreenProbeAtlasCoord, TraceTexelCoord);
+		
+		FProbeRayDistance ProbeRayDistance = DecodeProbeRayDistance(TraceHit[TraceBufferCoord].x);
+		bool bHit = ProbeRayDistance.bHit;
+		float TraceHitDistance = ProbeRayDistance.HitDistance;
+
+		float3 RayWorldDirection = 0;
+		float RefinementRay = 0;
+
+		if (ProbeSceneDepth > 0.0f)
+		{
+			float2 ProbeUV;
+			float ConeHalfAngle;
+			GetProbeTracingUV(TraceBufferCoord, TraceTexelCoord, GetProbeTexelCenter(ScreenTileCoord), 1, ProbeUV, ConeHalfAngle);
+
+			RayWorldDirection = EquiAreaSphericalMapping(ProbeUV);
+
+			float BaseAngle = acosFast(1.0f - 1.0f / (float)(ScreenProbeTracingOctahedronResolution * ScreenProbeTracingOctahedronResolution));
+			RefinementRay = 1 - ConeHalfAngle / BaseAngle;
+		}
+
+		uint TraceIndex = TraceTexelCoord.y * ScreenProbeTracingOctahedronResolution + TraceTexelCoord.x;
+
+		float3 Radiance = TraceRadiance[TraceBufferCoord].xyz;
+
+		// Visualize incorrect self-intersections
+		if (bHit && TraceHitDistance < 1)
+		{
+			TraceHitDistance = 5;
+			Radiance = float3(1, 0, 0);
+		}
+
+		bool bVisualizeRefinementRays = false;
+		WriteTraceForVisualization(TraceIndex, ProbeWorldPosition, RayWorldDirection, TraceHitDistance, select(bVisualizeRefinementRays, RefinementRay.xxx, Radiance));
+	}
+#endif
+}

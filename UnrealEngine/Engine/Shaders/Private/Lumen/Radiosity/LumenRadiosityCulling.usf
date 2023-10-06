@@ -1,0 +1,68 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenRadiosityCulling.usf
+=============================================================================*/
+
+#include "../../Common.ush"
+#include "../LumenCardCommon.ush"
+#include "../LumenCardTile.ush"
+
+StructuredBuffer<uint> CardPageIndexAllocator;
+StructuredBuffer<uint> CardPageIndexData;
+
+RWStructuredBuffer<uint> RWCardTileAllocator;
+RWStructuredBuffer<uint> RWCardTileData;
+
+uint NumViews;
+uint MaxCardTiles;
+
+/**
+ * Build a list of radiosity tiles
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void BuildRadiosityTilesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	// One thread per tile
+	uint LinearLightTileOffset = (GroupId.x % 4);
+	uint IndexInIndexBuffer = GroupId.x / 4;
+
+	uint2 TileCoord;
+	TileCoord.x = (LinearLightTileOffset % 2) * 8 + GroupThreadId.x;
+	TileCoord.y = (LinearLightTileOffset / 2) * 8 + GroupThreadId.y;
+
+	if (IndexInIndexBuffer < CardPageIndexAllocator[0])
+	{
+		uint CardPageIndex = CardPageIndexData[IndexInIndexBuffer];
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardPageIndex);
+		if (CardPage.CardIndex >= 0)
+		{
+			FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+
+			const uint2 SizeInTiles = CardPage.SizeInTexels / CARD_TILE_SIZE;
+
+			if (all(TileCoord < SizeInTiles))
+			{
+				float2 UVMin = float2(TileCoord) / SizeInTiles;
+				float2 UVMax = float2(TileCoord + 1) / SizeInTiles;
+
+				float SwapY = UVMin.y;
+				UVMin.y = 1.0f - UVMax.y;
+				UVMax.y = 1.0f - SwapY;
+
+				uint ViewIndex = GetCardViewIndex(CardPage, Card, UVMin, UVMax, NumViews, false);
+
+				FCardTileData CardTile;
+				CardTile.CardPageIndex = CardPageIndex;
+				CardTile.TileCoord = TileCoord;
+
+				uint NextTileIndex = 0;
+				InterlockedAdd(RWCardTileAllocator[ViewIndex], 1, NextTileIndex);
+				RWCardTileData[ViewIndex * MaxCardTiles + NextTileIndex] = PackCardTileData(CardTile);
+			}
+		}
+	}
+}

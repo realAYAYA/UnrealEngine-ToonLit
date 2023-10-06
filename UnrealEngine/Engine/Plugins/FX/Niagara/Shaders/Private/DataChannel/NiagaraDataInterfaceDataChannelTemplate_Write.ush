@@ -1,0 +1,14 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+/**
+ * Template shader code for the Write function for the NiagaraDataInterfaceDataChannel.
+ * Contained in it's own shader file to allow reuse between different invocations with different params.
+ */
+
+void Write_{ParameterName}_UEImpureCall(bool bEmit, int ElementIndex, out bool bOutSuccess, {FunctionParameters})
+{
+	//TODO;
+	bOutSuccess = false;
+}

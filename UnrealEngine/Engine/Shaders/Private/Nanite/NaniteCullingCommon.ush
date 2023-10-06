@@ -1,0 +1,314 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+
+#if VIRTUAL_TEXTURE_TARGET
+#include "../VirtualShadowMaps/VirtualShadowMapPageOverlap.ush"
+#endif
+
+#ifndef CULLING_PASS
+#define CULLING_PASS CULLING_PASS_NO_OCCLUSION
+#endif
+
+#include "../SceneData.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteHZBCull.ush"
+#include "NaniteCulling.ush"
+
+#ifndef DISABLE_DISPLACEMENT_BOUNDS
+#define DISABLE_DISPLACEMENT_BOUNDS 0
+#endif
+
+#ifndef ACCURATE_DISPLACEMENT_BOUNDS
+#define ACCURATE_DISPLACEMENT_BOUNDS 0
+#endif
+
+float GetAbsMaxMaterialDisplacement(StructuredBuffer<FNaniteRasterBinMeta> RasterBinMeta, uint RasterBin)
+{
+#if DISABLE_DISPLACEMENT_BOUNDS
+	return 0.0f;
+#else
+	const float MinMaterialDisplacement = RasterBinMeta[RasterBin].MinMaterialDisplacement;
+	const float MaxMaterialDisplacement = RasterBinMeta[RasterBin].MaxMaterialDisplacement;
+	return max(-MinMaterialDisplacement, MaxMaterialDisplacement);
+#endif
+}
+
+float GetAbsMaxMaterialDisplacement(FPrimitiveSceneData PrimitiveData)
+{
+#if DISABLE_DISPLACEMENT_BOUNDS
+	return 0.0f;
+#else
+	return max(-PrimitiveData.MinMaterialDisplacement, PrimitiveData.MaxMaterialDisplacement);
+#endif
+}
+
+float3 GetLocalMaxWPOExtent(FPrimitiveSceneData PrimitiveData, FInstanceSceneData InstanceData, bool bEnableWPO = true)
+{
+	const bool bHasAlwaysEvalWPOMaterial = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_ALWAYS_EVALUATE_WPO_MATERIALS) != 0;
+	return (bEnableWPO || bHasAlwaysEvalWPOMaterial) ? abs(PrimitiveData.MaxWPOExtent * InstanceData.InvNonUniformScale) : (float3)0;
+}
+
+float GetGlobalClipPlaneDistance(FNaniteView NaniteView, float3 TranslatedWorldPosition)
+{
+	return dot(NaniteView.TranslatedGlobalClipPlane, float4(TranslatedWorldPosition, 1.0f));
+}
+
+struct FBoxCull
+{
+	FNaniteView	NaniteView;
+	
+	float3		LocalBoxCenter;
+	float3		LocalBoxExtent;
+
+	float3		NonUniformScale;
+	float4x4	LocalToTranslatedWorld;
+	float4x4	PrevLocalToTranslatedWorld;
+
+	bool		bIsOrtho;
+	bool		bNearClip;
+	bool		bViewHZB;
+	bool		bDistanceCull;
+	bool		bIsViewUncached;
+
+	bool		bSkipCullFrustum;
+	bool		bSkipCullHZB;
+	bool		bSkipCullGlobalClipPlane;
+	bool		bSkipDrawDistance;
+	bool		bSkipWPODisableDistance;
+
+	bool		bIsVisible;
+	bool		bWasOccluded;
+	bool		bNeedsClipping;
+
+#if VIRTUAL_TEXTURE_TARGET
+	uint		PageFlagMask;
+	uint4		RectPages;
+#endif
+
+	void Init(
+		const FNaniteView	InNaniteView,
+		const float3		InLocalBoxCenter,
+		const float3		InLocalBoxExtent,
+		const float3		InNonUniformScale,
+		const float4x4		InLocalToTranslatedWorld,
+		const float4x4		InPrevLocalToTranslatedWorld )
+	{
+		NaniteView		= InNaniteView;
+		LocalBoxCenter	= InLocalBoxCenter;
+		LocalBoxExtent	= InLocalBoxExtent;
+		NonUniformScale	= InNonUniformScale;
+
+		LocalToTranslatedWorld		= InLocalToTranslatedWorld;
+		PrevLocalToTranslatedWorld	= InPrevLocalToTranslatedWorld;
+
+		bIsOrtho		= IsOrthoProjection( NaniteView.ViewToClip );
+		bNearClip		= (NaniteView.Flags & NANITE_VIEW_FLAG_NEAR_CLIP) != 0u;
+		bViewHZB		= (NaniteView.Flags & NANITE_VIEW_FLAG_HZBTEST) != 0u;
+		bDistanceCull	= (NaniteView.Flags & NANITE_VIEW_FLAG_DISTANCE_CULL) != 0u;
+		bIsViewUncached	= (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED) != 0u;
+
+	#if DEBUG_FLAGS
+		bSkipCullFrustum			= (DebugFlags & NANITE_DEBUG_FLAG_DISABLE_CULL_FRUSTUM) != 0u;
+		bSkipCullHZB				= (DebugFlags & NANITE_DEBUG_FLAG_DISABLE_CULL_HZB) != 0u;
+		bSkipCullGlobalClipPlane	= (DebugFlags & NANITE_DEBUG_FLAG_DISABLE_CULL_GLOBAL_CLIP_PLANE) != 0u;
+		bSkipDrawDistance			= (DebugFlags & NANITE_DEBUG_FLAG_DISABLE_CULL_DRAW_DISTANCE) != 0u;
+		bSkipWPODisableDistance		= (DebugFlags & NANITE_DEBUG_FLAG_DISABLE_WPO_DISABLE_DISTANCE) != 0u;
+	#else
+		bSkipCullFrustum			= false;
+		bSkipCullHZB				= false;
+		bSkipCullGlobalClipPlane	= false;
+		bSkipDrawDistance			= false;
+		bSkipWPODisableDistance		= false;
+	#endif
+
+		bIsVisible		= true;
+		bWasOccluded	= false;
+		bNeedsClipping	= false;
+
+	#if VIRTUAL_TEXTURE_TARGET
+		PageFlagMask = ~0u;
+		// Rect of overlapped virtual pages, is inclusive (as in zw is max, not max + 1)
+		RectPages = uint4(1U, 1U, 0U, 0U);
+	#endif
+	}
+
+	void GlobalClipPlane()
+	{
+	#if USE_GLOBAL_CLIP_PLANE
+		BRANCH
+		if( bIsVisible )
+		{
+			// Prevent the result being "intersecting" when the global plane is invalid (effectively disabled). This prevents clusters that
+			// should rasterize in SW from being sent down the HW path
+			if (bSkipCullGlobalClipPlane || all(NaniteView.TranslatedGlobalClipPlane.xyz == (float3)0.0f))
+			{
+				return;
+			}
+
+			// Get the global clipping plane in local space (multiply by inverse transpose)
+			const float4 PlaneLocal = mul(LocalToTranslatedWorld, NaniteView.TranslatedGlobalClipPlane);
+
+			// AABB/Plane intersection test
+			const float3 ScaledExtents = LocalBoxExtent * NonUniformScale;
+			const float ExtentAlongPlaneN = dot(abs(ScaledExtents * PlaneLocal.xyz), (float3)1.0f);
+			const float CenterDist = dot(PlaneLocal, float4(LocalBoxCenter, 1.0f));
+
+			if (CenterDist < -ExtentAlongPlaneN)
+			{
+				bIsVisible = false;
+			}
+			else if (CenterDist < ExtentAlongPlaneN)
+			{
+				bNeedsClipping = true;
+			}
+		}
+	#endif
+	}
+
+	void Distance()
+	{
+		BRANCH
+		if( bIsVisible && bDistanceCull )
+		{
+			const float3 CenterTranslatedWorld = mul( float4( LocalBoxCenter, 1.0f ), LocalToTranslatedWorld ).xyz;
+			const float Radius = length( LocalBoxExtent * NonUniformScale );
+
+			bIsVisible = length2( CenterTranslatedWorld ) <= Square( NaniteView.RangeBasedCullingDistance + Radius );
+		}
+	}
+
+	bool Distance( FPrimitiveSceneData PrimitiveData )
+	{
+		const bool bEvaluateWPO		= (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_EVALUATE_WORLD_POSITION_OFFSET) != 0u;
+		const bool bWPODisableDist	= (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_WPO_DISABLE_DISTANCE) != 0u;
+		const bool bDrawDistance	= (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_INSTANCE_DRAW_DISTANCE_CULL) != 0u;
+
+		// Ensure WPO can be disabled at the primitive level
+		bool bEnableWPO = bEvaluateWPO;
+
+		BRANCH
+		if( bIsVisible )
+		{
+			const float3 CenterTranslatedWorld = mul( float4( LocalBoxCenter, 1.0f ), LocalToTranslatedWorld ).xyz;
+
+			// Check to cull the instances based on its distance from the view's camera (per-view setting)
+			BRANCH
+			if( bIsVisible && bDistanceCull )
+			{
+				const float Radius = length( LocalBoxExtent * NonUniformScale );
+
+				bIsVisible = length2( CenterTranslatedWorld ) <= Square( NaniteView.RangeBasedCullingDistance + Radius );
+			}
+
+			const float InstanceDrawDistSq = length2( CenterTranslatedWorld - NaniteView.DrawDistanceOriginTranslatedWorld );
+
+			// Check to cull the instance based on its distance from the main view's location (per-primitive setting)
+			BRANCH
+			if (bIsVisible && bDrawDistance && !bSkipDrawDistance)
+			{
+				const float MinDistanceSq = PrimitiveData.InstanceDrawDistanceMinMaxSquared.x;
+				const float MaxDistanceSq = PrimitiveData.InstanceDrawDistanceMinMaxSquared.y;
+
+				bIsVisible = InstanceDrawDistSq >= MinDistanceSq && InstanceDrawDistSq <= MaxDistanceSq;
+			}
+
+			// Check to disable the instance's WPO based on distance from the main view's location
+			BRANCH
+			if (bIsVisible && bEnableWPO && bWPODisableDist && !bSkipWPODisableDistance)
+			{
+				bEnableWPO = InstanceDrawDistSq < PrimitiveData.InstanceWPODisableDistanceSquared;
+			}
+		}
+
+		// "Disable" WPO if the instance isn't visible
+		return bEnableWPO && bIsVisible;
+	}
+
+	FFrustumCullData Frustum()
+	{
+		// Frustum test against current frame
+		FFrustumCullData FrustumCull = BoxCullFrustum( LocalBoxCenter, LocalBoxExtent, LocalToTranslatedWorld, NaniteView.TranslatedWorldToClip, NaniteView.ViewToClip, bIsOrtho, bNearClip, bSkipCullFrustum );
+		bIsVisible		= bIsVisible && FrustumCull.bIsVisible;
+		bNeedsClipping	= bNeedsClipping || FrustumCull.bCrossesNearPlane || FrustumCull.bCrossesFarPlane;
+		return FrustumCull;
+	}
+
+	void HZB( FFrustumCullData FrustumCull, bool bClampToPageLevel )
+	{
+		// Our screen rect needs to be in HZB space, which is 0,0-based for all views, unless we're doing multiple views in one nanite pass
+	#if NANITE_MULTI_VIEW
+		FScreenRect Rect = GetScreenRect( NaniteView.ViewRect, FrustumCull, 4 );
+	#else
+		int4 HZBRect = int4( 0, 0, NaniteView.ViewRect.z - NaniteView.ViewRect.x, NaniteView.ViewRect.w - NaniteView.ViewRect.y );
+		FScreenRect Rect = GetScreenRect( HZBRect, FrustumCull, 4 );
+	#endif
+		bIsVisible = bIsVisible && Rect.bOverlapsPixelCenter;
+
+	#if VIRTUAL_TEXTURE_TARGET
+		BRANCH
+		if( bIsVisible )
+		{
+			RectPages = GetPageRect( Rect, NaniteView.TargetLayerIndex, NaniteView.TargetMipLevel );
+			bIsVisible = OverlapsAnyValidPage( NaniteView.TargetLayerIndex, NaniteView.TargetMipLevel, RectPages, PageFlagMask );
+		}
+	#endif
+
+	// VSM supports one-pass occlusion culling hijacking CULLING_PASS_NO_OCCLUSION (using only previous-frame with artifacts as a result), hence the || here
+	#if (CULLING_PASS == CULLING_PASS_NO_OCCLUSION && VIRTUAL_TEXTURE_TARGET) || CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		const bool bTreatUnmappedAsOccluded = (CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN);
+
+		// HZB occlusion test against previous frame
+		BRANCH
+		if( bIsVisible && !bSkipCullHZB && bViewHZB )
+		{
+			// Still HZB test if previously outside frustum. Clamped rect HZB provides a better guess for occlusion than assuming true or false.
+			// Post pass will clean up bad guesses anyways. This improves overdraw at edges of screen for moving cameras.
+			const bool bSkipPrevCullFrustum = true;
+			const bool bPrevIsOrtho = IsOrthoProjection( NaniteView.PrevViewToClip );
+
+			FFrustumCullData PrevFrustumCull = BoxCullFrustum( LocalBoxCenter, LocalBoxExtent, PrevLocalToTranslatedWorld, NaniteView.PrevTranslatedWorldToClip, NaniteView.PrevViewToClip, bPrevIsOrtho, bNearClip, bSkipPrevCullFrustum );
+
+			BRANCH
+			if (PrevFrustumCull.bIsVisible && !PrevFrustumCull.bCrossesNearPlane)
+			{
+			#if VIRTUAL_TEXTURE_TARGET
+				FScreenRect PrevRect = GetScreenRect(NaniteView.ViewRect, PrevFrustumCull, 4);	// Assume HZBTestViewRect=ViewRect for VSM. Don't load it redundantly.
+				bWasOccluded = !IsVisibleMaskedHZB(NaniteView.TargetPrevLayerIndex, NaniteView.TargetMipLevel, PrevRect, bClampToPageLevel, bTreatUnmappedAsOccluded, 0U);
+			#else
+				FScreenRect PrevRect = GetScreenRect(NaniteView.HZBTestViewRect, PrevFrustumCull, 4);
+				bWasOccluded = !IsVisibleHZB(PrevRect, true);
+			#endif
+			}
+		}
+	#elif CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		// Retest what was occluded last frame against current frame HZB
+		BRANCH
+		if( bIsVisible && !bSkipCullHZB )
+		{
+			BRANCH
+			if (!FrustumCull.bCrossesNearPlane)
+			{
+			#if VIRTUAL_TEXTURE_TARGET
+				// The logic here is that if the thing has moved it should test against all hzb pages, whereas if it is static we can skip the cached ones (since we'd not render into those anyway).
+				bWasOccluded = !IsVisibleMaskedHZB(NaniteView.TargetLayerIndex, NaniteView.TargetMipLevel, Rect, bClampToPageLevel, true, 0U, PageFlagMask);
+			#else
+				bWasOccluded = !IsVisibleHZB(Rect, true);
+			#endif
+			}
+		}
+	#endif
+	}
+
+	void FrustumHZB( bool bClampToPageLevel )
+	{
+		BRANCH
+		if( bIsVisible )
+		{
+			FFrustumCullData FrustumCull = Frustum();
+			HZB( FrustumCull, bClampToPageLevel );
+		}
+	}
+};

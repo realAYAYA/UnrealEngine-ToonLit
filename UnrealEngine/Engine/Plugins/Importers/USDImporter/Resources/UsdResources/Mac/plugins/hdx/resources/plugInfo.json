@@ -1,0 +1,14 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                 "ShaderResources": "shaders"
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/libusd_hdx.dylib",
+            "Name": "hdx",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

@@ -1,0 +1,67 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*==============================================================================
+    RayTracingCommonMetal.ush: Metal-specific ray tracing overrides.
+==============================================================================*/
+
+#pragma once
+
+#define OVERRIDE_PLATFORM_RAYTRACING_INSTANCE_DESCRITOR 1
+
+#define PLATFORM_RAYTRACING_INSTANCE_FLAG_NONE                                0   // MTLAccelerationStructureInstanceOptionNone
+#define PLATFORM_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE               0x1 // MTLAccelerationStructureInstanceOptionDisableTriangleCulling
+#define PLATFORM_RAYTRACING_INSTANCE_FLAG_TRIANGLE_FRONT_COUNTERCLOCKWISE     0x2 // MTLAccelerationStructureInstanceOptionTriangleFrontFacingWindingCounterClockwise
+#define PLATFORM_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE                        0x4 // MTLAccelerationStructureInstanceOptionOpaque
+#define PLATFORM_RAYTRACING_INSTANCE_FLAG_FORCE_NON_OPAQUE                    0x8 // MTLAccelerationStructureInstanceOptionNonOpaque
+
+// NOTE: Must be POD! (to avoid screwing up alignment for BLAS build).
+// Mirrors MTLAccelerationStructureUserIDInstanceDescriptor:
+struct FRayTracingInstanceDescriptor
+{
+    float Transform[4][3]; // MTLPackedFloat4x3 transformationMatrix;
+    uint Options;  //  MTLAccelerationStructureInstanceOptions options;
+    uint InstanceMask; // uint32_t mask;
+    uint InstanceContributionToHitGroupIndex; // uint32_t intersectionFunctionTableOffset;
+    uint AccelerationStructure; // uint32_t accelerationStructureIndex;
+    uint InstanceID; // uint32_t userID;
+};
+
+void SetRayTracingInstanceTransform(inout FRayTracingInstanceDescriptor Desc, float3x4 LocalToWorld)
+{
+    for (uint j = 0; j < 4; j++)
+        for (uint i = 0; i < 3; i++)
+            Desc.Transform[j][i] = LocalToWorld[i][j];
+}
+
+uint GetRayTracingInstanceDescriptorInstanceId(FRayTracingInstanceDescriptor Desc)
+{
+    return Desc.InstanceID;
+}
+
+uint GetRayTracingInstanceDescriptorMask(FRayTracingInstanceDescriptor Desc)
+{
+    return Desc.InstanceMask;
+}
+
+uint GetRayTracingInstanceDescriptorInstanceContributionToHitGroupIndex(FRayTracingInstanceDescriptor Desc)
+{
+    return Desc.InstanceContributionToHitGroupIndex;
+}
+
+uint GetRayTracingInstanceDescriptorFlags(FRayTracingInstanceDescriptor Desc)
+{
+    return Desc.Options;
+}
+
+FRayTracingInstanceDescriptor BuildPlatformRayTracingInstanceDesc(uint InstanceMask, uint InstanceId, uint InstanceFlags, uint InstanceContributionToHitGroupIndex, float3x4 LocalToWorld, uint2 AccelerationStructureAddress)
+{
+    FRayTracingInstanceDescriptor Desc;
+    Desc.Options = InstanceFlags;
+    Desc.InstanceMask = InstanceMask;
+    Desc.InstanceContributionToHitGroupIndex = InstanceContributionToHitGroupIndex;
+    Desc.AccelerationStructure = AccelerationStructureAddress.x;
+    Desc.InstanceID = InstanceId;
+    SetRayTracingInstanceTransform(Desc, LocalToWorld);
+
+    return Desc;
+}

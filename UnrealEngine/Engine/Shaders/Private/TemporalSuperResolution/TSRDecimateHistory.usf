@@ -1,0 +1,568 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "TSRCommon.ush"
+
+
+//------------------------------------------------------- CONFIG
+
+#define TILE_SIZE 8
+
+#define CONFIG_KERNEL 0
+
+#define CONFIG_MANUAL_LDS_SPILL 1
+
+#define CONFIG_VELOCITY_SAMPLES 9
+#if CONFIG_VELOCITY_SAMPLES != 1
+	#define CONFIG_VELOCITY_SAMPLE_PAIRS ((CONFIG_VELOCITY_SAMPLES - 1) / 2)
+
+	#if CONFIG_BUTTERFLY_KERNEL
+		#if CONFIG_VELOCITY_SAMPLES == 9
+			#define CONFIG_VELOCITY_PRE_FETCH_SAMPLES 4
+		#else
+			#define CONFIG_VELOCITY_PRE_FETCH_SAMPLES 3
+		#endif
+	#else // !CONFIG_BUTTERFLY_KERNEL
+		#define CONFIG_VELOCITY_PRE_FETCH_SAMPLES (CONFIG_VELOCITY_SAMPLES)
+	#endif
+#endif // CONFIG_VELOCITY_SAMPLES != 1
+
+/** Whether to compile the moire reprojection. */
+#define CONFIG_MOIRE_REPROJECTION (DIM_MOIRE_REPROJECTION)
+
+
+//------------------------------------------------------- PARAMETERS
+
+float4x4 RotationalClipToPrevClip;
+float2 CurrentToPrevInputJitter;
+
+Texture2D<float2> DilatedVelocityTexture;
+Texture2D<float> ClosestDepthTexture;
+Texture2D<uint> PrevUseCountTexture;
+Texture2D<uint> PrevClosestDepthTexture;
+
+Texture2D<tsr_halfC> PrevHistoryGuide;
+Texture2D<tsr_half4> PrevHistoryMoire;
+Texture2D<float2> PrevVelocityTexture;
+float2 PrevGuideInfo_Extent;
+float2 PrevGuideInfo_ExtentInverse;
+uint2  PrevGuideInfo_ViewportMin;
+uint2  PrevGuideInfo_ViewportMax;
+float2 PrevGuideInfo_ViewportSize;
+float2 PrevGuideInfo_ViewportSizeInverse;
+float2 PrevGuideInfo_UVViewportBilinearMin;
+float2 PrevGuideInfo_UVViewportBilinearMax;
+FScreenTransform InputPixelPosToReprojectScreenPos;
+FScreenTransform ScreenPosToPrevHistoryGuideBufferUV;
+float3 HistoryGuideQuantizationError;
+
+
+RWTexture2D<tsr_half4> ReprojectedHistoryGuideOutput;
+RWTexture2D<tsr_half4> ReprojectedHistoryMoireOutput;
+
+RWTexture2D<float2> HoleFilledVelocityOutput;
+RWTexture2D<float2> GrandHoleFilledVelocityOutput;
+RWTexture2D<tsr_half2> HoleFilledVelocityMaskOutput;
+RWTexture2D<tsr_half> ParallaxRejectionMaskOutput;
+
+
+//------------------------------------------------------- LDS
+
+#if CONFIG_MANUAL_LDS_SPILL
+	groupshared float2 SharedArray0[TILE_SIZE * TILE_SIZE];
+	groupshared float  SharedArray1[TILE_SIZE * TILE_SIZE];
+#endif
+
+
+//------------------------------------------------------- FUNCTIONS
+
+#if CONFIG_VELOCITY_SAMPLES != 1
+void LoadVelocityNeighborhood(
+	tsr_short2 InputPixelPos,
+	out float2 EncodedVelocityNeighborhood[CONFIG_VELOCITY_PRE_FETCH_SAMPLES])
+{
+	tsr_short2 LaneOffsetSign = GetLaneOffsetSign();
+
+	UNROLL_N(CONFIG_VELOCITY_PRE_FETCH_SAMPLES)
+	for (uint i = 0; i < CONFIG_VELOCITY_PRE_FETCH_SAMPLES; i++)
+	{
+		tsr_short2 SampleInputPixelPos;
+		#if CONFIG_BUTTERFLY_KERNEL
+		{
+			tsr_short2 Offset = tsr_short2(Offsets2x2[i]) * LaneOffsetSign;
+				
+			SampleInputPixelPos = InputPixelPos + Offset;
+		}
+		#else
+		{
+			tsr_short2 Offset;
+			#if CONFIG_VELOCITY_SAMPLES == 9
+				Offset = tsr_short2(kOffsets3x3[kSquareIndexes3x3[i]]);
+			#elif CONFIG_VELOCITY_SAMPLES == 5
+				Offset = tsr_short2(kOffsets3x3[kPlusIndexes3x3[i]]);
+			#endif
+					
+			SampleInputPixelPos = InputPixelPos + ClampPixelOffset(
+				InputPixelPos,
+				Offset, Offset,
+				InputPixelPosMin, InputPixelPosMax);
+		}
+		#endif
+
+		EncodedVelocityNeighborhood[i] = DilatedVelocityTexture[SampleInputPixelPos];
+	}
+} // LoadVelocityNeighborhood()
+
+void ProcessVelocityNeighborhood(
+	float2 EncodedVelocityNeighborhood[CONFIG_VELOCITY_PRE_FETCH_SAMPLES],
+	out float2 EncodedScreenVelocity,
+	out tsr_half RejectHighFrequency)
+{
+	// Preprocessed the prefetched samples
+	float2 PixelVelocityNeighborhood[CONFIG_VELOCITY_PRE_FETCH_SAMPLES];
+	{
+		UNROLL_N(CONFIG_VELOCITY_PRE_FETCH_SAMPLES)
+		for (uint i = 0; i < CONFIG_VELOCITY_PRE_FETCH_SAMPLES; i++)
+		{
+			PixelVelocityNeighborhood[i] = DecodeVelocityFromTexture(float4(EncodedVelocityNeighborhood[i], 0.0, 0.0)).xy * ScreenVelocityToInputPixelVelocity;
+		}
+	}
+	
+	RejectHighFrequency = tsr_half(0.0);
+
+	// Sample
+	float2 ScreenPixelVelocity = PixelVelocityNeighborhood[0];
+	tsr_short2 LaneOffsetSign = GetLaneOffsetSign();
+
+	UNROLL_N(CONFIG_VELOCITY_SAMPLE_PAIRS)
+	for (uint i = 0; i < CONFIG_VELOCITY_SAMPLE_PAIRS; i++)
+	ISOLATE
+	{
+		tsr_short2 Offset0;
+		tsr_short2 Offset1;
+			
+		float2 NeighborPixelVelocity0;
+		float2 NeighborPixelVelocity1;
+
+		#if CONFIG_BUTTERFLY_KERNEL
+		{
+			const uint PairIndex = i;
+				
+			const uint ButterflyArray0[] = { 0x0, 0x0, 0x0, 0x1 };
+			const uint ButterflyArray1[] = { 0x1, 0x2, 0x3, 0x2 };
+				
+			uint FetchIndex[2];
+			FWaveBroadcastSettings BroadcastSettings[2];
+			BroadcastSettings[0] = InitWaveXorButterfly(ButterflyArray0[PairIndex]);
+			BroadcastSettings[1] = InitWaveXorButterfly(ButterflyArray1[PairIndex]);
+				
+			if (PairIndex == 3)
+			{
+				FetchIndex[0] = 2;
+				FetchIndex[1] = 1;
+				Offset0 = tsr_short2(-1, 1);
+			}
+			else
+			{
+				FetchIndex[0] = PairIndex + 1;
+				FetchIndex[1] = PairIndex + 1;
+				Offset0 = tsr_short2(Offsets2x2[PairIndex + 1]);
+			}
+
+			Offset0 *= LaneOffsetSign;
+			Offset1 = -Offset0;
+
+			NeighborPixelVelocity0 = WaveBroadcast(BroadcastSettings[0], PixelVelocityNeighborhood[FetchIndex[0]]);
+			NeighborPixelVelocity1 = WaveBroadcast(BroadcastSettings[1], PixelVelocityNeighborhood[FetchIndex[1]]);
+		}
+		#else
+		{
+			const uint NeightbordId0 = i + 1;
+			const uint NeightbordId1 = i + 1 + CONFIG_VELOCITY_SAMPLE_PAIRS;
+			
+			#if CONFIG_VELOCITY_SAMPLES == 9
+				Offset0 = tsr_short2(kOffsets3x3[kSquareIndexes3x3[NeightbordId0]]);
+				Offset1 = tsr_short2(kOffsets3x3[kSquareIndexes3x3[NeightbordId1]]);
+			#elif CONFIG_VELOCITY_SAMPLES == 5
+				Offset0 = tsr_short2(kOffsets3x3[kPlusIndexes3x3[NeightbordId0]]);
+				Offset1 = tsr_short2(kOffsets3x3[kPlusIndexes3x3[NeightbordId1]]);
+			#endif
+					
+			NeighborPixelVelocity0 = PixelVelocityNeighborhood[NeightbordId0];
+			NeighborPixelVelocity1 = PixelVelocityNeighborhood[NeightbordId1];
+		}
+		#endif
+
+		tsr_half2 NeighborDeltaPixelVelocity0 = tsr_half2(ScreenPixelVelocity - NeighborPixelVelocity0);
+		tsr_half2 NeighborDeltaPixelVelocity1 = tsr_half2(ScreenPixelVelocity - NeighborPixelVelocity1);
+			
+		// Reject high frequency on velocity edge discontinuity.
+		{
+			tsr_half IsOverlapingEdge0 = tsr_half(1.0) - dot(saturate(NeighborDeltaPixelVelocity0 * Offset0), tsr_half(1.0).xx); // * saturate(ScreenPixelVelocityLength - NeighborPixelVelocityLength0);
+			tsr_half IsOverlapingEdge1 = tsr_half(1.0) - dot(saturate(NeighborDeltaPixelVelocity1 * Offset1), tsr_half(1.0).xx); // * saturate(ScreenPixelVelocityLength - NeighborPixelVelocityLength1);
+				
+			tsr_half IsOverlapingEdge = min(IsOverlapingEdge0, IsOverlapingEdge1);
+
+			if (i == 0)
+				RejectHighFrequency = IsOverlapingEdge;
+			else
+				RejectHighFrequency = min(RejectHighFrequency, IsOverlapingEdge);
+		}
+	}
+
+	// Remove noise from high frequency rejections.
+	RejectHighFrequency = saturate(tsr_half(1.0) - RejectHighFrequency * tsr_half(1.1));
+
+	// Do not reject high frequency additionally where hole filling happen
+	// RejectHighFrequency = max(RejectHighFrequency, HoleFilledVelocityMask); TODO
+
+	EncodedScreenVelocity = EncodedVelocityNeighborhood[0];
+} // ProcessVelocityNeighborhood()
+
+#endif // CONFIG_VELOCITY_SAMPLES != 1
+
+void LoadPrevAtomicTexturesSamples(
+	float2 PrevScreenPos,
+	out uint HistoryUseCountSamples[4],
+	out uint HistoryClosestDeviceZSamples[4])
+{
+	float2 PrevInputBufferUV = (InputInfo_ScreenPosToViewportScale * PrevScreenPos + InputInfo_ScreenPosToViewportBias) * InputInfo_ExtentInverse;
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(PrevInputBufferUV, InputInfo_Extent, InputInfo_ExtentInverse);
+
+	UNROLL_N(4)
+	for (uint i = 0; i < 4; i++)
+	{
+		float BilinearWeight = GetSampleWeight(BilinearInter, i);
+		uint2 PixelPos = GetSamplePixelCoord(BilinearInter, i);
+
+		bool bValidPixelPos = all(and(PixelPos >= InputInfo_ViewportMin, PixelPos < InputInfo_ViewportMax));
+
+		#if COMPRESS_PREV_USE_COUNT
+			uint2 CompressedUseCountPixelPos;
+			uint Shift;
+			ComputeCompressedUseCountPixelCoordinates(PixelPos, /* out */ CompressedUseCountPixelPos, /* out */ Shift);
+
+			uint HistoryUseCount = PrevUseCountTexture[CompressedUseCountPixelPos];
+		#else
+			uint HistoryUseCount = PrevUseCountTexture[PixelPos];
+		#endif
+			
+		HistoryUseCountSamples[i] = HistoryUseCount;
+		HistoryClosestDeviceZSamples[i] = PrevClosestDepthTexture[PixelPos];
+	}
+} // LoadPrevAtomicTexturesSamples()
+
+void ProcessPrevAtomicTexturesSamples(
+	uint HistoryUseCountSamples[4],
+	uint HistoryClosestDeviceZSamples[4],
+	float DeviceZ,
+	float2 PrevScreenPos,
+	out tsr_half ParallaxRejectionMask,
+	out bool bIsValidHoleFillingPixelVelocity,
+	out uint EncodedHoleFillingVelocity)
+{
+	ParallaxRejectionMask = tsr_half(0.0);
+	bIsValidHoleFillingPixelVelocity = false;
+	EncodedHoleFillingVelocity = 0;
+
+	float WorldDepth = ConvertFromDeviceZ(DeviceZ);
+	
+	float2 PrevInputBufferUV = (InputInfo_ScreenPosToViewportScale * PrevScreenPos + InputInfo_ScreenPosToViewportBias) * InputInfo_ExtentInverse;
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(PrevInputBufferUV, InputInfo_Extent, InputInfo_ExtentInverse);
+
+	UNROLL_N(4)
+	for (uint i = 0; i < 4; i++)
+	{
+		float BilinearWeight = GetSampleWeight(BilinearInter, i);
+		uint2 PixelPos = GetSamplePixelCoord(BilinearInter, i);
+
+		bool bValidPixelPos = all(and(PixelPos >= InputInfo_ViewportMin, PixelPos < InputInfo_ViewportMax));
+				
+		#if COMPRESS_PREV_USE_COUNT
+			uint2 CompressedUseCountPixelPos;
+			uint Shift;
+			ComputeCompressedUseCountPixelCoordinates(PixelPos, /* out */ CompressedUseCountPixelPos, /* out */ Shift);
+
+			uint HistoryUseCount = (HistoryUseCountSamples[i] >> (8 * Shift)) & 0xFF;
+		#else
+			uint HistoryUseCount = HistoryUseCountSamples[i];
+		#endif
+			
+		uint SampleHistoryClosestDeviceZ = HistoryClosestDeviceZSamples[i];
+		
+		float HistoryClosestDeviceZ = f16tof32(SampleHistoryClosestDeviceZ >> VELOCITY_HOLE_FILLING_BITS);
+		float HistoryClosestWorldDepth = ConvertFromDeviceZ(HistoryClosestDeviceZ);
+
+		tsr_half DepthRejection;
+		{
+			const float WorldDepthToPixelWorldRadius = GetTanHalfFieldOfView().x * InputInfo_ViewportSizeInverse.x;
+			const float PixelDepthError = 3.0;
+			const float RadiusToDiamater = 2.0;
+			
+			float WorldDepthEpsilon = (WorldDepthToPixelWorldRadius * RadiusToDiamater * PixelDepthError) * HistoryClosestWorldDepth; 
+			float DeltaDepth = abs(HistoryClosestWorldDepth - WorldDepth);
+
+			DepthRejection = saturate(tsr_half(2.0) - tsr_half(DeltaDepth / WorldDepthEpsilon));
+		}
+
+		tsr_half HistoryGhostingRejection = saturate(tsr_half(1.0) - tsr_half(3.0) * abs(tsr_half(HistoryUseCount) * rcp(tsr_half(PREV_USE_COUNT_QUANTIZATION)) - tsr_half(1.0)));
+			
+		bIsValidHoleFillingPixelVelocity = bIsValidHoleFillingPixelVelocity || bValidPixelPos;
+
+		EncodedHoleFillingVelocity = select(bValidPixelPos, max(EncodedHoleFillingVelocity, SampleHistoryClosestDeviceZ), EncodedHoleFillingVelocity);
+		ParallaxRejectionMask = select(bValidPixelPos, ParallaxRejectionMask + tsr_half(BilinearWeight) * max(DepthRejection, HistoryGhostingRejection), ParallaxRejectionMask);
+	}
+} // ProcessPrevAtomicTexturesSamples()
+
+// Sample a texture with a catrom kernel
+template<typename Type>
+Type SampleTextureCatrom(Texture2D<Type> InTexture, float2 TextureUV)
+{
+	FCatmullRomSamples Samples = GetBicubic2DCatmullRomSamples(TextureUV, PrevGuideInfo_Extent, PrevGuideInfo_ExtentInverse);
+
+	Type Color = tsr_half(0.0);
+	for (uint i = 0; i < Samples.Count; i++)
+	{
+		float2 SampleUV = Samples.UV[i];
+		SampleUV = clamp(
+			SampleUV,
+			PrevGuideInfo_UVViewportBilinearMin,
+			PrevGuideInfo_UVViewportBilinearMax);
+
+		Color += InTexture.SampleLevel(GlobalBilinearClampedSampler, SampleUV, 0) * tsr_half(Samples.Weight[i]);
+	}
+	Color *= tsr_half(Samples.FinalMultiplier);
+
+	return Color;
+}
+
+// Correct pre exposure of the guide color.
+tsr_halfC CorrectGuideColorExposure(tsr_halfC ReprojectedHistoryGuideColor)
+{
+	tsr_halfC LinearReprojectedHistoryGuideColor = ReprojectedHistoryGuideColor * rcp(tsr_half(1.0) - ReprojectedHistoryGuideColor) * tsr_half(HistoryPreExposureCorrection);
+				
+	ReprojectedHistoryGuideColor = LinearReprojectedHistoryGuideColor * rcp(LinearReprojectedHistoryGuideColor + tsr_half(1.0));
+
+	// Removes NaN
+	ReprojectedHistoryGuideColor = -min(-ReprojectedHistoryGuideColor, tsr_half(0.0));
+
+	return ReprojectedHistoryGuideColor;
+}
+
+// Sample previous moire history
+#if CONFIG_MOIRE_REPROJECTION
+tsr_half4 ReprojectPrevHistoryMoire(tsr_ushort2 InputPixelPos, float2 TextureUV)
+{
+	uint2 Random = Rand3DPCG16(int3(InputPixelPos - InputInfo_ViewportMin, View.StateFrameIndexMod8)).xy;
+	float2 E = Hammersley16(0, 1, Random).xy;
+
+	return PrevHistoryMoire.SampleLevel(GlobalPointClampedSampler, TextureUV + (E - 0.5) * PrevGuideInfo_ExtentInverse, 0);
+}
+#endif
+
+
+//------------------------------------------------------- ENTRY POINT
+
+[numthreads(TILE_SIZE * TILE_SIZE, 1, 1)]
+void MainCS(
+	uint2 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	float4 Debug = 0;
+
+	// Sample current frame informations.
+	float2 EncodedScreenVelocity;
+	float DeviceZ;
+	tsr_half RejectHighFrequency = tsr_half(0.0);
+	ISOLATE
+	{
+		tsr_ushort2 InputPixelPos = (
+			Map8x8Tile2x2Lane(GroupThreadIndex) +
+			(tsr_ushort2(InputInfo_ViewportMin) + tsr_ushort2(GroupId) * tsr_ushort2(TILE_SIZE, TILE_SIZE)));
+			
+		#if CONFIG_VELOCITY_SAMPLES != 1
+		float2 EncodedVelocityNeighborhood[CONFIG_VELOCITY_PRE_FETCH_SAMPLES];
+		#endif
+
+		// Issue texture fetechs
+		ISOLATE
+		{
+			DeviceZ = ClosestDepthTexture[InputPixelPos];
+
+			#if CONFIG_VELOCITY_SAMPLES == 1
+				EncodedScreenVelocity = DilatedVelocityTexture[InputPixelPos];
+			#else // CONFIG_VELOCITY_SAMPLES != 1
+				LoadVelocityNeighborhood(InputPixelPos, /* out */ EncodedVelocityNeighborhood);
+			#endif // CONFIG_VELOCITY_SAMPLES != 1
+		}
+
+		// LDS spill to save VGPR on the history texture fetches.
+		#if CONFIG_MANUAL_LDS_SPILL
+		ISOLATE
+		{
+			#if CONFIG_VELOCITY_SAMPLES == 1
+				SharedArray0[GroupThreadIndex] = EncodedScreenVelocity;
+			#else
+				SharedArray0[GroupThreadIndex] = EncodedVelocityNeighborhood[0];
+			#endif
+			SharedArray1[GroupThreadIndex] = DeviceZ;
+		}
+		#endif
+		
+		// Detect whether is on velocity edge to clamp the high frequencies
+		#if CONFIG_VELOCITY_SAMPLES != 1
+		ISOLATE
+		{
+			ProcessVelocityNeighborhood(
+				EncodedVelocityNeighborhood,
+				/* out */ EncodedScreenVelocity,
+				/* out */ RejectHighFrequency);
+		}
+		#endif // CONFIG_VELOCITY_SAMPLES != 1
+	}
+	
+	// Sample the previous frame information
+	uint HistoryUseCountSamples[4];
+	uint HistoryClosestDeviceZSamples[4];
+	
+	tsr_halfC ReprojectedHistoryGuideColor;
+	#if CONFIG_MOIRE_REPROJECTION
+		tsr_half4 ReprojectedHistoryMoireColor;
+	#endif
+	bool bIsOffScreen;
+
+	// Issues all the history texture fetches
+	ISOLATE
+	{
+		tsr_ushort2 InputPixelPos = (
+			Map8x8Tile2x2Lane(GroupThreadIndex) +
+			(tsr_ushort2(InputInfo_ViewportMin) + tsr_ushort2(GroupId) * tsr_ushort2(TILE_SIZE, TILE_SIZE)));
+			
+		float2 ScreenPos = ApplyScreenTransform(float2(InputPixelPos), InputPixelPosToScreenPos);
+		float2 PrevScreenPos = ScreenPos - DecodeVelocityFromTexture(float4(EncodedScreenVelocity, 0.0, 0.0)).xy;
+		LoadPrevAtomicTexturesSamples(PrevScreenPos,
+			/* out */ HistoryUseCountSamples,
+			/* out */ HistoryClosestDeviceZSamples);
+			
+		{
+			float2 OutputScreenPos = ApplyScreenTransform(float2(InputPixelPos), InputPixelPosToReprojectScreenPos);
+	
+			float2 PrevOutputScreenPos = OutputScreenPos - DecodeVelocityFromTexture(float4(EncodedScreenVelocity, 0.0, 0.0)).xy;
+			bIsOffScreen = (
+				(PrevOutputScreenPos.x < -1.0) ||
+				(PrevOutputScreenPos.y < -1.0) ||
+				(PrevOutputScreenPos.x > 1.0) ||
+				(PrevOutputScreenPos.y > 1.0));
+				
+			float2 KernelHistoryBufferUV = ApplyScreenTransform(PrevOutputScreenPos, ScreenPosToPrevHistoryGuideBufferUV);
+
+			ReprojectedHistoryGuideColor = SampleTextureCatrom(PrevHistoryGuide, KernelHistoryBufferUV);
+			ReprojectedHistoryGuideColor = CorrectGuideColorExposure(ReprojectedHistoryGuideColor);
+			#if CONFIG_MOIRE_REPROJECTION
+			{
+				ReprojectedHistoryMoireColor = ReprojectPrevHistoryMoire(InputPixelPos, KernelHistoryBufferUV);
+			}
+			#endif
+		}
+	}
+	
+	// Process the history samples
+	tsr_half ParallaxRejectionMask;
+	
+	ISOLATE
+	{
+		// LDS despill
+		#if CONFIG_MANUAL_LDS_SPILL
+		{
+			EncodedScreenVelocity = SharedArray0[GroupThreadIndex];
+			DeviceZ = SharedArray1[GroupThreadIndex];
+		}
+		#endif
+		
+		tsr_ushort2 InputPixelPos = (
+			Map8x8Tile2x2Lane(GroupThreadIndex) +
+			(tsr_ushort2(InputInfo_ViewportMin) + tsr_ushort2(GroupId) * tsr_ushort2(TILE_SIZE, TILE_SIZE)));
+
+		float2 ScreenPos = ApplyScreenTransform(float2(InputPixelPos), InputPixelPosToScreenPos);
+		float2 ScreenVelocity = DecodeVelocityFromTexture(float4(EncodedScreenVelocity, 0.0, 0.0)).xy;
+		float2 PrevScreenPos = ScreenPos - ScreenVelocity;
+		
+		// Compute the parralax rejection mask
+		bool bIsValidHoleFillingPixelVelocity = false;
+		uint EncodedHoleFillingVelocity = 0;
+		ProcessPrevAtomicTexturesSamples(
+			HistoryUseCountSamples,
+			HistoryClosestDeviceZSamples,
+			DeviceZ,
+			PrevScreenPos,
+			/* out */ ParallaxRejectionMask,
+			/* out */ bIsValidHoleFillingPixelVelocity,
+			/* out */ EncodedHoleFillingVelocity);
+
+		// Finish off the ParallaxRejectionMask
+		ParallaxRejectionMask = select(bIsOffScreen, tsr_half(0.0), ParallaxRejectionMask);
+
+		bool bIsOffscreenOrParallaxRejected = ParallaxRejectionMask < tsr_half(PARALLAX_REJECTION_MASK_THRESHOLD);
+	
+		// Hole fill the velocity.
+		{
+			float2 HoleFillingPixelVelocity;
+			float HoleFillingOutOfRange;
+			DecodeHoleFillingVelocity(EncodedHoleFillingVelocity, /* out */ HoleFillingPixelVelocity, /* out */ HoleFillingOutOfRange);
+			if (!bIsValidHoleFillingPixelVelocity)
+			{
+				HoleFillingOutOfRange = 0.0;
+			}
+
+			// If the hole filling velocity has better result that the neighborhood, use that.
+			FLATTEN
+			if (tsr_half(HoleFillingOutOfRange) > 0.0 && bIsOffscreenOrParallaxRejected)
+			{
+				float2 ScreenPixelVelocity = ScreenVelocity * ScreenVelocityToInputPixelVelocity;
+				float VelocityDelta = length(ScreenPixelVelocity - HoleFillingPixelVelocity);
+
+				float2 HoleFillingVelocity = HoleFillingPixelVelocity * InputPixelVelocityToScreenVelocity;
+
+				EncodedScreenVelocity = EncodeVelocityToTexture(float3(HoleFillingVelocity, 0.0)).xy;
+				//HoleFilledVelocityMask = tsr_half(HoleFillingOutOfRange) * tsr_half(saturate(MaxHollFillPixelVelocity - VelocityDelta));
+			}
+		}
+	}
+	
+	// Output full res
+	ISOLATE
+	{
+		tsr_ushort2 InputPixelPos = (
+			Map8x8Tile2x2Lane(GroupThreadIndex) +
+			(tsr_ushort2(InputInfo_ViewportMin) + tsr_ushort2(GroupId) * tsr_ushort2(TILE_SIZE, TILE_SIZE)));
+			
+		#if CONFIG_ENABLE_STOCASTIC_QUANTIZATION && 1
+		{
+			uint2 Random = Rand3DPCG16(int3(InputPixelPos - InputInfo_ViewportMin, View.StateFrameIndexMod8)).xy;
+			tsr_half E = tsr_half(Hammersley16(0, 1, Random).x);
+
+			ReprojectedHistoryGuideColor = QuantizeForUNormRenderTarget(ReprojectedHistoryGuideColor, E, HistoryGuideQuantizationError);
+		}
+		#endif
+		
+		tsr_short2 OutputPixelPos = InvalidateOutputPixelPos(InputPixelPos, InputInfo_ViewportMax);
+
+		#if CONFIG_SCENE_COLOR_ALPHA
+			ReprojectedHistoryGuideOutput[OutputPixelPos] = ReprojectedHistoryGuideColor;
+		#else
+			ReprojectedHistoryGuideOutput[OutputPixelPos] = tsr_half4(ReprojectedHistoryGuideColor.xyz, tsr_half(1.0));
+		#endif
+
+		#if CONFIG_MOIRE_REPROJECTION
+			ReprojectedHistoryMoireOutput[OutputPixelPos] = ReprojectedHistoryMoireColor;
+		#endif
+		HoleFilledVelocityOutput[OutputPixelPos] = EncodedScreenVelocity;
+		HoleFilledVelocityMaskOutput[InputPixelPos] = tsr_half2(0.0, RejectHighFrequency);
+		ParallaxRejectionMaskOutput[OutputPixelPos] = ParallaxRejectionMask;
+
+		#if DEBUG_OUTPUT
+		{
+			DebugOutput[tsr_short3(OutputPixelPos, 0)] = Debug;
+		}
+		#endif
+	}
+}

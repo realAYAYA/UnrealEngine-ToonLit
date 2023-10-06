@@ -1,0 +1,138 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	AnisotropyPassShader.usf: Outputs Anisotropy and World Tangent to GBufferF
+=============================================================================*/
+
+#include "Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "DeferredShadingCommon.ush"
+
+struct FAnisotropyPassVSToPS
+{
+	float4 Position : SV_POSITION;
+	FVertexFactoryInterpolantsVSToPS Interps;
+
+	#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+		float3 PixelPositionExcludingWPO : TEXCOORD7;
+	#endif
+};
+
+#define FVertexOutput FAnisotropyPassVSToPS
+#define VertexFactoryGetInterpolants VertexFactoryGetInterpolantsVSToPS
+
+/*=============================================================================
+ * Vertex Shader
+ *============================================================================*/
+#if VERTEXSHADER
+void MainVertexShader(
+	FVertexFactoryInput Input,
+	out FVertexOutput Output 
+#if USE_GLOBAL_CLIP_PLANE
+	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
+#endif
+#if INSTANCED_STEREO
+	, out uint ViewportIndex : SV_ViewPortArrayIndex
+#endif
+	)
+{
+#if INSTANCED_STEREO
+	const uint EyeIndex = GetEyeIndexFromVF(Input);
+	ViewportIndex = EyeIndex;
+#endif
+	ResolvedView = ResolveViewFromVF(Input);
+	
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPos = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float4 WorldPositionExcludingWPO = WorldPos;
+
+	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
+
+	// Isolate instructions used for world position offset
+	// As these cause the optimizer to generate different position calculating instructions in each pass, resulting in self-z-fighting.
+	// This is only necessary for shaders used in passes that have depth testing enabled.
+	{
+		WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+	}
+
+	{
+		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
+		Output.Position = INVARIANT(mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip));
+	}
+
+	#if XBOXONE_BIAS_HACK
+		// XB1 needs a bias in the opposite direction to fix FORT-40853
+		// XBOXONE_BIAS_HACK is defined only in a custom node in a particular material
+		// This should be removed with a future shader compiler update
+		Output.Position.z -= 0.0001 * Output.Position.w;
+	#endif
+
+	#if USE_GLOBAL_CLIP_PLANE
+		OutGlobalClipPlaneDistance = dot(ResolvedView.GlobalClippingPlane, float4(WorldPos.xyz, 1));
+	#endif
+
+	Output.Interps = VertexFactoryGetInterpolants(Input, VFIntermediates, VertexParameters);
+
+#if INSTANCED_STEREO
+	Output.Interps.EyeIndex = EyeIndex;
+#endif
+
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+	Output.PixelPositionExcludingWPO = WorldPositionExcludingWPO.xyz;
+#endif	
+}
+#endif // VERTEXSHADER
+
+/*=============================================================================
+ * Pixel Shader
+ *============================================================================*/
+#if PIXELSHADER
+void MainPixelShader(
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position,
+	FVertexFactoryInterpolantsVSToPS Input
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+	, float3 PixelPositionExcludingWPO : TEXCOORD7
+#endif
+	OPTIONAL_IsFrontFace
+	OPTIONAL_OutDepthConservative
+	, out float4 GBufferF : SV_Target0
+#if MATERIALBLENDING_MASKED_USING_COVERAGE
+	, out uint OutCoverage : SV_Coverage
+#endif
+	)
+{
+#if INSTANCED_STEREO
+	ResolvedView = ResolveView(Input.EyeIndex);
+#else
+	ResolvedView = ResolveView();
+#endif
+
+	// Manual clipping here (alpha-test, etc)
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Input, SvPosition);
+	FPixelMaterialInputs PixelMaterialInputs;
+
+	#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, PixelPositionExcludingWPO);	
+	#else
+		CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, bIsFrontFace);
+	#endif
+
+#if OUTPUT_PIXEL_DEPTH_OFFSET
+	ApplyPixelDepthOffsetToMaterialParameters(MaterialParameters, PixelMaterialInputs, OutDepth);
+#endif
+
+#if MATERIALBLENDING_MASKED_USING_COVERAGE
+	OutCoverage = DiscardMaterialWithPixelCoverage(MaterialParameters, PixelMaterialInputs);
+#endif
+
+	float Anisotropy = GetMaterialAnisotropy(PixelMaterialInputs);
+	float3 WorldTangent = MaterialParameters.WorldTangent;
+
+	GBufferF = EncodeWorldTangentAndAnisotropy(WorldTangent, Anisotropy);
+}
+#endif // PIXELSHADER
+

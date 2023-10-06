@@ -1,0 +1,99 @@
+{
+	"name": "//UE5/Main",
+	"tabs":
+	[
+		{
+			"title": "General",
+			"type": "Jobs",
+			"showNames": true,
+			"templates":
+			[
+				"test-executor",
+				"local-executor",
+				"custom"
+			],
+			"columns":
+			[
+				{
+					"heading": "Editors",
+					"category": "Editors",
+					"relativeWidth": 1
+				},
+				{
+					"heading": "Target Platforms",
+					"category": "Platforms",
+					"relativeWidth": 2
+				},
+				{
+					"heading": "Other",
+					"category": "Other",
+					"relativeWidth": 1
+				}
+			]
+		}
+	],
+	"agentTypes":
+	{
+		"AnyAgent": {
+			"pool": "any"
+		},
+		"Win-UE5":
+		{
+			"pool": "win-ue5",
+			"environment":
+			{
+			}
+		}
+	},
+	"workspaceTypes":
+	{
+	},
+	"templates":
+	[
+		{
+			"id": "test-executor",
+			"name": "Run Test Executor",
+			"initialAgentType": "AnyAgent",
+			"arguments": [
+				"-Target=Full Build"
+			],
+			"jobOptions": {
+				"executor": "Test"
+			}
+		},
+		{
+			"id": "local-executor",
+			"name": "Run Local Executor",
+			"initialAgentType": "AnyAgent",
+			"arguments": [
+				"-Script=Engine/Build/Graph/Examples/TagsAndFiles.xml",
+				"-Target=Tag and File Examples"
+			],
+			"jobOptions": {
+				"executor": "Local"
+			}
+		},
+		{
+			"id": "custom",
+			"name": "Custom...",
+			"arguments":
+			[
+			],
+			"parameters":
+			[
+				{
+					"type": "Text",
+					"label": "Script",
+					"argument": "-Script=",
+					"default": "Foo.xml"
+				},
+				{
+					"type": "Text",
+					"label": "Target",
+					"argument": "-Target=",
+					"default": ""
+				}
+			]
+		}
+	]
+}

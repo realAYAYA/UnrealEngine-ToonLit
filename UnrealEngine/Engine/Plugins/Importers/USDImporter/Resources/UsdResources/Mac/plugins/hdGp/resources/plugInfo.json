@@ -1,0 +1,24 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HdGpSceneIndexPlugin": {
+                        "bases": [
+                            "HdSceneIndexPlugin"
+                        ], 
+                        "displayName":
+                            "HdGpGenerativeProceduralResolvingSceneIndex",
+                        "loadWithRenderer": "",
+                        "priority": 0
+                    }
+                }
+            }, 
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/libusd_hdGp.dylib", 
+            "Name": "hdGp", 
+            "ResourcePath": "resources", 
+            "Root": "..", 
+            "Type": "library"
+        }
+    ]
+}

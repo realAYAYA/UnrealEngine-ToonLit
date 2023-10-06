@@ -1,0 +1,16 @@
+
+The original vpx source is in orig-libvpx-1.6.1.tar.bz2 for reference. libvpx-1.6.1.tar.bz2 contains Epic modifications.
+
+
+2020/07/24 (andrew.grant)
+
+Added support for building for arm64 macs. Currently vpx assumes arm64-darwin 
+is iPhoneOS so now follow the convention it uses for x86_64 where darwinNN
+specifies the macos version.
+
+E.g. arm64-darwin-gcc remains iOS and arm64-darwin13-gcc is macos
+
+'configure' has been updated to recognize arm64-darwinxx-gcc targets
+'build/make/configure.sh' has been updated to differntiate between 'darwin'
+and 'darwinxx' where necessary (primarily when adding SDK paths)
+

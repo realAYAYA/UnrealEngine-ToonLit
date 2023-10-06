@@ -1,0 +1,86 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+ReferencePathTracinPixelShader.ush: Reference path tracing  compositing pixel shader for progressive update.
+===============================================================================================*/
+
+#include "../Common.ush"
+
+uint Iteration;
+uint MaxSamples;
+int ProgressDisplayEnabled;
+Texture2D<float4> RadianceTexture;
+Texture2D<float4> NormalDepthTexture;
+
+void CompositeMain(
+	in noperspective float2 UV : TEXCOORD0,
+	out float4 OutColor : SV_Target0,
+	out float OutDepth : SV_DEPTH
+)
+{
+	float2 BufferSize = View.BufferSizeAndInvSize.xy;
+	int3 TexCoord = int3(UV * BufferSize - View.ViewRectMin.xy, 0);
+
+	float4 Radiance = RadianceTexture.Load(TexCoord);
+
+	OutColor = float4(Radiance.rgb * View.PreExposure, Radiance.a);
+
+	if (ProgressDisplayEnabled && (Iteration + 1) < MaxSamples)
+	{
+		// Draw a progress meter for how far along we are to the max number of passes
+		float Aspect = View.BufferSizeAndInvSize.y * View.BufferSizeAndInvSize.z;
+		float Size = 50.0 * View.BufferSizeAndInvSize.z;
+		float2 P = float2(UV.x, UV.y * Aspect);
+		float2 RectMin = View.ViewRectMin.xy;
+		float2 RectMax = View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy;
+
+		// center progress in middle-bottom of the frame
+		float2 Center = float2(lerp(RectMin.x, RectMax.x, 0.5), RectMax.y) * View.BufferSizeAndInvSize.zz - float2(0, Size * 0.75);
+		P -= Center;
+		float Fraction = saturate(float(Iteration + 1) / float(MaxSamples));
+#if 0
+		// measure progress like a clock
+		float R2 = dot(P, P);
+		float ROuter2 = Square(0.50 * Size);
+		float RInner2 = Square(0.35 * Size);
+
+		float R2f = fwidth(R2);
+
+		// point is on the progress ring
+		if (R2 < ROuter2 + R2f && R2 > RInner2 - R2f)
+		{
+			float Angle = (atan2(-P.x, P.y) + PI) / (2 * PI);
+			// anti-alias progress bar edge
+			float Blend = smoothstep(Fraction - fwidth(Angle), Fraction + fwidth(Angle), Angle);
+			// Grey/Red blend
+			float4 ProgressBarColor = lerp(float4(1.0, 0.1, 0.1, 1), float4(0.5, 0.5, 0.5, 1), Blend);
+			// anti-alias ring edges
+			float BlendOuter = 1 - smoothstep(ROuter2 - R2f, ROuter2 + R2f, R2);
+			float BlendInner =     smoothstep(RInner2 - R2f, RInner2 + R2f, R2);
+			OutColor = lerp(OutColor, ProgressBarColor, 0.75 * BlendInner * BlendOuter);
+		}
+#else
+		// simple linear progress bar
+		float2 ProgressSize = float2(2.0 * Size, 0.15 * Size);
+		if (all(abs(P) < ProgressSize))
+		{
+			P += ProgressSize;
+			P /= ProgressSize * 2;
+			float Blend = smoothstep(Fraction - fwidth(P.x), Fraction + fwidth(P.x), P.x);
+			// Grey/Red blend
+			float4 ProgressBarColor = lerp(float4(1.0, 0.1, 0.1, 1), float4(0.5, 0.5, 0.5, 1), Blend);
+			OutColor = lerp(OutColor, ProgressBarColor, 0.75);
+		}
+#endif
+	}
+
+#if 0
+    // split-screen debugging aids
+	if (UV.x < 0.5)
+	{
+		OutColor = 1 - Radiance.a; // visualize alpha channel
+	}
+#endif
+	
+	OutDepth = NormalDepthTexture.Load(TexCoord).w;
+}

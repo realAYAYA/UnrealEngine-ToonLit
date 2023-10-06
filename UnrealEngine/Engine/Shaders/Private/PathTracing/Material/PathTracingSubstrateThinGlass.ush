@@ -1,0 +1,260 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#ifndef STRATA_ENABLED
+#error "This header should only be included when Strata is enabled."
+#endif
+
+#include "PathTracingSubstrateCommon.ush"
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingGlossy.ush"
+#include "PathTracingFresnel.ush"
+#include "../../BRDF.ush"
+
+
+struct FSubstrateThinGlassSlabData
+{
+	float3x3 Basis;
+	float3 V;
+
+	float2 RoughnessT;
+
+	float  F0, F90;
+	float  Eta;
+	float3 TransmissionColor;
+	float2 AlphaR0, AlphaT0;
+	float2 AlphaR1, AlphaT1;
+	float  FuzzRoughness;
+
+	float  FuzzAttenuation;
+	float2  NudgeE;
+	FBxDFEnergyTermsA SpecR0, SpecR1;
+	FBxDFEnergyTermsA SpecT0, SpecT1;
+	FBxDFEnergyTermsA Fuzz;
+
+	float2 LobeCdf;
+	float3 LobePdf;
+
+	void PrepareBSDF(float3 V_World, FPathTracingPayload Payload)
+	{
+		float2 RoughnessR = Payload.RoughnessData.xy;
+		RoughnessT.x = ComputeThinTransmittedRoughness(RoughnessR.x, Payload.Ior);
+		RoughnessT.y = ComputeThinTransmittedRoughness(RoughnessR.y, Payload.Ior);
+
+		Basis   = GetGGXBasis(RoughnessR.x, Payload.Anisotropy, Payload.WorldNormal, Payload.WorldTangent, AlphaR0);
+		AlphaR1 = GetGGXAlpha(RoughnessR.y, Payload.Anisotropy);
+
+		AlphaT0 = GetGGXAlpha(RoughnessT.x, Payload.Anisotropy);
+		AlphaT1 = GetGGXAlpha(RoughnessT.y, Payload.Anisotropy);
+
+		V = mul(Basis, V_World);
+
+		F0 = F0RGBToF0(Payload.SpecularColor);
+		F90 = F0ToMicroOcclusion(F0);
+		TransmissionColor = Payload.GetTransmittanceColor();
+		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, STRATA_MIN_FUZZ_ROUGHNESS);
+
+		const float NoV = saturate(V.z);
+		SpecR0 = ComputeGGXSpecEnergyTermsA(RoughnessR.x, NoV, F0, F90);
+		SpecR1 = ComputeGGXSpecEnergyTermsA(RoughnessR.y, NoV, F0, F90);
+		SpecT0 = ComputeGGXSpecEnergyTermsA(RoughnessT.x, NoV, 1.0 - F0, 1.0 - F90);
+		SpecT1 = ComputeGGXSpecEnergyTermsA(RoughnessT.y, NoV, 1.0 - F0, 1.0 - F90);
+		NudgeE.x = rcp(SpecR0.E + SpecT0.E);
+		NudgeE.y = rcp(SpecR1.E + SpecT1.E);
+
+		Fuzz = ComputeClothEnergyTermsA(FuzzRoughness, NoV);
+
+		FuzzAttenuation = 1.0 - Payload.FuzzAmount * Fuzz.E;
+
+		const float3 GlassR = FuzzAttenuation * lerp(SpecR0.E * NudgeE.x, SpecR1.E * NudgeE.y, Payload.RoughnessData.z);
+		const float3 GlassT = FuzzAttenuation * lerp(SpecT0.E * NudgeE.x, SpecT1.E * NudgeE.y, Payload.RoughnessData.z);
+		const float  FuzzAlbedo = Payload.FuzzAmount * Fuzz.E;
+
+		// Now prepare a cdf/pdf for lobe selection
+		// NOTE: we put T first so that the reflected lobe (R and fuzz) are consecutive in the PDF
+		float3 MaxLobeWeight = Payload.GetMaxLobeWeight();
+		LobeCdf = LobeSelectionCdf(
+			Payload.Ior > 0.0 ? MaxLobeWeight * GlassT : 0.0,
+			MaxLobeWeight * GlassR,
+			MaxLobeWeight * FuzzAlbedo);
+		LobePdf = LobeSelectionPdf(LobeCdf);
+	}
+};
+
+
+FMaterialSample SubstrateThinGlass_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample
+)
+{
+	FSubstrateThinGlassSlabData Data = (FSubstrateThinGlassSlabData)0;
+	Data.PrepareBSDF(V_World, Payload);
+
+	float3 L = 0, H = 0, V = Data.V;
+	float OutRoughness = 1;
+
+	const bool bIsReflection = RandSample.x >= Data.LobeCdf.x;
+	const bool bSampleGlass = RandSample.x < Data.LobeCdf.y;
+	if (bSampleGlass)
+	{
+		// Two-phase lobe selection:
+		// First use the overall CDF to pick between transmission and reflection ...
+		RandSample.x = RescaleRandomNumber(RandSample.x,
+			bIsReflection ? Data.LobeCdf.x : 0.0,
+			bIsReflection ? Data.LobeCdf.y : Data.LobeCdf.x);
+
+		// Then use the roughness blend to pick one of the two possible roughness values
+		const bool bUseRoughness1 = RandSample.x < Payload.RoughnessData.z;
+		RandSample.x = RescaleRandomNumber(RandSample.x,
+			bUseRoughness1 ? 0.0 : Payload.RoughnessData.z,
+			bUseRoughness1 ? Payload.RoughnessData.z : 1.0);
+
+		// 
+		float2 Alpha = bIsReflection
+			? (bUseRoughness1 ? Data.AlphaR1 : Data.AlphaR0)
+			: (bUseRoughness1 ? Data.AlphaT1 : Data.AlphaT0);
+		OutRoughness = bIsReflection
+			? (bUseRoughness1 ? Payload.RoughnessData.y : Payload.RoughnessData.x)
+			: (bUseRoughness1 ? Data.RoughnessT.y : Data.RoughnessT.x);
+
+		H = ImportanceSampleVisibleGGX(RandSample.xy, Alpha, V).xyz;
+		L = reflect(-V, H);
+		if (L.z <= 0)
+		{
+			// invalid output direction, exit early
+			return NullMaterialSample();
+		}
+	}
+	else
+	{
+		// cloth lobe
+		RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.y, 1.0);
+		L = UniformSampleHemisphere(RandSample.xy).xyz;
+		H = normalize(L + V);
+	}
+	// transform to world space
+	const float3 N_World = Payload.WorldNormal;
+	const float NoV = saturate(V.z);
+	const float NoL = saturate(L.z);
+	const float VoH = saturate(dot(V, H));
+	const float NoH = saturate(H.z);
+
+	const float PositionBiasSign = bIsReflection ? 1.0 : -1.0;
+	const float3 L_World = normalize(mul(float3(L.xy, PositionBiasSign * L.z), Data.Basis)); // flip reflection to other side if we are refracting
+	FMaterialSample Result = CreateMaterialSample(L_World, 0.0, 0.0, PositionBiasSign, OutRoughness, bIsReflection ? PATHTRACER_SCATTER_SPECULAR : PATHTRACER_SCATTER_REFRACT);
+
+
+
+	// Specular Lobes (either reflected or transmitted)
+	const float2 GGXResult0 = GGXEvalReflection(L, V, H, bIsReflection ? Data.AlphaR0 : Data.AlphaT0);
+	const float2 GGXResult1 = GGXEvalReflection(L, V, H, bIsReflection ? Data.AlphaR1 : Data.AlphaT1);
+	const float LobePdf = bIsReflection ? Data.LobePdf.y : Data.LobePdf.x;
+	const float ClothPdf = 1.0 / (2 * PI);
+	if (bSampleGlass)
+	{
+		FThinSlabWeights SlabResult = ComputeThinSlabWeights(Data.TransmissionColor, VoH, Payload.Ior, Data.F0);
+		SlabResult.Reflected *= SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);
+
+		const float3 SlabTint = bIsReflection ? SlabResult.Reflected : SlabResult.Transmitted;
+		const float SlabW0 = (bIsReflection ? Data.SpecR0.W : Data.SpecT0.W) * Data.NudgeE.x;
+		const float SlabW1 = (bIsReflection ? Data.SpecR1.W : Data.SpecT1.W) * Data.NudgeE.y;
+
+
+		Result.AddLobeWithMIS(Data.FuzzAttenuation * (1 - Payload.RoughnessData.z) * GGXResult0.x * SlabW0 * SlabTint, GGXResult0.y, LobePdf * (1 - Payload.RoughnessData.z));
+		Result.AddLobeWithMIS(Data.FuzzAttenuation * (    Payload.RoughnessData.z) * GGXResult1.x * SlabW1 * SlabTint, GGXResult1.y, LobePdf * (    Payload.RoughnessData.z));
+
+		if (bIsReflection)
+		{
+			Result.Pdf += Data.LobePdf.z * ClothPdf;
+		}
+	}
+	else
+	{
+		// Cloth Lobe
+		const float ShadowTerminator = ShadowTerminatorTerm(L_World, N_World, Payload.WorldSmoothNormal);
+		const float DCloth = D_Charlie(Data.FuzzRoughness, NoH);
+		const float3 FCloth = F_Schlick(Payload.FuzzColor, VoH);
+		const float3 ClothWeight = NoL > 0 && NoV > 0 ? (NoL * Payload.FuzzAmount * DCloth * Vis_Ashikhmin(NoV, NoL)) * FCloth * Data.Fuzz.W * (2 * PI) : 0.0;
+		Result.AddLobeWithMIS(ClothWeight * ShadowTerminator, ClothPdf, Data.LobePdf.z);
+
+		Result.Pdf += LobePdf * (1.0 - Payload.RoughnessData.z) * GGXResult0.y;
+		Result.Pdf += LobePdf * (      Payload.RoughnessData.z) * GGXResult1.y;
+	}
+
+
+	if (bIsReflection)
+	{
+		Result.Weight *= SubstrateLobeWeight(Payload, NoL);
+	}
+	else
+	{
+		Result.Weight *= Payload.BSDFOpacity * Payload.WeightV;
+	}
+	return Result;
+}
+
+
+FMaterialEval SubstrateThinGlass_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	FSubstrateThinGlassSlabData Data = (FSubstrateThinGlassSlabData)0;
+	Data.PrepareBSDF(V_World, Payload);
+
+	const float3 N_World = Payload.WorldNormal;
+
+	// move vectors into right shading frame
+	const float3 V = Data.V;
+	float3 L = mul(Data.Basis, L_World);
+
+	const bool bIsReflection = L.z >= 0;
+	L.z = abs(L.z); // push L to the same side as V
+
+	const float NoL = saturate(L.z);
+	const float NoV = saturate(V.z);
+	const float3 H = normalize(L + V);
+	const float VoH = saturate(dot(V, H));
+	const float NoH = saturate(H.z);
+
+
+	// Specular Lobes (either reflected or transmitted)
+	const float2 GGXResult0 = GGXEvalReflection(L, V, H, bIsReflection ? Data.AlphaR0 : Data.AlphaT0);
+	const float2 GGXResult1 = GGXEvalReflection(L, V, H, bIsReflection ? Data.AlphaR1 : Data.AlphaT1);
+	FThinSlabWeights SlabResult = ComputeThinSlabWeights(Data.TransmissionColor, VoH, Payload.Ior, Data.F0);
+	SlabResult.Reflected *= SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);
+
+	const float3 SlabTint = bIsReflection ? SlabResult.Reflected : SlabResult.Transmitted;
+	const float SlabW0 = (bIsReflection ? Data.SpecR0.W : Data.SpecT0.W) * Data.NudgeE.x;
+	const float SlabW1 = (bIsReflection ? Data.SpecR1.W : Data.SpecT1.W) * Data.NudgeE.y;
+
+	const float LobePdf = bIsReflection ? Data.LobePdf.y : Data.LobePdf.x;
+
+	FMaterialEval Result = NullMaterialEval();
+
+	Result.AddLobeWithMIS(DiffuseSpecularScale.y * Data.FuzzAttenuation * (1 - Payload.RoughnessData.z) * GGXResult0.x * SlabW0 * SlabTint, GGXResult0.y, LobePdf * (1 - Payload.RoughnessData.z));
+	Result.AddLobeWithMIS(DiffuseSpecularScale.y * Data.FuzzAttenuation * (    Payload.RoughnessData.z) * GGXResult1.x * SlabW1 * SlabTint, GGXResult1.y, LobePdf * (    Payload.RoughnessData.z));
+
+
+	if (bIsReflection)
+	{
+		{
+			// Cloth Lobe
+			const float ShadowTerminator = ShadowTerminatorTerm(L_World, N_World, Payload.WorldSmoothNormal);
+			const float DCloth = D_Charlie(Data.FuzzRoughness, NoH);
+			const float3 FCloth = F_Schlick(Payload.FuzzColor, VoH);
+			const float3 ClothWeight = NoL > 0 && NoV > 0 ? (NoL * Payload.FuzzAmount * DCloth * Vis_Ashikhmin(NoV, NoL)) * FCloth * Data.Fuzz.W * (2 * PI) : 0.0;
+			Result.AddLobeWithMIS(DiffuseSpecularScale.y * ClothWeight * ShadowTerminator, 1 / (2.0 * PI), Data.LobePdf.z);
+		}
+		Result.Weight *= SubstrateLobeWeight(Payload, NoL);
+	}
+	else
+	{
+		Result.Weight *= Payload.BSDFOpacity * Payload.WeightV;
+	}
+	return Result;
+}

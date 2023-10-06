@@ -1,0 +1,118 @@
+Availability:NoPublish
+Title:Collision Help
+Crumbs:
+Description: Collision Help
+
+
+[EXCERPT:ObjectChannel]
+
+Object channels are used when the engine tests for collision between moving objects, and when you run your own collision queries against objects.
+
+By creating your own custom object channels, you can define patterns of physical interactions between different types of actors, and you can filter collision queries to find only actors that you set to respond to those custom channels.
+
+---
+
+Every actor that can collide with anything else has an object channel assigned to it in the Object Type setting of the actor's collision preset:
+
+![](CollisionPresetObjectType.png)
+
+---
+
+When an actor moves in space so that it collides with another actor, the collision responses in each actor's collision preset are checked against the other actor's Object Type to determine what happens:
+
+-   If both presets are set to Block the other actor's object type, the movement is blocked. In addition, if both actors have the Simulation Generates Hit Event setting enabled, a Hit event is generated for the collision.
+
+-   Otherwise, the movement is permitted. In addition, if both presets are set to Overlap the other actor's object type AND both actors have the Generate Overlap Events setting enabled, Overlap events are generated for the collision.
+
+---
+
+Some types of collision queries, like traces and overlap tests, also allow you to specify the Object Types that you want to take into account in the query:
+
+![](ObjectQueryExample.png)
+
+If a query hits an actor, the object response in the collision preset determines what happens:
+
+-   Ignore: The query does not report a hit, and it continues looking for other collisions.
+
+-   Overlap: The query returns information about the collision in the Out Hit output, and it continues looking for other collisions.
+
+-   Block: The query returns information about the collision in the Out Hit output, and it stops looking for any other collisions.
+
+[VAR:ToolTipFullLink]
+collision-in-unreal-engine---overview
+[/VAR]
+
+[/EXCERPT:ObjectChannel]
+
+
+[EXCERPT:TraceChannel]
+
+Trace channels determine how actors respond when you run a trace query.
+
+By creating your own custom trace channels, you can filter your collision queries to find only actors that you set up to respond to those channels.
+
+---
+
+Every actor that can collide with anything else has a collision preset that defines how it responds to each trace channel: Ignore, Overlap, or Block. In this example, the preset blocks trace queries that use the Visibility channel, and ignores queries that use the Camera channel:
+
+![](CollisionPresetTraceResponses.png)
+
+When you carry out a trace query, you can specify the trace channel that you want the collision test to use:
+
+![](TraceQueryExample.png)
+
+If a trace query hits an actor, the trace response in the collision preset determines what happens:
+
+-   Ignore: The query does not report a hit, and it continues looking for other collisions.
+
+-   Overlap: If you are performing a single trace, as in the example above, the query returns information about the collision in the Out Hit output and stops. If you are performing a Multi trace, the query returns information about the collision in the Out Hits array output and continues looking for other collisions.
+
+-   Block: The query returns information about the collision in the Out Hit output, and it stops looking for any other collisions.
+
+[VAR:ToolTipFullLink]
+collision-in-unreal-engine---overview
+[/VAR]
+ 
+[/EXCERPT:TraceChannel]
+
+
+[EXCERPT:Preset]
+
+Every actor that can collide with anything else has a collision preset: a reusable profile that defines how the actor behaves in the physics collision system. 
+
+---
+
+Each collision preset contains the following settings:
+
+-   Collision Enabled: Determines which kinds of collision tests take this actor into account. You may be able to increase performance by enabling only the collision tests you need.
+
+-   Object Type: Determines which object channel this actor uses. The engine uses this when testing for collisions between actors, and you can use it when you run your own queries against objects.
+
+-   Collision Responses: Determines how this actor responds to trace queries and potential collisions with other actors.
+
+![](CollisionPresetExample.png)
+
+---
+
+Unreal Engine ships with many general-purpose collision presets that emulate common behavior patterns. By creating your own custom collision presets, you can also set up new patterns of physical interaction between different types of objects in your project.
+
+-   To change which preset is assigned to an actor, select the actor in the Level Viewport or Outliner and look for the Collision Presets setting in the Details panel.
+
+-   To create, modify, or delete collision presets, open the Project Settings and look for the Collision section. Note that if you change or delete an existing collision preset, you immediately change the behavior of all actors that are set to use that preset.
+
+[VAR:ToolTipFullLink]
+collision-in-unreal-engine---overview
+[/VAR]
+[/EXCERPT:Preset]
+
+
+[EXCERPT:PresetDetail]
+[VAR:ExcerptAlias]
+Preset
+[/VAR]
+[VAR:ToolTipFullLink]
+collision-in-unreal-engine---overview
+[/VAR]
+[/EXCERPT:PresetDetail]
+
+

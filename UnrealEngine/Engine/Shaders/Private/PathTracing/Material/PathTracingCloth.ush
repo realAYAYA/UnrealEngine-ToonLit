@@ -1,0 +1,192 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	PathTracingCloth.ush: Path tracing BRDF model for cloth materials
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingFresnel.ush"
+#include "PathTracingEnergyConservation.ush"
+
+struct FClothData
+{
+	float3x3 Basis;
+	float2 Alpha;
+	float3 V;
+
+	FBxDFEnergyTermsRGB Spec;
+	FBxDFEnergyTermsA Fuzz;
+
+	float3 DiffWeight;
+
+	float2 LobeCdf;
+	float3 LobePdf;
+};
+
+FClothData PrepareClothData(FPathTracingPayload Payload, float3 V_World)
+{
+	FClothData Data = (FClothData)0;
+
+	Data.Basis = GetGGXBasis(Payload.Roughness, Payload.Anisotropy, Payload.WorldNormal, Payload.WorldTangent, Data.Alpha);
+
+	Data.V = mul(Data.Basis, V_World);
+
+	const float ClothBlend = Payload.GetClothAmount();
+
+	const float NoV = saturate(Data.V.z);
+	Data.Spec = ComputeGGXSpecEnergyTermsRGB(Payload.Roughness, NoV, Payload.SpecularColor);
+	Data.Fuzz = ComputeClothEnergyTermsA(Payload.Roughness, NoV);
+
+	const float SpecEp = ComputeEnergyPreservation(Data.Spec);
+	const float FuzzEp = ComputeEnergyPreservation(Data.Fuzz);
+	Data.DiffWeight = lerp(SpecEp, FuzzEp, ClothBlend) * Payload.DiffuseColor;
+
+	Data.LobeCdf = LobeSelectionCdf(Data.DiffWeight, ClothBlend * Data.Fuzz.E, (1.0 - ClothBlend) * Data.Spec.E);
+	Data.LobePdf = LobeSelectionPdf(Data.LobeCdf);
+
+	return Data;
+}
+
+FMaterialEval Cloth_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	const FClothData Data = PrepareClothData(Payload, V_World);
+
+	// move vectors into right shading frame
+	const float3 V = Data.V;
+	const float3 L = mul(Data.Basis, L_World);
+	const float3 H = normalize(V + L);
+
+	const float NoL = saturate(L.z);
+	const float NoV = saturate(V.z);
+	const float VoH = saturate(dot(V, H));
+	const float NoH = saturate(H.z);
+
+
+	FMaterialEval Result = NullMaterialEval();
+
+	// Diffuse Lobe
+	const float ShadowTerminator = ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal);
+	Result.AddLobeWithMIS(Data.DiffWeight * ShadowTerminator * DiffuseSpecularScale.x, NoL / PI, Data.LobePdf.x);
+
+	const float ClothBlend = Payload.GetClothAmount();
+
+	// Cloth Lobe (see ClothBxDF - it is counted as specular)
+	const float DCloth = D_InvGGX(Pow4(Payload.Roughness), NoH);
+	const float3 FCloth = F_Schlick(Payload.GetClothColor(), VoH);
+	const float3 ClothWeight = NoL > 0 && NoV > 0 ? (PI * ClothBlend * DCloth * Vis_Cloth(NoV, NoL)) * FCloth * ComputeEnergyConservation(Data.Fuzz) : 0.0;
+	Result.AddLobeWithMIS(ClothWeight * ShadowTerminator * DiffuseSpecularScale.y, NoL / PI, Data.LobePdf.y);
+
+	// Specular lobe
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+	const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+	const float3 SpecWeight = (1 - ClothBlend) * F * GGXResult.x * Data.Spec.W;
+	const float SpecPdf = GGXResult.y;
+	Result.AddLobeWithMIS(SpecWeight * DiffuseSpecularScale.y, SpecPdf, Data.LobePdf.z);
+
+	Result.Weight *= Payload.BSDFOpacity;
+
+	return Result;
+}
+
+FMaterialSample Cloth_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample
+)
+{
+	const FClothData Data = PrepareClothData(Payload, V_World);
+
+	const float3 V = Data.V;
+	const float NoV = saturate(Data.V.z);
+
+	// Randomly choose to sample diffuse+cloth or specular lobe
+	// The cloth lobe is low enough frequency that sampling with cosine weighting is sufficient
+
+	float3 L = 0.0, H = 0.0;
+	float OutRoughness = 1.0;
+	const bool bSampledDiffuse = RandSample.x < Data.LobeCdf.x;
+	const bool bSampledCloth   = RandSample.x < Data.LobeCdf.y;
+	if (bSampledDiffuse || bSampledCloth)
+	{
+		if (bSampledDiffuse)
+		{
+			RandSample.x = RescaleRandomNumber(RandSample.x, 0.0, Data.LobeCdf.x);
+		}
+		else
+		{
+			RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.x, Data.LobeCdf.y);
+		}
+
+		// Lambert
+		L = CosineSampleHemisphere(RandSample.xy).xyz;
+		H = normalize(L + Data.V);
+	}
+	else
+	{
+		RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.y, 1.0);
+
+		H = ImportanceSampleVisibleGGX(RandSample.xy, Data.Alpha, Data.V).xyz;
+		L = reflect(-Data.V, H);
+		if (L.z <= 0)
+		{
+			// invalid output direction, exit early
+			return NullMaterialSample();
+		}
+		OutRoughness = Payload.Roughness;
+	}
+
+	// With a valid direction in hand -- now evaluate the BxDF (taking advantage of already computed terms)
+
+	// transform to world space
+	const float3 L_World = normalize(mul(L, Data.Basis));
+
+	const float NoL = saturate(L.z);
+	const float VoH = saturate(dot(V, H));
+	const float NoH = saturate(H.z);
+
+	const float ClothBlend = Payload.GetClothAmount();
+	const float2 GGXResult = GGXEvalReflection(L, V, H, Data.Alpha);
+	const float SpecPdf = GGXResult.y;
+	const float DiffPdf = NoL / PI;
+	const float ClothPdf = DiffPdf;
+
+
+	FMaterialSample Result = CreateMaterialSample(L_World, 0.0, 0.0, 1.0, OutRoughness, PATHTRACER_SCATTER_DIFFUSE);
+
+	const float ShadowTerminator = ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal);
+
+	if (bSampledDiffuse)
+	{
+		Result.AddLobeWithMIS(Data.DiffWeight * ShadowTerminator, DiffPdf, Data.LobePdf.x);
+
+		// Cloth and Spec PDF
+		Result.Pdf += Data.LobePdf.y * ClothPdf;
+		Result.Pdf += Data.LobePdf.z * SpecPdf;
+	}
+	else
+	{
+		Result.ScatterType = PATHTRACER_SCATTER_SPECULAR;
+
+		// Cloth Lobe
+		const float DCloth = D_InvGGX(Pow4(Payload.Roughness), NoH);
+		const float3 FCloth = F_Schlick(Payload.GetClothColor(), VoH);
+		const float3 ClothWeight = NoL > 0 && NoV > 0 ? (PI * ClothBlend * DCloth * Vis_Cloth(NoV, NoL)) * FCloth * ComputeEnergyConservation(Data.Fuzz) : 0.0;
+		Result.AddLobeWithMIS(ClothWeight * ShadowTerminator, ClothPdf, Data.LobePdf.y);
+
+		// Specular lobe
+		const float3 F = F_Schlick(Payload.SpecularColor, VoH);
+		const float3 SpecWeight = (1 - ClothBlend) * F * GGXResult.x * Data.Spec.W;
+		Result.AddLobeWithMIS(SpecWeight, SpecPdf, Data.LobePdf.z);
+
+		// Diffuse PDF
+		Result.Pdf += Data.LobePdf.x * DiffPdf;
+	}
+	Result.Weight *= Payload.BSDFOpacity;
+	return Result;
+}

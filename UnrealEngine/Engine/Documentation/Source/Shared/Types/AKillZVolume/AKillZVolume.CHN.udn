@@ -1,0 +1,14 @@
+INTSourceChangelist:3108692
+Availability:NoPublish
+Title:AKillZVolume
+Crumbs:
+Description:KillZVolume类概述
+
+[EXCERPT:AKillZVolume]
+
+销毁Z体积（Kill Z Volume）又称“销毁笔刷”，基本上可销毁进入该体积的任何Actor（包括玩家）。销毁Z（Kill Z）是沿Z轴分布的坐标，在该坐标上，Actor将自动被销毁，玩家将被杀死。设置“销毁Z（Kill Z）”有助于防止玩家角色在从边缘跌落时被困住，无法重生。
+
+[VAR:ToolTipFullLink]
+Engine/Actors/Volumes#killzvolume
+[/VAR]
+[/EXCERPT:AKillZVolume]

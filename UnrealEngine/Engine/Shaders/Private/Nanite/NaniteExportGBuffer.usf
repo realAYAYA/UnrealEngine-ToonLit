@@ -1,0 +1,520 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../VelocityCommon.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../VariableRateShading/VRSShadingRateCommon.ush"
+#include "../BRDF.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+
+ByteAddressBuffer MaterialSlotTable;
+ByteAddressBuffer MaterialDepthTable;
+ByteAddressBuffer MaterialHitProxyTable;
+
+uint DummyZero; // TODO: Remove me
+uint StencilClear;
+uint StencilDecal;
+uint bWriteCustomStencil; // only used to repurpose EmitSceneDepthStencilPS for custom depth/stencil where possible
+
+Texture2D<UlongType> VisBuffer64;
+#if SHADING_MASK_LOAD
+Texture2D<uint> ShadingMask;
+#endif
+StructuredBuffer<uint> MaterialTileRemap;
+
+// These are only used for custom depth/stencil output
+Texture2D<float> CustomDepth;
+Texture2D<uint2> CustomStencil;
+
+uint GetCustomStencilValue(FPrimitiveSceneData PrimitiveData)
+{
+	uint CustomStencilMask = (PrimitiveData.CustomStencilValueAndMask >> 8u) & 0xFFu;
+	if (CustomStencilMask == 0)
+	{
+		// "Default" mask value of 0 means depth pass = replace, depth fail = keep
+		// TODO: Proper support for ignore-depth, bitwise-or modes (requires a separate 32-bit target)
+		CustomStencilMask = 0xFFu;
+	}
+
+	return PrimitiveData.CustomStencilValueAndMask & CustomStencilMask;
+}
+
+void MarkStencilPS(
+	in float4 SvPosition	: SV_Position,
+	out float OutDepth		: SV_Depth
+)
+{
+	const uint2 PixelPos = (uint2)SvPosition.xy;
+	const UlongType VisPixel = VisBuffer64[PixelPos];
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	if (VisibleClusterIndex != 0xFFFFFFFF)
+	{
+		OutDepth = asfloat(DepthInt);
+	}
+	else
+	{
+		OutDepth = 0.0f;
+		discard;
+	}
+}
+
+void EmitMaterialDepthPS(
+	in  float4 SvPosition	: SV_Position,
+	out float  OutDepth		: SV_Depth
+)
+{
+	const uint2 PixelPos = (uint2)SvPosition.xy;
+	uint ShadingBin = 0;
+
+#if SHADING_MASK_LOAD
+	FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PixelPos]);
+	const bool bIsNanitePixel = UnpackedMask.bIsNanitePixel;
+	ShadingBin = UnpackedMask.ShadingBin;
+#else
+	UlongType VisPixel  = VisBuffer64[PixelPos];
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	const bool bIsNanitePixel = VisibleClusterIndex != 0xFFFFFFFF;
+	if (bIsNanitePixel)
+	{
+		FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+		FInstanceSceneData InstanceData = GetInstanceSceneData( VisibleCluster, false );
+		FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+	#if LEGACY_CULLING
+		ShadingBin = GetMaterialLegacyShadingId(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+	#else
+		ShadingBin = GetMaterialShadingBin(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+	#endif
+	}
+#endif
+
+	if (bIsNanitePixel)
+	{
+		// Export material depth ID as SV_Depth.
+		const uint MaterialDepthId = GetMaterialDepthId(ShadingBin, MaterialDepthTable);
+		OutDepth = asfloat(MaterialDepthId | DummyZero); // Workaround for bug on Geforce 2080Ti. It seems the issue might be related to writing directly to OutDepth in a buffer load instruction.
+	}
+	else
+	{
+		OutDepth = 0.0f;
+		discard;
+	}
+}
+
+void EmitSceneDepthPS(
+	in float4  SvPosition			: SV_Position,
+#if SHADING_MASK_EXPORT
+	out uint   OutShadingMask		: SV_Target0,
+#endif
+#if VELOCITY_EXPORT
+	out float4 OutVelocity			: SV_Target1,
+#endif
+	out float  OutDepth				: SV_Depth
+)
+{
+	uint2 PixelPos = (uint2)SvPosition.xy;
+	UlongType VisPixel = VisBuffer64[PixelPos];
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	if (VisibleClusterIndex != 0xFFFFFFFF)
+	{
+	#if VELOCITY_EXPORT || SHADING_MASK_EXPORT
+		FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+		const FInstanceSceneData InstanceData = GetInstanceSceneData(VisibleCluster, false);
+	#if VELOCITY_EXPORT
+	#if INSTANCED_STEREO
+		checkSlow(VisibleCluster.ViewId < 2);					// see INSTANCED_VIEW_COUNT in SceneView.h.  
+																// Velocity export uses a per-view TemporalAAJitter anyway, so it is a fair assumption that each NaniteView has a backing FViewInfo at this point.
+		FNaniteView NaniteView = GetNaniteView(VisibleCluster.ViewId);
+		ResolvedView = ResolveView(VisibleCluster.ViewId);
+	#else
+		FNaniteView NaniteView = GetNaniteView(0);
+		ResolvedView = ResolveView();
+	#endif
+	#endif
+	#endif
+
+#if SHADING_MASK_EXPORT
+		const FCluster ClusterData		= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+	#if LEGACY_CULLING
+		const uint ShadingBin			= GetMaterialLegacyShadingId(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+	#else
+		const uint ShadingBin			= GetMaterialShadingBin(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+	#endif
+		const bool bIsDecalReceiver		= (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_DECAL_RECEIVER) != 0 && View.ShowDecalsMask > 0;
+		const bool bHasDistanceField	= (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_DISTANCE_FIELD_REPRESENTATION) != 0;
+		OutShadingMask = PackShadingMask(
+			ShadingBin,
+			D3D12_SHADING_RATE_1X1,
+			bIsDecalReceiver,
+			bHasDistanceField,
+			GetPrimitive_LightingChannelMask_FromFlags(GetPrimitiveData(InstanceData.PrimitiveId).Flags)
+		);
+#endif
+
+	#if VELOCITY_EXPORT
+		// Don't output velocity here for WPO clusters, as their velocity must be calculated in the base pass
+		const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+		const bool bOutputVelocity = !bWPOEnabled && (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_OUTPUT_VELOCITY) != 0;
+		if (bOutputVelocity)
+		{
+			FInstanceDynamicData InstanceDynamicData = CalculateInstanceDynamicData(NaniteView, InstanceData);
+
+			const float4 ScreenPos = SvPositionToScreenPosition(float4(SvPosition.xy, asfloat(DepthInt), 1.0f));
+			const FLWCVector3 WorldPos  = SvPositionToWorld(float4(SvPosition.xy, asfloat(DepthInt), 1.0f));
+			const float3 LocalPos  = LWCMultiply(WorldPos, InstanceData.WorldToLocal);
+
+			const float3 WorldPosPrev = mul(float4(LocalPos, 1), InstanceDynamicData.PrevLocalToTranslatedWorld).xyz;
+			const float4 ScreenPosPrev = mul(float4(WorldPosPrev, 1), NaniteView.PrevTranslatedWorldToClip);
+		
+			const float3 Velocity = Calculate3DVelocity(ScreenPos, ScreenPosPrev);
+			OutVelocity = EncodeVelocityToTexture(Velocity);
+		}
+		else
+		{
+			OutVelocity = 0;
+		}
+	#endif
+
+		OutDepth = asfloat(DepthInt);
+	}
+	else
+	{
+#if SHADING_MASK_EXPORT
+		OutShadingMask = 0;
+#endif
+#if VELOCITY_EXPORT
+		OutVelocity = 0;
+#endif
+		OutDepth = 0.0f;
+		discard;
+	}
+}
+
+#if SHADING_MASK_LOAD
+
+void EmitSceneStencilPS(
+	in float4 SvPosition	: SV_Position,
+	out float OutDepth		: SV_Depth
+)
+{
+	const uint2 PixelPos = (uint2)SvPosition.xy;
+
+	FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PixelPos]);
+
+	BRANCH
+	if (UnpackedMask.bIsNanitePixel && UnpackedMask.bIsDecalReceiver)
+	{
+		UlongType VisPixel = VisBuffer64[PixelPos];
+		uint DepthInt = 0;
+		uint VisibleClusterIndex = 0;
+		uint TriIndex = 0;
+		UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+		OutDepth = asfloat(DepthInt);
+	}
+	else
+	{
+		OutDepth = 0.0f;
+		discard;
+	}
+}
+
+#endif
+
+void EmitCustomDepthStencilPS
+(
+	in float4	SvPosition	: SV_Position
+#if WRITE_CUSTOM_STENCIL
+	, out uint2	OutStencil	: SV_Target0
+#endif
+	, out float	OutDepth	: SV_Depth
+)
+{
+	uint2 PixelPos = (uint2)SvPosition.xy;
+	UlongType VisPixel = VisBuffer64[PixelPos];
+
+	// We'll read the custom depth/stencil values from SRV and output them to separate texture RT and depth
+	float SceneDepth = CustomDepth[PixelPos];
+	uint SceneStencil = CustomStencil[PixelPos] STENCIL_COMPONENT_SWIZZLE;
+
+#if WRITE_CUSTOM_STENCIL
+	OutStencil = (uint2)0;
+#endif
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+	
+	const float NaniteDepth = asfloat(DepthInt);
+
+	if (VisibleClusterIndex != 0xFFFFFFFF && NaniteDepth > SceneDepth)
+	{
+		OutDepth = NaniteDepth;
+
+	#if WRITE_CUSTOM_STENCIL
+		FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+		const FInstanceSceneData InstanceData = GetInstanceSceneData(VisibleCluster, false);
+		const FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+
+		OutStencil STENCIL_COMPONENT_SWIZZLE = GetCustomStencilValue(PrimitiveData);
+	#endif
+	}
+	else
+	{
+		OutDepth = SceneDepth;
+
+	#if WRITE_CUSTOM_STENCIL
+		OutStencil STENCIL_COMPONENT_SWIZZLE = SceneStencil;
+	#endif
+	}
+}
+
+float ViewToClip22;
+float DepthBias;
+
+Texture2D< uint > DepthBuffer;
+
+void EmitShadowMapPS(
+	in float4 SvPosition	: SV_Position,
+	out float OutDepth		: SV_Depth
+)
+{
+	OutDepth = 0;
+
+	uint2 PixelPos = (uint2)SvPosition.xy;
+	uint DepthInt = DepthBuffer[ PixelPos ];
+
+	if( DepthInt != 0 )
+	{
+		float DeviceZ = asfloat( DepthInt );
+
+#if DEPTH_OUTPUT_TYPE == 0
+		// Standard depth
+		OutDepth = DeviceZ;
+#elif DEPTH_OUTPUT_TYPE == 1
+		// Ortho shadow maps
+		OutDepth = 1 - DeviceZ + DepthBias;
+#else
+		// Perspective shadow maps
+		OutDepth = ViewToClip22 * ( DeviceZ - 1 ) / ( DeviceZ - ViewToClip22 ) + DepthBias;
+		//MinZ = View.ViewToClip[3][2] / ( 1 - View.ViewToClip[2][2] );
+		//ViewZ = View.ViewToClip[3][2] / ( DeviceZ - View.ViewToClip[2][2] );
+#endif
+	}
+	else
+	{
+		discard;
+	}
+}
+
+void EmitHitProxyIdPS(
+	in float4 SvPosition		: SV_Position,
+	out float4 OutHitProxyId	: SV_Target0,
+	out float OutDepth			: SV_Depth
+)
+{
+#if USE_EDITOR_SHADERS
+	uint2 PixelPos = (uint2)SvPosition.xy;
+	UlongType VisPixel = VisBuffer64[PixelPos];
+
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	uint DepthInt = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	bool bValidExport = VisibleClusterIndex != 0xFFFFFFFFu;
+	if (bValidExport)
+	{
+		FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+		FInstanceSceneData InstanceData = GetInstanceSceneData(VisibleCluster, false);
+
+		BRANCH
+		if ((InstanceData.Flags & INSTANCE_SCENE_DATA_FLAG_HAS_EDITOR_DATA) != 0u)
+		{
+			OutHitProxyId = float4(InstanceData.EditorData.HitProxyId, 0.0f);
+		}
+		else
+		{
+			FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+			const uint MaterialHitProxyPacked = GetMaterialHitProxyId(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialHitProxyTable);
+			OutHitProxyId = float4(UnpackHitProxyId(MaterialHitProxyPacked), 0.0f);
+		}
+
+		OutDepth = asfloat(DepthInt);
+	}
+	else
+	{
+		OutHitProxyId = 0;
+		OutDepth = 0.0f;
+		discard;
+	}
+#else
+	OutHitProxyId = 0;
+	OutDepth = 0.0f;
+	discard;
+#endif // USE_EDITOR_SHADERS
+}
+
+float2 OutputToInputScale;
+float2 OutputToInputBias;
+
+// This shader is used to output depth (and stencil) for both editor selection outlines and visualize level instances.
+// NOTE: In the case of outlines, all unselected instances have been culled from the VisBuffer to prevent issues with
+// selected instances being occluded, so we don't need to further check their selection state in this shader.
+void EmitEditorSelectionDepthPS(
+	float4 SvPosition  : SV_Position,
+	out float OutDepth : SV_Depth
+)
+{
+	uint DepthInt = 0;
+	bool bValidExport = false;
+
+#if USE_EDITOR_SHADERS
+	uint2 PixelPos = (uint2)(SvPosition.xy * OutputToInputScale + OutputToInputBias);
+	UlongType VisPixel = VisBuffer64[PixelPos];
+
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	bValidExport = VisibleClusterIndex != 0xFFFFFFFF;
+#endif // USE_EDITOR_SHADERS
+
+	OutDepth = asfloat(DepthInt);
+	if (!bValidExport)
+	{
+		discard;
+	}
+}
+
+float MaterialDepth;
+#if NANITE_MATERIAL_MULTIVIEW
+uint InstanceBaseOffset;
+#else
+uint MaterialSlot;
+uint TileRemapCount;
+#endif
+
+void FullScreenVS(
+	float2 InPosition : ATTRIBUTE0,
+	uint InstanceIndex : SV_InstanceID,
+	out FNaniteFullscreenVSToPS Output,
+	out float4 Position : SV_Position
+
+)
+{
+#if NANITE_MATERIAL_MULTIVIEW
+	// Compile time constant to remove int mod ALU
+	const uint2 GridSize = uint2(1, 1);
+#else
+	// TODO: Avoid int mod ALU when calculating GridPos
+	const uint2 GridSize = Nanite.MaterialConfig.yz;
+#endif
+
+	Output = (FNaniteFullscreenVSToPS)0;
+
+	uint TileIndex = InstanceIndex;
+
+#if !NANITE_MATERIAL_MULTIVIEW
+	{
+		const uint TargetTileCount = TileIndex + 1;
+
+		uint ValidTiles = 0;
+
+		// Remap compacted tile index to sparse tile index
+		// If compacted index is 7, the first 4 indices are valid, but the next 2 are not, the sparse index is 9
+		// Basically figure out how many preceeding empty slots exist, so we can shift the index by that. (reverse prefix sum w/ linear scan)
+		const uint RemapBaseOffset = (TileRemapCount * MaterialSlot);
+
+		// TODO: Could optimize by having material classify store out the prefix sum per remap uint, and then binary search the result quicker
+
+		uint RemapBin  = 0;
+		uint RemapData = 0;
+
+		LOOP
+		for (; RemapBin < TileRemapCount; ++RemapBin)
+		{
+			RemapData = Nanite.MaterialTileRemap[RemapBaseOffset + RemapBin];
+
+			const uint SumValidTiles = ValidTiles + countbits(RemapData); // Count number of valid tiles in bin
+			if (SumValidTiles < TargetTileCount)
+			{
+				// Keeping going
+				ValidTiles = SumValidTiles;
+			}
+			else
+			{
+				// Found the target bin
+				break;
+			}
+		}
+
+		uint RemapBinBit = 0;
+
+		LOOP
+		while (RemapData != 0)
+		{
+			RemapBinBit = firstbitlow(RemapData);
+			RemapData &= ~(1u << RemapBinBit);
+			++ValidTiles;
+			if (ValidTiles == TargetTileCount)
+			{
+				// Arrived at sparse tile index
+				break;
+			}
+		}
+
+		TileIndex = (RemapBin * 32u) + RemapBinBit;
+	}
+#endif
+
+	float4 RectScaleOffset = Nanite.RectScaleOffset;
+
+#if NANITE_MATERIAL_MULTIVIEW
+	{
+		// Treat InstanceIndex for view indexing if multi view rendering is enabled
+		TileIndex = 0;
+
+		const uint ViewIndex = Nanite.MultiViewIndices[InstanceBaseOffset + InstanceIndex];
+		RectScaleOffset = Nanite.MultiViewRectScaleOffsets[ViewIndex];
+		Output.ViewIndex = ViewIndex;	
+	}
+#endif
+
+	Output.TileIndex = TileIndex;
+
+	float2 GridStep = float2(1.0, 1.0) / (float2)GridSize;
+	uint2  GridPos  = uint2(TileIndex % GridSize.x, TileIndex / GridSize.x);
+
+	// Input position is in [0,0 .. 1,1] range.
+	float2 TilePosition = (InPosition + (float2)GridPos) * GridStep;
+	TilePosition.xy = TilePosition.xy * RectScaleOffset.xy + RectScaleOffset.zw;
+
+	const float Depth = MaterialDepth;
+	const uint MaterialBucketId = GetMaterialBucketIdFromDepth(Depth);
+
+	Position = float4(TilePosition.x * 2.0 - 1.0, 1.0 - 2.0 * TilePosition.y, Depth, 1);
+
+#if INSTANCED_STEREO
+	// Nanite fullscreen VS is run for the whole side-by-side RT and the primary (left) view, so the quads can span the line separating views, and we cannot output EyeIndex here
+	// Output.EyeIndex will be calculated in the pixel shader instead based on which view rect it is in.
+#endif
+}
+
+

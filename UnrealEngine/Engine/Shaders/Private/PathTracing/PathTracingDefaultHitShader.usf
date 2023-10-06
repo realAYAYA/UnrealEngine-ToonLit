@@ -1,0 +1,52 @@
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+#include "/Engine/Private/PathTracing/PathTracingCommon.ush"
+
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(PathTracingDefaultOpaqueCHS,
+	FPackedPathTracingPayload, PackedPayload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	if (PackedPayload.IsVisibilityRay())
+	{
+		// mark shadow fully opaque
+		PackedPayload.SetRayThroughput(0.0);
+	}
+	else
+	{
+		// mark hit as solid black
+		FPathTracingPayload Payload = (FPathTracingPayload)0;
+		Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+		Payload.BSDFOpacity = 1.0;
+		PackedPayload = PackPathTracingPayload(Payload);
+	}
+	PackedPayload.HitT = RayTCurrent();
+}
+
+RAY_TRACING_ENTRY_CLOSEST_HIT(PathTracingDefaultHiddenCHS,
+	FPackedPathTracingPayload, PackedPayload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	// This is not reachable in theory since AHS calls IgnoreHit(), but could be if the mesh gets flagged with ForceOpaque (or the ray ignores AHS)
+	if (PackedPayload.IsVisibilityRay())
+	{
+		// don't change the throughput (object should be invisible)
+	}
+	else
+	{
+		// mark hit as fully transparent
+		FPathTracingPayload Payload = (FPathTracingPayload)0;
+		Payload.ShadingModelID = SHADINGMODELID_UNLIT;
+		Payload.TransparencyColor = 1.0;
+		PackedPayload = PackPathTracingPayload(Payload);
+	}
+	PackedPayload.HitT = RayTCurrent();
+}
+
+RAY_TRACING_ENTRY_ANY_HIT(PathTracingDefaultHiddenAHS,
+	FPackedPathTracingPayload, PackedPayload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	IgnoreHit();
+}
+

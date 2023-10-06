@@ -1,0 +1,29 @@
+{
+    "FileVersion" : 3,
+    "Version" : 1,
+    "VersionName" : "1.0",
+    "FriendlyName" : "Chaos Cloth",
+    "Description" : "Adds Chaos Cloth Module.",
+    "Category": "Physics",
+    "CreatedBy" : "Epic Games, Inc.",
+    "CreatedByURL" : "https://epicgames.com",
+    "DocsURL" : "",
+    "MarketplaceURL" : "",
+    "SupportURL" : "",
+    "EnabledByDefault" : true,
+    "CanContainContent" : false,
+    "Installed" : false,
+    "Modules": [
+      {
+        "Name": "ChaosCloth",
+        "Type": "Runtime",
+        "LoadingPhase": "PostConfigInit"
+      }
+    ],
+	"Plugins": [
+		{
+			"Name": "ChaosCaching",
+			"Enabled": true
+		}
+	]
+}

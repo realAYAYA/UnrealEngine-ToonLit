@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Resources">
+      <UniqueIdentifier>{7056dae3-3593-4941-8e3c-e104a8092402}</UniqueIdentifier>
+      <Extensions>grc;rc2</Extensions>
+    </Filter>
+    <Filter Include="Resources\Images">
+      <UniqueIdentifier>{7056dae3-3593-4941-8e3c-e104a8092402}</UniqueIdentifier>
+      <Extensions>png;svg</Extensions>
+    </Filter>
+    <Filter Include="Private">
+      <UniqueIdentifier>{292ab008-16fb-44e8-bc09-3e91433b6af1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Utils">
+      <UniqueIdentifier>{de87e191-d21f-42b4-bee2-86a620464838}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Private\LoadDatasmithDlls.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\AddOn.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Commander.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\ElementEvent.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Export.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Exporter.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Menus.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Palette.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\ProjectEvent.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Synchronizer.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Element2StaticMesh.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\ElementID.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\MaterialsDatabase.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\SyncContext.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\SyncData.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\SyncDatabase.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\TexturesCache.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\DatasmithHashTools.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\MetaData.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\GeometryUtil.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\ReportWindow.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\3DElement2String.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\AddonTools.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\AutoChangeDatabase.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\DebugTools.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\Element2String.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\ElementTools.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\Error.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\LocalizeTools.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\Pasteboard.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\ShellOpenDocument.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\TAssValueName.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\TimeStat.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\ViewEvent.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\WinOS.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\ViewState.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\Progression.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\TaskMgr.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\LibPartInfo.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Private\Utils\TaskCalledFromEventLoop.cpp">
+      <Filter>Private\Utils</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Private\LoadDatasmithDlls.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\ResourcesIDs.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Commander.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\ElementEvent.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Export.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Exporter.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Menus.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Palette.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\ProjectEvent.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Synchronizer.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Element2StaticMesh.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\ElementID.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\MaterialsDatabase.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\SyncContext.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\SyncData.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\SyncDatabase.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\TexturesCache.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\StatsCounter.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\DatasmithHashTools.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\MetaData.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\GeometryUtil.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\ReportWindow.h">
+      <Filter>Private</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\3DElement2String.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\AddonTools.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\APIEnvir.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\AutoChangeDatabase.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\CurrentOS.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\DebugTools.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\Element2String.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\ElementTools.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\Error.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\LocalizeTools.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\Pasteboard.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\ResourcesUtils.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\ShellOpenDocument.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\TAssValueName.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\TimeStat.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\ViewEvent.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\WarningsDisabler.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\ViewState.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\Progression.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\TaskMgr.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\LibPartInfo.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Private\Utils\TaskCalledFromEventLoop.h">
+      <Filter>Private\Utils</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\..\Resources\RFIX\DatasmithARCHICADExporterFix.grc">
+      <Filter>Resources</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\..\Resources\RFIX.WIN\DatasmithARCHICADExporter.rc2">
+      <Filter>Resources</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\Resources\RFIX\Images\MenuIcon_18x18.svg">
+      <Filter>Resources\Images</Filter>
+    </None>
+    <None Include="..\..\Private\Utils\MacOS.mm">
+      <Filter>Private\Utils</Filter>
+    </None>
+    <None Include="..\..\Resources\RINT\en.lproj\DatasmithARCHICADExporter.grc">
+      <Filter>Resources</Filter>
+    </None>
+    <None Include="..\..\Resources\RINT\fr.lproj\DatasmithARCHICADExporter.grc">
+      <Filter>Resources</Filter>
+    </None>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,294 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+
+#if NANITE_TESSELLATION
+
+// TODO Change to 65534. Must be even but doesn't have to be pow2.
+static const uint BarycentricMax = (1 << 15);
+
+uint EncodeBarycentrics( float3 Barycentrics )
+{
+	Barycentrics = round( Barycentrics * BarycentricMax );
+
+	// Normalize after rounding
+	FLATTEN
+	if( Barycentrics.x > Barycentrics.y && Barycentrics.x > Barycentrics.z )
+		Barycentrics.x = BarycentricMax - Barycentrics.y - Barycentrics.z;
+	else if( Barycentrics.y > Barycentrics.z )
+		Barycentrics.y = BarycentricMax - Barycentrics.x - Barycentrics.z;
+	else
+		Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
+
+	uint Encoded;
+	Encoded  = uint( Barycentrics.x );
+	Encoded |= uint( Barycentrics.y ) << 16;
+	return Encoded;
+}
+
+float3 DecodeBarycentrics( uint Encoded )
+{
+	float3 Barycentrics;
+	Barycentrics.x = Encoded & 0xffff;
+	Barycentrics.y = Encoded >> 16;
+	Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
+	Barycentrics  /= BarycentricMax;
+	return Barycentrics;
+}
+
+
+ByteAddressBuffer TessellationTable_Offsets;
+ByteAddressBuffer TessellationTable_Verts;
+ByteAddressBuffer TessellationTable_Indexes;
+static const uint TessellationTable_Size = 16;
+
+float InvDiceRate;
+
+float3 GetTessFactors( FNaniteView NaniteView, float3 PointView[3] )
+{
+#if 0
+	float2 PointPixels[3];
+	for( uint i = 0; i < 3; i++ )
+	{
+		float4 PointClip = mul( float4( PointView[i], 1 ), NaniteView.ViewToClip );
+		PointPixels[i] = PointClip.xy / PointClip.w * float2(0.5, -0.5) * NaniteView.ViewSizeAndInvSize.xy;
+	}
+
+	float3 TessFactors =
+	{
+		length( PointPixels[0] - PointPixels[1] ),
+		length( PointPixels[1] - PointPixels[2] ),
+		length( PointPixels[2] - PointPixels[0] )
+	};
+	TessFactors *= InvDiceRate;
+#else
+	bool bOrtho = NaniteView.ViewToClip[3][3] >= 1;
+
+	float3 TessFactors;
+	for( uint i = 0; i < 3; i++ )
+	{
+		uint i0 = i;
+		uint i1 = (i + 1) % 3;
+
+		float EdgeScale = min( PointView[ i0 ].z, PointView[ i1 ].z );
+		float EdgeLength = length( PointView[ i0 ] - PointView[ i1 ] );
+		EdgeScale = bOrtho ? 1.0f : max( EdgeScale, NaniteView.NearPlane );
+		TessFactors[i] = EdgeLength / EdgeScale;
+	}
+
+	TessFactors *= NaniteView.LODScale * InvDiceRate;
+#endif
+	
+	return TessFactors;
+}
+
+float3 GetSplitFactors( float3 TessFactors )
+{
+#if 1
+	return TessFactors / TessellationTable_Size;
+#elif 1
+	const float SizeLog2 = log2( TessellationTable_Size );
+
+	float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
+	float ChildLevels = ceil( log2( MaxTessFactor ) / SizeLog2 ) - 1;
+	float Scale = saturate( exp2( -ChildLevels * SizeLog2 ) );
+	return TessFactors * Scale;
+#else
+	TessFactors /= TessellationTable_Size;
+
+	float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
+	if( MaxTessFactor > TessellationTable_Size )
+		TessFactors *= TessellationTable_Size / MaxTessFactor;
+	return TessFactors;
+#endif
+}
+
+struct FTessellatedPatch
+{
+	uint4	TableOffsets;
+	uint	Pattern;
+	uint	Swizzle;
+
+	void Init( float3 TessFactors, inout uint3 VertIndexes )
+	{
+		TessFactors = ceil( TessFactors );
+		TessFactors = clamp( TessFactors, 1, TessellationTable_Size );
+
+		float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
+
+		Swizzle = 0b011010;
+
+		// TessFactors in descending order to reduce size of table.
+		// Rotate patch so TessFactors.x == MaxTessFactor
+		if( TessFactors.y == MaxTessFactor )
+		{
+			VertIndexes = VertIndexes.yzx;
+			TessFactors = TessFactors.yzx;
+			Swizzle = 0b110100;
+		}
+		else if( TessFactors.z == MaxTessFactor )
+		{
+			VertIndexes = VertIndexes.zxy;
+			TessFactors = TessFactors.zxy;
+			Swizzle = 0b101001;
+		}
+
+		// Sorting can flip winding which we need to undo later.
+		bool bFlipWinding = false;
+		if( TessFactors.y < TessFactors.z )
+		{
+			VertIndexes.xy = VertIndexes.yx;
+			TessFactors.yz = TessFactors.zy;
+			bFlipWinding = true;
+			Swizzle ^= 0b000111;
+		}
+
+		Pattern = uint(
+			TessFactors.x +
+			TessFactors.y * TessellationTable_Size +
+			TessFactors.z * TessellationTable_Size * TessellationTable_Size -
+			(1 + TessellationTable_Size + TessellationTable_Size * TessellationTable_Size) );
+
+		TableOffsets = TessellationTable_Offsets.Load4( 4*2 * Pattern );
+
+		Pattern |= bFlipWinding ? 0x1000 : 0;
+		//Pattern |= Swizzle << 25;
+	}
+
+	uint GetNumVerts()	{ return TableOffsets[2] - TableOffsets[0]; }
+	uint GetNumTris()	{ return TableOffsets[3] - TableOffsets[1]; }
+
+	float3 GetVert( uint VertIndex )
+	{
+		uint BarycentricsEncoded = TessellationTable_Verts.Load( 4 * ( TableOffsets.x + VertIndex ) );
+
+		float3 Barycentrics;
+		Barycentrics.x = BarycentricsEncoded & 0xffff;
+		Barycentrics.y = BarycentricsEncoded >> 16;
+		Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
+		Barycentrics  /= BarycentricMax;
+
+		return Barycentrics;
+	}
+
+	uint3 GetIndexes( uint TriIndex )
+	{
+		uint  PackedIndexes	= TessellationTable_Indexes.Load( 4 * ( TableOffsets.y + TriIndex ) );
+
+		uint3 VertIndexes;
+		VertIndexes[0] = ( PackedIndexes >>  0 ) & 1023;
+		VertIndexes[1] = ( PackedIndexes >> 10 ) & 1023;
+		VertIndexes[2] = ( PackedIndexes >> 20 ) & 1023;
+			
+		// Sorting TessFactors might have flipped the patch winding.
+		//bool bFlipWinding = Pattern > 0xfff;
+		bool bFlipWinding = Pattern & 0x1000;
+		if( bFlipWinding )
+			VertIndexes.yz = VertIndexes.zy;
+
+		return VertIndexes;
+	}
+
+	uint3 GetTriangleEncoded( uint TriIndex )
+	{
+		uint3 VertIndexes = GetIndexes( TriIndex );
+
+		uint3 Shift, Mask;
+		for( int i = 0; i < 3; i++ )
+		{
+			Shift[i] = BitFieldExtractU32( Pattern, 1, i + 25 ) << 4;
+			Mask[i]  = BitFieldExtractU32( Pattern, 1, i + 28 ) << 4;
+			Mask[i]  = BitFieldMaskU32( Mask[i], 0 );
+		}
+
+		uint3 Encoded;
+		for( int i = 0; i < 3; i++ )
+		{
+			uint BarycentricsEncoded = TessellationTable_Verts.Load( 4 * ( TableOffsets.x + VertIndexes[i] ) );
+
+			uint3 Barycentrics;
+			Barycentrics.x = BarycentricsEncoded & 0xffff;
+			Barycentrics.y = BarycentricsEncoded >> 16;
+			Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
+
+			Barycentrics = ( Barycentrics & Mask ) << Shift;
+			Encoded[i] = Barycentrics.x | Barycentrics.y | Barycentrics.z;
+		}
+		return Encoded;
+	}
+
+	uint3 GetTessFactors()
+	{
+		uint Packed = Pattern & 0xfff;
+		Packed -= (1 + TessellationTable_Size + TessellationTable_Size * TessellationTable_Size);
+		
+		uint3 TessFactors;
+		for( int i = 0; i < 3; i++ )
+		{
+			TessFactors[i] = Packed % TessellationTable_Size;
+			Packed /= TessellationTable_Size;
+		}
+		return TessFactors;
+	}
+};
+
+FTessellatedPatch WaveReadLaneAt( FTessellatedPatch In, uint SrcIndex )
+{
+	FTessellatedPatch Out;
+	Out.TableOffsets= WaveReadLaneAt( In.TableOffsets,	SrcIndex );
+	Out.Pattern		= WaveReadLaneAt( In.Pattern,		SrcIndex );
+	Out.Swizzle		= WaveReadLaneAt( In.Swizzle,		SrcIndex );
+	return Out;
+}
+
+
+struct FSplitPatch
+{
+	uint	VisibleClusterIndex;
+	uint	TriIndex;
+	float3	Barycentrics[3];
+
+	void Decode( uint4 Encoded )
+	{
+		VisibleClusterIndex	= Encoded.x >> 7;
+		TriIndex			= Encoded.x & 0x7F;
+
+		for( int i = 0; i < 3; i++ )
+			Barycentrics[i] = DecodeBarycentrics( Encoded[ i + 1 ] );
+	}
+
+	float3 TransformBarycentrics( float3 Local )
+	{
+		return
+			Barycentrics[0] * Local.x +
+			Barycentrics[1] * Local.y +
+			Barycentrics[2] * Local.z;
+	}
+};
+
+
+#define THREADGROUP_SIZE	32
+#include "../WorkDistribution.ush"
+
+RWCoherentByteAddressBuffer						SplitWorkQueue_DataBuffer;
+RWCoherentStructuredBuffer( FWorkQueueState )	SplitWorkQueue_StateBuffer;
+uint											SplitWorkQueue_Size;
+
+static const FGlobalWorkQueue SplitWorkQueue = { SplitWorkQueue_DataBuffer, SplitWorkQueue_StateBuffer, 0, SplitWorkQueue_Size };
+
+RWByteAddressBuffer						OccludedPatches_DataBuffer;
+RWStructuredBuffer< FWorkQueueState >	OccludedPatches_StateBuffer;
+uint									OccludedPatches_Size;
+
+static const FOutputQueue OccludedPatches = { OccludedPatches_DataBuffer, OccludedPatches_StateBuffer, 0, OccludedPatches_Size };
+
+ByteAddressBuffer	VisiblePatches;
+Buffer< uint >		VisiblePatchesArgs;
+uint				VisiblePatchesSize;
+
+RWByteAddressBuffer	RWVisiblePatches;
+RWBuffer< uint >	RWVisiblePatchesArgs;
+
+#endif

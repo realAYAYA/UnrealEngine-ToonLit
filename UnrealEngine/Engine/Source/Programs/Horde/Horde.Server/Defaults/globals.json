@@ -1,0 +1,88 @@
+{
+	"dashboard": {
+		"showLandingPage": true,
+		"showCI": true,
+		"showAgents": true,
+		"showPerforceServers": true,
+		"showDeviceManager": true,
+		"showTests": true
+	},
+	"compute": [
+		{
+			"id": "default",
+			"namespaceId": "horde.compute"
+		}
+	],
+	"storage": {
+		"backends": [
+			{
+				"id": "default-backend",
+				"type": "FileSystem",
+				"baseDir": "Storage" // Default base directory is C:\ProgramData\HordeServer
+			},
+			{
+				"id": "memory-backend", // Used for automated tests
+				"type": "Memory"
+			}
+		],
+		"namespaces": [
+			{
+				"id": "default",
+				"backend": "default-backend"
+			},
+			{
+				"id": "horde-artifacts",
+				"prefix": "Artifacts/",
+				"backend": "default-backend"
+			},
+			{
+				"id": "horde-perforce",
+				"prefix": "Perforce/",
+				"backend": "default-backend"
+			},
+			{
+				"id": "horde-logs",
+				"prefix": "Logs/",
+				"backend": "default-backend"
+			},
+			{
+				"id": "horde-tools",
+				"prefix": "Tools/",
+				"backend": "default-backend"
+			},
+			{
+				"id": "memory",
+				"backend": "memory-backend",
+				"enableAliases": true
+			}
+		]
+	},
+	"pools": [
+		{
+			"id": "any",
+			"name": "Any",
+			"condition": "true"
+		},
+		{
+			"id": "win64",
+			"name": "Win64",
+			"condition": "Platform == 'Win64'"
+		},
+		{
+			"id": "mac",
+			"name": "Mac",
+			"condition": "Platform == 'Mac'"
+		},
+		{
+			"id": "linux",
+			"name": "Linux",
+			"condition": "Platform == 'Linux'"
+		}
+	],
+	"artifactTypes": [
+		{
+			"name": "step-output",
+			"keepDays": 1
+		}
+	]
+}

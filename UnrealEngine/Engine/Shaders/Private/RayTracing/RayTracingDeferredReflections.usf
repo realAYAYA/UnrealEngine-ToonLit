@@ -1,0 +1,287 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define RAY_TRACING_DEFERRED_REFLECTIONS_SHADER_VERSION 0xC1669BC2  // Change to force shader compilation of this shader
+
+// EDeferredMaterialMode
+#define DEFERRED_MATERIAL_MODE_NONE   0
+#define DEFERRED_MATERIAL_MODE_GATHER 1
+#define DEFERRED_MATERIAL_MODE_SHADE  2
+
+#ifndef DIM_DEFERRED_MATERIAL_MODE
+	#define DIM_DEFERRED_MATERIAL_MODE DEFERRED_MATERIAL_MODE_NONE
+#endif
+
+#ifndef DIM_GENERATE_RAYS
+	#define DIM_GENERATE_RAYS 0
+#endif
+
+#include "../Common.ush"
+
+#define SUPPORT_CONTACT_SHADOWS		0
+#define USE_SOURCE_TEXTURE			1
+#define STRATA_LEGACY_REFLECTION_API 1
+
+#define PreIntegratedGF				ReflectionStruct.PreIntegratedGF
+#define PreIntegratedGFSampler		GlobalBilinearClampedSampler
+
+#include "../DeferredShadingCommon.ush"
+#include "../DeferredLightingCommon.ush"
+#include "../ReflectionEnvironmentShared.ush"
+#include "../Montecarlo.ush"
+#include "../PathTracing/Utilities/PathTracingRandomSequence.ush" 
+#include "../HeightFogCommon.ush"
+#include "../ScreenSpaceDenoise/SSDPublic.ush"
+#include "../SobolRandom.ush"
+#include "../SceneTextureParameters.ush"
+
+#include "RayTracingCommon.ush"
+#include "RayTracingDeferredShadingCommon.ush"
+#include "RayTracingLightingCommon.ush"
+#include "RayTracingReflectionsCommon.ush"
+#include "RayTracingDeferredMaterials.ush"
+#include "RayTracingDeferredReflections.ush"
+#include "RayTracingReflectionEnvironment.ush"
+
+uint2 RayTracingResolution;
+uint2 TileAlignedResolution;
+float ReflectionMaxNormalBias;
+float ReflectionSmoothBias;
+float ReflectionMaxRoughness;
+float AnyHitMaxRoughness;
+float TextureMipBias;
+float2 UpscaleFactor;
+int   ShouldDoDirectLighting;
+int   ShouldDoEmissiveAndIndirectLighting;
+int   ShouldDoReflectionCaptures;
+int   DenoisingOutputFormat; // 0: hit distance, 1: spatial resolve params (see RayTracingReflectionResolve.usf)
+RWStructuredBuffer<FSortedReflectionRay>        RayBuffer;
+RWStructuredBuffer<FDeferredMaterialPayload>    MaterialBuffer;
+RWTexture2D<float4>                             ColorOutput;
+RWTexture2D<float4>                             ReflectionDenoiserData;
+
+RaytracingAccelerationStructure                 TLAS;
+
+// Buffer of ray intersections aquired during Gather phase and 
+// used during to reduce ray intersection overhead during Shading.
+RWStructuredBuffer<FRayIntersectionBookmark>    BookmarkBuffer;
+
+FPackedMaterialClosestHitPayload InitializePackedPayload(bool bSkyLightAffectReflection)
+{
+	FPackedMaterialClosestHitPayload PackedPayload = (FPackedMaterialClosestHitPayload)0;
+	if (bSkyLightAffectReflection)
+	{
+		PackedPayload.SetEnableSkyLightContribution();
+	}
+	PackedPayload.SetMipBias(TextureMipBias);
+	return PackedPayload;
+}
+
+RAY_TRACING_ENTRY_RAYGEN(RayTracingDeferredReflectionsRGS)
+{
+	const uint DispatchThreadId = DispatchRaysIndex().x; // This shader is dispatched in 1D configuration
+
+	FDeferredMaterialPayload DeferredMaterialPayload = (FDeferredMaterialPayload)0;
+	DeferredMaterialPayload.SortKey = RAY_TRACING_DEFERRED_MATERIAL_KEY_INVALID;
+
+#if DIM_DEFERRED_MATERIAL_MODE == DEFERRED_MATERIAL_MODE_GATHER
+
+	FSortedReflectionRay ReflectionRay;
+
+	#if DIM_GENERATE_RAYS
+	{
+		const uint  ThreadGroupSize  = REFLECTION_RAY_DIRECTION_SORT_TILE_SIZE * REFLECTION_RAY_DIRECTION_SORT_TILE_SIZE;
+		const uint2 TileSize         = uint2(REFLECTION_RAY_DIRECTION_SORT_TILE_SIZE, REFLECTION_RAY_DIRECTION_SORT_TILE_SIZE);
+		const uint  TileIndex        = DispatchThreadId / ThreadGroupSize;
+		const uint  RayIndexInTile   = DispatchThreadId % ThreadGroupSize;
+		const uint2 NumTiles         = TileAlignedResolution / TileSize;
+		const uint2 TileBasePixelPos = uint2(TileIndex % NumTiles.x, TileIndex / NumTiles.x) * TileSize;
+		const uint2 PixelPos         = View.ViewRectMin.xy + TileBasePixelPos + uint2(RayIndexInTile % TileSize.x, RayIndexInTile / TileSize.x);
+
+		ReflectionRay = GenerateDeferredReflectionRay(PixelPos, UpscaleFactor, ReflectionMaxNormalBias, ReflectionSmoothBias);
+		RayBuffer[DispatchThreadId] = ReflectionRay; // Store the ray to be used in shading phase
+	}	
+	#else
+	{
+		 ReflectionRay = RayBuffer[DispatchThreadId];
+	}
+	#endif
+
+	DeferredMaterialPayload.PixelCoordinates = DispatchThreadId; // Store the sorted ray index, not packed 2D pixel coordinates
+	const uint2 PixelPos = UnpackPixelCoordinates(ReflectionRay.PixelCoordinates);
+	if (all(PixelPos - View.ViewRectMin.xy < RayTracingResolution))
+	{
+		FRayDesc Ray;
+		Ray.TMin      = 0;
+		Ray.TMax      = 1e9;
+		Ray.Origin    = ReflectionRay.Origin;
+		Ray.Direction = ReflectionRay.GetDirection();
+
+		DeferredMaterialPayload.SortKey = RAY_TRACING_DEFERRED_MATERIAL_KEY_RAY_MISS;
+		FRayIntersectionBookmark Bookmark = (FRayIntersectionBookmark)0;
+
+		float RoughnessFade = GetRoughnessFade(ReflectionRay.Roughness, ReflectionMaxRoughness);
+
+		bool bIsValidPixel = RoughnessFade > 0;
+
+		if (bIsValidPixel)
+		{
+			TraceDeferredMaterialGatherRay(TLAS,
+				RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
+				RAY_TRACING_MASK_OPAQUE,
+				Ray.GetNativeDesc(),
+				Bookmark,
+				DeferredMaterialPayload
+			);
+		}
+
+		BookmarkBuffer[DispatchThreadId] = Bookmark;
+	}
+
+	MaterialBuffer[DispatchThreadId] = DeferredMaterialPayload;
+
+#elif DIM_DEFERRED_MATERIAL_MODE == DEFERRED_MATERIAL_MODE_SHADE
+
+	DeferredMaterialPayload = MaterialBuffer[DispatchThreadId];
+
+	// Linear ray index is stored in PixelCoordinates (see DEFERRED_MATERIAL_MODE_GATHER above)
+	const uint ReflectionRayIndex = DeferredMaterialPayload.PixelCoordinates;
+
+	FSortedReflectionRay ReflectionRay = RayBuffer[ReflectionRayIndex];
+	const uint2 PixelPos = UnpackPixelCoordinates(ReflectionRay.PixelCoordinates);
+	if (any(PixelPos - View.ViewRectMin.xy >= RayTracingResolution))
+	{
+		return;
+	}
+
+	const bool bSkyLightAffectReflection = ShouldSkyLightAffectReflection();
+
+	float4 ResultColor    = (float4)0;
+	// Unify miss condition with RayTracingReflections.usf
+	//float ResultDistance = DENOISER_MISS_HIT_DISTANCE;
+	//float ResultDistance = DENOISER_INVALID_HIT_DISTANCE;
+	float ResultDistance = 1.0e20;
+
+	FPackedMaterialClosestHitPayload PackedPayload = InitializePackedPayload(bSkyLightAffectReflection);
+	float3 RayHitWorldPos = ReflectionRay.Origin + ReflectionRay.GetDirection() * DENOISER_MISS_HIT_DISTANCE;
+
+	if (DeferredMaterialPayload.SortKey < RAY_TRACING_DEFERRED_MATERIAL_KEY_RAY_MISS)
+	{
+		FRayDesc Ray;
+		Ray.TMin      = 0;
+		Ray.TMax      = 1e9;
+		Ray.Origin    = ReflectionRay.Origin;
+		Ray.Direction = ReflectionRay.GetDirection();
+
+		FRayIntersectionBookmark Bookmark = BookmarkBuffer[DeferredMaterialPayload.PixelCoordinates];
+
+		TraceDeferredMaterialShadingRay(
+			TLAS,
+			RAY_FLAG_FORCE_OPAQUE,
+			RAY_TRACING_MASK_OPAQUE,
+			Ray.GetNativeDesc(),
+			Bookmark,
+			PackedPayload);
+
+		const bool bTopLayerRayTraceSkyLightContribution = false;
+
+		// If the closest surface that we found during material gather is transparent,
+		// we can trace another ray that performs full traversal and masked material evaluation.
+		// The assumption here is that majority of the rays will actually hit opaque surfaces and
+		// the win from skipping AHS invocations during initial traversal will lead to overall win on average.
+		if ((!PackedPayload.IsHit() || PackedPayload.GetOpacity() == 0) 
+			&& ReflectionRay.Roughness <= AnyHitMaxRoughness)
+		{
+			// Reset the payload to a known initial state, as previous Trace() call may have overwritten some of the fields.
+			PackedPayload = InitializePackedPayload(bSkyLightAffectReflection);
+
+			FRayCone RayCone = (FRayCone)0;
+			TraceMaterialRayPacked(
+				PackedPayload,
+				TLAS,
+				0, // RayFlags
+				RAY_TRACING_MASK_OPAQUE,
+				Ray,
+				RayCone,
+				bTopLayerRayTraceSkyLightContribution);
+		}
+
+		if (PackedPayload.IsHit())
+		{
+			bool bShouldDoDirectLighting               = ShouldDoDirectLighting != 0;
+			bool bShouldDoEmissiveAndIndirectLighting  = ShouldDoEmissiveAndIndirectLighting != 0;
+			bool bDecoupleSampleGeneration             = false;
+			uint ReflectedShadowsType                  = 1; // Hard shadows
+			
+			RandomSequence RandSequence = (RandomSequence) 0; // Not actually used, since hard shadows are forced
+
+			float3 LightingViewDirection = Ray.Direction;
+			RayHitWorldPos = Ray.Origin + Ray.Direction * PackedPayload.HitT;
+			FRayCone RayCone = (FRayCone)0; // Not used
+
+			AccumulateResults(
+				PackedPayload,
+				RayHitWorldPos,
+				LightingViewDirection,
+				TLAS,
+				RandSequence,
+				PixelPos,
+				ReflectionMaxNormalBias,
+				ReflectedShadowsType,
+				bShouldDoDirectLighting,
+				bShouldDoEmissiveAndIndirectLighting,
+				bTopLayerRayTraceSkyLightContribution,
+				bDecoupleSampleGeneration,
+				RayCone,
+				ResultColor.rgb);
+
+			if (ShouldDoReflectionCaptures != 0)
+			{
+				float3 R = reflect(Ray.Direction, PackedPayload.GetWorldNormal());
+				const float NoV = saturate(dot(-Ray.Direction, PackedPayload.GetWorldNormal()));
+				const float Roughness = PackedPayload.GetRoughness();
+				const float RoughnessSq = Roughness * Roughness;
+				const float SpecularOcclusion = GetSpecularOcclusion(NoV, RoughnessSq, 1.0);
+				ResultColor.rgb += EnvBRDF(PackedPayload.GetSpecularColor(), Roughness, NoV) * SpecularOcclusion *
+					CompositeReflectionCapturesAndSkylight(
+						1.0, // CompositeAlpha
+						RayHitWorldPos,
+						R,
+						Roughness,
+						0.0, // IndirectIrradiance,
+						1.0, // IndirectSpecularOcclusion
+						0.0, // ExtraIndirectSpecular
+						ForwardLightData.NumReflectionCaptures,
+						0, // ReflectionCapturesStartIndex
+						0,
+						bSkyLightAffectReflection);
+			}
+
+			ResultColor.rgb *= View.PreExposure;
+
+			float RoughnessFade = GetRoughnessFade(ReflectionRay.Roughness, ReflectionMaxRoughness);
+
+			ResultColor.rgb *= RoughnessFade;
+			ResultColor.a = RoughnessFade;
+
+			ResultDistance = PackedPayload.HitT;
+		}
+	}
+
+	// Filter out any NaN-s and negative numbers to prevent any errors propagating into the subsequent pipeline.
+	ResultColor.rgb = -min(-ResultColor.rgb, float3(0, 0, 0));
+
+	ColorOutput[PixelPos] = ResultColor;
+
+	float4 RayParams = (float4)0;
+
+	const float FP16Max = 65504.0;
+	float ClampedHitDistance = (ResultDistance == DENOISER_MISS_HIT_DISTANCE) ? FP16Max : min(ResultDistance, FP16Max); // Clamp to fit into FP16
+	RayParams.xyz = ReflectionRay.GetDirection() * ClampedHitDistance;
+	RayParams.w  = ReflectionRay.Pdf > 0 ? min(1.0 / ReflectionRay.Pdf, FP16Max) : 0;
+
+	// NOTE: Written a ternary operator to work around shader compiler crash as of 2020-11-19
+	ReflectionDenoiserData[PixelPos] = DenoisingOutputFormat == 1 ? RayParams : (float4)ResultDistance;
+
+#endif // DIM_DEFERRED_MATERIAL_MODE
+}
+

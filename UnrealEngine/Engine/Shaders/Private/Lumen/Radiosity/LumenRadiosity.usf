@@ -1,0 +1,532 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "../../MonteCarlo.ush"
+#include "../../SHCommon.ush"
+#include "../LumenCardCommon.ush"
+#include "../LumenTracingCommon.ush"
+#include "../LumenSoftwareRayTracing.ush"
+#include "../LumenCardTile.ush"
+#include "LumenRadiosity.ush"
+#include "../../RayTracing/RayGenUtils.ush"
+
+#ifndef THREADGROUP_SIZE
+	#define THREADGROUP_SIZE 1
+#endif
+
+RWBuffer<uint> RWIndirectArgs;	
+uint HardwareRayTracingThreadGroupSize;
+
+void SetIndirectArgs(uint ArgIndex, uint NumThreads, uint ThreadGroupSize)
+{
+	WriteDispatchIndirectArgs(RWIndirectArgs, ArgIndex, (NumThreads + ThreadGroupSize - 1) / ThreadGroupSize, 1, 1);
+}
+
+void SetHardwareRayTracingIndirectArgs(uint ArgIndex, uint NumThreads, uint ThreadGroupSize)
+{
+	uint NumGroups = (NumThreads + HardwareRayTracingThreadGroupSize - 1) / HardwareRayTracingThreadGroupSize;
+	int3 DispatchDimension = GetRayTracingThreadCountWrapped(NumGroups, ThreadGroupSize);
+	WriteDispatchIndirectArgs(RWIndirectArgs, ArgIndex, DispatchDimension);
+}
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void LumenRadiosityIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint ViewIndex = DispatchThreadId.x;
+
+	if (ViewIndex < NumViews)
+	{
+		// View offset
+		uint BaseOffset = ViewIndex * 5;
+
+		uint NumTraces = CardTileAllocator[ViewIndex] * RadiosityTileSize * RadiosityTileSize * NumTracesPerProbe;
+
+		// ERadiosityIndirectArgs::NumTracesDiv64
+		SetIndirectArgs(BaseOffset + 0, NumTraces, /*ThreadGroupSize*/ 64);
+
+		// ERadiosityIndirectArgs::NumTracesDiv32
+		SetIndirectArgs(BaseOffset + 1, NumTraces, /*ThreadGroupSize*/ 32);
+
+		// ERadiosityIndirectArgs::ThreadPerProbe
+		SetIndirectArgs(BaseOffset + 2, CardTileAllocator[ViewIndex] * RadiosityTileSize * RadiosityTileSize, /*ThreadGroupSize*/ 32);
+
+		// ERadiosityIndirectArgs::ThreadPerRadiosityTexel
+		SetIndirectArgs(BaseOffset + 3, CardTileAllocator[ViewIndex] * CARD_TILE_SIZE * CARD_TILE_SIZE, /*ThreadGroupSize*/ 32);
+
+		// ERadiosityIndirectArgs::HardwareRayTracingThreadPerTrace
+		SetHardwareRayTracingIndirectArgs(BaseOffset + 4, NumTraces, /*ThreadGroupSize*/ 64);
+	}
+}
+
+RWTexture2D<float3> RWTraceRadianceAtlas;
+RWTexture2D<float> RWTraceHitDistanceAtlas;
+
+float SurfaceBias;
+float MinTraceDistance;
+float MaxTraceDistance;
+float MaxMeshSDFTraceDistance;
+float MaxRayIntensity;
+
+#if THREADGROUP_SIZE_32
+	#define RADIOSITY_TRACE_THREADGROUP_SIZE 32
+#else
+	#define RADIOSITY_TRACE_THREADGROUP_SIZE 64
+#endif
+
+[numthreads(RADIOSITY_TRACE_THREADGROUP_SIZE, 1, 1)]
+void LumenRadiosityDistanceFieldTracingCS(
+	uint DispatchThreadId : SV_DispatchThreadID)
+{
+	uint CardTileIndex;
+	uint2 CoordInCardTile;
+	uint2 TraceTexelCoord;
+	UnswizzleTexelTraceCoords(DispatchThreadId, CardTileIndex, CoordInCardTile, TraceTexelCoord);
+
+	FRadiosityTexel RadiosityTexel = GetRadiosityTexelFromCardTile(CardTileIndex, CoordInCardTile);
+
+	if (RadiosityTexel.bInsideAtlas)
+	{
+		float3 Radiance = 0.0f;
+		float TraceHitDistance = MaxTraceDistance;
+
+		if (RadiosityTexel.bValid)
+		{
+			float3 WorldPosition = RadiosityTexel.WorldPosition;
+			float3 WorldNormal = RadiosityTexel.WorldNormal;
+
+			float3 WorldRayDirection;
+			float ConeHalfAngle;
+			float PDF;
+			GetRadiosityRay(RadiosityTexel, RadiosityTexel.CardCoord >> ProbeSpacingInRadiosityTexelsDivideShift, TraceTexelCoord, WorldRayDirection, ConeHalfAngle, PDF);
+
+			//#lumen_todo: derive bias from texel world size
+			WorldPosition += WorldNormal * SurfaceBias;
+
+			float VoxelTraceStartDistance = CalculateVoxelTraceStartDistance(MinTraceDistance, MaxTraceDistance, MaxMeshSDFTraceDistance, false);
+
+			//#lumen_todo: derive bias from texel world size
+			float3 SamplePosition = WorldPosition + SurfaceBias * WorldRayDirection;
+
+			float3 TranslatedSamplePosition = SamplePosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+
+			FConeTraceInput TraceInput;
+			TraceInput.Setup(SamplePosition, TranslatedSamplePosition, WorldRayDirection, ConeHalfAngle, 0, MinTraceDistance, MaxTraceDistance, 1);
+			TraceInput.VoxelTraceStartDistance = VoxelTraceStartDistance;
+			TraceInput.SDFStepFactor = 1;
+			TraceInput.DitherScreenCoord = (RadiosityTexel.CardCoord >> ProbeSpacingInRadiosityTexelsDivideShift) + TraceTexelCoord;
+
+			FConeTraceResult TraceResult = (FConeTraceResult)0;
+			TraceResult.Transparency = 1;
+
+			#if TRACE_GLOBAL_SDF
+			{
+				RayTraceGlobalDistanceField(TraceInput, TraceResult);
+			}
+			#endif
+
+			if (TraceResult.Transparency < 0.5f)
+			{
+				Radiance = TraceResult.Lighting;
+
+				// Recalculate TraceHitDistance to incorporate biases
+				//@todo - Self intersection from grazing angle traces breaks probe occlusion
+				float3 HitPosition = SamplePosition + WorldRayDirection * (TraceResult.OpaqueHitDistance + TraceResult.ExpandSurfaceAmount);
+				TraceHitDistance = length(RadiosityTexel.WorldPosition - HitPosition);
+			}
+			else
+			{
+				Radiance = EvaluateSkyRadiance(WorldRayDirection);
+			}
+
+			float MaxLighting = max3(Radiance.x, Radiance.y, Radiance.z);
+
+			if (MaxLighting > MaxRayIntensity * View.OneOverPreExposure)
+			{
+				Radiance *= MaxRayIntensity * View.OneOverPreExposure / MaxLighting;
+			}
+		}
+
+		FCardTileData CardTile = GetCardTile(CardTileIndex);
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+		uint2 RadiosityProbeTracingAtlasCoord = GetRadiosityProbeAtlasCoord(CardPage, CardTile, CoordInCardTile) * HemisphereProbeResolution + TraceTexelCoord;
+		RWTraceRadianceAtlas[RadiosityProbeTracingAtlasCoord] = Radiance;
+
+		if (UseProbeOcclusion > 0)
+		{
+			RWTraceHitDistanceAtlas[RadiosityProbeTracingAtlasCoord] = TraceHitDistance;
+		}
+	}
+}
+
+RWTexture2D<float3> RWFilteredTraceRadianceAtlas;
+float ProbePlaneWeightingDepthScale;
+
+float CalculatePlaneWeight(float3 WorldPosition, float3 WorldNormal, float3 ProbeWorldPosition)
+{
+	float4 TexelPlane = float4(WorldNormal, dot(ProbeWorldPosition, WorldNormal));
+	float PlaneDistance = abs(dot(float4(WorldPosition, -1), TexelPlane));
+	float RelativeDistance = max(PlaneDistance / (length(ProbeWorldPosition - WorldPosition) + .01f), .1f);
+	float DepthWeight = exp2(ProbePlaneWeightingDepthScale * (RelativeDistance * RelativeDistance));
+	return DepthWeight > .01f ? 1 : 0;
+}
+
+void SampleTraceRadianceAtlas(
+	FRadiosityTexel GatherProbeTexel,
+	uint2 GatherProbeAtlasCoord,
+	uint ResLevelPageTableOffset, 
+	uint2 ResLevelSizeInProbes, 
+	int2 ProbeCoordInCard, 
+	uint2 TraceTexelCoord,
+	float InterpolationWeight,
+	inout float3 Radiance,
+	inout float WeightSum)
+{
+	if (all(ProbeCoordInCard >= 0))
+	{
+		uint2 ResLevelSizeInPages = (ResLevelSizeInProbes * ProbeSpacingInRadiosityTexels) / PHYSICAL_PAGE_SIZE;
+		uint2 CoordInCard = ProbeCoordInCard * ProbeSpacingInRadiosityTexels;
+		// First find page to sample from
+		uint2 PageCoordInCard = CoordInCard / PHYSICAL_PAGE_SIZE;
+
+		//@todo - breaks SW tracing
+		//if (all(PageCoordInCard < ResLevelSizeInPages))
+		{
+			uint LinearCardPageIndex = PageCoordInCard.x + PageCoordInCard.y * ResLevelSizeInPages.x;
+			FLumenCardPageData CardPage = GetLumenCardPageData(ResLevelPageTableOffset + LinearCardPageIndex);
+
+			// Don't sample if page doesn't have a valid probe
+			if (CardPage.bMapped && CardPage.LastIndirectLightingUpdateFrameIndex != 0)
+			{
+				// Then tile and probe coordinates
+				uint2 CoordInCardPage = CoordInCard - (PageCoordInCard * PHYSICAL_PAGE_SIZE);
+				uint2 ProbeAtlasCoord = ((uint2)CardPage.PhysicalAtlasCoord + CoordInCardPage) >> ProbeSpacingInRadiosityTexelsDivideShift;
+
+				FRadiosityTexel ProbeTexel = GetRadiosityTexel(CardPage, CoordInCardPage);
+
+				if (ProbeTexel.bInsideAtlas)
+				{
+					float Weight = ProbeTexel.bValid ? InterpolationWeight : 0.0f;
+
+					#if FILTERING_PLANE_WEIGHTING
+					{
+						float PlaneWeight = CalculatePlaneWeight(GatherProbeTexel.WorldPosition, GatherProbeTexel.WorldNormal, ProbeTexel.WorldPosition);
+						Weight = min(Weight, PlaneWeight);
+					}
+					#endif
+
+					#if FILTERING_PROBE_OCCLUSION
+					{
+						float VisibilityWeight = CalculateProbeVisibility(GatherProbeTexel.WorldPosition, ProbeTexel, ProbeAtlasCoord);
+						Weight = min(Weight, VisibilityWeight);
+
+						float VisibilityWeight2 = CalculateProbeVisibility(ProbeTexel.WorldPosition, GatherProbeTexel, GatherProbeAtlasCoord);
+						Weight = min(Weight, VisibilityWeight2);
+					}
+					#endif
+
+					if (Weight > 0)
+					{
+						Radiance += TraceRadianceAtlas[ProbeAtlasCoord * HemisphereProbeResolution + TraceTexelCoord] * Weight;
+						WeightSum += Weight;
+					}
+				}
+			}
+		}
+	}
+}
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void LumenRadiositySpatialFilterProbeRadiance(
+	uint DispatchThreadId : SV_DispatchThreadID)
+{
+	uint CardTileIndex;
+	uint2 CoordInCardTile;
+	uint2 TraceTexelCoord;
+	UnswizzleTexelTraceCoords(DispatchThreadId, CardTileIndex, CoordInCardTile, TraceTexelCoord);
+
+	FRadiosityTexel RadiosityTexel = GetRadiosityTexelFromCardTile(CardTileIndex, CoordInCardTile);
+
+	if (RadiosityTexel.bInsideAtlas)
+	{
+		FCardTileData CardTile = GetCardTile(CardTileIndex);
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+		uint2 ProbeAtlasCoord = GetRadiosityProbeAtlasCoord(CardPage, CardTile, CoordInCardTile);
+		uint2 RadiosityProbeTracingAtlasCoord = ProbeAtlasCoord * HemisphereProbeResolution + TraceTexelCoord;
+
+		float CenterWeight = 2.0f;
+		float3 Radiance = TraceRadianceAtlas[RadiosityProbeTracingAtlasCoord] * CenterWeight;
+		float TotalWeight = CenterWeight;
+
+		if (RadiosityTexel.bValid)
+		{
+			uint2 ResLevelSizeInProbes = CardPage.ResLevelSizeInTiles * RadiosityTileSize;
+			uint2 CardPageProbeCoord = CardPage.CardUVRect.xy * ResLevelSizeInProbes;
+			int2 ProbeCoordInCard = CardPageProbeCoord + CardTile.TileCoord * RadiosityTileSize + (CoordInCardTile >> ProbeSpacingInRadiosityTexelsDivideShift);
+
+#if FILTERING_KERNEL_SIZE == 1
+			const uint NumSamples = 4;
+			int2 NeighborOffsets[NumSamples];
+			NeighborOffsets[0] = int2(0, 1);
+			NeighborOffsets[1] = int2(1, 0);
+			NeighborOffsets[2] = int2(0, -1);
+			NeighborOffsets[3] = int2(-1, 0);
+#else 
+			const uint NumSamples = 13;
+			int2 NeighborOffsets[NumSamples];
+			NeighborOffsets[0] = int2(0, 2);
+			NeighborOffsets[1] = int2(-1, 1);
+			NeighborOffsets[2] = int2(0, 1);
+			NeighborOffsets[3] = int2(1, 1);
+			NeighborOffsets[4] = int2(-2, 0);
+			NeighborOffsets[5] = int2(-1, 0);
+			NeighborOffsets[6] = int2(0, 0);
+			NeighborOffsets[7] = int2(1, 0);
+			NeighborOffsets[8] = int2(2, 0);
+			NeighborOffsets[9] = int2(-1, -1);
+			NeighborOffsets[10] = int2(0, -1);
+			NeighborOffsets[11] = int2(1, -1);
+			NeighborOffsets[12] = int2(0, -2);
+#endif
+
+			UNROLL
+			for (uint i = 0; i < NumSamples; i++)
+			{
+				SampleTraceRadianceAtlas(
+					RadiosityTexel,
+					ProbeAtlasCoord,
+					CardPage.ResLevelPageTableOffset, 
+					ResLevelSizeInProbes, 
+					ProbeCoordInCard + NeighborOffsets[i], 
+					TraceTexelCoord,
+					1.0f,
+					Radiance,
+					TotalWeight);
+			}
+		}
+
+		RWFilteredTraceRadianceAtlas[RadiosityProbeTracingAtlasCoord] = Radiance / TotalWeight;
+	}
+}
+
+RWTexture2D<float4> RWRadiosityProbeSHRedAtlas;
+RWTexture2D<float4> RWRadiosityProbeSHGreenAtlas;
+RWTexture2D<float4> RWRadiosityProbeSHBlueAtlas;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void LumenRadiosityConvertToSH(
+	uint DispatchThreadId : SV_DispatchThreadID)
+{
+	uint CardTileIndex;
+	uint2 CoordInCardTile;
+	UnswizzleCardTileIndex(DispatchThreadId, CardTileIndex, CoordInCardTile);
+	
+	if (CardTileIndex < CardTileAllocator[ViewIndex])
+	{
+		FRadiosityTexel RadiosityTexel = GetRadiosityTexelFromCardTile(CardTileIndex, CoordInCardTile);
+
+		FCardTileData CardTile = GetCardTile(CardTileIndex);
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+
+		uint2 RadiosityProbeAtlasCoord = GetRadiosityProbeAtlasCoord(CardPage, CardTile, CoordInCardTile);
+
+		FTwoBandSHVectorRGB IrradianceSH = (FTwoBandSHVectorRGB)0;
+		float NumValidSamples = 0.0f;
+
+		if (RadiosityTexel.bInsideAtlas && RadiosityTexel.bValid)
+		{
+			for (uint TraceY = 0; TraceY < HemisphereProbeResolution; ++TraceY)
+			{
+				for (uint TraceX = 0; TraceX < HemisphereProbeResolution; ++TraceX)
+				{
+					uint2 TraceTexelCoord = uint2(TraceX, TraceY);
+					float3 TraceRadiance = TraceRadianceAtlas[RadiosityProbeAtlasCoord * HemisphereProbeResolution + TraceTexelCoord];
+
+					float3 WorldRayDirection;
+					float ConeHalfAngle;
+					float PDF;
+					GetRadiosityRay(RadiosityTexel, RadiosityTexel.CardCoord >> ProbeSpacingInRadiosityTexelsDivideShift, TraceTexelCoord, WorldRayDirection, ConeHalfAngle, PDF);
+
+					IrradianceSH = AddSH(IrradianceSH, MulSH(SHBasisFunction(WorldRayDirection), TraceRadiance / PDF));
+					NumValidSamples += 1.0f;
+				}
+			}
+		}
+
+		if (NumValidSamples > 0.0f)
+		{
+			IrradianceSH = MulSH(IrradianceSH, 1.0f / NumValidSamples);
+		}
+
+		RWRadiosityProbeSHRedAtlas[RadiosityProbeAtlasCoord] = IrradianceSH.R.V;
+		RWRadiosityProbeSHGreenAtlas[RadiosityProbeAtlasCoord] = IrradianceSH.G.V;
+		RWRadiosityProbeSHBlueAtlas[RadiosityProbeAtlasCoord] = IrradianceSH.B.V;
+	}
+}
+
+Texture2D<float4> RadiosityProbeSHRedAtlas;
+Texture2D<float4> RadiosityProbeSHGreenAtlas;
+Texture2D<float4> RadiosityProbeSHBlueAtlas;
+
+FTwoBandSHVectorRGB GetRadiosityProbeSH(uint2 RadiosityProbeAtlasCoord)
+{
+	float4 SHRed = RadiosityProbeSHRedAtlas.Load(int3(RadiosityProbeAtlasCoord, 0));
+	float4 SHGreen = RadiosityProbeSHGreenAtlas.Load(int3(RadiosityProbeAtlasCoord, 0));
+	float4 SHBlue = RadiosityProbeSHBlueAtlas.Load(int3(RadiosityProbeAtlasCoord, 0));
+
+	FTwoBandSHVectorRGB IrradianceSH;
+	IrradianceSH.R.V = SHRed;
+	IrradianceSH.G.V = SHGreen;
+	IrradianceSH.B.V = SHBlue;
+
+	return IrradianceSH;
+}
+
+void SampleRadiositySH(
+	uint2 TexelCoordInCard,
+	float3 TexelWorldPosition,
+	float3 TexelNormal,
+	uint ResLevelPageTableOffset, 
+	uint2 ResLevelSizeInProbes, 
+	uint2 ProbeCoordInCard, 
+	float InterpolationWeight,
+	inout FTwoBandSHVectorRGB IrradianceSH,
+	inout float WeightSum,
+	inout float3 Debug)
+{
+	if (all(ProbeCoordInCard < ResLevelSizeInProbes))
+	{
+		uint2 ResLevelSizeInPages = (ResLevelSizeInProbes * ProbeSpacingInRadiosityTexels) / PHYSICAL_PAGE_SIZE;
+
+		// First find page to sample from
+		uint2 PageCoordInCard = (ProbeCoordInCard * ProbeSpacingInRadiosityTexels) / PHYSICAL_PAGE_SIZE;
+		uint LinearCardPageIndex = PageCoordInCard.x + PageCoordInCard.y * ResLevelSizeInPages.x;
+		FLumenCardPageData CardPage = GetLumenCardPageData(ResLevelPageTableOffset + LinearCardPageIndex);
+
+		// Don't sample if page doesn't have a valid probe
+		if (CardPage.bMapped && CardPage.LastIndirectLightingUpdateFrameIndex != 0)
+		{
+			// Then tile and probe coordinates
+			uint2 CoordInCardPage = ProbeCoordInCard * ProbeSpacingInRadiosityTexels - (PageCoordInCard * PHYSICAL_PAGE_SIZE);
+			uint2 ProbeAtlasCoord = ((uint2)CardPage.PhysicalAtlasCoord + CoordInCardPage) >> ProbeSpacingInRadiosityTexelsDivideShift;
+
+			if (all(CoordInCardPage < CardPage.SizeInTexels))
+			{
+				FRadiosityTexel NeighborProbeTexel = GetRadiosityTexel(CardPage, CoordInCardPage);
+
+				float Weight = NeighborProbeTexel.bValid ? InterpolationWeight : 0.0f;
+
+				#if INTERPOLATION_PLANE_WEIGHTING
+				{
+					float PlaneWeight = CalculatePlaneWeight(TexelWorldPosition, TexelNormal, NeighborProbeTexel.WorldPosition);
+					Weight = min(Weight, PlaneWeight);
+				}
+				#endif
+
+				#if INTERPOLATION_PROBE_OCCLUSION
+				{
+					float VisibilityWeight = CalculateProbeVisibility(TexelWorldPosition, NeighborProbeTexel, ProbeAtlasCoord);
+					Weight = min(Weight, VisibilityWeight);
+				}
+				#endif
+
+				if (Weight > 0.0f)
+				{
+					FTwoBandSHVectorRGB ProbeSH = GetRadiosityProbeSH(ProbeAtlasCoord);
+					IrradianceSH = AddSH(IrradianceSH, MulSH(ProbeSH, Weight));
+					WeightSum += Weight;
+				}
+			}
+		}
+	}
+}
+
+RWTexture2D<float3> RWRadiosityAtlas;
+RWTexture2D<UNORM float> RWRadiosityNumFramesAccumulatedAtlas;
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void LumenRadiosityIntegrateCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint LinearTexelIndex = DispatchThreadId.x;
+
+	uint NumTexelsPerTile = CARD_TILE_SIZE * CARD_TILE_SIZE;
+	uint CardTileIndex = LinearTexelIndex / NumTexelsPerTile;
+	const uint LinearIndexInCardTile = LinearTexelIndex - CardTileIndex * NumTexelsPerTile;
+	uint2 CoordInCardTile = uint2(LinearIndexInCardTile % CARD_TILE_SIZE, LinearIndexInCardTile / CARD_TILE_SIZE);
+
+	float3 TexelRadiance = float3(0.0f, 0.0f, 0.0f);
+	float3 Debug = 0;
+	float WeightSum = 0.0f;
+	float NewNumFramesAccumulated = 0;
+
+	FRadiosityTexel RadiosityTexel = GetRadiosityTexelFromCardTile(CardTileIndex, CoordInCardTile);
+
+	if (RadiosityTexel.bInsideAtlas && RadiosityTexel.bValid)
+	{
+		FCardTileData CardTile = GetCardTile(CardTileIndex);
+		FLumenCardPageData CardPage = GetLumenCardPageData(CardTile.CardPageIndex);
+		FLumenCardData Card = GetLumenCardData(CardPage.CardIndex);
+
+		//@todo - seam if CardPage.IndirectLightingTemporalIndex different
+		uint2 CoordInCard = (CardPage.CardUVRect.xy * CardPage.ResLevelSizeInTiles + CardTile.TileCoord) * CARD_TILE_SIZE + CoordInCardTile;
+
+		uint2 ProbeFullResCoord = max((float2)CoordInCard - GetProbeJitter(CardPage.IndirectLightingTemporalIndex), 0.0f);
+		uint2 ProbeCoord00 = ProbeFullResCoord >> ProbeSpacingInRadiosityTexelsDivideShift;
+		uint2 ProbeCoord10 = ProbeCoord00 + uint2(1, 0);
+		uint2 ProbeCoord01 = ProbeCoord00 + uint2(0, 1);
+		uint2 ProbeCoord11 = ProbeCoord00 + uint2(1, 1);
+
+		// Guarantee that no probe will have a bilinear weight of zero, when other probes might be discarded due to occlusion
+		float BilinearExpand = 1;
+		float2 BilinearWeights = ((float2)ProbeFullResCoord - ProbeCoord00 * ProbeSpacingInRadiosityTexels + BilinearExpand) / (float)(ProbeSpacingInRadiosityTexels + 2 * BilinearExpand);
+
+		float4 Weights = float4(
+			(1.0f - BilinearWeights.x) * (1.0f - BilinearWeights.y),
+			BilinearWeights.x * (1.0f - BilinearWeights.y),
+			(1.0f - BilinearWeights.x) * BilinearWeights.y,
+			BilinearWeights.x * BilinearWeights.y);
+
+		FTwoBandSHVectorRGB IrradianceSHWeighted = (FTwoBandSHVectorRGB)0;
+
+		uint2 ResLevelSizeInProbes = CardPage.ResLevelSizeInTiles * RadiosityTileSize;
+		SampleRadiositySH(CoordInCard, RadiosityTexel.WorldPosition, RadiosityTexel.WorldNormal, CardPage.ResLevelPageTableOffset, ResLevelSizeInProbes, ProbeCoord00, Weights.x, IrradianceSHWeighted, WeightSum, Debug);
+		SampleRadiositySH(CoordInCard, RadiosityTexel.WorldPosition, RadiosityTexel.WorldNormal, CardPage.ResLevelPageTableOffset, ResLevelSizeInProbes, ProbeCoord10, Weights.y, IrradianceSHWeighted, WeightSum, Debug);
+		SampleRadiositySH(CoordInCard, RadiosityTexel.WorldPosition, RadiosityTexel.WorldNormal, CardPage.ResLevelPageTableOffset, ResLevelSizeInProbes, ProbeCoord01, Weights.z, IrradianceSHWeighted, WeightSum, Debug);
+		SampleRadiositySH(CoordInCard, RadiosityTexel.WorldPosition, RadiosityTexel.WorldNormal, CardPage.ResLevelPageTableOffset, ResLevelSizeInProbes, ProbeCoord11, Weights.w, IrradianceSHWeighted, WeightSum, Debug);
+
+		FTwoBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH(RadiosityTexel.WorldNormal, 1.0f);
+		TexelRadiance = max(float3(0.0f, 0.0f, 0.0f), DotSH(IrradianceSHWeighted, DiffuseTransferSH));
+
+		if (WeightSum > 0.0f)
+		{
+			TexelRadiance /= WeightSum;
+		}
+
+#if TEMPORAL_ACCUMULATION
+		float NumFramesAccumulated = RWRadiosityNumFramesAccumulatedAtlas[RadiosityTexel.AtlasCoord] * 255.0f;
+		NewNumFramesAccumulated = min(NumFramesAccumulated + 1, (float)MaxFramesAccumulated);
+
+		float Alpha = 1.0f / (1.0f + NumFramesAccumulated);
+
+		float3 HistoryRadiosity = RWRadiosityAtlas[RadiosityTexel.AtlasCoord];
+		TexelRadiance = lerp(HistoryRadiosity, TexelRadiance, Alpha);
+#endif
+
+		////////////////////////
+		//TexelRadiance = Debug;
+		//TexelRadiance = WeightSum > 0 ? 1 : 0;
+
+#define DEBUG_VISUALIZE_PROBE_PLACEMENT 0
+#if DEBUG_VISUALIZE_PROBE_PLACEMENT
+
+		if (all(CoordInCard == ProbeCoord00 * ProbeSpacingInRadiosityTexels + GetProbeJitter(CardPage.IndirectLightingTemporalIndex)))
+		{
+			TexelRadiance = float3(10, 0, 10);
+		}
+#endif
+
+	}
+
+	RWRadiosityNumFramesAccumulatedAtlas[RadiosityTexel.AtlasCoord] = NewNumFramesAccumulated / 255.0f;
+	RWRadiosityAtlas[RadiosityTexel.AtlasCoord] = TexelRadiance;
+}

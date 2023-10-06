@@ -1,0 +1,22 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<!-- add us to the platform list-->
+	<Property Name="AllPGOPlatforms" Value="$(AllPGOPlatforms);Win64" If="ContainsItem('$(TargetPlatforms)', 'Win64', '+')"/>
+
+	<!-- set platform-specific properties -->
+	<Property Name="PGOBinaryStagingPathWin64" Value="$(ProjectName)/Binaries/Win64/"/>
+	<Property Name="PGOProfileOutputWin64" Value="$(ProjectPath)/Platforms/Windows/Build/PGO"/>
+	<Property Name="PGOProfileOutputFilterWin64" Value="*.pgd;*.pgc"/>
+	<Property Name="PGOProfileCommandLineWin64" Value=""/>
+	<Property Name="PGOCompileArgsWin64" Value=""/>
+	<Property Name="PGOCompileExtraBinariesWin64" Value="*.pgd"/>
+
+	<!-- enable /FASTGENPROFILE when running locally -->
+	<Property Name="PGOCompileArgsWin64" Value="-PGOFastGen" If="!$(IsBuildMachine)"/>
+
+	<!-- no special preprocessing required for this platform -->
+	<Macro Name="PGOPrepareBuildForProfilingWin64" Arguments="LocalStagingDir;Configuration"/>
+
+
+</BuildGraph>

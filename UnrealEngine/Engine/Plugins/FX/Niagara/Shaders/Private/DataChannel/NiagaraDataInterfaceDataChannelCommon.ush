@@ -1,0 +1,99 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+/**
+
+Shader code common to all instances and functions of Niagara Data Channel DI.
+
+*/
+
+//TODO: Bindless buffers would allow us to read from any number of separate buffers without having to do a bunch of copying around.
+#define NIAGARA_DATACHANNEL_BINDLESSBUFFERS 0
+
+//TOOD: Add support for N multiple buffers
+//TODO: Add support for bindless buffers on platforms that support it.
+
+void NiagaraDataChannelRead_float(Buffer<float> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out float OutValue)
+{
+	OutValue = InBuffer[RegisterIdx * Stride + ParticleIdx];
+	++RegisterIdx;
+}
+
+void NiagaraDataChannelRead_float2(Buffer<float> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out float2 OutValue)
+{
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+}
+
+void NiagaraDataChannelRead_float3(Buffer<float> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out float3 OutValue)
+{
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.z);
+}
+
+void NiagaraDataChannelRead_float4(Buffer<float> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out float4 OutValue)
+{
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.z);
+	NiagaraDataChannelRead_float(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.w);
+}
+
+void NiagaraDataChannelRead_int(Buffer<int> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out int OutValue)
+{
+	OutValue = InBuffer[RegisterIdx * Stride + ParticleIdx];
+	++RegisterIdx;
+}
+
+void NiagaraDataChannelRead_int2(Buffer<int> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out int2 OutValue)
+{
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+}
+
+void NiagaraDataChannelRead_int3(Buffer<int> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out int3 OutValue)
+{
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.z);
+}
+
+void NiagaraDataChannelRead_int4(Buffer<int> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out int4 OutValue)
+{
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.z);
+	NiagaraDataChannelRead_int(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.w);
+}
+
+void NiagaraDataChannelRead_half(Buffer<half> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out half OutValue)
+{
+	OutValue = InBuffer[RegisterIdx * Stride + ParticleIdx];
+	++RegisterIdx;
+}
+
+void NiagaraDataChannelRead_half2(Buffer<half> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out half2 OutValue)
+{
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+}
+
+void NiagaraDataChannelRead_half3(Buffer<half> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out half3 OutValue)
+{
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.z);
+}
+
+void NiagaraDataChannelRead_half4(Buffer<half> InBuffer, uint Stride, in out uint RegisterIdx, uint ParticleIdx, out half4 OutValue)
+{
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.x);
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.y);
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.z);
+	NiagaraDataChannelRead_half(InBuffer, Stride, RegisterIdx, ParticleIdx, OutValue.w);
+}
+
+//TODO: More base type accessors.
+

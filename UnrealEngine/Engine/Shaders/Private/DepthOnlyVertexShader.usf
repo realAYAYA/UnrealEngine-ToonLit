@@ -1,0 +1,99 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DepthOnlyVertexShader.hlsl: Depth-only vertex shader.
+=============================================================================*/
+
+#include "Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+#define USE_RAW_WORLD_POSITION ((!MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET) && USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS)
+
+struct FDepthOnlyVSToPS
+{
+	float4 Position : SV_POSITION;
+
+	#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
+		FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+		float4 PixelPosition : TEXCOORD6;
+	#endif
+
+	#if USE_RAW_WORLD_POSITION
+		float3 PixelPositionExcludingWPO : TEXCOORD7;
+	#endif
+};
+
+#define FDepthOnlyVSOutput FDepthOnlyVSToPS
+#define VertexFactoryGetInterpolants VertexFactoryGetInterpolantsVSToPS
+
+#if VERTEXSHADER
+
+void Main(
+	FVertexFactoryInput Input,
+	out FDepthOnlyVSOutput Output
+#if USE_GLOBAL_CLIP_PLANE
+	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
+#endif
+#if INSTANCED_STEREO
+	, out uint ViewportIndex : SV_ViewPortArrayIndex
+#endif
+	)
+{
+#if INSTANCED_STEREO
+	uint EyeIndex = GetEyeIndexFromVF(Input);
+	ViewportIndex = EyeIndex;
+#endif
+	ResolvedView = ResolveViewFromVF(Input);
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPos = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float4 WorldPositionExcludingWPO = WorldPos;
+
+	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
+
+	// Isolate instructions used for world position offset
+	// As these cause the optimizer to generate different position calculating instructions in each pass, resulting in self-z-fighting.
+	// This is only necessary for shaders used in passes that have depth testing enabled.
+	{
+		WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+	}
+
+	{
+		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
+		Output.Position = INVARIANT(mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip));
+	}
+
+	#if XBOXONE_BIAS_HACK
+		// XB1 needs a bias in the opposite direction to fix FORT-40853
+		// XBOXONE_BIAS_HACK is defined only in a custom node in a particular material
+		// This should be removed with a future shader compiler update
+		Output.Position.z -= 0.0001 * Output.Position.w;
+	#endif
+
+#if USE_GLOBAL_CLIP_PLANE
+	OutGlobalClipPlaneDistance = dot(ResolvedView.GlobalClippingPlane, float4(WorldPos.xyz, 1));
+#endif
+
+#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
+	// Masked and transparent materials need texture coords to clip, and tessellated
+	// materials need texture coords to displace
+	Output.FactoryInterpolants = VertexFactoryGetInterpolants(Input, VFIntermediates, VertexParameters);
+
+#if INSTANCED_STEREO
+	Output.FactoryInterpolants.EyeIndex = EyeIndex;
+#endif
+
+#endif
+
+#if !MATERIALBLENDING_SOLID || OUTPUT_PIXEL_DEPTH_OFFSET
+	Output.PixelPosition = WorldPos;
+#endif
+
+#if USE_RAW_WORLD_POSITION
+	Output.PixelPositionExcludingWPO = WorldPositionExcludingWPO.xyz;
+#endif
+}
+
+#endif // VERTEXSHADER

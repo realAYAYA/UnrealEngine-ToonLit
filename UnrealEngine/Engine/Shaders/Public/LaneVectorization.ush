@@ -1,0 +1,449 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LaneVectorization.ush: Vectorize arbitrary number of processing per lane.
+=============================================================================*/
+  
+#pragma once
+
+#include "Platform.ush"
+
+template<typename ScalarType, uint InVectorSize, uint InSimdSize>
+struct TLaneVector
+{
+	static const uint VectorSize = InVectorSize;
+	static const uint SimdSize = InSimdSize;
+
+	vector<ScalarType, VectorSize> RegisterArray[SimdSize];
+
+	
+	// Access a component of the vector
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, 1, SimdSize> operator [](const uint ComponentIndex)
+	{
+		TLaneVector<ScalarType, 1, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex)[ComponentIndex]);
+		}
+		return R;
+	}
+	
+	// Access an individual element of the vector.
+	CALL_SITE_DEBUGLOC
+	vector<ScalarType, VectorSize> GetElement(const uint SimdIndex)
+	{
+		return RegisterArray[SimdIndex];
+	}
+	
+	CALL_SITE_DEBUGLOC
+	void SetElement(const uint SimdIndex, vector<ScalarType, VectorSize> Element)
+	{
+		RegisterArray[SimdIndex] = Element;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	void SetAllElements(vector<ScalarType, VectorSize> Element)
+	{
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			RegisterArray[SimdIndex] = Element;
+		}
+	}
+	
+	
+	// ------------- binary operator +
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator + (TLaneVector<ScalarType, VectorSize, SimdSize> B)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) + B.GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator + (vector<ScalarType, VectorSize> B)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) + B);
+		}
+		return R;
+	}
+
+	
+	// ------------- unary operator -
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator - ()
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, -GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	// ------------- binary operator -
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator - (TLaneVector<ScalarType, VectorSize, SimdSize> B)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) - B.GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator - (vector<ScalarType, VectorSize> B)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) - B);
+		}
+		return R;
+	}
+
+	
+	// ------------- binary operator *
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator * (TLaneVector<ScalarType, VectorSize, SimdSize> B)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) * B.GetElement(SimdIndex));
+		}
+		return R;
+	}
+
+	CALL_SITE_DEBUGLOC
+	TLaneVector<ScalarType, VectorSize, SimdSize> operator * (vector<ScalarType, VectorSize> B)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) * B);
+		}
+		return R;
+	}
+	
+
+	// ------------- constructors
+	CALL_SITE_DEBUGLOC
+	static TLaneVector<ScalarType, VectorSize, SimdSize> Vectorize(
+		TLaneVector<ScalarType, 1, SimdSize> A)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, A.GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	static TLaneVector<ScalarType, VectorSize, SimdSize> Const(
+		vector<ScalarType, VectorSize> A)
+	{
+		TLaneVector<ScalarType, VectorSize, SimdSize> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, A);
+		}
+		return R;
+	}
+
+};
+
+template<typename ScalarType, uint InVectorSize, uint InSimdSizeX, uint InSimdSizeY>
+struct TLaneVector2D
+{
+	static const uint VectorSize = InVectorSize;
+	static const uint SimdSize = InSimdSizeX * InSimdSizeY;
+	static const uint SimdSizeX = InSimdSizeX;
+	static const uint SimdSizeY = InSimdSizeY;
+
+	vector<ScalarType, VectorSize> RegisterArray[SimdSize];
+
+	
+	// Access a component of the vector
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, 1, SimdSizeX, SimdSizeY> operator [](const uint ComponentIndex)
+	{
+		TLaneVector2D<ScalarType, 1, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex)[ComponentIndex]);
+		}
+		return R;
+	}
+	
+	// Access an individual element of the vector.
+	CALL_SITE_DEBUGLOC
+	vector<ScalarType, VectorSize> GetElement(const uint SimdIndex)
+	{
+		return RegisterArray[SimdIndex];
+	}
+	
+	CALL_SITE_DEBUGLOC
+	void SetElement(const uint SimdIndex, vector<ScalarType, VectorSize> Element)
+	{
+		RegisterArray[SimdIndex] = Element;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	void SetAllElements(vector<ScalarType, VectorSize> Element)
+	{
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			RegisterArray[SimdIndex] = Element;
+		}
+	}
+	
+	
+	// ------------- binary operator +
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator + (TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> B)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) + B.GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator + (vector<ScalarType, VectorSize> B)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) + B);
+		}
+		return R;
+	}
+
+	
+	// ------------- unary operator -
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator - ()
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, -GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	// ------------- binary operator -
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator - (TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> B)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) - B.GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator - (vector<ScalarType, VectorSize> B)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) - B);
+		}
+		return R;
+	}
+
+	
+	// ------------- binary operator *
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator * (TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> B)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) * B.GetElement(SimdIndex));
+		}
+		return R;
+	}
+
+	CALL_SITE_DEBUGLOC
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> operator * (vector<ScalarType, VectorSize> B)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, GetElement(SimdIndex) * B);
+		}
+		return R;
+	}
+	
+
+	// ------------- constructors
+	CALL_SITE_DEBUGLOC
+	static TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> Vectorize(
+		TLaneVector2D<ScalarType, 1, SimdSizeX, SimdSizeY> A)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, A.GetElement(SimdIndex));
+		}
+		return R;
+	}
+	
+	CALL_SITE_DEBUGLOC
+	static TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> Const(
+		vector<ScalarType, VectorSize> A)
+	{
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R;
+		UNROLL
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++)
+		{
+			R.SetElement(SimdIndex, A);
+		}
+		return R;
+	}
+
+};
+
+// ------------- 1 parameter
+
+#define TVECTOR_FUNCTION_1PARAMS(FunctionName) \
+	CALL_SITE_DEBUGLOC \
+	template<typename ScalarType, uint VectorSize, uint SimdSize> \
+	TLaneVector<ScalarType, VectorSize, SimdSize> FunctionName( \
+		TLaneVector<ScalarType, VectorSize, SimdSize> A) \
+	{ \
+		TLaneVector<ScalarType, VectorSize, SimdSize> R; \
+		UNROLL \
+		for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++) \
+		{ \
+			R.SetElement(SimdIndex, FunctionName(A.GetElement(SimdIndex))); \
+		} \
+		return R; \
+	} \
+	\
+	CALL_SITE_DEBUGLOC \
+	template<typename ScalarType, uint VectorSize, uint SimdSizeX, uint SimdSizeY> \
+	TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> FunctionName( \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> A) \
+	{ \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> R; \
+		UNROLL \
+		for (uint SimdIndex = 0; SimdIndex < SimdSizeX * SimdSizeY; SimdIndex++) \
+		{ \
+			R.SetElement(SimdIndex, FunctionName(A.GetElement(SimdIndex))); \
+		} \
+		return R; \
+	} \
+	
+TVECTOR_FUNCTION_1PARAMS(rcp);
+TVECTOR_FUNCTION_1PARAMS(saturate);
+TVECTOR_FUNCTION_1PARAMS(abs);
+
+// ------------- 2 parameters
+
+#define TVECTOR_FUNCTION_2PARAMS(ReturnVectorSize, FunctionName) \
+	CALL_SITE_DEBUGLOC \
+	template<typename ScalarType, uint VectorSize, uint SimdSize> \
+	TLaneVector<ScalarType, ReturnVectorSize, SimdSize> FunctionName( \
+		TLaneVector<ScalarType, VectorSize, SimdSize> A, \
+		TLaneVector<ScalarType, VectorSize, SimdSize> B) \
+	{ \
+		TLaneVector<ScalarType, ReturnVectorSize, SimdSize> R; \
+		UNROLL for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++) { \
+			R.SetElement(SimdIndex, FunctionName(A.GetElement(SimdIndex), B.GetElement(SimdIndex))); \
+		} \
+		return R; \
+	} \
+	\
+	CALL_SITE_DEBUGLOC \
+	template<typename ScalarType, uint VectorSize, uint SimdSizeX, uint SimdSizeY> \
+	TLaneVector2D<ScalarType, ReturnVectorSize, SimdSizeX, SimdSizeY> FunctionName( \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> A, \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> B) \
+	{ \
+		TLaneVector2D<ScalarType, ReturnVectorSize, SimdSizeX, SimdSizeY> R; \
+		UNROLL for (uint SimdIndex = 0; SimdIndex < SimdSizeX * SimdSizeY; SimdIndex++) { \
+			R.SetElement(SimdIndex, FunctionName(A.GetElement(SimdIndex), B.GetElement(SimdIndex))); \
+		} \
+		return R; \
+	} \
+	
+TVECTOR_FUNCTION_2PARAMS(VectorSize, min);
+TVECTOR_FUNCTION_2PARAMS(VectorSize, max);
+TVECTOR_FUNCTION_2PARAMS(/* VectorSize = */ 1, dot);
+
+
+// ------------- 3 parameters
+#define TVECTOR_FUNCTION_3PARAMS(ReturnVectorSize, FunctionName) \
+	CALL_SITE_DEBUGLOC \
+	template<typename ScalarType, uint VectorSize, uint SimdSize> \
+	TLaneVector<ScalarType, ReturnVectorSize, SimdSize> FunctionName( \
+		TLaneVector<ScalarType, VectorSize, SimdSize> A, \
+		TLaneVector<ScalarType, VectorSize, SimdSize> B, \
+		TLaneVector<ScalarType, VectorSize, SimdSize> C) \
+	{ \
+		TLaneVector<ScalarType, ReturnVectorSize, SimdSize> R; \
+		UNROLL for (uint SimdIndex = 0; SimdIndex < SimdSize; SimdIndex++) { \
+			R.SetElement(SimdIndex, FunctionName(A.GetElement(SimdIndex), B.GetElement(SimdIndex), C.GetElement(SimdIndex))); \
+		} \
+		return R; \
+	} \
+	\
+	CALL_SITE_DEBUGLOC \
+	template<typename ScalarType, uint VectorSize, uint SimdSizeX, uint SimdSizeY> \
+	TLaneVector2D<ScalarType, ReturnVectorSize, SimdSizeX, SimdSizeY> FunctionName( \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> A, \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> B, \
+		TLaneVector2D<ScalarType, VectorSize, SimdSizeX, SimdSizeY> C) \
+	{ \
+		TLaneVector2D<ScalarType, ReturnVectorSize, SimdSizeX, SimdSizeY> R; \
+		UNROLL for (uint SimdIndex = 0; SimdIndex < SimdSizeX * SimdSizeY; SimdIndex++) { \
+			R.SetElement(SimdIndex, FunctionName(A.GetElement(SimdIndex), B.GetElement(SimdIndex), C.GetElement(SimdIndex))); \
+		} \
+		return R; \
+	} \
+	
+TVECTOR_FUNCTION_3PARAMS(VectorSize, clamp);
+TVECTOR_FUNCTION_3PARAMS(VectorSize, min3);
+TVECTOR_FUNCTION_3PARAMS(VectorSize, max3);
+#if COMPILER_SUPPORTS_MED3
+	TVECTOR_FUNCTION_3PARAMS(VectorSize, med3);
+#endif

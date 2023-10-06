@@ -1,0 +1,304 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+#include "../ComputeShaderUtils.ush"
+
+#include "NaniteCullingCommon.ush"
+#include "NaniteCulling.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteHZBCull.ush"
+
+#include "/Engine/Shared/SceneCullingDefinitions.h"
+
+#if DEBUG_FLAGS
+RWStructuredBuffer<FNaniteStats>		OutStatsBuffer;
+#endif
+
+/**
+ * Unpacked cell data.
+ */
+struct FSceneHiearchyCellData
+{
+	uint3 LocalCellCoord;
+	float3 LocalBoundsCenter; // Bounds center is local to the cell block
+	float3 LocalBoundsExtent;
+	uint BlockId;
+
+	FCellBlockData BlockData;
+};
+
+// Make these compile time constants?
+uint NumCellsPerBlockLog2;
+uint LocalCellCoordMask;
+uint CellBlockDimLog2;
+int FirstLevel;
+
+StructuredBuffer<FCellBlockData> InstanceHierarchyCellBlockData;
+
+FCellBlockData GetCellBlockData(uint BlockId)
+{
+	return InstanceHierarchyCellBlockData[BlockId];
+}
+
+StructuredBuffer<FCellHeader> InstanceHierarchyCellHeaders;
+
+FCellHeader GetCellHeader(uint CellId)
+{
+	return InstanceHierarchyCellHeaders[CellId];
+}
+StructuredBuffer<uint> InstanceHierarchyItemChunks;
+
+inline uint CellIndexToBlockId(uint CellIndex)
+{
+	return CellIndex >> NumCellsPerBlockLog2;
+}
+
+FSceneHiearchyCellData GetSceneHiearchyCellData(uint CellId)
+{
+	FSceneHiearchyCellData CellData;
+	CellData.BlockId = CellIndexToBlockId(CellId);
+
+	// These data sizes are small enough that we could tabulate this if it were ever important (unlikely)
+	CellData.LocalCellCoord.x = CellId & LocalCellCoordMask;
+	CellData.LocalCellCoord.y = (CellId >> CellBlockDimLog2) & LocalCellCoordMask;
+	CellData.LocalCellCoord.z = (CellId >> (CellBlockDimLog2 * 2u)) & LocalCellCoordMask;
+	// Cache the block data for future use.
+	CellData.BlockData = GetCellBlockData(CellData.BlockId);
+	const float LevelCellSize = CellData.BlockData.LevelCellSize;
+	// Note: extent is _not_ half the cell size as we have loose bounds.
+	CellData.LocalBoundsExtent = LevelCellSize;
+	// TODO: roll half-offset into the block world position?
+	CellData.LocalBoundsCenter = float3(CellData.LocalCellCoord) * LevelCellSize + (LevelCellSize * 0.5f).xxx;
+
+	return CellData;
+}
+
+// Occluded cells fed back to post-pass.
+RWStructuredBuffer<FOccludedCellDraw> OutOccludedCells;
+RWBuffer<uint> OutOccludedCellArgs;
+
+void WriteOccludedCell(FCellDraw InCellDraw, uint OccludedViewMask)
+{
+	uint OccludedCellOffset = 0;
+	WaveInterlockedAddScalarInGroups(OutOccludedCellArgs[3], OutOccludedCellArgs[0], 64, 1, OccludedCellOffset);
+
+	FOccludedCellDraw OccCellDraw;
+	OccCellDraw.CellDraw = InCellDraw;
+	OccCellDraw.OccludedViewMask = OccludedViewMask;
+	OccCellDraw.Pad = 0;
+	OutOccludedCells[OccludedCellOffset] = OccCellDraw;
+}
+
+StructuredBuffer<FViewDrawGroup> InViewDrawRanges;
+
+// Yet another format 
+// TODO: unify/remove paths
+RWStructuredBuffer<FInstanceCullingGroupWork> OutInstanceWorkGroups;
+
+// TODO: this used to be the same arg as the post pass instances from the instance culling main pass, but due to a weird bug they are separate, for now.
+// Output indirect dispatch args for the following instance culling pass (x will contain all the groups, which matches the array count above).
+RWBuffer<uint> OutInstanceWorkArgs;
+uint MaxInstanceWorkGroups;
+
+void AppendInstanceCullingWorkGroups(uint ItemChunksOffset, uint NumItemChunks, uint ViewGroupId, uint ActiveViewMask)
+{
+	uint InstanceGroupsStartOutOffset = 0;
+	WaveInterlockedAdd_(OutInstanceWorkArgs[0], NumItemChunks, InstanceGroupsStartOutOffset);
+
+	// TODO: stats?
+#if 0// DEBUG_FLAGS
+	if ((DebugFlags & NANITE_DEBUG_FLAG_WRITE_STATS) != 0u)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		WaveInterlockedAddScalar( OutStatsBuffer[0].NumPostCellsPostCull, 1 );
+#else
+		WaveInterlockedAddScalar( OutStatsBuffer[0].NumMainCellsPostCull, 1 );
+#endif
+	}
+#endif
+	// Clamp the number of item groups to buffer size.
+	uint NumToOutput = min(NumItemChunks, uint(max(0, int(MaxInstanceWorkGroups) - int(InstanceGroupsStartOutOffset))));
+
+	for (uint Index = 0u; Index < NumToOutput; ++Index)
+	{
+		uint PackedItemChunkDesc = InstanceHierarchyItemChunks[ItemChunksOffset + Index];
+
+		FInstanceCullingGroupWork InstanceCullingGroupWork;
+		InstanceCullingGroupWork.ViewGroupId = ViewGroupId;
+		InstanceCullingGroupWork.PackedItemChunkDesc = PackedItemChunkDesc;
+		InstanceCullingGroupWork.ActiveViewMask = ActiveViewMask;
+		InstanceCullingGroupWork.Pad = 0;
+
+		OutInstanceWorkGroups[InstanceGroupsStartOutOffset + Index] = InstanceCullingGroupWork;
+	}
+}
+
+Buffer<uint> InOccludedCellArgs;
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+StructuredBuffer<FOccludedCellDraw> InOccludedCellDraws;
+#else
+StructuredBuffer<FCellDraw> InCellDraws;
+#endif
+
+uint NumCellDraws;
+
+[numthreads(64, 1, 1)]
+void HierarchyCellInstanceCull(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	const uint DispatchIndex = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, 64);
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+	uint NumCellDrawsLocal = InOccludedCellArgs[3];
+#else
+	uint NumCellDrawsLocal = NumCellDraws;
+#endif
+
+#if DEBUG_FLAGS
+	if ((DebugFlags & NANITE_DEBUG_FLAG_WRITE_STATS) != 0u && DispatchIndex == 0)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		OutStatsBuffer[0].NumPostHierarchyCellsPreCull = NumCellDrawsLocal;
+#else
+		OutStatsBuffer[0].NumMainHierarchyCellsPreCull = NumCellDrawsLocal;
+#endif
+	}
+#endif
+
+	if (DispatchIndex < NumCellDrawsLocal)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		FOccludedCellDraw OccludedCellDraw = InOccludedCellDraws[DispatchIndex];
+		FCellDraw CellDraw = OccludedCellDraw.CellDraw;
+		const uint InOccludedViewMask = OccludedCellDraw.OccludedViewMask;
+#else
+		FCellDraw CellDraw = InCellDraws[DispatchIndex];
+#endif
+		FViewDrawGroup ViewDrawGroup = InViewDrawRanges[CellDraw.ViewGroupId];
+		FSceneHiearchyCellData CellData = GetSceneHiearchyCellData(CellDraw.CellId);
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		uint OutOccludedViewMask = 0U;
+#endif
+		uint ActiveViewMask = 0U;
+		// Wrt mip views - views, there is no explicit handling here: they are expected to come in a compact range (post view compaction, or from host for non-VSM draws)
+		for (uint ViewIndex = 0; ViewIndex < ViewDrawGroup.NumViews; ++ViewIndex)
+		{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+			// TODO: loop over set bits instead!
+			if ((InOccludedViewMask & (1U << ViewIndex)) == 0U)
+			{
+				continue;
+			}
+#endif
+			uint ViewId = ViewDrawGroup.FirstView + ViewIndex;
+
+			FNaniteView NaniteView = GetNaniteView(ViewId);
+
+			// Depth clipping should only be disabled with orthographic projections
+			const bool bIsOrtho = IsOrthoProjection(NaniteView.ViewToClip);
+			const bool bNearClip = (NaniteView.Flags & NANITE_VIEW_FLAG_NEAR_CLIP) != 0u;
+			const bool bViewHZB = (NaniteView.Flags & NANITE_VIEW_FLAG_HZBTEST) != 0u;
+			const bool bIsViewUncached = (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED) != 0u;
+
+			float4x4 LocalToTranslatedWorld = MakeTranslationMatrix(LWCToFloat(LWCAdd(NaniteView.PreViewTranslation, CellData.BlockData.WorldPos)));
+			float4x4 PrevLocalToTranslatedWorld = MakeTranslationMatrix(LWCToFloat(LWCAdd(NaniteView.PrevPreViewTranslation, CellData.BlockData.WorldPos)));
+
+			FBoxCull Cull;
+			Cull.Init(NaniteView, CellData.LocalBoundsCenter, CellData.LocalBoundsExtent, float3(1.0f, 1.0f, 1.0f), LocalToTranslatedWorld, PrevLocalToTranslatedWorld);
+			if (CULLING_PASS == CULLING_PASS_OCCLUSION_POST)
+			{
+				Cull.bSkipCullFrustum = true;
+				Cull.bSkipCullGlobalClipPlane = true;
+			}
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		Cull.GlobalClipPlane();
+#endif
+			BRANCH
+            if( Cull.bIsVisible )
+            {
+#if VIRTUAL_TEXTURE_TARGET
+                Cull.PageFlagMask = VSM_ALLOCATED_FLAG;
+#endif
+				// Note: bClampToPageLevel == true means we might test rather large footprints in the HZB, leading to load imbalance
+				// TODO: rebalance the work in the workgroup? Spawn more work groups / cell? Implement the top (virtual space) HZB hierarchy?
+				const bool bClampToPageLevel = false;
+                Cull.FrustumHZB( bClampToPageLevel );
+            }
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+			if( Cull.bWasOccluded )
+			{
+				OutOccludedViewMask |= 1U << ViewIndex;
+			}
+#endif
+
+			if( Cull.bIsVisible && !Cull.bWasOccluded )
+			{
+				ActiveViewMask |= 1U << ViewIndex;
+			}
+		}
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		if( OutOccludedViewMask != 0u)
+		{
+			WriteOccludedCell(CellDraw, OutOccludedViewMask);
+		}
+#endif
+		if (ActiveViewMask != 0u)
+		{
+			FCellHeader CellHeader = GetCellHeader(CellDraw.CellId);
+			AppendInstanceCullingWorkGroups(CellHeader.ItemChunksOffset, CellHeader.NumItemChunks, CellDraw.ViewGroupId, ActiveViewMask);
+		}
+	}
+}
+
+// Store the uncullable in the regular cell draw array, at the end.
+uint NumViewDrawGroups;
+uint UncullableItemChunksOffset;
+uint UncullableNumItemChunks;
+
+[numthreads(64, 1, 1)]
+void AppendUncullableInstanceWork(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	const uint ViewGroupId = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, 64);
+
+	if (ViewGroupId < NumViewDrawGroups)
+	{
+		FViewDrawGroup ViewDrawGroup = InViewDrawRanges[ViewGroupId];
+		if (ViewDrawGroup.NumViews > 0u)
+		{
+			uint ActiveViewMask = (1u << ViewDrawGroup.NumViews) - 1u;
+
+			AppendInstanceCullingWorkGroups(UncullableItemChunksOffset, UncullableNumItemChunks, ViewGroupId, ActiveViewMask);
+		}
+	}
+}
+
+
+RWBuffer< uint > OutInstanceWorkArgs0;
+RWBuffer< uint > OutInstanceWorkArgs1;
+
+[numthreads(1, 1, 1)]
+void InitArgs()
+{
+	OutInstanceWorkArgs0[0] = 0; // group count == x dimension
+	OutInstanceWorkArgs0[1] = 1;
+	OutInstanceWorkArgs0[2] = 1;
+	OutInstanceWorkArgs0[3] = 0; // instance count
+	OutInstanceWorkArgs0[4] = 0; // num groups (not the same as x dim because we drive also occluded instances from this indirect call)
+
+#if OCCLUSION_CULLING
+	OutOccludedCellArgs[0] = 0; // group count == x dimension
+	OutOccludedCellArgs[1] = 1;
+	OutOccludedCellArgs[2] = 1;
+	OutOccludedCellArgs[3] = 0; // Item count
+
+	OutInstanceWorkArgs1[0] = 0; // group count == x dimension
+	OutInstanceWorkArgs1[1] = 1;
+	OutInstanceWorkArgs1[2] = 1;
+	OutInstanceWorkArgs1[3] = 0; // instance count
+	OutInstanceWorkArgs1[4] = 0; // num groups (not the same as x dim because we drive also occluded instances from this indirect call)
+#endif
+}

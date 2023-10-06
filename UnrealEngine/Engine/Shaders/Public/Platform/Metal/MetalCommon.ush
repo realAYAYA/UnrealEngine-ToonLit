@@ -1,0 +1,93 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	MetalCommon.usf: Common Metal shader code
+=============================================================================*/
+
+// Update this GUID to improve shader recompilation for Metal only shaders
+// GUID = 7DDC23C5-DDBC-4A9F-9047-CC365A54D83C
+
+#pragma once
+
+#if VERTEXSHADER && HULLSHADER
+#ifndef TESSELLATIONSHADER
+#define TESSELLATIONSHADER 1
+#endif
+#endif
+
+#define STRONG_TYPE
+#define StrongTypedBuffer Buffer
+
+#if METAL_SM6_PROFILE == 1
+    #define PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS 1
+    // Disable WaveVote due to bugs
+    #define COMPILER_SUPPORTS_WAVE_VOTE 0
+#endif
+
+#if IS_BASE_PASS && COMPUTE_SHADED && !defined(USE_FORCE_TEXTURE_MIP)
+	#define USE_FORCE_TEXTURE_MIP 1
+#endif
+
+/* Too many bugs to enable wave-intrinsics just yet, but we are getting there.
+#if COMPUTESHADER || PIXELSHADER
+#define COMPILER_SUPPORTS_WAVE_ONCE 1
+#define COMPILER_SUPPORTS_WAVE_VOTE 1
+#define COMPILER_SUPPORTS_WAVE_MINMAX 1
+#define COMPILER_SUPPORTS_WAVE_BIT_ORAND 1
+#endif
+*/
+
+#define COMPILER_SUPPORTS_MINMAX3 0
+
+#if IOS && PIXELSHADER 
+	// The load operation here will be patched by the MetalShaderCompiler,
+	// do NOT change any character in the "SubpassFetch*" macro definition, including white spaces!
+	
+	// 4 components: RGBA_0
+	Texture2D<float4> gl_LastFragDataRGBA_0;
+	#define SubpassFetchRGBA_0() gl_LastFragDataRGBA_0.Load(uint3(0, 0, 0), 0)
+	// 1 component: R_4
+	Texture2D<float> gl_LastFragDataR_4;
+	#define SubpassFetchR_4() gl_LastFragDataR_4.Load(uint3(0, 0, 0), 0)
+
+	Texture2D<float> gl_LastFragDataR_1;
+	#define SubpassFetchR_1() gl_LastFragDataR_1.Load(uint3(0, 0, 0), 0)
+	//
+	// Rest of SubpassFetch can be found in MetalSubpassSupport.ush
+	//
+	#if MOBILE_DEFERRED_SHADING
+		#define DepthbufferFetchES2() SubpassFetchR_4()
+	#else
+		#define DepthbufferFetchES2() SubpassFetchR_1()
+	#endif
+#else
+	#define SubpassFetchRGBA_0() ((float4)0.0)
+	#define SubpassFetchR_0() (0.0)
+	#define SubpassFetchR_4() (0.0)
+#endif //IOS && PIXELSHADER
+
+#if METAL_SM6_PROFILE == 1
+    #define COMPILER_SUPPORTS_ULONG_TYPES 1
+    #define COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS 1
+
+    #if COMPILER_SUPPORTS_ULONG_TYPES
+        #define UlongType uint64_t
+
+        UlongType PackUlongType(uint2 Value)
+        {
+            return ((UlongType)Value.y << 32) | Value.x;
+        }
+
+        uint2 UnpackUlongType(UlongType Value)
+        {
+            return uint2(uint(Value), uint(Value >> 32));
+        }
+    #endif
+
+    #if COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
+        void ImageInterlockedMaxUInt64(RWTexture2D<UlongType> Dest, uint2 Coord, UlongType Value)
+        {
+            InterlockedMax(Dest[Coord], Value);
+        }
+    #endif
+#endif

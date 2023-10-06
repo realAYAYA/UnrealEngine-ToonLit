@@ -1,0 +1,4 @@
+../../../Templates/TP_AEC_ProdConfigBP/manifest.json
+../../../Templates/TP_AEC_ProdConfigBP/Config/config.ini
+../../../Templates/TP_AEC_ProdConfigBP/Media/TP_AEC_ProdConfigBP.png
+../../../Templates/TP_AEC_ProdConfigBP/Media/TP_AEC_ProdConfigBP_Preview.png

@@ -1,0 +1,22 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+StructuredBuffer< uint >	InStatsBuffer;
+RWBuffer< uint >			AccumulatedStatsBufferOut;
+uint NumStats;
+
+
+[numthreads(1, 1, 1)]
+void CopyStatsCS()
+{
+	uint Index;
+	InterlockedAdd(AccumulatedStatsBufferOut[0], 1, Index);
+	if (Index < MAX_STAT_FRAMES)
+	{
+		for (uint StatInd = 0; StatInd < NumStats; ++StatInd)
+		{
+			AccumulatedStatsBufferOut[1 + Index * NumStats + StatInd] = InStatsBuffer[StatInd];
+		}
+	}
+}

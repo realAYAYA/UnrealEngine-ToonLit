@@ -1,0 +1,182 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "LumenMaterial.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../BRDF.ush"
+#include "LumenScreenProbeCommon.ush"
+#include "../MonteCarlo.ush"
+#include "../ShadingModelsSampling.ush"
+#include "../SceneTextureParameters.ush"
+#define IS_SSGI_SHADER 1
+#include "LumenScreenTracing.ush"
+#include "LumenHairTracing.ush"
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 1
+#endif
+
+RWTexture2D<UNORM float4> RWScreenBentNormal;
+float SlopeCompareToleranceScale;
+
+Texture2D FurthestHZBTexture;
+#define FurthestHZBTextureSampler GlobalPointClampedSampler
+float4 HZBUvFactorAndInvFactor;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ScreenSpaceShortRangeAOCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+#if STRATA_ENABLED && PERMUTATION_OVERFLOW
+	const FLumenMaterialCoord Coord = GetLumenMaterialCoord(DispatchThreadId + (Strata.OverflowTileOffset * STRATA_TILE_SIZE), true);
+#else
+	const FLumenMaterialCoord Coord = GetLumenMaterialCoord(DispatchThreadId + View.ViewRectMinAndSize.xy, false);
+#endif
+
+	const float2 ScreenUV = (Coord.SvPosition + .5f) * View.BufferSizeAndInvSize.zw;
+	const float SceneDepth = CalcSceneDepth(ScreenUV);
+
+	const float DummyMaxRoughnessToTrace = 0.5f;
+	const FLumenMaterialData Material = ReadMaterialData(Coord, DummyMaxRoughnessToTrace);
+
+	if (IsValid(Material))
+	{
+		float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+		float3x3 TangentBasis = GetTangentBasis(Material.WorldNormal);
+		//uint2 Seed0 = Rand3DPCG16(int3(Coord.SvPosition, GENERAL_TEMPORAL_INDEX)).xy;
+		float MaxScreenTraceFraction = ScreenProbeDownsampleFactor * 2 * View.ViewSizeAndInvSize.z;
+		float TraceDistance = SceneDepth * MaxScreenTraceFraction * 2.0 * GetTanHalfFieldOfView().x;
+		float DepthThresholdScale = GetScreenTraceDepthThresholdScale(ScreenUV);
+		uint NumPixelSamples = NUM_PIXEL_RAYS;
+
+		float3 UnoccludedSum = 0;
+		float3 BentNormal = 0;
+
+		UNROLL
+		for (uint PixelRayIndex = 0; PixelRayIndex < NumPixelSamples; PixelRayIndex++)
+		{
+			//float2 UniformRandom = Hammersley16(PixelRayIndex, NumPixelSamples, Seed0);
+			float2 UniformRandom = BlueNoiseVec2(Coord.SvPosition, (RAY_DIRECTION_TEMPORAL_INDEX * NumPixelSamples + PixelRayIndex));
+
+			//@todo - other shading models
+			float4 HemisphereSample = CosineSampleHemisphere(UniformRandom);
+			float3 RayDirection = mul(HemisphereSample.xyz, TangentBasis);
+			float DirectionVisible = 1;
+
+			#define TRACE_SCREEN 1
+			#if TRACE_SCREEN
+			{
+				uint NumSteps = 4;
+				float StartMipLevel = 0;
+
+				uint2 NoiseCoord = Coord.SvPosition * uint2(NumPixelSamples, 1) + uint2(PixelRayIndex, 0);
+				float StepOffset = InterleavedGradientNoise(NoiseCoord + 0.5f, 0.0f);
+
+				float RayRoughness = .2f;
+		
+				FSSRTCastingSettings CastSettings = CreateDefaultCastSettings();
+				CastSettings.bStopWhenUncertain = true;
+
+				bool bHit = false;
+				float Level;
+				float3 HitUVz;
+				bool bRayWasClipped;
+
+				FSSRTRay Ray = InitScreenSpaceRayFromWorldSpace(
+					TranslatedWorldPosition, RayDirection,
+					/* WorldTMax = */ TraceDistance,
+					/* SceneDepth = */ SceneDepth,
+					/* SlopeCompareToleranceScale */ SlopeCompareToleranceScale * DepthThresholdScale * (float)NumSteps,
+					/* bExtendRayToScreenBorder = */ false,
+					/* out */ bRayWasClipped);
+
+				bool bUncertain;
+				float3 DebugOutput;
+
+				CastScreenSpaceRay(
+					FurthestHZBTexture, FurthestHZBTextureSampler,
+					StartMipLevel,
+					CastSettings,
+					Ray, RayRoughness, NumSteps, StepOffset - .9f,
+					HZBUvFactorAndInvFactor, false,
+					/* out */ DebugOutput,
+					/* out */ HitUVz,
+					/* out */ Level,
+					/* out */ bHit,
+					/* out */ bUncertain);
+
+#if USE_HAIRSTRANDS_SCREEN
+				if (!bHit)
+				{
+					float3 Hair_DebugOutput;
+					float3 Hair_HitUVz;
+					float Hair_Level;
+					bool Hair_bHit = false;
+					bool Hair_bUncertain = bUncertain;
+
+					CastScreenSpaceRay(
+						HairStrands.HairOnlyDepthFurthestHZBTexture, FurthestHZBTextureSampler,
+						StartMipLevel,
+						CastSettings,
+						Ray, RayRoughness, NumSteps, StepOffset,
+						HZBUvFactorAndInvFactor, false,
+						/* out */ Hair_DebugOutput,
+						/* out */ Hair_HitUVz,
+						/* out */ Hair_Level,
+						/* out */ Hair_bHit,
+						/* out */ Hair_bUncertain);
+
+					if (Hair_bHit && !Hair_bUncertain)
+					{
+						DebugOutput = Hair_DebugOutput;
+						HitUVz = Hair_HitUVz;
+						bHit = Hair_bHit;
+						bUncertain = Hair_bUncertain;
+					}
+				}
+#endif
+
+				bHit = bHit && !bUncertain;
+
+#if USE_HAIRSTRANDS_VOXEL
+				if (!bHit)
+				{
+					bool bHairHit;
+					float HairTransparency;
+					float HairHitT;
+
+					TraceHairVoxels(
+						NoiseCoord,
+						SceneDepth,
+						TranslatedWorldPosition,
+						RayDirection,
+						TraceDistance,
+						false,
+						bHairHit,
+						HairTransparency,
+						HairHitT);
+
+					bHit = bHairHit && HairHitT < TraceDistance;
+				}
+#endif
+
+				DirectionVisible = bHit ? 0.0f : 1.0f;
+			}
+			#endif
+
+			UnoccludedSum += RayDirection;
+			BentNormal += RayDirection * DirectionVisible;
+		}
+
+		float NormalizeFactor = length(UnoccludedSum);
+
+		if (NormalizeFactor > 0)
+		{
+			BentNormal /= NormalizeFactor;
+		}
+
+		// Debug passthrough
+		//BentNormal = Material.WorldNormal;
+
+		RWScreenBentNormal[Coord.SvPositionFlatten] = float4(BentNormal * .5f + .5f, 0);
+	}
+}

@@ -1,0 +1,3104 @@
+@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,900);
+@import url(https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap);
+@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,900);
+@import url(https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap);
+@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,900);
+@import url(https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap);
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-button {
+  box-sizing: border-box;
+  align-items: center;
+  display: flex;
+  flex-flow: row nowrap;
+  justify-content: center;
+  border-color: transparent;
+  border-radius: 4px;
+  border-style: solid;
+  border-width: 2px;
+}
+.gnt-button--variant-primary {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: #26bbff;
+}
+.gnt-button--variant-primary:hover:not(:active) {
+  background-color: #61cdff;
+  transition: background-color 60ms;
+  will-change: background-color;
+}
+.gnt-button--variant-primary:hover {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+.gnt-button--variant-secondary {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+.gnt-button--variant-secondary:hover:not(:active) {
+  background-color: rgba(255, 255, 255, 0.15);
+  transition: background-color 60ms;
+  will-change: background-color;
+}
+.gnt-button--variant-secondary:hover {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+.gnt-button--variant-red {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: #ff4040;
+}
+.gnt-button--variant-red:hover:not(:active) {
+  background-color: #ff6a6a;
+  transition: background-color 60ms;
+  will-change: background-color;
+}
+.gnt-button--variant-red:hover {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+.gnt-button--variant-green {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: #8bc24a;
+}
+.gnt-button--variant-green:hover:not(:active) {
+  background-color: #a8d177;
+  transition: background-color 60ms;
+  will-change: background-color;
+}
+.gnt-button--variant-green:hover {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+.gnt-button--variant-orange {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: #fe9b07;
+}
+.gnt-button--variant-orange:hover:not(:active) {
+  background-color: #feb64a;
+  transition: background-color 60ms;
+  will-change: background-color;
+}
+.gnt-button--variant-orange:hover {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+.gnt-button * {
+  box-sizing: border-box;
+}
+.gnt-button.l-align-start {
+  justify-content: flex-start;
+}
+.gnt-button:focus {
+  outline: none;
+}
+.gnt-button--is-disabled {
+  background-color: transparent;
+  border-color: rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+}
+.gnt-button--is-disabled:hover {
+  background: none;
+  box-shadow: initial;
+}
+.gnt-button--size-small {
+  height: 24px;
+  padding: 0 24px;
+}
+.gnt-button--size-medium {
+  height: 32px;
+  padding: 0 32px;
+}
+.gnt-button--size-large {
+  height: 40px;
+  padding: 0 40px;
+}
+.gnt-button--size-xlarge {
+  height: 48px;
+  padding: 0 48px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-textlabel {
+  font-family: Roboto;
+  -webkit-font-smoothing: antialiased;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnt-textlabel--color-blue {
+  color: #26bbff;
+}
+.gnt-textlabel--color-red {
+  color: #ff4040;
+}
+.gnt-textlabel--color-green {
+  color: #8bc24a;
+}
+.gnt-textlabel--color-orange {
+  color: #fe9b07;
+}
+.gnt-textlabel--color-black {
+  color: #242424;
+}
+.gnt-textlabel--color-white {
+  color: #fff;
+}
+.gnt-textlabel--color-white50 {
+  color: rgba(255, 255, 255, 0.5);
+}
+.gnt-textlabel--color-white25 {
+  color: rgba(255, 255, 255, 0.25);
+}
+.gnt-textlabel--color-white10 {
+  color: rgba(255, 255, 255, 0.1);
+}
+.gnt-textlabel--variant-heading {
+  font-family: Roboto Condensed;
+  text-transform: uppercase;
+}
+.gnt-textlabel--variant-heading.gnt-textlabel--size-xsmall {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  line-height: 20px;
+}
+.gnt-textlabel--variant-heading.gnt-textlabel--size-small {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 26px;
+}
+.gnt-textlabel--variant-heading.gnt-textlabel--size-medium {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  line-height: 36px;
+}
+.gnt-textlabel--variant-heading.gnt-textlabel--size-large {
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -2px;
+  line-height: 48px;
+}
+.gnt-textlabel--variant-heading.gnt-textlabel--size-xlarge {
+  font-size: 72px;
+  font-weight: 700;
+  letter-spacing: -3px;
+  line-height: 72px;
+}
+.gnt-textlabel--variant-body.gnt-textlabel--size-xsmall {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  line-height: 14px;
+}
+.gnt-textlabel--variant-body.gnt-textlabel--size-small {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  line-height: 18px;
+}
+.gnt-textlabel--variant-body.gnt-textlabel--size-medium {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.25px;
+  line-height: 20px;
+}
+.gnt-textlabel--variant-body.gnt-textlabel--size-large {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 24px;
+}
+.gnt-textlabel--variant-body.gnt-textlabel--size-xlarge {
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 24px;
+}
+.gnt-textlabel--variant-caption {
+  text-transform: uppercase;
+}
+.gnt-textlabel--variant-caption.gnt-textlabel--size-small {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  line-height: 10px;
+}
+.gnt-textlabel--variant-caption.gnt-textlabel--size-medium {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  line-height: 12px;
+}
+.gnt-textlabel--variant-caption.gnt-textlabel--size-large {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  line-height: 14px;
+}
+.gnt-textlabel--variant-caption.gnt-textlabel--size-xlarge {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  line-height: 16px;
+}
+.gnt-textlabel--variant-button {
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.gnt-textlabel--variant-button.gnt-textlabel--size-small {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  line-height: 10px;
+}
+.gnt-textlabel--variant-button.gnt-textlabel--size-medium {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  line-height: 12px;
+}
+.gnt-textlabel--variant-button.gnt-textlabel--size-large {
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  line-height: 14px;
+}
+.gnt-textlabel--variant-button.gnt-textlabel--size-xlarge {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  line-height: 16px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-text-button {
+  background: none;
+  border: 0;
+  display: block;
+  font: inherit;
+  padding: 0;
+  text-align: initial;
+  width: 100%;
+  width: initial;
+}
+.gnt-text-button:focus {
+  outline: none;
+}
+.gnt-text-button--has-icon {
+  align-items: center;
+  display: inline-grid;
+  grid-template-columns: auto 1fr;
+}
+.gnt-text-button--is-disabled {
+  pointer-events: none;
+}
+.gnt-text-button--is-disabled:hover {
+  background: none;
+  box-shadow: initial;
+}
+.gnt-text-button--icon-right .gnt-text-button__icon {
+  order: 2;
+}
+.gnt-text-button--size-large {
+  column-gap: 12px;
+}
+.gnt-text-button--size-medium {
+  column-gap: 8px;
+}
+.gnt-text-button--size-small {
+  column-gap: 4px;
+}
+
+.gnt-text-button:hover:not(:active) .gnt-text-button__icon {
+  --icon-color: #fff;
+}
+.gnt-text-button:hover:not(:active) .gnt-text-button__icon path {
+  transition: fill 60ms, stroke 60ms;
+  will-change: fill, stroke;
+}
+.gnt-text-button:hover:not(:active) .gnt-text-button__caption {
+  transition: color 60ms;
+  will-change: color;
+  color: #fff;
+}
+
+.gnt-text-button__icon path {
+  transition: fill 120ms, stroke 120ms;
+  will-change: fill, stroke;
+}
+
+.gnt-text-button__caption {
+  transition: color 120ms;
+  will-change: color;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-icon {
+  --icon-color: none;
+  --icon-color-secondary: #242424;
+  height: 24px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5px;
+  width: 24px;
+}
+.gnt-icon--color-blue {
+  --icon-color: #26bbff;
+}
+.gnt-icon--color-blue.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-red {
+  --icon-color: #ff4040;
+}
+.gnt-icon--color-red.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-green {
+  --icon-color: #8bc24a;
+}
+.gnt-icon--color-green.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-orange {
+  --icon-color: #fe9b07;
+}
+.gnt-icon--color-orange.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-black {
+  --icon-color: #242424;
+}
+.gnt-icon--color-black.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-white {
+  --icon-color: #fff;
+}
+.gnt-icon--color-white.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-white50 {
+  --icon-color: rgba(255, 255, 255, 0.5);
+}
+.gnt-icon--color-white50.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-white25 {
+  --icon-color: rgba(255, 255, 255, 0.25);
+}
+.gnt-icon--color-white25.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+.gnt-icon--color-white10 {
+  --icon-color: rgba(255, 255, 255, 0.1);
+}
+.gnt-icon--color-white10.gnt-icon--is-clickable:hover {
+  --icon-color: #fff;
+}
+
+.gnt-icon--is-clickable .gnt-icon__path {
+  transition: fill 120ms, stroke 120ms;
+  will-change: fill, stroke;
+}
+.gnt-icon--is-clickable:hover .gnt-icon__path {
+  transition: fill 60ms, stroke 60ms;
+  will-change: fill, stroke;
+}
+.gnt-icon__path--fill {
+  fill: var(--icon-color);
+}
+.gnt-icon__path--stroke {
+  stroke: var(--icon-color);
+}
+.gnt-icon__path--stroke-secondary {
+  stroke: var(--icon-color-secondary);
+}
+.gnt-icon__path--fill-secondary {
+  fill: var(--icon-color-secondary);
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-card {
+  background-color: #1a1a1a;
+  border-radius: 8px;
+  display: grid;
+  grid-template-areas: "main";
+  overflow: hidden;
+}
+.gnt-card:focus {
+  outline: none;
+}
+.gnt-card--is-hovered {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24), 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+.gnt-card--is-selected {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24), 0 0 0 2px #26bbff;
+}
+
+.gnt-card__image {
+  --aspect-ratio: 1;
+  align-items: stretch;
+  background-color: transparent;
+  background-position: center;
+  background-repeat: no-repeat;
+  border: initial;
+  display: grid;
+  grid-area: main;
+  grid-template-areas: "main";
+  outline: none;
+  padding: 0;
+}
+.gnt-card__image--variant-contain {
+  background-size: contain;
+  margin: 10%;
+}
+.gnt-card__image--variant-cover {
+  background-size: cover;
+}
+.gnt-card__image--variant-contain.gnt-card__image--ar-horizontal {
+  margin: 5%;
+}
+
+.gnt-card:hover .gnt-card__image--has-gradient:before, .gnt-card--is-hovered .gnt-card__image--has-gradient:before {
+  background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.4428) 19%, rgba(0, 0, 0, 0.3246) 34%, rgba(0, 0, 0, 0.2292) 47%, rgba(0, 0, 0, 0.1668) 56.5%, rgba(0, 0, 0, 0.1164) 65%, rgba(0, 0, 0, 0.0756) 73%, rgba(0, 0, 0, 0.045) 80.2%, rgba(0, 0, 0, 0.0252) 86.1%, rgba(0, 0, 0, 0.0126) 91%, rgba(0, 0, 0, 0.0048) 95.2%, rgba(0, 0, 0, 0.0012) 98.2%, rgba(0, 0, 0, 0) 100%);
+  content: "";
+  grid-area: main;
+  height: 56px;
+}
+.gnt-card:hover .gnt-card__image--has-gradient:after, .gnt-card--is-hovered .gnt-card__image--has-gradient:after {
+  align-self: end;
+  background-image: linear-gradient(0deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.4428) 19%, rgba(0, 0, 0, 0.3246) 34%, rgba(0, 0, 0, 0.2292) 47%, rgba(0, 0, 0, 0.1668) 56.5%, rgba(0, 0, 0, 0.1164) 65%, rgba(0, 0, 0, 0.0756) 73%, rgba(0, 0, 0, 0.045) 80.2%, rgba(0, 0, 0, 0.0252) 86.1%, rgba(0, 0, 0, 0.0126) 91%, rgba(0, 0, 0, 0.0048) 95.2%, rgba(0, 0, 0, 0.0012) 98.2%, rgba(0, 0, 0, 0) 100%);
+  content: "";
+  grid-area: main;
+  height: 56px;
+}
+
+.gnt-card__regions {
+  display: grid;
+  grid-area: main;
+  grid-template-areas: "ltop top rtop" "l mid r" "lbot bot rbot";
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: 40px 1fr 40px;
+  pointer-events: none;
+}
+
+.gnt-card__region {
+  align-items: center;
+  display: grid;
+  grid-auto-flow: column;
+  padding: 8px;
+  visibility: hidden;
+}
+.gnt-card__region--is-interactive > * {
+  pointer-events: initial;
+}
+.gnt-card__region--is-persistent, .gnt-card--is-hovered .gnt-card__region--is-overlay, .gnt-card:hover .gnt-card__region--is-overlay {
+  visibility: initial;
+}
+.gnt-card__region--position-top-left {
+  grid-area: ltop;
+  justify-self: flex-start;
+}
+.gnt-card__region--position-top-right {
+  grid-area: rtop;
+  justify-self: flex-end;
+}
+.gnt-card__region--position-bottom-left {
+  grid-area: lbot;
+  justify-self: flex-start;
+}
+.gnt-card__region--position-bottom-right {
+  grid-area: rbot;
+  justify-self: flex-end;
+}
+
+.gnt-card__labelwrapper {
+  padding: 0 4px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-grid {
+  --columns: 3;
+  --cellgap: 8;
+  align-items: stretch;
+  display: grid;
+  grid-gap: calc(var(--cellgap) * 1px);
+  grid-template-columns: repeat(var(--columns), 1fr);
+  justify-content: center;
+}
+.gnt-grid--boxpack {
+  grid-auto-flow: row dense;
+}
+
+.gnt-grid__cell {
+  --colspan: 1;
+  --colspanadjusted: min(var(--colspan), var(--columns));
+  --rowspan: 1;
+  display: grid;
+  grid-column-end: span var(--colspanadjusted);
+  grid-row-end: span var(--rowspan);
+  grid-template-areas: "main";
+}
+.gnt-grid__cell > * {
+  grid-area: main;
+}
+.gnt-grid__cell::before {
+  content: "";
+  display: block;
+  grid-area: main;
+  padding-bottom: calc((calc(var(--rowspan) / var(--colspanadjusted)) * 100%) + calc((calc(var(--rowspan) / var(--colspanadjusted)) - 1) * ((var(--cellgap) * 1px))));
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-icon-button {
+  --fillcolor: transparent;
+  --bordercolor: transparent;
+  --hovercolor: transparent;
+  background-color: transparent;
+  border-radius: 50%;
+  border-style: none;
+  display: grid;
+  grid-template-areas: "main";
+  height: var(--size);
+  padding: 0;
+  place-items: center;
+  stroke-width: 1.5;
+  width: var(--size);
+}
+.gnt-icon-button:hover:not(:active) {
+  --fillcolor: var(--hovercolor);
+  --bordercolor: var(--hovercolor);
+}
+.gnt-icon-button:hover:not(:active) .gnt-icon-button__circle {
+  transition: fill 60ms, stroke 60ms;
+  will-change: fill, stroke;
+}
+.gnt-icon-button:focus {
+  outline: none;
+}
+.gnt-icon-button--variant-primary {
+  --fillcolor: #26bbff;
+  --bordercolor: #26bbff;
+  --hovercolor: #61cdff;
+}
+.gnt-icon-button--variant-secondary {
+  --fillcolor: #383838;
+  --bordercolor: #383838;
+  --hovercolor: #6a6a6a;
+}
+.gnt-icon-button--variant-green {
+  --fillcolor: #8bc24a;
+  --bordercolor: #8bc24a;
+  --hovercolor: #a8d177;
+}
+.gnt-icon-button--variant-orange {
+  --fillcolor: #fe9b07;
+  --bordercolor: #fe9b07;
+  --hovercolor: #feb64a;
+}
+.gnt-icon-button--variant-red {
+  --fillcolor: #ff4040;
+  --bordercolor: #ff4040;
+  --hovercolor: #ff6a6a;
+}
+.gnt-icon-button--size-small {
+  --size: 24px;
+}
+.gnt-icon-button--size-large {
+  --size: 32px;
+}
+.gnt-icon-button--is-disabled {
+  --fillcolor: transparent;
+  --bordercolor: rgba(255, 255, 255, 0.25);
+  box-shadow: none;
+  pointer-events: none;
+}
+.gnt-icon-button--is-disabled:hover {
+  background: none;
+  box-shadow: initial;
+}
+.gnt-icon-button--has-shadow {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+
+.gnt-icon-button__plate {
+  grid-area: main;
+}
+
+.gnt-icon-button__circle {
+  transition: fill 120ms, stroke 120ms;
+  will-change: fill, stroke;
+  fill: var(--fillcolor);
+  height: var(--size);
+  stroke: var(--bordercolor);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  width: var(--size);
+}
+
+.gnt-icon-button__icon {
+  grid-area: main;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-avatar {
+  background-color: #383838;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.gnt-avatar__initials {
+  align-items: center;
+  display: flex;
+  flex-flow: row nowrap;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  font-family: Roboto;
+  height: 100%;
+  width: 100%;
+}
+.gnt-avatar__initials.l-align-start {
+  justify-content: flex-start;
+}
+.gnt-avatar__image {
+  background-size: 100%;
+  border-radius: 50%;
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+.gnt-avatar__image--has-initials {
+  transform: translate(0, -100%);
+}
+.gnt-avatar--size-xlarge {
+  font-size: 56px;
+  height: 128px;
+  line-height: calc(56px - 0.1px);
+  width: 128px;
+}
+.gnt-avatar--size-large {
+  font-size: 24px;
+  height: 64px;
+  line-height: calc(24px - 0.1px);
+  width: 64px;
+}
+.gnt-avatar--size-medium {
+  font-size: 16px;
+  height: 48px;
+  line-height: calc(16px - 0.1px);
+  width: 48px;
+}
+.gnt-avatar--size-small {
+  font-size: 12px;
+  height: 32px;
+  line-height: calc(12px - 0.1px);
+  width: 32px;
+}
+.gnt-avatar--size-xsmall {
+  font-size: 8px;
+  height: 20px;
+  line-height: calc(8px - 0.1px);
+  width: 20px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-checkbox-outerwrap {
+  font-size: 0;
+}
+
+.gnt-checkbox-wrap {
+  display: inline-block;
+}
+.gnt-checkbox-wrap:focus {
+  outline: none;
+}
+
+.gnt-checkbox {
+  align-items: flex-start;
+  column-gap: 8px;
+  cursor: default;
+  display: inline-grid;
+  grid-auto-flow: column;
+}
+.gnt-checkbox:focus {
+  outline: none;
+}
+.gnt-checkbox--is-disabled {
+  pointer-events: none;
+}
+.gnt-checkbox--is-disabled:hover {
+  background: none;
+  box-shadow: initial;
+}
+
+.gnt-checkbox__input {
+  display: none;
+}
+
+.gnt-checkbox__icon {
+  transition: opacity 120ms;
+  will-change: opacity;
+}
+.gnt-checkbox__icon--is-disabled {
+  opacity: 0.25;
+}
+.gnt-checkbox-wrap[aria-checked=false] .gnt-checkbox__icon--is-enabled:hover {
+  --icon-color: #fff;
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 1;
+}
+
+.gnt-checkbox__icon > * {
+  transition: fill 120ms, stroke 120ms;
+  will-change: fill, stroke;
+}
+.gnt-checkbox:hover .gnt-checkbox__icon > * {
+  transition: fill 60ms, stroke 60ms;
+  will-change: fill, stroke;
+}
+
+.gnt-checkbox__label {
+  user-select: none;
+}
+.gnt-checkbox__label--medium {
+  margin-top: 2px;
+}
+.gnt-checkbox__label--small {
+  margin-top: 3px;
+}
+
+.gnt-checkbox__description {
+  margin-left: 32px;
+}
+.gnt-checkbox__description--medium {
+  margin-top: 4px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-color-tag {
+  height: 24px;
+  width: 24px;
+}
+.gnt-color-tag--color-blue {
+  --bgcolor: #26bbff;
+}
+.gnt-color-tag--color-orange {
+  --bgcolor: #fe9b07;
+}
+.gnt-color-tag--color-green {
+  --bgcolor: #8bc24a;
+}
+.gnt-color-tag--color-red {
+  --bgcolor: #ff4040;
+}
+.gnt-color-tag--color-yellow {
+  --bgcolor: #ffdc1a;
+}
+.gnt-color-tag--color-brown {
+  --bgcolor: #804d39;
+}
+.gnt-color-tag--color-pink {
+  --bgcolor: #ff729c;
+}
+.gnt-color-tag--color-purple {
+  --bgcolor: #a139bf;
+}
+.gnt-color-tag--color-gray {
+  --bgcolor: #808080;
+}
+.gnt-color-tag--color-black {
+  --bgcolor: #0f0f0f;
+}
+.gnt-color-tag--color-white {
+  --bgcolor: #fff;
+}
+.gnt-color-tag--has-emphasis circle {
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 2px;
+}
+
+.gnt-color-tag--variant-small .gnt-color-tag__path {
+  fill: var(--bgcolor);
+}
+.gnt-color-tag--variant-large .gnt-color-tag__path {
+  fill: var(--bgcolor);
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-input-wrap {
+  align-items: center;
+  display: inline-grid;
+  flex-flow: row nowrap;
+  grid-template-areas: "icon-left main icon-right" "error error error";
+  grid-template-columns: 0 auto 0;
+  grid-template-rows: auto auto;
+  line-height: 0;
+}
+
+.gnt-input {
+  background-color: #1a1a1a;
+  border-radius: 4px;
+  border-style: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: Roboto;
+  grid-area: main;
+  padding: 0 12px;
+}
+.gnt-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+.gnt-input--size-small {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  line-height: 18px;
+  height: 24px;
+  padding: 0 8px;
+}
+.gnt-input--size-large {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.25px;
+  line-height: 20px;
+  height: 32px;
+}
+.gnt-input--has-icon-left {
+  padding-left: 32px;
+}
+.gnt-input--has-icon-right {
+  padding-right: 32px;
+}
+.gnt-input--has-value {
+  color: #fff;
+}
+.gnt-input--is-multiline {
+  height: auto;
+  padding: 6px 12px;
+  resize: none;
+}
+.gnt-input--is-number::-webkit-inner-spin-button {
+  visibility: hidden;
+}
+.gnt-input:disabled {
+  color: rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+}
+.gnt-input:disabled:placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+.gnt-input:hover {
+  box-shadow: 0 0 0 2px #383838;
+}
+.gnt-input:focus {
+  box-shadow: 0 0 0 2px #26bbff;
+  outline: none;
+}
+.gnt-input--has-warning, .gnt-input--has-warning:hover, .gnt-input--has-warning:focus {
+  box-shadow: 0 0 0 2px #fe9b07;
+}
+.gnt-input--has-error, .gnt-input--has-error:hover, .gnt-input--has-error:focus {
+  box-shadow: 0 0 0 2px #ff4040;
+}
+
+.gnt-input__icon-wrap {
+  display: inline-block;
+  width: 0;
+}
+.gnt-input__icon-wrap--left {
+  grid-area: icon-left;
+  transform: translate(4px, 0);
+}
+.gnt-input__icon-wrap--right {
+  grid-area: icon-right;
+  transform: translate(-28px, 0);
+}
+
+.gnt-input__helper {
+  grid-area: error;
+  padding-top: 8px;
+}
+
+.gnt-input::-webkit-credentials-auto-fill-button {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: rgba(255, 255, 255, 0.5);
+}
+.gnt-input::-webkit-credentials-auto-fill-button:hover {
+  transition: background-color 60ms;
+  will-change: background-color;
+  background-color: #fff;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-pill {
+  transition: background-color 120ms;
+  will-change: background-color;
+  background-color: rgba(255, 255, 255, 0.1);
+  align-items: center;
+  border-radius: calc(var(--size) / 2);
+  display: inline-grid;
+  grid-template-columns: 1fr auto;
+  height: var(--size);
+  justify-content: space-between;
+  user-select: none;
+}
+.gnt-pill:hover:not(:active) {
+  background-color: rgba(255, 255, 255, 0.15);
+  transition: background-color 60ms;
+  will-change: background-color;
+}
+.gnt-pill:hover {
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+.gnt-pill--variant-large {
+  --size: 24px;
+  padding: 0 12px;
+}
+.gnt-pill--variant-large.gnt-pill--has-icon {
+  gap: 2px;
+  padding-right: 4px;
+}
+.gnt-pill--variant-medium {
+  --size: 20px;
+  padding: 0 10px;
+}
+.gnt-pill--variant-medium.gnt-pill--has-icon {
+  padding-right: 2px;
+}
+.gnt-pill--variant-small {
+  --size: 16px;
+  padding: 0 8px;
+}
+.gnt-pill--variant-small.gnt-pill--has-icon {
+  padding-right: 0;
+}
+.gnt-pill:focus {
+  outline: none;
+}
+
+.gnt-pill--variant-small .gnt-pill__icon {
+  margin: -4px 0;
+}
+.gnt-pill--variant-medium .gnt-pill__icon {
+  margin: -2px 0;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-progress {
+  --value: 0;
+  --meter-color: #26bbff;
+  display: grid;
+  grid-template-areas: "main";
+}
+.gnt-progress--variant-linear {
+  border-radius: 4px;
+  height: 4px;
+  min-width: 96px;
+  overflow: hidden;
+  will-change: transform;
+}
+.gnt-progress--variant-radial {
+  height: var(--size);
+  stroke-width: 1.5;
+  width: var(--size);
+}
+.gnt-progress--size-small {
+  --size: 24px;
+}
+.gnt-progress--size-large {
+  --size: 32px;
+}
+
+.gnt-progress__glyph {
+  grid-area: main;
+}
+
+.gnt-progress__track--variant-linear {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  grid-area: main;
+  height: 4px;
+}
+.gnt-progress__track--variant-radial {
+  fill: transparent;
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-linecap: round;
+}
+
+.gnt-progress__meter--color-blue {
+  --meter-color: #26bbff;
+  stroke: url("#gnt-progress__gradient--color-blue");
+}
+.gnt-progress__meter--color-red {
+  --meter-color: #ff4040;
+  stroke: url("#gnt-progress__gradient--color-red");
+}
+.gnt-progress__meter--color-green {
+  --meter-color: #8bc24a;
+  stroke: url("#gnt-progress__gradient--color-green");
+}
+.gnt-progress__meter--color-orange {
+  --meter-color: #fe9b07;
+  stroke: url("#gnt-progress__gradient--color-orange");
+}
+.gnt-progress__meter--color-black {
+  --meter-color: #242424;
+  stroke: url("#gnt-progress__gradient--color-black");
+}
+.gnt-progress__meter--color-white {
+  --meter-color: #fff;
+  stroke: url("#gnt-progress__gradient--color-white");
+}
+.gnt-progress__meter--color-white50 {
+  --meter-color: rgba(255, 255, 255, 0.5);
+  stroke: url("#gnt-progress__gradient--color-white50");
+}
+.gnt-progress__meter--color-white25 {
+  --meter-color: rgba(255, 255, 255, 0.25);
+  stroke: url("#gnt-progress__gradient--color-white25");
+}
+.gnt-progress__meter--color-white10 {
+  --meter-color: rgba(255, 255, 255, 0.1);
+  stroke: url("#gnt-progress__gradient--color-white10");
+}
+.gnt-progress__meter.gnt-progress__meter--variant-linear {
+  border-radius: 4px;
+  grid-area: main;
+}
+.gnt-progress__meter.gnt-progress__meter--variant-linear.gnt-progress__meter--has-value {
+  background-color: var(--meter-color);
+  transition: width 240ms;
+  width: calc(var(--value) * 100%);
+  will-change: width;
+}
+.gnt-progress__meter.gnt-progress__meter--variant-linear.gnt-progress__meter--no-value {
+  animation: gnt-progress__anim-runner 1.8s linear infinite;
+  background-image: linear-gradient(90deg, transparent, var(--meter-color));
+  background-position: right;
+  background-repeat: repeat-y;
+  background-size: 100% 100%;
+  will-change: transform;
+}
+.gnt-progress__meter.gnt-progress__meter--variant-radial {
+  --origin: calc(var(--size) / 2);
+  fill: transparent;
+  transform-origin: var(--origin) var(--origin);
+  will-change: transform;
+}
+.gnt-progress__meter.gnt-progress__meter--variant-radial.gnt-progress__meter--has-value {
+  stroke: var(--meter-color);
+  transform: rotate(-90deg);
+}
+.gnt-progress__meter.gnt-progress__meter--variant-radial.gnt-progress__meter--no-value {
+  animation: gnt-progress__anim-rot 1.2s linear infinite;
+}
+.gnt-progress__meter.gnt-progress__meter--variant-radial.gnt-progress__meter--is-running {
+  stroke-linecap: round;
+}
+
+@keyframes gnt-progress__anim-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes gnt-progress__anim-runner {
+  from {
+    transform: translate(-100%, 0);
+  }
+  to {
+    transform: translate(100%, 0);
+  }
+}
+#gnt-progress__gradient--color-blue {
+  --meter-color: #26bbff;
+}
+
+#gnt-progress__gradient--color-red {
+  --meter-color: #ff4040;
+}
+
+#gnt-progress__gradient--color-green {
+  --meter-color: #8bc24a;
+}
+
+#gnt-progress__gradient--color-orange {
+  --meter-color: #fe9b07;
+}
+
+#gnt-progress__gradient--color-black {
+  --meter-color: #242424;
+}
+
+#gnt-progress__gradient--color-white {
+  --meter-color: #fff;
+}
+
+#gnt-progress__gradient--color-white50 {
+  --meter-color: rgba(255, 255, 255, 0.5);
+}
+
+#gnt-progress__gradient--color-white25 {
+  --meter-color: rgba(255, 255, 255, 0.25);
+}
+
+#gnt-progress__gradient--color-white10 {
+  --meter-color: rgba(255, 255, 255, 0.1);
+}
+
+.gnt-progress__gradient-stop {
+  stop-color: var(--meter-color);
+}
+.gnt-progress__gradient-stop__start {
+  stop-opacity: 0;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-radio-button {
+  display: inline-block;
+  font-size: 0;
+}
+.gnt-radio-button[aria-disabled=true] {
+  pointer-events: none;
+}
+.gnt-radio-button:focus {
+  outline: none;
+}
+
+.gnt-radio-button__inner {
+  align-items: flex-start;
+  column-gap: 8px;
+  display: inline-grid;
+  grid-auto-flow: column;
+}
+.gnt-radio-button__inner:focus {
+  outline: none;
+}
+
+.gnt-radio-button__input {
+  display: none;
+}
+
+.gnt-radio-button__icon {
+  transition: opacity 120ms;
+  will-change: opacity;
+}
+.gnt-radio-button__icon--is-disabled {
+  opacity: 0.25;
+}
+.gnt-radio-button[aria-checked=false] .gnt-radio-button__icon--is-enabled:hover {
+  --icon-color: #fff;
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 1;
+}
+
+.gnt-radio-button__icon path {
+  transition: fill 120ms, stroke 120ms;
+  will-change: fill, stroke;
+}
+.gnt-radio-button:hover .gnt-radio-button__icon path {
+  transition: fill 60ms, stroke 60ms;
+  will-change: fill, stroke;
+}
+
+.gnt-radio-button__label {
+  color: #fff;
+  user-select: none;
+}
+.gnt-radio-button__label--medium {
+  margin-top: 2px;
+}
+.gnt-radio-button__label--small {
+  margin-top: 3px;
+}
+.gnt-radio-button[aria-disabled=true] .gnt-radio-button__label {
+  color: rgba(255, 255, 255, 0.25);
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-radiogroup {
+  display: grid;
+  grid-auto-flow: row;
+  justify-items: flex-start;
+  row-gap: 16px;
+}
+.gnt-radiogroup:focus {
+  outline: none;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-segcontrol {
+  display: inline-grid;
+  font-size: 0;
+  grid-auto-columns: auto;
+  grid-auto-flow: column;
+}
+.gnt-segcontrol--is-disabled {
+  pointer-events: none;
+}
+
+.gnt-segcontrol__option {
+  background-color: #383838;
+}
+.gnt-segcontrol__option:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.gnt-segcontrol__option:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.gnt-segcontrol__option--is-active {
+  background-color: #1a1a1a;
+}
+.gnt-segcontrol__option--is-disabled {
+  background-color: #383838;
+}
+.gnt-segcontrol__option:focus {
+  outline: none;
+}
+
+.gnt-segcontrol__iconwrap {
+  align-items: center;
+  display: grid;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+.gnt-segcontrol__iconwrap:focus {
+  outline: none;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-tabcontrol__list {
+  align-items: stretch;
+  column-gap: 24px;
+  display: inline-grid;
+  font-size: 0;
+  grid-auto-flow: column;
+  justify-content: center;
+  padding: 0 24px;
+}
+.gnt-tabcontrol__list--size-large {
+  height: 48px;
+}
+.gnt-tabcontrol__list--size-medium {
+  height: 40px;
+}
+.gnt-tabcontrol__list--size-small {
+  height: 32px;
+}
+
+.gnt-tabcontrol__tab {
+  cursor: default;
+  display: grid;
+  place-items: center;
+}
+.gnt-tabcontrol__tab:focus {
+  outline: none;
+}
+
+.gnt-tabcontrol__label {
+  transition: color 120ms;
+  will-change: color;
+}
+.gnt-tabcontrol__tab:focus .gnt-tabcontrol__label, .gnt-tabcontrol__tab:hover .gnt-tabcontrol__label {
+  transition: color 60ms;
+  will-change: color;
+  color: #fff;
+}
+
+.gnt-tabcontrol__cursor {
+  transition: left 120ms, width 120ms;
+  will-change: left, width;
+  background-color: #26bbff;
+  height: 2px;
+  position: absolute;
+}
+.gnt-tabcontrol__cursor--size-large {
+  transform: translate(0, 46px);
+}
+.gnt-tabcontrol__cursor--size-medium {
+  transform: translate(0, 38px);
+}
+.gnt-tabcontrol__cursor--size-small {
+  transform: translate(0, 30px);
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-dropdown {
+  transition: box-shadow 120ms;
+  will-change: box-shadow;
+  background-color: #1a1a1a;
+  border-radius: 4px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  min-width: 96px;
+  padding: 0 0 0 12px;
+  place-items: center start;
+  user-select: none;
+}
+.gnt-dropdown--variant-xsmall {
+  height: 20px;
+}
+.gnt-dropdown--variant-small {
+  height: 24px;
+}
+.gnt-dropdown--variant-large {
+  height: 32px;
+}
+.gnt-dropdown:focus {
+  outline: none;
+}
+.gnt-dropdown:hover {
+  transition: box-shadow 60ms;
+  will-change: box-shadow;
+  box-shadow: 0 0 0 2px #383838;
+}
+
+.gnt-dropdown__value {
+  cursor: default;
+  padding: 0 32px 0 0;
+}
+
+.gnt-dropdown__icon {
+  align-items: center;
+  align-self: stretch;
+  border-left: 2px solid #242424;
+  display: grid;
+  min-height: 1px;
+  place-content: center;
+  width: 32px;
+}
+.gnt-dropdown__icon:hover > * {
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 1;
+}
+.gnt-dropdown__icon > * {
+  transition: opacity 120ms;
+  will-change: opacity;
+  flex: 1 1 auto;
+  opacity: 0.25;
+}
+
+.gnt-dropdown__popup {
+  border-radius: 6px;
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+  z-index: 1;
+}
+
+.gnt-dropdown__option {
+  background-color: #383838;
+  display: grid;
+  gap: 8px;
+  grid-template-areas: "icon label";
+  grid-template-columns: 24px 1fr;
+  height: 32px;
+  padding: 0 8px;
+  place-items: center start;
+}
+.gnt-dropdown__option--hovered {
+  background-color: #2f2f2f;
+  outline: none;
+}
+.gnt-dropdown__option--current {
+  background: #242424;
+}
+.gnt-dropdown__option--variant-xsmall {
+  height: 24px;
+}
+.gnt-dropdown__option--variant-small {
+  height: 24px;
+}
+.gnt-dropdown__option--variant-large {
+  height: 32px;
+}
+
+.gnt-dropdown__check {
+  grid-area: check;
+  pointer-events: none;
+}
+
+.gnt-dropdown__option-label {
+  cursor: default;
+  grid-area: label;
+  pointer-events: none;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-asseticon {
+  display: grid;
+  grid-template-areas: "icon" "label";
+  height: 72px;
+  place-items: center;
+  width: 72px;
+}
+
+.gnt-asseticon__icon {
+  grid-area: icon;
+}
+
+.gnt-asseticon__label {
+  grid-area: label;
+}
+
+.gnt-asseticon__variations {
+  grid-area: icon;
+}
+
+.gnt-asseticonasset__path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2px;
+}
+.gnt-asseticonasset__path--fill {
+  fill: rgba(255, 255, 255, 0.5);
+}
+.gnt-asseticonasset__path--stroke {
+  stroke: rgba(255, 255, 255, 0.5);
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-progressbutton {
+  align-items: center;
+  column-gap: 4px;
+  display: grid;
+  grid-template-areas: "main" "caption";
+  justify-content: center;
+  overflow: hidden;
+  row-gap: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gnt-progressbutton--size-large {
+  padding: 4px 0 0;
+  width: 72px;
+}
+.gnt-progressbutton--size-large > .gnt-textlabel {
+  text-align: center;
+}
+.gnt-progressbutton--size-small {
+  grid-template-areas: "caption main";
+  grid-template-columns: 1fr auto;
+}
+.gnt-progressbutton--size-small > .gnt-textlabel {
+  text-align: right;
+}
+
+.gnt-progressbutton__button {
+  display: grid;
+  grid-area: main;
+  grid-template-areas: "main";
+  place-items: center;
+}
+
+.gnt-progressbutton__start-button {
+  transition: opacity 120ms;
+  will-change: opacity;
+  grid-area: main;
+  opacity: 0;
+}
+.gnt-progressbutton__start-button--state-initial {
+  opacity: 1;
+}
+.gnt-progressbutton .gnt-progressbutton__start-button--state-completed:hover, .gnt-progressbutton .gnt-progressbutton__start-button--state-failed:hover {
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 1;
+}
+
+.gnt-progressbutton__stop-button {
+  transition: opacity 120ms;
+  will-change: opacity;
+  grid-area: main;
+  opacity: 0;
+  pointer-events: none;
+}
+.gnt-progressbutton--size-small .gnt-progressbutton__stop-button--state-running {
+  pointer-events: initial;
+}
+.gnt-progressbutton--size-small .gnt-progressbutton__stop-button--state-running:hover, .gnt-progressbutton--size-large .gnt-progressbutton__stop-button--state-running {
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 1;
+  pointer-events: initial;
+}
+
+.gnt-progressbutton__progress {
+  transition: opacity 120ms;
+  will-change: opacity;
+  grid-area: main;
+}
+.gnt-progressbutton__progress--state-initial {
+  display: none;
+}
+.gnt-progressbutton__progress--state-initial, .gnt-progressbutton__button:hover .gnt-progressbutton__progress--state-completed, .gnt-progressbutton__button:hover .gnt-progressbutton__progress--state-failed {
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 0;
+}
+
+.gnt-progressbutton__icon {
+  grid-area: main;
+  opacity: 0;
+}
+.gnt-progressbutton .gnt-progressbutton__icon--state-completed:not(:hover), .gnt-progressbutton .gnt-progressbutton__icon--state-failed:not(:hover) {
+  transition: opacity 60ms;
+  will-change: opacity;
+  opacity: 1;
+}
+
+.gnt-progressbutton__caption {
+  grid-area: caption;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-popup {
+  border-radius: 6px;
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+
+.gnt-popup__header {
+  align-items: center;
+  background: #2f2f2f;
+  display: grid;
+  grid-auto-flow: column;
+  height: 48px;
+  justify-content: space-between;
+  padding: 0 12px 0 16px;
+}
+
+.gnt-popup__guts {
+  background: #242424;
+  padding: 48px;
+}
+
+.gnt-popup__footer {
+  background: #242424;
+  border-top: 2px solid #1a1a1a;
+  padding: 16px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-stack {
+  align-items: center;
+  display: grid;
+  grid-gap: 16px;
+  justify-content: start;
+}
+
+.gnt-stack--h {
+  grid-auto-flow: column;
+}
+
+.gnt-stack--v {
+  grid-auto-flow: row;
+}
+
+.gnt-stack--separators {
+  grid-gap: 12px;
+}
+
+.gnt-stack--space-between {
+  justify-content: space-between;
+}
+
+.gnt-stack__separator {
+  background: rgba(255, 255, 255, 0.5);
+  height: 10px;
+  width: 1px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-menu {
+  background-color: #383838;
+  border-radius: 8px;
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+  display: grid;
+  max-width: 240px;
+  min-width: 160px;
+  padding: 8px 0;
+}
+
+.gnt-menu__submenu {
+  display: grid;
+}
+
+.gnt-menu__header {
+  display: flex;
+  padding: 0 16px;
+  place-items: center start;
+}
+.gnt-menu__header--size-small {
+  height: 24px;
+}
+.gnt-menu__header--size-large {
+  height: 32px;
+}
+
+.gnt-menu__divider {
+  background-color: #2f2f2f;
+  height: 2px;
+  margin: 8px 0;
+  user-select: none;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-menu-item-wrap {
+  background: none;
+  border: 0;
+  display: block;
+  font: inherit;
+  padding: 0;
+  text-align: initial;
+  width: 100%;
+  background-color: #383838;
+}
+.gnt-menu-item-wrap:focus {
+  outline: none;
+}
+
+.gnt-menu-item {
+  align-items: center;
+  border-radius: 4px;
+  cursor: default;
+  display: grid;
+  grid-auto-flow: column;
+  grid-gap: 8px;
+  grid-template-areas: "main chevron";
+  grid-template-columns: 1fr auto;
+  margin: 0 8px;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 8px;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.gnt-menu-item:focus,
+.gnt-menu-item-wrap--can-self-highlight:hover .gnt-menu-item,
+.gnt-menu-item--has-highlight {
+  background-color: #2f2f2f;
+  outline: none;
+}
+
+.gnt-menu-item--variant-small {
+  height: 24px;
+}
+
+.gnt-menu-item--variant-large {
+  height: 32px;
+}
+
+.gnt-menu-item--is-checkable {
+  grid-template-areas: "check main chevron";
+  grid-template-columns: 12px 1fr auto;
+}
+
+.gnt-menu-item--has-icon {
+  grid-template-areas: "icon main chevron";
+  grid-template-columns: 24px 1fr auto;
+}
+
+.gnt-menu-item--has-icon.gnt-menu-item--is-checkable {
+  grid-template-areas: "icon check main chevron";
+  grid-template-columns: 24px 12px 1fr auto;
+}
+
+.gnt-menu-item__icon {
+  grid-area: icon;
+}
+
+.gnt-menu-item__check {
+  display: grid;
+  grid-area: check;
+}
+
+.gnt-menu-item__label {
+  grid-area: main;
+}
+
+.gnt-menu-item__chevron {
+  grid-area: chevron;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-card-base {
+  background-repeat: no-repeat;
+  background-size: cover;
+  cursor: default;
+  display: grid;
+  grid-template-areas: "main";
+}
+.gnt-card-base:focus {
+  outline: none;
+}
+
+.gnt-card-base--is-clickable {
+  border-radius: 6px;
+  overflow: hidden;
+  user-select: none;
+}
+.gnt-card-base--is-clickable:hover {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25), 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+}
+
+.gnt-card-base--has-aspectratio::after {
+  content: "";
+  grid-area: main;
+  padding-bottom: 56.25%;
+  pointer-events: none;
+}
+
+.gnt-card-base__content {
+  align-content: end;
+  display: grid;
+  grid-area: main;
+  grid-gap: 8px;
+  grid-template-areas: "main";
+  padding: var(--content-padding);
+}
+
+.gnt-card-base__content--gradient-horizontal {
+  background-image: linear-gradient(to right, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.6273) 19%, rgba(0, 0, 0, 0.45985) 34%, rgba(0, 0, 0, 0.3247) 47%, rgba(0, 0, 0, 0.2363) 56.5%, rgba(0, 0, 0, 0.1649) 65%, rgba(0, 0, 0, 0.1071) 73%, rgba(0, 0, 0, 0.06375) 80.2%, rgba(0, 0, 0, 0.0357) 86.1%, rgba(0, 0, 0, 0.01785) 91%, rgba(0, 0, 0, 0.0068) 95.2%, rgba(0, 0, 0, 0.0017) 98.2%, rgba(0, 0, 0, 0) 100%);
+  background-repeat: no-repeat;
+  justify-self: flex-start;
+  padding-right: calc(var(--content-padding) * 4);
+}
+
+.gnt-card-base__content--gradient-vertical {
+  align-self: flex-end;
+  background-image: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.6273) 19%, rgba(0, 0, 0, 0.45985) 34%, rgba(0, 0, 0, 0.3247) 47%, rgba(0, 0, 0, 0.2363) 56.5%, rgba(0, 0, 0, 0.1649) 65%, rgba(0, 0, 0, 0.1071) 73%, rgba(0, 0, 0, 0.06375) 80.2%, rgba(0, 0, 0, 0.0357) 86.1%, rgba(0, 0, 0, 0.01785) 91%, rgba(0, 0, 0, 0.0068) 95.2%, rgba(0, 0, 0, 0.0017) 98.2%, rgba(0, 0, 0, 0) 100%);
+  background-repeat: no-repeat;
+  padding-top: calc(var(--content-padding) * 2);
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-banner-card {
+  height: 400px;
+}
+
+.gnt-banner-card__content {
+  max-width: min(560px, 50%);
+  min-width: min(480px, 75%);
+}
+
+.gnt-banner-card__body {
+  display: grid;
+  grid-gap: 8px;
+}
+
+.gnt-banner-card__actions {
+  display: flex;
+  grid-gap: 24px;
+  margin: 16px 0 0 0;
+  place-items: center left;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+/* stylelint-disable function-parentheses-space-inside */
+.gnt-brand-logo {
+  --bgcolor: transparent;
+  --symbolcolor: #fff;
+  background-color: var(--bgcolor);
+  display: block;
+  height: calc(var(--size) * 1px);
+  width: calc(var(--size) * 1px);
+}
+.gnt-brand-logo--quixel {
+  --hovercolor: transparent;
+}
+.gnt-brand-logo--megascans {
+  --bgcolor: #8bc24a;
+  --hovercolor: #a8d177;
+}
+.gnt-brand-logo--bridge {
+  --bgcolor: #26bbff;
+  --hovercolor: #61cdff;
+}
+.gnt-brand-logo--mixer {
+  --bgcolor: #ff4040;
+  --hovercolor: #ff6a6a;
+}
+.gnt-brand-logo--tracker {
+  --bgcolor: #fe9b07;
+  --hovercolor: #feb64a;
+}
+.gnt-brand-logo--palette {
+  --bgcolor: transparent;
+  background-image: conic-gradient(from -90deg at 50% 50%, #fe9b07 -44.92deg, #8bc24a 44.85deg, #26bbff 135.08deg, #ff4040 225.15deg, #fe9b07 315.08deg, #8bc24a 404.85deg);
+}
+
+.gnt-brand-logo--is-hoverable {
+  transition: background-color 120ms, background-image 120ms;
+  will-change: background-color, background-image;
+}
+.gnt-brand-logo--is-hoverable:hover {
+  transition: background-color 60ms, background-image 60ms;
+  will-change: background-color, background-image;
+  background-color: var(--hovercolor);
+}
+.gnt-brand-logo--is-hoverable:hover.gnt-brand-logo--quixel {
+  --symbolcolor: rgba(255, 255, 255, 0.85);
+}
+.gnt-brand-logo--is-hoverable:hover.gnt-brand-logo--palette {
+  --hovercolor: transparent;
+  background-image: conic-gradient(from -90deg at 50% 50%, #feb64a -44.92deg, #a8d177 44.85deg, #61cdff 135.08deg, #ff6a6a 225.15deg, #feb64a 315.08deg, #a8d177 404.85deg);
+}
+
+.gnt-brand-logo__symbol {
+  transition: fill 120ms;
+  will-change: fill;
+  fill: var(--symbolcolor);
+}
+.gnt-brand-logo--is-hoverable:hover .gnt-brand-logo__symbol {
+  transition: fill 60ms;
+  will-change: fill;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-toast {
+  background-color: #383838;
+  border-radius: 4px;
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+  padding: 16px;
+  padding-right: 24px;
+  position: relative;
+  width: 320px;
+}
+
+.gnt-toast__close {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-select {
+  cursor: default;
+  display: grid;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.gnt-select > div[role=listbox]:focus {
+  outline: none;
+}
+
+.gnt-select__toggle {
+  align-items: center;
+  background-color: #1a1a1a;
+  border: 0;
+  border-radius: 4px;
+  display: grid;
+  grid-template-areas: "main chevron";
+  grid-template-columns: 1fr auto;
+  padding: 0;
+  text-align: initial;
+}
+.gnt-select__toggle--variant-small {
+  height: 24px;
+  padding-left: 8px;
+}
+.gnt-select__toggle--variant-large {
+  height: 32px;
+  padding-left: 12px;
+}
+.gnt-select__toggle:focus {
+  outline: none;
+}
+
+.gnt-select:hover .gnt-select__toggle {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.gnt-select:focus-within .gnt-select__toggle {
+  box-shadow: 0 0 0 2px #26bbff;
+}
+.gnt-select:focus-within .gnt-select__label {
+  color: #fff;
+}
+.gnt-select:focus-within .gnt-select__chevron {
+  --icon-color: #fff;
+}
+
+.gnt-select__chevron {
+  grid-area: chevron;
+}
+
+.gnt-select__menu {
+  background-color: #383838;
+  border-radius: 4px;
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.gnt-select__item {
+  list-style: none;
+  text-indent: 0;
+}
+/**
+ * Color palette choices
+ */
+/**
+ * Box shadow size choices
+ */
+/**
+ * Font size choices
+ */
+/**
+ * Line height choices
+ */
+/**
+ * Letter spacing choices
+ */
+/**
+ * Border size choices
+ */
+/**
+ * Padding choices
+ */
+/**
+ * Element fixed height choices
+ */
+/**
+ * Font family choices
+ */
+/**
+ * Font weight choices
+ */
+/**
+ * Timing choices
+ */
+.gnt-combo-box {
+  align-items: center;
+  background-color: #1a1a1a;
+  border-radius: 4px;
+}
+.gnt-combo-box--variant-small {
+  height: 24px;
+  padding-left: 8px;
+}
+.gnt-combo-box--variant-large {
+  height: 32px;
+  padding-left: 12px;
+  padding-right: 4px;
+}
+
+.gnt-combo-box__combo {
+  display: grid;
+  grid-template-areas: "main toggle";
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.gnt-combo-box:hover {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.gnt-combo-box:focus-within {
+  box-shadow: 0 0 0 2px #26bbff;
+}
+.gnt-combo-box:focus-within .gnt-combo-box__input {
+  color: #fff;
+}
+.gnt-combo-box:focus-within .gnt-combo-box__chevron {
+  --icon-color: #fff;
+}
+
+.gnt-combo-box__input {
+  background-color: transparent;
+  border: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: Roboto;
+  grid-area: main;
+  padding: 0;
+}
+.gnt-combo-box__input--has-value {
+  color: #fff;
+}
+.gnt-combo-box__input--variant-small {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  line-height: 18px;
+  height: 24px;
+}
+.gnt-combo-box__input--variant-large {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.25px;
+  line-height: 20px;
+  height: 32px;
+}
+.gnt-combo-box__input:focus {
+  outline: none;
+}
+
+.gnt-combo-box__button {
+  background: none;
+  border-left: 2px solid #242424;
+  display: grid;
+  grid-area: toggle;
+  padding: 0;
+  place-items: center;
+}
+
+.gnt-combo-box__menu {
+  background-color: #383838;
+  border-radius: 4px;
+  box-shadow: 0 16px 24px 0 rgba(0, 0, 0, 0.24);
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.gnt-combo-box__menu-item {
+  list-style: none;
+}
+
+.gnt-combo-box__not-found-msg {
+  padding: 4px 8px;
+  text-align: center;
+}
+
+/*# sourceMappingURL=granite.css.map*/

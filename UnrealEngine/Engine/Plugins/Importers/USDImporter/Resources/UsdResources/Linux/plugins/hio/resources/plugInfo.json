@@ -1,0 +1,20 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "Hio_StbImage" : {
+                        "bases": ["HioImage"],
+                        "imageTypes": ["bmp", "jpg", "jpeg", "png", "tga", "hdr"],
+                        "precedence": 2
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Linux/bin/x86_64-unknown-linux-gnu/libusd_hio.so",
+            "Name": "hio",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

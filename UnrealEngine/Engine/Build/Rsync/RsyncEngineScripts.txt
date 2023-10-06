@@ -1,0 +1,11 @@
+# This file contains a list of shell scripts to be synced to the remote. These files will be locally converted to use Unix line endings, and will be
+# marked as executable on the remote. Wildcards are not supported.
+
+Binaries/ThirdParty/Mono/Mac/bin/xbuild
+Build/BatchFiles/Mac/Build.sh
+Build/BatchFiles/Mac/FixDependencyFiles.sh
+Build/BatchFiles/Mac/RunMono.sh
+Build/BatchFiles/Mac/FixMonoFiles.sh
+Build/BatchFiles/Mac/GenerateProjectFiles.sh
+Build/BatchFiles/Mac/SetupMono.sh
+Build/BatchFiles/Mac/SetupEnvironment.sh

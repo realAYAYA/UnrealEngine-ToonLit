@@ -1,0 +1,92 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	PathTracingTwoSidedFoliage.usf: Path tracing BRDF model for two-sided foliage material
+===============================================================================================*/
+
+#pragma once
+
+#include "PathTracingDefaultLit.ush"
+#include "PathTracingEnergyConservation.ush"
+
+struct FTwoSidedFoliageData
+{
+	float NoV;
+	FBxDFEnergyTermsRGB Spec;
+	float3 Back;
+
+	float ProbT;
+};
+
+FTwoSidedFoliageData PrepareTwoSidedFoliageData(FPathTracingPayload Payload, float3 V_World)
+{
+	FTwoSidedFoliageData Data = (FTwoSidedFoliageData)0;
+	Data.NoV = saturate(dot(V_World, Payload.WorldNormal));
+	Data.Spec = ComputeGGXSpecEnergyTermsRGB(Payload.Roughness, Data.NoV, Payload.SpecularColor);
+
+	// pick back lobe proportionally to its contribution relative to front side
+	const float3 Diff = (1 - Data.Spec.E) * Payload.DiffuseColor;
+	Data.Back         = (1 - Data.Spec.E) * Payload.SubsurfaceColor;
+	Data.ProbT = LobeSelectionProb(Data.Back, Diff + Data.Spec.E);
+
+	return Data;
+}
+
+FMaterialSample TwoSidedFoliage_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample
+)
+{
+	const FTwoSidedFoliageData Data = PrepareTwoSidedFoliageData(Payload, V_World);
+	if (RandSample.x < Data.ProbT)
+	{
+		RandSample.x = RescaleRandomNumber(RandSample.x, 0.0, Data.ProbT);
+
+		const float3 N = Payload.WorldNormal;
+		const float4 SampledValue = CosineSampleHemisphere(RandSample.yz);
+
+		return CreateMaterialSample(TangentToWorld(SampledValue.xyz, -N), Payload.BSDFOpacity * Data.Back / Data.ProbT, Data.ProbT * SampledValue.w, -1.0, 1.0, PATHTRACER_SCATTER_DIFFUSE);
+	}
+	else
+	{
+		RandSample.x = RescaleRandomNumber(RandSample.x, Data.ProbT, 1.0);
+
+		FMaterialSample Result = DefaultLit_SampleMaterial(V_World, Payload, RandSample);
+		Result.Weight /= 1.0 - Data.ProbT;
+		Result.Pdf *= 1.0 - Data.ProbT;
+		return Result;
+	}
+}
+
+FMaterialEval TwoSidedFoliage_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	const FTwoSidedFoliageData Data = PrepareTwoSidedFoliageData(Payload, V_World);
+
+	const float3 N = Payload.WorldNormal;
+	const float NoL = dot(N, L_World);
+	if (NoL < 0.0)
+	{
+		// Diffuse transmission (the implementation in TwoSidedBxDF does not appear to be a real BxDF)
+
+		if (Data.ProbT > 0)
+		{
+			float LambertPdf = -NoL / PI;
+
+			return CreateMaterialEval(Payload.BSDFOpacity * Data.Back / Data.ProbT * DiffuseSpecularScale.x, Data.ProbT * LambertPdf);
+		}
+	}
+	else if (Data.ProbT < 1)
+	{
+		FMaterialEval Result = DefaultLit_EvalMaterial(V_World, L_World, Payload, DiffuseSpecularScale);
+		Result.Weight /= 1.0 - Data.ProbT;
+		Result.Pdf *= 1.0 - Data.ProbT;
+		return Result;
+	}
+	return NullMaterialEval();
+}

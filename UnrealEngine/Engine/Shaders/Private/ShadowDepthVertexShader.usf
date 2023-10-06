@@ -1,0 +1,335 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	ShadowDepthVertexShader.usf: Vertex & Geometry shader for writing shadow depth.
+=============================================================================*/
+
+// needs to before Common.usf
+#define SHADOW_DEPTH_SHADER 1
+#define USE_STENCIL_LOD_DITHER	0
+
+#ifndef ENABLE_NON_NANITE_VSM
+#error "ENABLE_NON_NANITE_VSM should be defined to either 0 or 1!"
+#endif
+
+
+#if ENABLE_NON_NANITE_VSM
+	#define VIRTUAL_SM_ENABLED (!(ONEPASS_POINTLIGHT_SHADOW || PERSPECTIVE_CORRECT_DEPTH))
+#else
+	#define VIRTUAL_SM_ENABLED 0
+#endif
+
+// Need to get the definition of nanite packed view for generated unform buffer (which is pulled in by Common.ush)
+#include "Nanite/NanitePackedNaniteView.ush"
+#include "Common.ush"
+
+// Reroute SceneTexturesStruct uniform buffer references to the shadow depth pass uniform buffer
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM5
+#define PassStruct ShadowDepthPass
+#define SceneTexturesStruct ShadowDepthPass.SceneTextures 
+#else
+#define PassStruct MobileShadowDepthPass
+#define MobileSceneTextures MobileShadowDepthPass.SceneTextures 
+#endif
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "ShadowDepthCommon.ush"
+
+
+#if VIRTUAL_SM_ENABLED
+#include "Nanite/NaniteDataDecode.ush"
+#include "SceneData.ush"
+#include "VirtualShadowMaps/VirtualShadowMapPageAccessCommon.ush"
+#endif // VIRTUAL_SM_ENABLED
+
+
+void SetShadowDepthOutputs(
+	float4x4 WorldToClipMatrix, 
+	float4x4 WorldToShadowMatrix, 
+	float4 WorldPosition, 
+	float3 WorldVertexNormal, 
+	out float4 OutPosition, 
+	out float ShadowDepth
+#if PERSPECTIVE_CORRECT_DEPTH
+	, out float OutDepthBias
+#endif
+)
+{
+	OutPosition = mul(WorldPosition, WorldToClipMatrix);
+
+	// Clamp the vertex to the near plane if it is in front of the near plane
+	// This has problems if some vertices of a triangle get clamped and others do not, also causes artifacts with non-ortho projections
+	if (PassStruct.bClampToNearPlane > 0 && OutPosition.z > OutPosition.w)
+	{
+		OutPosition.z = 0.999999f;
+		OutPosition.w = 1.0f;
+	}
+
+	#if ONEPASS_POINTLIGHT_SHADOW
+	const float3 ViewDirection = -normalize(mul(WorldPosition, WorldToShadowMatrix).xyz);
+	const float3 ViewNormal = mul(float4(WorldVertexNormal,0), WorldToShadowMatrix).xyz;
+	const float NoL = abs(dot(ViewDirection, ViewNormal));
+	#else
+	const float NoL = abs(dot(
+		float3(WorldToShadowMatrix[0].z, WorldToShadowMatrix[1].z, WorldToShadowMatrix[2].z),
+		WorldVertexNormal));
+	#endif
+
+	const float MaxSlopeDepthBias = PassStruct.ShadowParams.z;
+	const float Slope = clamp(abs(NoL) > 0 ? sqrt(saturate(1 - NoL*NoL)) / NoL : MaxSlopeDepthBias, 0, MaxSlopeDepthBias);
+	
+	const float SlopeDepthBias = PassStruct.ShadowParams.y;
+	const float SlopeBias = SlopeDepthBias * Slope;
+
+	const float ConstantDepthBias = PassStruct.ShadowParams.x;
+	const float DepthBias = SlopeBias + ConstantDepthBias;
+
+	#if PERSPECTIVE_CORRECT_DEPTH
+		ShadowDepth = OutPosition.z;
+		OutDepthBias = DepthBias;
+	#elif ONEPASS_POINTLIGHT_SHADOW
+		ShadowDepth = 0;
+		//OutPosition.z += DepthBias;
+	#else
+		// Output linear, normalized depth
+		const float InvMaxSubjectDepth = PassStruct.ShadowParams.w;
+		#if PLATFORM_NEEDS_PRECISE_SHADOW_DEPTH
+			precise 
+		#endif
+		float AdjustedDepth = ( 1 - OutPosition.z * InvMaxSubjectDepth ) + DepthBias;
+		ShadowDepth = AdjustedDepth;
+		OutPosition.z = AdjustedDepth;
+	#endif
+}
+
+/** 
+ * Load physical page offset and perform the needed scale and bias to render the instance into the given physical page,
+ * with the correct clipping set up.
+ */
+#if VIRTUAL_SM_ENABLED
+
+void ScaleBiasClipToPhysicalSmPage(FNaniteView NaniteView, inout float4 PositionClip, inout float4 ClipPlanesInOut, FPageInfo PageInfo)
+{
+	float2 vClip = PositionClip.xy;
+	float2 vUV = vClip * float2(0.5, -0.5) + 0.5 * PositionClip.w;
+	float2 vPixels = vUV * ( uint(VSM_VIRTUAL_MAX_RESOLUTION_XY) >> NaniteView.TargetMipLevel );
+
+	{
+		//PointClip.xy = NaniteView.ClipSpaceScaleOffset.xy * PointClip.xy + NaniteView.ClipSpaceScaleOffset.zw * PointClip.w;
+
+		float2 Scale = exp2( -NaniteView.TargetMipLevel );
+		PositionClip.xy *= Scale;
+		PositionClip.xy += ( Scale * float2(1,-1) + float2(-1,1) ) * PositionClip.w;
+	}
+
+	{
+		// Clip to allocated page rect
+		uint4 PageRect = PassStruct.PageRectBounds[ NaniteView.TargetLayerIndex * VSM_MAX_MIP_LEVELS + NaniteView.TargetMipLevel ];
+
+		float2 MinClip =  vPixels - ( PageRect.xy + 0 ) * VSM_PAGE_SIZE * PositionClip.w;
+		float2 MaxClip = -vPixels + ( PageRect.zw + 1 ) * VSM_PAGE_SIZE * PositionClip.w;
+
+		ClipPlanesInOut.xy = MinClip;
+		ClipPlanesInOut.zw = MaxClip;
+	}
+}
+
+void TransformToVirtualSmPage(inout float4 PointClip, inout float4 ClipPlanesInOut, FPageInfo PageInfo, float3 PointTranslatedWorld)
+{
+	// Load nanite view and perform transform to SM space.
+	FNaniteView NaniteView = UnpackNaniteView(PassStruct.PackedNaniteViews[PageInfo.ViewId]);
+
+	PointTranslatedWorld += LWCToFloat( LWCSubtract( NaniteView.PreViewTranslation, ResolvedView.PreViewTranslation ) );
+	PointClip = mul( float4( PointTranslatedWorld, 1 ), NaniteView.TranslatedWorldToClip );
+
+	// Clamp the vertex to the near plane if it is in front of the near plane
+	// This has problems if some vertices of a triangle get clamped and others do not, also causes artifacts with non-ortho projections
+	if (PassStruct.bClampToNearPlane > 0 && PointClip.z > PointClip.w)
+	{
+		PointClip.z = 0.999999f;
+		PointClip.w = 1.0f;
+	}
+
+	ScaleBiasClipToPhysicalSmPage(NaniteView, PointClip, ClipPlanesInOut, PageInfo);
+}
+
+#endif // VIRTUAL_SM_ENABLED
+
+uint bUseGpuSceneInstancing;
+#if VERTEXSHADER && ONEPASS_POINTLIGHT_SHADOW
+uint LayerId;
+#endif
+
+void Main(
+	FVertexFactoryInput Input,
+#if ONEPASS_POINTLIGHT_SHADOW
+	out FShadowDepthVSToPS OutParameters,
+#else
+	out FShadowDepthVSToPS OutParameters,
+#endif
+#if VIRTUAL_SM_ENABLED
+	out nointerpolation uint PackedPageInfo : TEXCOORD8,
+#endif
+	out float4 OutPosition : SV_POSITION
+#if ONEPASS_POINTLIGHT_SHADOW
+	, out uint LayerIndex : SV_RenderTargetArrayIndex
+#endif
+#if VIRTUAL_SM_ENABLED	
+	// OLA-TODO: this collides with instanced stereo, which thankfully is not used with shadow maps, so should be fine, presumably.
+	, out float4 OutVirtualSmPageClip : SV_ClipDistance
+#endif // VIRTUAL_SM_ENABLED
+	)
+{
+	ResolvedView = ResolveView();
+	
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPos = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
+	const float3 WorldNormal = VertexFactoryGetWorldNormal(Input, VFIntermediates);
+
+	WorldPos.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+
+#if ONEPASS_POINTLIGHT_SHADOW
+
+	OutPosition = WorldPos;
+
+	#if INTERPOLATE_VF_ATTRIBUTES
+		// Masked materials need texture coords to clip
+		OutParameters.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+	#endif
+
+	#if INTERPOLATE_POSITION
+		OutParameters.PixelPosition = WorldPos.xyz;
+	#endif
+
+	LayerIndex = bUseGpuSceneInstancing ? VertexFactoryGetViewIndex(VFIntermediates) : LayerId;
+	OutPosition = mul(WorldPos, PassStruct.ShadowViewProjectionMatrices[LayerIndex]);
+
+#else
+	float Dummy;
+
+	SetShadowDepthOutputs(
+		PassStruct.ProjectionMatrix,
+		PassStruct.ViewMatrix,
+		WorldPos, 
+		WorldNormal,
+		OutPosition, 
+#if !PERSPECTIVE_CORRECT_DEPTH
+		Dummy
+#else
+		OutParameters.ShadowDepth,
+		OutParameters.DepthBias
+#endif
+		);
+	
+	#if INTERPOLATE_VF_ATTRIBUTES
+		// Masked materials need texture coords to clip
+		OutParameters.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+	#endif
+
+	#if INTERPOLATE_POSITION
+		OutParameters.PixelPosition = WorldPos.xyz;
+	#endif
+
+	#if !PERSPECTIVE_CORRECT_DEPTH && !COMPILER_SUPPORTS_EMPTY_STRUCTS
+		OutParameters.Dummy = 0;
+	#endif
+
+#endif
+
+#if VIRTUAL_SM_ENABLED
+	PackedPageInfo = 0;
+	
+	OutVirtualSmPageClip = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	if (PassStruct.bRenderToVirtualShadowMap != 0)
+	{
+		// Get the offset from which we loaded the instance ID
+		uint InstanceIdIndex = VertexFactoryGetInstanceIdLoadIndex(VFIntermediates);
+		PackedPageInfo = InstanceCulling.PageInfoBuffer[InstanceIdIndex];
+
+		FPageInfo PageInfo = UnpackPageInfo(PackedPageInfo);
+
+		TransformToVirtualSmPage(OutPosition, OutVirtualSmPageClip, PageInfo, WorldPos.xyz);
+	}
+#endif // VIRTUAL_SM_ENABLED
+}
+
+#if POSITION_ONLY
+void PositionOnlyMain(
+	in FPositionAndNormalOnlyVertexFactoryInput Input,
+#if ONEPASS_POINTLIGHT_SHADOW
+	out uint LayerIndex : SV_RenderTargetArrayIndex,
+#endif
+	out FShadowDepthVSToPS OutParameters,
+
+#if VIRTUAL_SM_ENABLED
+	out nointerpolation uint PackedPageInfo : TEXCOORD8,
+#endif
+	out float4 OutPosition : SV_POSITION
+#if VIRTUAL_SM_ENABLED	
+	// OLA-TODO: this collides with instanced stereo, which thankfully is not used with shadow maps, so should be fine, presumably.
+	, out float4 OutVirtualSmPageClip : SV_ClipDistance
+#endif // VIRTUAL_SM_ENABLED
+	)
+{
+	ResolvedView = ResolveView();
+
+	float4 WorldPos = VertexFactoryGetWorldPosition(Input);
+
+#if INTERPOLATE_VF_ATTRIBUTES
+	OutParameters.FactoryInterpolants = (FVertexFactoryInterpolantsVSToPS)0;
+#endif
+
+	float3 WorldNormal = VertexFactoryGetWorldNormal(Input);
+
+#if ONEPASS_POINTLIGHT_SHADOW
+	LayerIndex = bUseGpuSceneInstancing ? VertexFactoryGetViewIndex(Input) : LayerId;
+	OutPosition = mul(WorldPos, PassStruct.ShadowViewProjectionMatrices[LayerIndex]);
+
+#else // !ONEPASS_POINTLIGHT_SHADOW
+	float ShadowDepth;
+	SetShadowDepthOutputs(
+		PassStruct.ProjectionMatrix, 
+		PassStruct.ViewMatrix, 
+		WorldPos, 
+		WorldNormal, 
+		OutPosition,
+	#if PERSPECTIVE_CORRECT_DEPTH
+		OutParameters.ShadowDepth,
+		OutParameters.DepthBias
+	#else
+		ShadowDepth
+	#endif
+	);
+
+	#if !PERSPECTIVE_CORRECT_DEPTH && !COMPILER_SUPPORTS_EMPTY_STRUCTS
+		OutParameters.Dummy = 0;
+	#endif
+#endif // ONEPASS_POINTLIGHT_SHADOW
+
+#if INTERPOLATE_POSITION
+	OutParameters.PixelPosition = WorldPos.xyz;
+#endif
+
+#if VIRTUAL_SM_ENABLED
+	PackedPageInfo = 0;
+
+	OutVirtualSmPageClip = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	if (PassStruct.bRenderToVirtualShadowMap != 0)
+	{
+		// Get the offset from which we loaded the instance ID
+		uint InstanceIdIndex = VertexFactoryGetInstanceIdLoadIndex(Input);
+		// TODO: Maybe offset index to local buffer for this? We may not want to use a global since most passes are not supporting this
+		//       Or perhaps both are different, as they are managed somewhat differently anyway, maybe.
+		PackedPageInfo = InstanceCulling.PageInfoBuffer[InstanceIdIndex];
+		FPageInfo PageInfo = UnpackPageInfo(PackedPageInfo);
+		TransformToVirtualSmPage(OutPosition, OutVirtualSmPageClip, PageInfo, WorldPos.xyz);
+	}
+#endif // VIRTUAL_SM_ENABLED
+}
+
+
+#endif // POSITION_ONLY

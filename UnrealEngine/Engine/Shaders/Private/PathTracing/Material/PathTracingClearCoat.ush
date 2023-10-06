@@ -1,0 +1,254 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================================
+	PathTracingClearCoat.usf: Path tracing BRDF model for clear coat material
+===============================================================================================*/
+
+#pragma once
+
+#define EVAL_TOP_LAYER 1
+#define EVAL_BOTTOM_LAYER 1
+
+#define GREY_INNER_LAYER 0
+
+#include "PathTracingMaterialCommon.ush"
+#include "PathTracingGlossy.ush"
+#include "PathTracingFresnel.ush"
+#include "PathTracingEnergyConservation.ush"
+
+struct FClearCoatData
+{
+	float3x3 BaseBasis;
+	float3x3 CoatBasis;
+	float2 BaseAlpha;
+	float2 CoatAlpha;
+
+	float3 BaseV;
+	float3 CoatV;
+
+	float3 DiffColor;
+	float3 SpecColor;
+	float ClearCoat;
+
+	FBxDFEnergyTermsRGB Spec;
+	FBxDFEnergyTermsA   Coat;
+	float CoatE;
+
+	float2 LobeCdf;
+	float3 LobePdf;
+};
+
+FClearCoatData CreateClearCoatData(FPathTracingPayload Payload, float3 V_World)
+{
+	FClearCoatData Data = (FClearCoatData)0;
+
+	const float3 CoatN = Payload.WorldNormal;
+	const float3 BaseN = Payload.GetClearCoatBottomNormal();
+
+	Data.BaseBasis = GetGGXBasis(Payload.Roughness, Payload.Anisotropy, BaseN, Payload.WorldTangent, Data.BaseAlpha);
+	Data.CoatBasis = GetGGXBasis(Payload.GetClearCoatRoughness(), CoatN, Data.CoatAlpha);
+	
+
+	Data.CoatV = mul(Data.CoatBasis, V_World);
+	Data.BaseV = mul(Data.BaseBasis, V_World);
+
+	const float CoatNoV = saturate(Data.CoatV.z);
+	const float BaseNoV = saturate(Data.BaseV.z);
+
+
+#if EVAL_BOTTOM_LAYER
+#if GREY_INNER_LAYER
+	Data.SpecColor = 0.0;
+	Data.DiffColor = 0.18;
+#else
+	Data.SpecColor = Payload.SpecularColor;
+	Data.DiffColor = Payload.DiffuseColor;
+#endif
+#else
+	Data.SpecColor = 0.0;
+	Data.DiffColor = 0.0;
+#endif
+
+#if EVAL_TOP_LAYER
+	Data.ClearCoat = Payload.GetClearCoat();
+#else
+	Data.ClearCoat = 0.0;
+#endif
+
+	Data.Coat = ComputeGGXSpecEnergyTermsA(Payload.GetClearCoatRoughness(), CoatNoV, CLEAR_COAT_F0);
+	Data.Spec = ComputeGGXSpecEnergyTermsRGB(Payload.Roughness, BaseNoV, Data.SpecColor);
+
+	Data.CoatE = Data.ClearCoat * Data.Coat.E;
+	Data.LobeCdf = LobeSelectionCdf(Data.CoatE, (1.0 - Data.CoatE) * Data.Spec.E, (1.0 - Data.CoatE) * (1.0 - Data.Spec.E) * Data.DiffColor);
+	Data.LobePdf = LobeSelectionPdf(Data.LobeCdf);
+
+	return Data;
+}
+
+FMaterialEval ClearCoat_EvalMaterial(
+	float3 V_World,
+	float3 L_World,
+	FPathTracingPayload Payload,
+	float2 DiffuseSpecularScale
+)
+{
+	const FClearCoatData Data = CreateClearCoatData(Payload, V_World);
+	
+	// move vectors into right shading frame
+	const float3 CoatV = Data.CoatV;
+	const float3 CoatL = mul(Data.CoatBasis, L_World);
+	const float3 CoatH = normalize(CoatV + CoatL);
+
+	const float3 BaseV = Data.BaseV;
+	const float3 BaseL = mul(Data.BaseBasis, L_World);
+	const float3 BaseH = normalize(BaseV + BaseL);
+
+
+	const float CoatNoL = saturate(CoatL.z);
+	const float CoatNoV = saturate(CoatV.z);
+	const float CoatNoH = saturate(CoatH.z);
+	const float CoatVoH = saturate(dot(CoatV, CoatH));
+
+	const float BaseNoL = saturate(BaseL.z);
+	const float BaseNoV = saturate(BaseV.z);
+	const float BaseNoH = saturate(BaseH.z);
+	const float BaseVoH = saturate(dot(BaseV, BaseH));
+
+
+	// Coat Specular lobe
+	const float2 CoatGGXResult = GGXEvalReflection(CoatL, CoatV, CoatH, Data.CoatAlpha);
+	const float3 CoatWeight = Data.ClearCoat * ClearCoatFresnel(CoatVoH) * CoatGGXResult.x * Data.Coat.W;
+	const float CoatPdf = CoatGGXResult.y;
+
+	// Calculate transmission through substrate
+	const float3 Transmission = (1.0 - Data.CoatE) * lerp(1.0, SimpleClearCoatTransmittance(CoatNoL, CoatNoV, Payload.Metallic, Payload.BaseColor), Data.ClearCoat);
+
+	// Base Specular lobe
+	const float2 SpecGGXResult = GGXEvalReflection(BaseL, BaseV, BaseH, Data.BaseAlpha);
+	const float3 SpecWeight = Transmission * F_Schlick(Data.SpecColor, BaseVoH) * SpecGGXResult.x * Data.Spec.W;
+	const float SpecPdf = SpecGGXResult.y;
+
+	// Base Diffuse lobe
+	const float3 Diffuse = GetPathTracingDiffuseModel(Data.DiffColor, Payload.Roughness, BaseNoV, BaseNoL, BaseVoH, BaseNoH);
+	const float3 DiffWeight = Transmission * (1 - Data.Spec.E) * Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal);
+	const float DiffPdf = BaseNoL / PI;
+
+	// Combine all lobes together
+	FMaterialEval Result = NullMaterialEval();
+	Result.AddLobeWithMIS(CoatWeight * DiffuseSpecularScale.y, CoatPdf, Data.LobePdf.x);
+	Result.AddLobeWithMIS(SpecWeight * DiffuseSpecularScale.y, SpecPdf, Data.LobePdf.y);
+	Result.AddLobeWithMIS(DiffWeight * DiffuseSpecularScale.x, DiffPdf, Data.LobePdf.z);
+
+	Result.Weight *= Payload.BSDFOpacity;
+	
+	return Result;
+}
+
+FMaterialSample ClearCoat_SampleMaterial(
+	float3 V_World,
+	FPathTracingPayload Payload,
+	float3 RandSample
+)
+{
+	const FClearCoatData Data = CreateClearCoatData(Payload, V_World);
+
+	const float CoatNoV = saturate(Data.CoatV.z);
+	const float BaseNoV = saturate(Data.BaseV.z);
+
+	// choose between layers
+	FMaterialSample Result = NullMaterialSample();
+	const bool bSampledSpecular = RandSample.x < Data.LobeCdf.y;
+	if (bSampledSpecular)
+	{
+		// Sampled specular (coat or base)
+		const bool bSampledCoat = RandSample.x < Data.LobeCdf.x;
+
+		if (bSampledCoat)
+		{
+			RandSample.x = RescaleRandomNumber(RandSample.x, 0.0, Data.LobeCdf.x);
+		}
+		else
+		{
+			RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.x, Data.LobeCdf.y);
+		}
+		const float3 V = bSampledCoat ? Data.CoatV : Data.BaseV;
+		const float3 H = ImportanceSampleVisibleGGX(RandSample.xy, bSampledCoat ? Data.CoatAlpha : Data.BaseAlpha, V).xyz;
+		const float3 L = reflect(-V, H);
+		if (L.z <= 0)
+		{
+			// invalid output direction, skip some work
+			return NullMaterialSample();
+		}
+
+		// reflect and transform
+		Result.Direction = bSampledCoat ? mul(L, Data.CoatBasis) : mul(L, Data.BaseBasis);
+		Result.Roughness = bSampledCoat ? Payload.GetClearCoatRoughness() : Payload.Roughness;
+		Result.ScatterType = PATHTRACER_SCATTER_SPECULAR;
+	}
+	else
+	{
+		// Sampled base diffuse
+		RandSample.x = RescaleRandomNumber(RandSample.x, Data.LobeCdf.y, 1.0);
+
+		const float3 L = CosineSampleHemisphere(RandSample.xy).xyz;
+		Result.Direction = mul(L, Data.BaseBasis);
+		Result.Roughness = 1.0;
+		Result.ScatterType = PATHTRACER_SCATTER_DIFFUSE;
+	}
+
+	// move light vector into right shading frame
+	const float3 L_World = Result.Direction;
+
+	const float3 CoatL = mul(Data.CoatBasis, L_World);
+	const float3 CoatH = normalize(Data.CoatV + CoatL);
+
+	const float3 BaseL = mul(Data.BaseBasis, L_World);
+	const float3 BaseH = normalize(Data.BaseV + BaseL);
+
+	const float CoatNoL = saturate(CoatL.z);
+	const float CoatNoH = saturate(CoatH.z);
+	const float CoatVoH = saturate(dot(Data.CoatV, CoatH));
+
+	const float BaseNoL = saturate(BaseL.z);
+	const float BaseNoH = saturate(BaseH.z);
+	const float BaseVoH = saturate(dot(Data.BaseV, BaseH));
+
+	// Calculate transmission through substrate
+	const float3 Transmission = (1.0 - Data.CoatE) * lerp(1.0, SimpleClearCoatTransmittance(CoatNoL, CoatNoV, Payload.Metallic, Payload.BaseColor), Data.ClearCoat);
+
+	// compute coat and spec evals so we can re-use Pdfs across both branches
+	const float2 CoatGGXResult = GGXEvalReflection(CoatL, Data.CoatV, CoatH, Data.CoatAlpha);
+	const float2 SpecGGXResult = GGXEvalReflection(BaseL, Data.BaseV, BaseH, Data.BaseAlpha);
+	const float CoatPdf = CoatGGXResult.y;
+	const float SpecPdf = SpecGGXResult.y;
+	const float DiffPdf = BaseNoL / PI;
+
+	// evaluate the lobe we sampled
+	if (bSampledSpecular)
+	{
+		const float3 CoatWeight = Data.ClearCoat * ClearCoatFresnel(CoatVoH) * CoatGGXResult.x * Data.Coat.W;
+		const float3 SpecWeight = Transmission * F_Schlick(Data.SpecColor, BaseVoH) * SpecGGXResult.x * Data.Spec.W;
+
+		Result.AddLobeWithMIS(CoatWeight, CoatPdf, Data.LobePdf.x);
+		Result.AddLobeWithMIS(SpecWeight, SpecPdf, Data.LobePdf.y);
+
+		Result.Pdf += Data.LobePdf.z * DiffPdf;
+	}
+	else
+	{
+		// Base Diffuse lobe
+		const float3 Diffuse = GetPathTracingDiffuseModel(Data.DiffColor, Payload.Roughness, BaseNoV, BaseNoL, BaseVoH, BaseNoH);
+		const float3 DiffWeight = Transmission * (1 - Data.Spec.E) * Diffuse * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal);
+
+		Result.AddLobeWithMIS(DiffWeight, DiffPdf, Data.LobePdf.z);
+
+		Result.Pdf += Data.LobePdf.x * CoatPdf;
+		Result.Pdf += Data.LobePdf.y * SpecPdf;
+	}
+
+
+	Result.Weight *= Payload.BSDFOpacity;
+	Result.PositionBiasSign = 1.0;
+
+	return Result;
+}

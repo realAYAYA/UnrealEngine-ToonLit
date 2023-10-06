@@ -1,0 +1,473 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "HairStrandsBindingCommon.ush"
+
+////////////////////////////////////////////////////////////////////////
+// Deform hair mesh basd on RBF weights
+
+#if SHADER_HAIRMESHES
+
+uint VertexCount;
+uint MaxSampleCount;
+
+Buffer<float4> RestSamplePositionsBuffer;
+Buffer<float4> MeshSampleWeightsBuffer;
+
+Buffer<float4> RestPositionBuffer;
+RWBuffer<float4> OutDeformedPositionBuffer;
+
+[numthreads(128, 1, 1)]
+void MainHairMeshesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint VertexIndex = DispatchThreadId.x;
+	if (VertexIndex >= VertexCount)
+		return;
+
+	const float3 RestPosition = RestPositionBuffer[VertexIndex].xyz;
+	const float3 DeformedPosition = ApplyRBF(RestPosition, MaxSampleCount, RestSamplePositionsBuffer, MeshSampleWeightsBuffer);
+	OutDeformedPositionBuffer[VertexIndex] = float4(DeformedPosition,1);
+}
+
+#endif // SHADER_HAIRMESHES
+
+////////////////////////////////////////////////////////////////////////
+// Init RBF point based on mesh position
+
+#if SHADER_SAMPLE_INIT
+
+#ifndef MAX_SECTION_COUNT
+#error MAX_SECTION_COUNT needs to be defined
+#endif
+
+uint PassSectionCount;
+
+// Manual packing for mesh section scalars.  MUST MATCH WITH HairStrandsMeshProjection.cpp
+// PackedSectionScalars: SectionVertexOffset, SectionVertexCount, SectionBufferIndex, *free*
+uint4 PackedSectionScalars[MAX_SECTION_COUNT];
+#define SectionVertexOffset(SectionIndex) PackedSectionScalars[SectionIndex].x
+#define SectionVertexCount(SectionIndex)  PackedSectionScalars[SectionIndex].y
+#define SectionBufferIndex(SectionIndex)  PackedSectionScalars[SectionIndex].z
+
+#if PERMUTATION_POSITION_TYPE == 0
+Buffer<float> VertexPositionsBuffer0;
+Buffer<float> VertexPositionsBuffer1;
+Buffer<float> VertexPositionsBuffer2;
+Buffer<float> VertexPositionsBuffer3;
+Buffer<float> VertexPositionsBuffer4;
+Buffer<float> VertexPositionsBuffer5;
+Buffer<float> VertexPositionsBuffer6;
+Buffer<float> VertexPositionsBuffer7;
+#elif PERMUTATION_POSITION_TYPE == 1
+Buffer<float> RDGVertexPositionsBuffer0;
+Buffer<float> RDGVertexPositionsBuffer1;
+Buffer<float> RDGVertexPositionsBuffer2;
+Buffer<float> RDGVertexPositionsBuffer3;
+Buffer<float> RDGVertexPositionsBuffer4;
+Buffer<float> RDGVertexPositionsBuffer5;
+Buffer<float> RDGVertexPositionsBuffer6;
+Buffer<float> RDGVertexPositionsBuffer7;
+
+#define VertexPositionsBuffer0 RDGVertexPositionsBuffer0
+#define VertexPositionsBuffer1 RDGVertexPositionsBuffer1
+#define VertexPositionsBuffer2 RDGVertexPositionsBuffer2
+#define VertexPositionsBuffer3 RDGVertexPositionsBuffer3
+#define VertexPositionsBuffer4 RDGVertexPositionsBuffer4
+#define VertexPositionsBuffer5 RDGVertexPositionsBuffer5
+#define VertexPositionsBuffer6 RDGVertexPositionsBuffer6
+#define VertexPositionsBuffer7 RDGVertexPositionsBuffer7
+#endif
+
+uint MaxVertexCount;
+uint MaxSampleCount;
+Buffer<uint> SampleIndicesBuffer;
+RWBuffer<float4> OutSamplePositionsBuffer;
+
+[numthreads(128, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{ 
+	const uint SampleIndex = DispatchThreadId.x;
+	if (SampleIndex >= MaxSampleCount) 
+		return;
+
+	const uint VertexIndex = SampleIndicesBuffer[SampleIndex];
+	if (VertexIndex >= MaxVertexCount) 
+		return;
+	
+	bool bValid = false;  
+	uint SectionIndex = 0;
+	for (uint It = 0; It < PassSectionCount; ++It)
+	{
+		if ((VertexIndex >= SectionVertexOffset(It)) && (VertexIndex < (SectionVertexOffset(It) + SectionVertexCount(It))))
+		{
+			SectionIndex = It;
+			bValid = true;
+			break;
+		}
+	}
+	
+	if (!bValid)
+		return;
+
+	float3 SamplePosition = float3(0,0,0);
+	const uint BufferIndex = SectionBufferIndex(SectionIndex);
+	const int LocalIndex = VertexIndex;
+	if (BufferIndex == 0)
+	{
+		SamplePosition.x = VertexPositionsBuffer0.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer0.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer0.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 1)
+	{
+		SamplePosition.x = VertexPositionsBuffer1.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer1.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer1.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 2)
+	{
+		SamplePosition.x = VertexPositionsBuffer2.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer2.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer2.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 3)
+	{
+		SamplePosition.x = VertexPositionsBuffer3.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer3.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer3.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 4)
+	{
+		SamplePosition.x = VertexPositionsBuffer4.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer4.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer4.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 5)
+	{
+		SamplePosition.x = VertexPositionsBuffer5.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer5.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer5.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 6)
+	{
+		SamplePosition.x = VertexPositionsBuffer6.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer6.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer6.Load(LocalIndex * 3 + 2);
+	}
+	else if (BufferIndex == 7)
+	{
+		SamplePosition.x = VertexPositionsBuffer7.Load(LocalIndex * 3 + 0);
+		SamplePosition.y = VertexPositionsBuffer7.Load(LocalIndex * 3 + 1);
+		SamplePosition.z = VertexPositionsBuffer7.Load(LocalIndex * 3 + 2);
+	}
+
+	OutSamplePositionsBuffer[SampleIndex] = float4(SamplePosition,1);
+}
+
+#endif // SHADER_SAMPLE_INIT
+
+////////////////////////////////////////////////////////////////////////
+// Update RBF points
+
+#if SHADER_SAMPLE_UPDATE
+
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+uint MaxSampleCount;
+Buffer<uint> SampleIndicesBuffer;
+Buffer<float> InterpolationWeightsBuffer;
+
+Buffer<float4> SampleRestPositionsBuffer;
+Buffer<float4> SampleDeformedPositionsBuffer;
+
+RWBuffer<float4> OutSampleDeformationsBuffer; 
+
+[numthreads(128, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{ 
+	const uint SampleIndex = DispatchThreadId.x;
+	if (SampleIndex >= HAIR_RBF_ENTRY_COUNT(MaxSampleCount))
+	{
+		return;
+	}
+
+	uint WeightsOffset = SampleIndex * HAIR_RBF_ENTRY_COUNT(MaxSampleCount);
+	float3 SampleDeformation = float3(0,0,0);
+	for(uint i = 0; i < MaxSampleCount; ++i, ++WeightsOffset)
+	{
+		SampleDeformation += InterpolationWeightsBuffer[WeightsOffset] * (SampleDeformedPositionsBuffer[i] - SampleRestPositionsBuffer[i]).xyz;
+	}
+
+	OutSampleDeformationsBuffer[SampleIndex] = float4(SampleDeformation,1);
+}
+
+#endif // SHADER_SAMPLE_UPDATE
+
+////////////////////////////////////////////////////////////////////////
+// Update strands root triangle positions
+
+#if SHADER_MESH_UPDATE
+
+#ifndef MAX_SECTION_COUNT
+#error MAX_SECTION_COUNT needs to be defined
+#endif
+
+uint Pass_SectionStart;
+uint Pass_SectionCount;
+
+uint MaxSectionCount;
+
+// Manual packing for mesh section scalars.  MUST MATCH WITH HairStrandsMeshProjection.cpp
+// PackedMeshSectionScalars1: MeshSectionIndices, MeshMaxIndexCount, MeshMaxVertexCount, MeshIndexOffset
+// PackedMeshSectionScalars2: MeshUVsChannelOffset, MeshUVsChannelCount, MeshSectionBufferIndex, *free*
+uint4 PackedMeshSectionScalars1[MAX_SECTION_COUNT];
+uint4 PackedMeshSectionScalars2[MAX_SECTION_COUNT];
+#define MeshSectionIndices(SectionIndex) PackedMeshSectionScalars1[SectionIndex].x
+#define MeshMaxIndexCount(SectionIndex) PackedMeshSectionScalars1[SectionIndex].y
+#define MeshMaxVertexCount(SectionIndex) PackedMeshSectionScalars1[SectionIndex].z
+#define MeshIndexOffset(SectionIndex) PackedMeshSectionScalars1[SectionIndex].w
+#define MeshUVsChannelOffset(SectionIndex) PackedMeshSectionScalars2[SectionIndex].x
+#define MeshUVsChannelCount(SectionIndex) PackedMeshSectionScalars2[SectionIndex].y
+#define MeshSectionBufferIndex(SectionIndex) PackedMeshSectionScalars2[SectionIndex].z
+
+Buffer<uint> MeshIndexBuffer0;
+Buffer<uint> MeshIndexBuffer1;
+Buffer<uint> MeshIndexBuffer2;
+Buffer<uint> MeshIndexBuffer3;
+Buffer<uint> MeshIndexBuffer4;
+Buffer<uint> MeshIndexBuffer5;
+Buffer<uint> MeshIndexBuffer6;
+Buffer<uint> MeshIndexBuffer7;
+
+// Note on buffer input type
+// There are two different input buffer permutation, as if skin cache is enabled, we are using raw RHI SRV 
+// (while the skin cache system is not converted to RDG). If skin cache is disable, a manual skin compute 
+// update happens in the hair system, and its output are RDG buffers.
+#if PERMUTATION_POSITION_TYPE == 0
+
+Buffer<float> MeshPositionBuffer0;
+Buffer<float> MeshPositionBuffer1;
+Buffer<float> MeshPositionBuffer2;
+Buffer<float> MeshPositionBuffer3;
+Buffer<float> MeshPositionBuffer4;
+Buffer<float> MeshPositionBuffer5;
+Buffer<float> MeshPositionBuffer6;
+Buffer<float> MeshPositionBuffer7;
+
+Buffer<float> MeshPreviousPositionBuffer0;
+Buffer<float> MeshPreviousPositionBuffer1;
+Buffer<float> MeshPreviousPositionBuffer2;
+Buffer<float> MeshPreviousPositionBuffer3;
+Buffer<float> MeshPreviousPositionBuffer4;
+Buffer<float> MeshPreviousPositionBuffer5;
+Buffer<float> MeshPreviousPositionBuffer6;
+Buffer<float> MeshPreviousPositionBuffer7;
+
+#else
+
+Buffer<float> RDGMeshPositionBuffer0;
+Buffer<float> RDGMeshPositionBuffer1;
+Buffer<float> RDGMeshPositionBuffer2;
+Buffer<float> RDGMeshPositionBuffer3;
+Buffer<float> RDGMeshPositionBuffer4;
+Buffer<float> RDGMeshPositionBuffer5;
+Buffer<float> RDGMeshPositionBuffer6;
+Buffer<float> RDGMeshPositionBuffer7;
+
+Buffer<float> RDGMeshPreviousPositionBuffer0;
+Buffer<float> RDGMeshPreviousPositionBuffer1;
+Buffer<float> RDGMeshPreviousPositionBuffer2;
+Buffer<float> RDGMeshPreviousPositionBuffer3;
+Buffer<float> RDGMeshPreviousPositionBuffer4;
+Buffer<float> RDGMeshPreviousPositionBuffer5;
+Buffer<float> RDGMeshPreviousPositionBuffer6;
+Buffer<float> RDGMeshPreviousPositionBuffer7;
+
+#define MeshPositionBuffer0 RDGMeshPositionBuffer0
+#define MeshPositionBuffer1 RDGMeshPositionBuffer1
+#define MeshPositionBuffer2 RDGMeshPositionBuffer2
+#define MeshPositionBuffer3 RDGMeshPositionBuffer3
+#define MeshPositionBuffer4 RDGMeshPositionBuffer4
+#define MeshPositionBuffer5 RDGMeshPositionBuffer5
+#define MeshPositionBuffer6 RDGMeshPositionBuffer6
+#define MeshPositionBuffer7 RDGMeshPositionBuffer7
+
+#define MeshPreviousPositionBuffer0 RDGMeshPreviousPositionBuffer0
+#define MeshPreviousPositionBuffer1 RDGMeshPreviousPositionBuffer1
+#define MeshPreviousPositionBuffer2 RDGMeshPreviousPositionBuffer2
+#define MeshPreviousPositionBuffer3 RDGMeshPreviousPositionBuffer3
+#define MeshPreviousPositionBuffer4 RDGMeshPreviousPositionBuffer4
+#define MeshPreviousPositionBuffer5 RDGMeshPreviousPositionBuffer5
+#define MeshPreviousPositionBuffer6 RDGMeshPreviousPositionBuffer6
+#define MeshPreviousPositionBuffer7 RDGMeshPreviousPositionBuffer7
+
+#endif 
+
+#if PERMUTATION_WITHUV == 1
+Buffer<float2> MeshUVsBuffer0;
+Buffer<float2> MeshUVsBuffer1;
+Buffer<float2> MeshUVsBuffer2;
+Buffer<float2> MeshUVsBuffer3;
+Buffer<float2> MeshUVsBuffer4;
+Buffer<float2> MeshUVsBuffer5;
+Buffer<float2> MeshUVsBuffer6;
+Buffer<float2> MeshUVsBuffer7;
+Buffer<float2> MeshUVsBuffer8;
+#endif
+
+uint MaxUniqueTriangleCount;
+Buffer<uint> UniqueTriangleIndices;
+
+RWBuffer<float4> OutUniqueTriangleCurrPosition;
+
+#if PERMUTATION_PREVIOUS
+RWBuffer<float4> OutUniqueTrianglePrevPosition;
+#endif
+
+#if PERMUTATION_WITHUV == 1
+FHairMeshTriangleWithUVs GetTriangleData(FHairTriangleIndex TriangleIndex, uint SectionIndex, bool bPrevious)
+{
+	#define GetTriangleDataAtIndex(Index) GetTriangleData(TriangleIndex.TriangleIndex, bPrevious ? MeshPreviousPositionBuffer##Index : MeshPositionBuffer##Index, MeshUVsBuffer##Index, MeshIndexBuffer##Index, MeshIndexOffset(SectionIndex), MeshMaxIndexCount(SectionIndex), MeshMaxVertexCount(SectionIndex), MeshUVsChannelOffset(SectionIndex), MeshUVsChannelCount(SectionIndex));
+
+	const uint MeshSectionIndex = MeshSectionBufferIndex(SectionIndex);
+		 if (MeshSectionIndex == 0) { return GetTriangleDataAtIndex(0); } 
+	else if (MeshSectionIndex == 1) { return GetTriangleDataAtIndex(1); }
+	else if (MeshSectionIndex == 2) { return GetTriangleDataAtIndex(2); }
+	else if (MeshSectionIndex == 3) { return GetTriangleDataAtIndex(3); }
+	else if (MeshSectionIndex == 4) { return GetTriangleDataAtIndex(4); }
+	else if (MeshSectionIndex == 5) { return GetTriangleDataAtIndex(5); }
+	else if (MeshSectionIndex == 6) { return GetTriangleDataAtIndex(6); }
+	else if (MeshSectionIndex == 7) { return GetTriangleDataAtIndex(7); }
+	
+	#undef GetTriangleDataAtIndex
+
+	return (FHairMeshTriangleWithUVs)0;
+}
+#else
+FHairMeshTriangle GetTriangleData(FHairTriangleIndex TriangleIndex, uint SectionIndex, bool bPrevious)
+{
+	#define GetTriangleDataAtIndex(Index) GetTriangleData(TriangleIndex.TriangleIndex, bPrevious ? MeshPreviousPositionBuffer##Index : MeshPositionBuffer##Index, MeshIndexBuffer##Index, MeshIndexOffset(SectionIndex), MeshMaxIndexCount(SectionIndex), MeshMaxVertexCount(SectionIndex));
+
+	const uint MeshSectionIndex = MeshSectionBufferIndex(SectionIndex);
+		 if (MeshSectionIndex == 0) { return GetTriangleDataAtIndex(0); }
+	else if (MeshSectionIndex == 1) { return GetTriangleDataAtIndex(1); }
+	else if (MeshSectionIndex == 2) { return GetTriangleDataAtIndex(2); }
+	else if (MeshSectionIndex == 3) { return GetTriangleDataAtIndex(3); }
+	else if (MeshSectionIndex == 4) { return GetTriangleDataAtIndex(4); }
+	else if (MeshSectionIndex == 5) { return GetTriangleDataAtIndex(5); }
+	else if (MeshSectionIndex == 6) { return GetTriangleDataAtIndex(6); }
+	else if (MeshSectionIndex == 7) { return GetTriangleDataAtIndex(7); }
+
+	#undef GetTriangleDataAtIndex
+
+	return (FHairMeshTriangle)0;
+}
+#endif
+
+[numthreads(128, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{ 
+	const uint UniqueTriangleIndex = DispatchThreadId.x;
+	if (UniqueTriangleIndex >= MaxUniqueTriangleCount)
+		return;
+	
+	const FHairTriangleIndex TriangleIndex = UnpackTriangleIndex(UniqueTriangleIndices[UniqueTriangleIndex]);
+	if (TriangleIndex.SectionIndex >= MaxSectionCount)
+		return;
+
+	const uint SectionIndex = TriangleIndex.SectionIndex;
+
+	bool bValid = false;
+	uint SectionSlotIndex = 0;
+	for (uint It=0;It<Pass_SectionCount;++It)
+	{
+		if (MeshSectionIndices(It) == SectionIndex)
+		{
+			SectionSlotIndex = It;
+			bValid = true;
+			break;
+		}
+	}
+	
+	if (!bValid)
+		return;
+
+	// Compute the slod index of the resources for the section index (this is done in multiple pass
+#if PERMUTATION_WITHUV == 1
+	{
+		const FHairMeshTriangleWithUVs Tri = GetTriangleData(TriangleIndex, SectionSlotIndex, false);
+		OutUniqueTriangleCurrPosition[UniqueTriangleIndex * 3 + 0] = float4(Tri.P0, PackUVsToFloat(Tri.UV0));
+		OutUniqueTriangleCurrPosition[UniqueTriangleIndex * 3 + 1] = float4(Tri.P1, PackUVsToFloat(Tri.UV1));
+		OutUniqueTriangleCurrPosition[UniqueTriangleIndex * 3 + 2] = float4(Tri.P2, PackUVsToFloat(Tri.UV2));
+	}
+
+	#if PERMUTATION_PREVIOUS
+	{
+		const FHairMeshTriangleWithUVs Tri = GetTriangleData(TriangleIndex, SectionSlotIndex, true);
+		OutUniqueTrianglePrevPosition[UniqueTriangleIndex * 3 + 0] = float4(Tri.P0, PackUVsToFloat(Tri.UV0));
+		OutUniqueTrianglePrevPosition[UniqueTriangleIndex * 3 + 1] = float4(Tri.P1, PackUVsToFloat(Tri.UV1));
+		OutUniqueTrianglePrevPosition[UniqueTriangleIndex * 3 + 2] = float4(Tri.P2, PackUVsToFloat(Tri.UV2));
+	}
+	#endif
+#else
+	{
+		const FHairMeshTriangle Tri = GetTriangleData(TriangleIndex, SectionSlotIndex, false);
+		OutUniqueTriangleCurrPosition[UniqueTriangleIndex * 3 + 0] = (float4(Tri.P0, 1));
+		OutUniqueTriangleCurrPosition[UniqueTriangleIndex * 3 + 1] = (float4(Tri.P1, 1));
+		OutUniqueTriangleCurrPosition[UniqueTriangleIndex * 3 + 2] = (float4(Tri.P2, 1));
+	}
+
+	#if PERMUTATION_PREVIOUS
+	{
+		const FHairMeshTriangle Tri = GetTriangleData(TriangleIndex, SectionSlotIndex, true);
+		OutUniqueTrianglePrevPosition[UniqueTriangleIndex * 3 + 0] = (float4(Tri.P0, 1));
+		OutUniqueTrianglePrevPosition[UniqueTriangleIndex * 3 + 1] = (float4(Tri.P1, 1));
+		OutUniqueTrianglePrevPosition[UniqueTriangleIndex * 3 + 2] = (float4(Tri.P2, 1));
+	}
+	#endif
+#endif
+}
+
+#endif // SHADER_MESH_UPDATE
+
+////////////////////////////////////////////////////////////////////////
+// Update hair strands offset position
+
+#if SHADER_OFFSET_UPDATE
+
+#if PERMUTATION_USE_GPU_OFFSET
+	Buffer<float4> RootTriangleCurrPositionBuffer;
+	float3 GetOffsetCurrPosition()	{ return RootTriangleCurrPositionBuffer[0].xyz; }
+
+	#if PERMUTATION_PREVIOUS
+	Buffer<float4> RootTrianglePrevPositionBuffer;
+	float3 GetOffsetPrevPosition()	{ return RootTrianglePrevPositionBuffer[0].xyz; }
+	#endif
+#else
+	float3 CPUCurrPositionOffset;
+	float3 CPUPrevPositionOffset;
+
+	float3 GetOffsetCurrPosition()	{ return CPUCurrPositionOffset; }
+	float3 GetOffsetPrevPosition()	{ return CPUPrevPositionOffset; }
+#endif
+
+RWBuffer<float4> OutCurrOffsetBuffer;
+#if PERMUTATION_PREVIOUS
+RWBuffer<float4> OutPrevOffsetBuffer;
+#endif
+
+[numthreads(1, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x > 0)
+		return;
+
+	OutCurrOffsetBuffer[0] = float4(GetOffsetCurrPosition(), 1);
+#if PERMUTATION_PREVIOUS
+	OutPrevOffsetBuffer[0] = float4(GetOffsetPrevPosition(), 1);
+#endif
+}
+
+#endif // SHADER_OFFSET_UPDATE

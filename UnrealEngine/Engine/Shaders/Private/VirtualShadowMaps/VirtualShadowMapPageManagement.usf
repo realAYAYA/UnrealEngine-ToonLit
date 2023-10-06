@@ -1,0 +1,205 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	VirtualShadowMapPageManagement.usf: 
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../WaveOpUtil.ush"
+#include "VirtualShadowMapProjectionStructs.ush"
+#include "VirtualShadowMapProjectionCommon.ush"
+#include "VirtualShadowMapPageAccessCommon.ush"
+#include "VirtualShadowMapStats.ush"
+
+StructuredBuffer<FPhysicalPageMetaData> PhysicalPageMetaData;
+RWStructuredBuffer<uint> OutPageFlags;
+RWStructuredBuffer<uint> OutPageTable;
+RWStructuredBuffer<uint4> OutPageRectBounds;
+
+/**
+* One thread per page physical table flag entry
+*/
+[numthreads(VSM_DEFAULT_CS_GROUP_X, 1, 1)]
+void GenerateHierarchicalPageFlags(uint ThreadId : SV_DispatchThreadID)
+{
+	// early out any overflowing threads.
+	if (ThreadId >= VirtualShadowMap.MaxPhysicalPages)
+	{
+		return;
+	}
+	FPhysicalPageMetaData MetaData = PhysicalPageMetaData[ThreadId];
+
+	if (MetaData.Flags == 0U)
+	{
+		return;
+	}
+
+	// Use the group ID to ensure the compiler knows it is scalar / uniform
+	uint VirtualShadowMapId = MetaData.VirtualShadowMapId;
+	uint GlobalPageTableEntryIndex = CalcPageOffset(VirtualShadowMapId, MetaData.MipLevel, MetaData.PageAddress);
+
+	// No hierarchy to propagate to for single-page pages.
+	const bool bIsSinglePageSm = IsSinglePageVirtualShadowMap(VirtualShadowMapId);
+
+#if 0
+	uint Flag = PageFlags[GlobalPageTableEntryIndex] & VSM_PAGE_FLAGS_BITS_MASK;
+#else
+	// This (non-atomic) read should be safe as we are only using the lower bits,
+	// which are valid before this dispatch, and unchanged by this compute shader.
+	uint Flag = OutPageFlags[GlobalPageTableEntryIndex] & VSM_PAGE_FLAGS_BITS_MASK;
+#endif
+	if (Flag != 0)
+	{
+		uint MipLevel = MetaData.MipLevel;
+		uint2 PageAddress = MetaData.PageAddress;
+		if (bIsSinglePageSm)
+		{
+			// Note: we need to set the page rect bounds for the last mip level, since that is the only one that is valid, logically, for a single-page VSM.
+			//       This is important since this is what filters all the rendering that would otherwise try to draw stuff to the other levels.
+			MipLevel = VSM_MAX_MIP_LEVELS - 1U;
+		}
+
+		// Compute the min/max rect of active pages
+		uint PageBoundIndex = VirtualShadowMapId * VSM_MAX_MIP_LEVELS + MipLevel;
+		InterlockedMin(OutPageRectBounds[PageBoundIndex].x, PageAddress.x);
+		InterlockedMin(OutPageRectBounds[PageBoundIndex].y, PageAddress.y);
+		InterlockedMax(OutPageRectBounds[PageBoundIndex].z, PageAddress.x);
+		InterlockedMax(OutPageRectBounds[PageBoundIndex].w, PageAddress.y);
+
+		if (bIsSinglePageSm)
+		{
+			return;
+		}
+
+		// Loop over H flag levels, this builds a mip pyramid over _each_ mip level in the page table
+		// the 0-th level in this hiearchy is the page table mip level itself.
+		uint MaxHLevel = VSM_MAX_MIP_LEVELS - MipLevel;
+		// Note: starting from 1 as level 0 is the ordinary flag mip level
+		for (uint HMipLevel = 1U; HMipLevel < MaxHLevel; ++HMipLevel)
+		{
+			PageAddress.xy >>= 1U;
+
+			uint HMipBitShift = VSM_PAGE_FLAGS_BITS_PER_HMIP * HMipLevel;
+			uint HMipLevelFlagMask = VSM_PAGE_FLAGS_BITS_MASK << HMipBitShift;
+			uint HMipLevelFlag = Flag << HMipBitShift;
+
+			uint PreviousValue = 0;
+			uint MipToSample = MipLevel + HMipLevel;
+			uint HPageFlagOffset = CalcPageOffset(VirtualShadowMapId, MipToSample, PageAddress);
+			InterlockedOr(OutPageFlags[HPageFlagOffset], HMipLevelFlag, PreviousValue);
+			// If this was already the value for this HMip, then whoever did that will continue up the hierarhcy.
+			// TODO: We could probably get fancier here and let a thread carry through HMip values from multiple
+			// source mips now that they are encoded in a single int, but keeping it simple for now.
+			if ((PreviousValue & HMipLevelFlagMask) == HMipLevelFlag)
+			{
+				break;
+			}
+		}
+	}
+}
+
+
+/**
+* One thread per page in level 0, launched as 1d groups, with 2D grid with Y dim ==  NumFullShadowMaps.
+* This is effectively just a big broadcast operation. There are more efficient ways to do this with
+* fewer threads and wave ops, but given the page counts just relying on memory coalescing is
+* good enough for now.
+*/
+[numthreads(VSM_DEFAULT_CS_GROUP_X, 1, 1)]
+void PropagateMappedMips(uint2 ThreadId : SV_DispatchThreadID, uint2 GroupId : SV_GroupID)
+{
+	const uint NumLevel0Entries = VSM_LEVEL0_DIM_PAGES_XY * VSM_LEVEL0_DIM_PAGES_XY;
+	if (ThreadId.x >= NumLevel0Entries)
+	{
+		return;
+	}
+
+	int VirtualShadowMapID = int(GroupId.y + VSM_MAX_SINGLE_PAGE_SHADOW_MAPS);
+	uint PageTableEntryIndex = ThreadId.x;
+
+	uint2 Level0Page;
+	Level0Page.x = PageTableEntryIndex & ((1U << VSM_LOG2_LEVEL0_DIM_PAGES_XY) - 1U);
+	Level0Page.y = PageTableEntryIndex >> VSM_LOG2_LEVEL0_DIM_PAGES_XY;
+
+	FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapID);
+
+	if (ProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL)
+	{
+		// Directional lights propagate pages to their coarser/larger clipmap levels (and only use mip0 pages)
+		// Each clipmap level is a separate VSM, so we gather any mapped coarser pages as necessary and write only our own page output
+		// There's also technically a race similar to below with other threads writing the PT data we are reading,
+		// but it's still deterministic as long as we only look at pages with "bThisLODValid".
+		// There's some redundant work of course, but this shader is pretty cheap overall
+
+		uint Page0Offset = CalcPageOffset(VirtualShadowMapID, 0, Level0Page);
+		FShadowPhysicalPage pPage0 = ShadowDecodePageTable(OutPageTable[Page0Offset]);
+
+		BRANCH
+		if (!pPage0.bThisLODValid)
+		{
+			const int OffsetScale = (VSM_LEVEL0_DIM_PAGES_XY >> 2);
+			int2 BaseOffset = OffsetScale * ProjectionData.ClipmapCornerRelativeOffset;
+			int2 BasePage   = int2(Level0Page) - BaseOffset;
+
+			// Search for first mapped page past this one
+			uint RemainingLevels = ProjectionData.ClipmapLevelCountRemaining;
+			for (uint ClipmapOffset = 1; ClipmapOffset < RemainingLevels; ++ClipmapOffset)
+			{
+				const int ClipmapLevelId = VirtualShadowMapID + int(ClipmapOffset);
+
+				FVirtualShadowMapProjectionShaderData LevelProjectionData = GetVirtualShadowMapProjectionData(ClipmapLevelId);								
+				int2 LevelOffset = OffsetScale * LevelProjectionData.ClipmapCornerRelativeOffset;
+
+				int2 LevelPage = (BasePage + (LevelOffset << ClipmapOffset)) >> ClipmapOffset;
+				if (IsVirtualShadowMapPageAddressValid(LevelPage, 0))
+				{
+					uint LevelPageOffset = CalcPageOffset(ClipmapLevelId, 0, uint2(LevelPage));
+					FShadowPhysicalPage pPage = ShadowDecodePageTable(OutPageTable[LevelPageOffset]);
+					if (pPage.bThisLODValid)
+					{
+						OutPageTable[Page0Offset] = ShadowEncodePageTable(pPage.PhysicalAddress, ClipmapOffset);
+						break;
+					}
+				}
+				else
+				{
+					// TODO: We're off the edge... can this ever even happen in practice given the construction?
+				}
+			}
+		}
+	}
+	else
+	{
+		// Local lights propagate pages to their coarser mips
+		int MappedPageLevel = -1;
+		uint2 MappedPhysicalAddress = 0;
+
+		for (int Level = (VSM_MAX_MIP_LEVELS - 1); Level >= 0; --Level)
+		{
+			uint2 vPage = Level0Page >> Level;
+			uint PageOffset = CalcPageOffset(VirtualShadowMapID, Level, vPage);
+			FShadowPhysicalPage pPage = ShadowDecodePageTable(OutPageTable[PageOffset]);
+
+			BRANCH
+			if (pPage.bThisLODValid)
+			{
+				// This page is mapped, so leave it alone and propagate downwards
+				MappedPageLevel = Level;
+				MappedPhysicalAddress = pPage.PhysicalAddress;
+			}
+			else if( MappedPageLevel >= 0 )
+			{
+				// This page is not mapped; replace it with our suitably offset parent mapped page
+				// Ensure only one thread writes each value to avoid races, but we read on all threads as the broadcast
+				// Note that this can race with the other threads reading this value, but since bThisLODValid will
+				// always be false on these updated pages the values will be ignored. As long as the writes to the page
+				// table are atomic (currently a single DWORD), this is safe.
+				if (all((vPage << Level) == Level0Page))
+				{
+					uint MipOffset = MappedPageLevel - Level;
+					OutPageTable[PageOffset] = ShadowEncodePageTable(MappedPhysicalAddress, MipOffset);
+				}
+			}
+		}
+	}
+}

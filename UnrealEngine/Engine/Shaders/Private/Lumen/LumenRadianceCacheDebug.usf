@@ -1,0 +1,87 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "LumenRadianceCacheUpdate.ush"
+
+uint MaxNumProbes;
+StructuredBuffer<uint> PriorityHistogram;
+StructuredBuffer<uint> MaxUpdateBucket;
+StructuredBuffer<uint> MaxTracesFromMaxUpdateBucket;
+StructuredBuffer<uint> ProbesToUpdateTraceCost;
+Buffer<uint> ProbeTraceAllocator;
+Buffer<uint> ProbeFreeListAllocator;
+Buffer<uint> ProbeAllocator;
+
+/** 
+ * Print out various stats for debugging radiance cache probe updates
+ */
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void RadianceCacheUpdateStatsCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (all(DispatchThreadId == 0))
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.1, 0.1));
+		Newline(Context);
+
+		LOOP
+		for (uint BucketIndex = 0; BucketIndex < PRIORITY_HISTOGRAM_SIZE; ++BucketIndex)
+		{
+			Print(Context, PriorityHistogram[BucketIndex]);
+
+			if ((BucketIndex + 1) % 8 == 0)
+			{
+				Newline(Context);
+			}
+			else
+			{
+				PrintSymbol(Context, _SPC_);
+			}
+		}
+
+		const uint MaxUpdateBucketIndex = MaxUpdateBucket[0];
+		const uint LocalMaxTracesFromMaxUpdateBucket = MaxTracesFromMaxUpdateBucket[0];
+
+		Newline(Context);
+		Print(Context, TEXT("MaxBucket "));
+		Print(Context, MaxUpdateBucketIndex);
+
+		Newline(Context);
+		Print(Context, TEXT("MaxTracesFromMaxUpdateBucket "));
+		Print(Context, LocalMaxTracesFromMaxUpdateBucket);
+
+		Newline(Context);
+		Print(Context, TEXT("Out "));
+
+		Newline(Context);
+		Print(Context, TEXT(" TraceCost "));
+		Print(Context, ProbesToUpdateTraceCost[0]);
+
+		Newline(Context);
+		Print(Context, TEXT(" TraceCostFromMaxUpdateBucket "));
+		Print(Context, ProbesToUpdateTraceCost[1]);
+
+		Newline(Context);
+		Print(Context, TEXT(" Probes "));
+		Print(Context, ProbeTraceAllocator[0]);
+
+		Newline(Context);
+		Print(Context, TEXT("MaxProbesInAtlas "));
+		Print(Context, MaxNumProbes);
+
+		Newline(Context);
+		Print(Context, TEXT("ProbesInAtlas "));
+		Print(Context, ProbeAllocator[0] - ProbeFreeListAllocator[0]);
+
+		Newline(Context);
+		Print(Context, TEXT("Allocator "));
+		Print(Context, ProbeAllocator[0]);
+
+		Newline(Context);
+		Print(Context, TEXT("FreeList "));
+		Print(Context, ProbeFreeListAllocator[0]);
+	}
+}

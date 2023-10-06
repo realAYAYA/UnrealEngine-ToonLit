@@ -1,0 +1,46 @@
+{
+  "name": "robomerge",
+  "version": "3.0.4",
+  "description": "Automatic P4 merge management bot.",
+  "repository": {},
+  "keywords": [
+    "robomerge"
+  ],
+  "author": "james.hopkin",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node dist/robo/watchdog.js -botname=TEST -devMode",
+    "test": "node dist/robo/unit-tests.js"
+  },
+  "dependencies": {
+    "@hpcc-js/graph": "^2.27.0",
+    "@hpcc-js/wasm": "^0.3.14",
+    "@sentry/node": "^5.7.1",
+    "@types/ldapjs": "^1.0.3",
+    "@types/marked": "^4.0.2",
+    "@types/mustache": "^0.8.32",
+    "@types/node": "^12.12.24",
+    "@types/nodemailer": "^4.3.4",
+    "@types/sanitize-html": "^1.20.2",
+    "@types/semver": "^6.0.2",
+    "@types/swagger-ui-dist": "^3.0.3",
+    "colors": "^1.4.0",
+    "jsonlint": "^1.6.3",
+    "ldapauth-fork": "^4.0.2",
+    "markdown-toc": "^1.2.0",
+    "marked": "^4.0.12",
+    "mustache": "^3.2.1",
+    "node-gzip": "^1.1.2",
+    "nodemailer": "^6.7.0",
+    "nomnom": "^1.5.3",
+    "request": "^2.88.0",
+    "sanitize-html": "^2.5.3",
+    "semver": "^6.1.0",
+    "source-map-support": "^0.5.12",
+    "winston": "^3.2.1"
+  },
+  "devDependencies": {
+    "@types/intl": "^1.2.0",
+    "@types/swagger-ui-express": "^3.0.1"
+  }
+}

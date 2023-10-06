@@ -1,0 +1,475 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	DBufferDecalShared.ush: Common definitions for DBuffer decals
+=============================================================================*/
+
+#pragma once
+
+#ifndef DBUFFER_BASEPASS_RESOURCE
+#define DBUFFER_BASEPASS_RESOURCE 1
+#endif
+
+#if DBUFFER_BASEPASS_RESOURCE
+#define OpaqueBasePassDBufferATexture OpaqueBasePass.DBufferATexture
+#define OpaqueBasePassDBufferBTexture OpaqueBasePass.DBufferBTexture
+#define OpaqueBasePassDBufferCTexture OpaqueBasePass.DBufferCTexture
+#define OpaqueBasePassDBufferRenderMask OpaqueBasePass.DBufferRenderMask
+
+#if SUPPORTS_INDEPENDENT_SAMPLERS
+#define OpaqueBasePassDBufferATextureSampler OpaqueBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferBTextureSampler OpaqueBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferCTextureSampler OpaqueBasePass.DBufferATextureSampler
+#else
+#define OpaqueBasePassDBufferATextureSampler OpaqueBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferBTextureSampler OpaqueBasePass.DBufferBTextureSampler
+#define OpaqueBasePassDBufferCTextureSampler OpaqueBasePass.DBufferCTextureSampler
+#endif
+
+#endif // DBUFFER_BASEPASS_RESOURCE
+
+#if USE_DBUFFER && RAYHITGROUPSHADER
+// This must be set prior to running the generated material code.
+static float4 CurrentPayloadDBufferA = float4(0.0, 0.0, 0.0, 1.0);
+static float4 CurrentPayloadDBufferB = float4(0.0, 0.0, 0.0, 1.0);
+static float4 CurrentPayloadDBufferC = float4(0.0, 0.0, 0.0, 1.0);
+#endif
+
+// Returns a bitmask of DBuffer targets that contain valid data for this pixel.
+// @param BufferUV - UV space in the DBuffer textures
+uint GetDBufferTargetMask(uint2 PixelPos)
+{
+#if USE_DBUFFER && ENABLE_DBUFFER_TEXTURES && !RAYHITGROUPSHADER && !LUMEN_CARD_CAPTURE
+	{
+#	if PLATFORM_SUPPORTS_RENDERTARGET_WRITE_MASK
+		return DecodeRTWriteMask(PixelPos, OpaqueBasePassDBufferRenderMask, 3);
+#	elif PLATFORM_SUPPORTS_PER_PIXEL_DBUFFER_MASK
+		uint Mask = OpaqueBasePassDBufferRenderMask.Load(uint3(PixelPos, 0));
+		return Mask > 0 ? 0x07 : 0x00;
+#	else
+		return 0x07;
+#	endif
+	}
+#elif USE_DBUFFER && RAYHITGROUPSHADER
+	return 0x07;
+#else
+	return 0;
+#endif
+}
+
+// all values that are output by the forward rendering pass
+#if STRATA_ENABLED
+
+void ConvertFromMetalness(
+	in float3 BaseColor,
+	in float Specular,
+	in float Metallic,
+	inout float3 DiffuseAlbedo,
+	inout float3 F0)
+{
+	DiffuseAlbedo = lerp(BaseColor, 0, Metallic);
+	F0			  = lerp(DielectricSpecularToF0(Specular), BaseColor, Metallic);
+}
+
+void ConvertToMetalness(
+	in float3 DiffuseAlbedo,
+	in float3 F0,
+	inout float3 BaseColor,
+	inout float Specular,
+	inout float Metallic)
+{
+	Metallic  = F0RGBToMetallic(F0);
+	Specular  = F0RGBToDielectricSpecular(F0);
+	BaseColor = lerp(DiffuseAlbedo, F0, Metallic);
+}
+
+// @param BufferUV - UV space in the DBuffer textures
+FStrataDBuffer GetDBufferData(float2 BufferUV, uint RTMaskBit)
+{
+	// Setup default values, which mean that no decals are present in DBuffer
+	float4 DBufferA = float4(0.0, 0.0, 0.0, 1.0);
+	float4 DBufferB = float4(128.0f / 255.0f, 128.f / 255.5f, 128.f / 255.5f, 1.0);
+	float4 DBufferC = float4(0.0, 0.0, 0.0, 1.0);
+
+#if USE_DBUFFER && ENABLE_DBUFFER_TEXTURES && !RAYHITGROUPSHADER && !LUMEN_CARD_CAPTURE
+	BRANCH
+	if (RTMaskBit & 0x1) { DBufferA = Texture2DSampleLevel(OpaqueBasePassDBufferATexture, OpaqueBasePassDBufferATextureSampler, BufferUV, 0);	}
+	BRANCH
+	if (RTMaskBit & 0x2) { DBufferB = Texture2DSampleLevel(OpaqueBasePassDBufferBTexture, OpaqueBasePassDBufferBTextureSampler, BufferUV, 0);	}
+	BRANCH
+	if (RTMaskBit & 0x4) { DBufferC = Texture2DSampleLevel(OpaqueBasePassDBufferCTexture, OpaqueBasePassDBufferCTextureSampler, BufferUV, 0);	}
+#elif USE_DBUFFER && RAYHITGROUPSHADER
+	BRANCH
+	if (RTMaskBit & 0x1) { DBufferA = CurrentPayloadDBufferA; }
+	BRANCH // StrataUnpackDBuffer expects DBufferB to have a specific scale and bias
+	if (RTMaskBit & 0x2) { DBufferB = float4(CurrentPayloadDBufferB.rgb * 0.5f + 128.0f / 255.0f, CurrentPayloadDBufferB.a); }
+	BRANCH
+	if (RTMaskBit & 0x4) { DBufferC = CurrentPayloadDBufferC; }
+#endif
+	return StrataUnpackDBuffer(DBufferA, DBufferB, DBufferC);
+}
+
+
+// Define how DBuffer is applied onto existing layers:
+// * 0: Apply DBuffer as per-component parameter blending (legacy mode). Default. 
+// * 1: Apply DBuffer as a coating layer (using parameter blending for efficiency purpose). Not used for now
+#define STRATA_DBUFFER_LEGACY 0
+#define STRATA_DBUFFER_COATING 1
+#define STRATA_DBUFFER_BLENDING_MODE STRATA_DBUFFER_LEGACY
+
+// Define which DBuffers are valid to read from, for this material
+#define STRATA_DBUFFER_RESPONSE_BASECOLOR_BIT_OFFSET 0
+#define STRATA_DBUFFER_RESPONSE_NORMAL_BIT_OFFSET    1
+#define STRATA_DBUFFER_RESPONSE_ROUGHNESS_BIT_OFFSET 2
+
+#define STRATA_DBUFFER_RESPONSE_BASECOLOR (MATERIALDECALRESPONSEMASK & (1<<STRATA_DBUFFER_RESPONSE_BASECOLOR_BIT_OFFSET))
+#define STRATA_DBUFFER_RESPONSE_NORMAL    (MATERIALDECALRESPONSEMASK & (1<<STRATA_DBUFFER_RESPONSE_NORMAL_BIT_OFFSET))
+#define STRATA_DBUFFER_RESPONSE_ROUGHNESS (MATERIALDECALRESPONSEMASK & (1<<STRATA_DBUFFER_RESPONSE_ROUGHNESS_BIT_OFFSET))
+
+#if MATERIAL_IS_STRATA
+void ApplyDBufferData(in FStrataDBuffer StrataDBufferData, inout FStrataPixelHeader StrataPixelHeader, inout FStrataData StrataData)
+{
+	// We cannot early out due when coverage = 0 due to the possibility of using premultipled alpha.
+
+	// For normal, apply decal data onto all basis, without consideration of top layers
+	#if STRATA_DBUFFER_RESPONSE_NORMAL && STRATA_INLINE_SHADING
+	if(any(StrataDBufferData.WorldNormal != 0.0) || StrataDBufferData.OneMinusCoverage_WorldNormal < 1.0)
+	{
+		UNROLL
+		for (uint i = 0; i < StrataPixelHeader.SharedLocalBases.Count; ++i)
+		{
+			// Note:
+			// * Assume Normal is already been normalized
+			// * After modification we normalize the normal to get smoother visual result (it helps to avoid having D_GGX explodes toward infinity)
+			// 
+			// STRATA_TODO: 
+			// * If the normal is shared by different layers on which decals would be applied differently (e.g., one affected, not the other), we 
+			//   would need to add a new normal entry and modify it. 
+			// * If the basis has a tangent, the average operation should be changed into a basis sler/rotation
+			StrataPixelHeader.SharedLocalBases.Normals[i] = normalize(StrataPixelHeader.SharedLocalBases.Normals[i] * StrataDBufferData.OneMinusCoverage_WorldNormal + StrataDBufferData.WorldNormal);
+			//if (StrataGetSharedLocalBasisType(StrataPixelHeader.SharedLocalBases.Types, i) == STRATA_BASIS_TYPE_TANGENT)
+			//{
+			//	StrataPixelHeader.SharedLocalBases.Tangents[i] = normalize(StrataPixelHeader.SharedLocalBases.Tangents[i]);
+			//}
+		}
+	}
+	#endif
+
+	const bool bAffectDiffuse = any(StrataDBufferData.BaseColor > 0) || StrataDBufferData.OneMinusCoverage_BaseColor < 1.0;
+	const bool bAffectF0Rough = any(StrataDBufferData.Metallic > 0) || any(StrataDBufferData.Specular > 0) || any(StrataDBufferData.Roughness > 0) || StrataDBufferData.OneMinusCoverage_Roughness < 1.0;
+	if (!bAffectDiffuse && !bAffectF0Rough)
+	{
+		return;
+	}
+
+	// For now apply decal data onto all layers, without consideration of top layers
+	STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
+	for (int BSDFIdx = 0; BSDFIdx < StrataPixelHeader.StrataTree.BSDFCount; ++BSDFIdx)
+	{
+	#define BSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
+
+		switch (BSDF_GETTYPE(BSDF))
+		{
+			case STRATA_BSDF_TYPE_SLAB:
+			{	
+				// Note:
+				// * For Slab, since the DBuffer is stored with a Metalness parameterization for storage-space reason, 
+				//   we were convert back&forth the Slab data between DiffuseAlbedo/F0 and Metalness. 
+				// * However, this is a non identy operation even when non decal so material look could be changed.
+				//   Furthermore this resulted in some transition edges being visible where the decal was being applied
+				//=> We now do computation in Diffuse/F0 space. It is still not perfectly matching legacy 
+				//   but at least the null operation is identity and no more transition edges are visible.
+					
+				// Apply DBuffer as per-component parameter blending (legacy mode)
+				#if STRATA_DBUFFER_BLENDING_MODE == STRATA_DBUFFER_LEGACY
+				{
+					// The original metallic, before the decal touched the slab.
+					// We use MIN on F0 to nor remove too much energy when metallic is lowered and have smoother metallic gradient with low F0.
+					float SlabMetallic = F0ToMetallic(min(SLAB_F0(BSDF).r, min(SLAB_F0(BSDF).g, SLAB_F0(BSDF).b)));
+
+				#if STRATA_DBUFFER_RESPONSE_BASECOLOR || STRATA_DBUFFER_RESPONSE_ROUGHNESS
+					float3 DecalDiffuse;
+					float3 DecalF0;
+					ConvertFromMetalness(StrataDBufferData.BaseColor, StrataDBufferData.Specular, StrataDBufferData.Metallic, DecalDiffuse, DecalF0);
+
+					if (bAffectDiffuse || bAffectF0Rough)
+					{
+						// Affect F0 if basecolor or metallic are changed.
+						SLAB_F0(BSDF) = SLAB_F0(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + DecalF0;
+					}
+				#endif
+
+				#if STRATA_DBUFFER_RESPONSE_BASECOLOR
+					if (bAffectDiffuse)
+					{
+						// Diffuse albedo is affected by throughpu and decal diffuse contribution
+						SLAB_DIFFUSEALBEDO(BSDF) = SLAB_DIFFUSEALBEDO(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor	+ DecalDiffuse;
+
+						// Fade out fuzz to avoid overbright decal.
+						SLAB_FUZZ_AMOUNT(BSDF) *= StrataDBufferData.OneMinusCoverage_BaseColor;
+
+						// Disable SSS when the coverage reach one to preserve the decal color. 
+						// That operation also progressively makes non top layer disapear.
+						// Since this is ran before the strata tree is processed, we must use TmpMFP and not SLAB_SSSMFP.
+						BSDF.TmpMFP = BSDF.TmpMFP * StrataDBufferData.OneMinusCoverage_BaseColor;
+						if (StrataDBufferData.OneMinusCoverage_BaseColor == 0.0f)
+						{
+							BSDF_SETSSSTYPE(BSDF, SSS_TYPE_INVALID);
+						}
+					}
+				#endif
+
+				#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
+					if (bAffectF0Rough)
+					{
+						// Now also operate a change to reflect the change of metallic
+						float NewMetallic = SlabMetallic * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Metallic;
+						
+						if (NewMetallic >= SlabMetallic)
+						{
+							float TransferDelta		 = (NewMetallic - SlabMetallic);	// Positive or zero
+							SLAB_F0(BSDF)			+= TransferDelta * SLAB_DIFFUSEALBEDO(BSDF);
+							SLAB_DIFFUSEALBEDO(BSDF)-= TransferDelta * SLAB_DIFFUSEALBEDO(BSDF);
+						}
+						else
+						{
+							float TransferDelta =-(NewMetallic - SlabMetallic);			// Positive
+
+							float CurrentSpecular		= F0ToDielectricSpecular(min(SLAB_F0(BSDF).r, min(SLAB_F0(BSDF).g, SLAB_F0(BSDF).b)));
+							float F0ThatCannotTransfer	= DielectricSpecularToF0(CurrentSpecular);
+							float3 F0ThatCanTransfer	= saturate(SLAB_F0(BSDF) - F0ThatCannotTransfer);
+
+							SLAB_DIFFUSEALBEDO(BSDF)+= TransferDelta * F0ThatCanTransfer;
+							SLAB_F0(BSDF)			-= TransferDelta * F0ThatCanTransfer;
+						}
+					
+						SLAB_ROUGHNESS(BSDF)	= SLAB_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
+					
+						// Also fade out other specular features since we consider decal to have not specular features.
+						if (BSDF_GETHASHAZINESS(BSDF))
+						{
+							FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+							Haziness.Weight *= StrataDBufferData.OneMinusCoverage_Roughness;
+							SLAB_HAZINESS(BSDF) = PackHaziness(Haziness);
+						}
+					
+						SLAB_ANISOTROPY(BSDF) *= StrataDBufferData.OneMinusCoverage_Roughness;
+					}
+				#endif
+				}
+				// Apply DBuffer as a coating layer (using parameter blending for efficiency purpose)
+				#elif STRATA_DBUFFER_BLENDING_MODE == STRATA_DBUFFER_COATING
+				{
+					// Since all DBuffer parameters are not necessary initialized, take default value from the existing BDSF
+					FStrataDBuffer LocalStrataDBufferData = StrataDBufferData;
+					{
+						float3 SlabBaseColor = 0;
+						float  SlabMetallic = 0;
+						float  SlabSpecular = 0;
+						ConvertToMetalness(SLAB_DIFFUSEALBEDO(BSDF), SLAB_F0(BSDF), SlabBaseColor, SlabSpecular, SlabMetallic);
+					#if !STRATA_DBUFFER_RESPONSE_BASECOLOR
+						LocalStrataDBufferData.BaseColor					= LocalStrataDBufferData.Coverage * SlabBaseColor;
+						LocalStrataDBufferData.OneMinusCoverage_BaseColor	= LocalStrataDBufferData.OneMinusCoverage;
+					#endif
+					#if !STRATA_DBUFFER_RESPONSE_ROUGHNESS
+						LocalStrataDBufferData.Metallic						= LocalStrataDBufferData.Coverage * SlabMetallic;
+						LocalStrataDBufferData.Specular						= LocalStrataDBufferData.Coverage * SlabSpecular;
+						LocalStrataDBufferData.Roughness					= LocalStrataDBufferData.Coverage * SLAB_ROUGHNESS(BSDF);
+						LocalStrataDBufferData.OneMinusCoverage_Roughness	= LocalStrataDBufferData.OneMinusCoverage;
+					#endif
+					}
+
+					FStrataPixelHeader StrataDecalHeader;
+					FStrataData StrataDecalData;
+					StrataDecalHeader.StrataConvertFromDBuffer(LocalStrataDBufferData, StrataDecalData);
+
+					// Parameters blend attributes
+					const float Coverage = StrataDecalData.Layers[l].BSDFs[i].Coverage;
+					const float DummyNoV = 1;
+					BSDF = StrataVerticalLayeringParameterBlending(StrataDecalData.Layers[l].BSDFs[i], BSDF, BasisIndex, DummyNoV);
+				}
+				#endif // STRATA_DBUFFER_BLENDING_MODE
+				break;
+			}
+
+			case STRATA_BSDF_TYPE_HAIR:
+			{
+			#if STRATA_DBUFFER_RESPONSE_BASECOLOR
+				HAIR_BASECOLOR(BSDF) = HAIR_BASECOLOR(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + StrataDBufferData.BaseColor;
+			#endif
+
+			#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
+				HAIR_ROUGHNESS(BSDF) = HAIR_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
+				HAIR_SPECULAR(BSDF)  = HAIR_SPECULAR(BSDF)  * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Specular;
+			#endif
+				break;
+			}
+
+			case STRATA_BSDF_TYPE_EYE:
+			{
+			#if STRATA_DBUFFER_RESPONSE_BASECOLOR
+				EYE_DIFFUSEALBEDO(BSDF) = EYE_DIFFUSEALBEDO(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + StrataDBufferData.BaseColor;
+			#endif
+
+			#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
+				EYE_ROUGHNESS(BSDF) = EYE_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
+			#endif
+				break;
+			}
+
+			case STRATA_BSDF_TYPE_SINGLELAYERWATER:
+			{
+			#if STRATA_DBUFFER_RESPONSE_BASECOLOR
+				SLW_BASECOLOR(BSDF) = SLW_BASECOLOR(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + StrataDBufferData.BaseColor;
+			#endif
+
+			#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
+				SLW_ROUGHNESS(BSDF) = SLW_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
+				SLW_SPECULAR(BSDF)  = SLW_SPECULAR(BSDF)  * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Specular;
+				SLW_METALLIC(BSDF)  = SLW_METALLIC(BSDF)  * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Metallic;
+			#endif
+				break;
+			}
+		} // switch
+
+	#undef BSDF
+	}
+}
+#endif // MATERIAL_IS_STRATA
+#else // STRATA_ENABLED
+struct FDBufferData
+{
+	// 0..1, premultiplied with ColorOpacity
+	float3 PreMulColor;
+	// 0:opaque ..1:see through
+	float ColorOpacity;
+
+	// -1..1, premultiplied with NormalOpacity
+	float3 PreMulWorldNormal;
+	// 0:opaque ..1:see through
+	float NormalOpacity;
+
+	// 0..1, premultiplied with RoughnessOpacity
+	float PreMulRoughness;
+	// 0..1, premultiplied with RoughnessOpacity
+	float PreMulMetallic;
+	// 0..1, premultiplied with RoughnessOpacity
+	float PreMulSpecular;
+	// 0:opaque ..1:see through
+	float RoughnessOpacity;
+};
+
+/** Populates DBufferA, DBufferB, DBufferC as float4 and puts opacity in alpha for frame buffer blending */
+// @param MultiOpacity .x: Color, .y:Normal, .z:Roughness/Metallic/Specular
+void EncodeDBufferData(FGBufferData GBufferData, float3 MultiOpacity,
+	out float4 DBufferA,
+	out float4 DBufferB,
+	out float4 DBufferC)
+{
+	// UNORM 4 channel
+	DBufferA = float4(GBufferData.BaseColor, MultiOpacity.x);
+
+	// UNORM 4 channel, 128/255 represents 0
+	DBufferB = float4(GBufferData.WorldNormal * 0.5f + 128.0f/255.0f, MultiOpacity.y);
+
+	// UNORM 4 channel
+	DBufferC = float4(GBufferData.Metallic, GBufferData.Specular, GBufferData.Roughness, MultiOpacity.z);
+}
+
+/** Populates FDBufferData */
+FDBufferData DecodeDBufferData(
+	float4 DBufferA,
+	float4 DBufferB,
+	float4 DBufferC)
+{
+	FDBufferData ret;
+
+	// UNORM 4 channel
+	ret.PreMulColor = DBufferA.rgb;
+	ret.ColorOpacity = DBufferA.a;
+
+	// UNORM 4 channel, 128/255 represents 0
+	ret.PreMulWorldNormal = DBufferB.rgb * 2 - (256.0 / 255.0);
+	ret.NormalOpacity = DBufferB.a;
+
+	// UNORM 4 channel
+	ret.PreMulMetallic = DBufferC.r;
+	ret.PreMulSpecular = DBufferC.g;
+	ret.PreMulRoughness = DBufferC.b;
+	ret.RoughnessOpacity = DBufferC.a;
+
+	return ret;
+}
+
+// @param BufferUV - UV space in the DBuffer textures
+FDBufferData GetDBufferData(float2 BufferUV, uint RTMaskBit)
+{
+	// Setup default values, which mean that no decals are present in DBuffer
+	float4 DBufferA = float4(0.0, 0.0, 0.0, 1.0);
+	float4 DBufferB = float4(128.0f / 255.0f, 128.f / 255.5f, 128.f / 255.5f, 1.0);
+	float4 DBufferC = float4(0.0, 0.0, 0.0, 1.0);
+
+#if USE_DBUFFER && ENABLE_DBUFFER_TEXTURES && !RAYHITGROUPSHADER && !LUMEN_CARD_CAPTURE
+	BRANCH
+	if (RTMaskBit & 0x1)
+	{
+		DBufferA = Texture2DSampleLevel(OpaqueBasePass.DBufferATexture, OpaqueBasePassDBufferATextureSampler, BufferUV, 0);
+	}
+
+	BRANCH
+	if (RTMaskBit & 0x2)
+	{
+		DBufferB = Texture2DSampleLevel(OpaqueBasePass.DBufferBTexture, OpaqueBasePassDBufferBTextureSampler, BufferUV, 0);
+	}
+
+	BRANCH
+	if (RTMaskBit & 0x4)
+	{
+		DBufferC = Texture2DSampleLevel(OpaqueBasePass.DBufferCTexture, OpaqueBasePassDBufferCTextureSampler, BufferUV, 0);
+	}
+#elif USE_DBUFFER && RAYHITGROUPSHADER
+	BRANCH
+	if (RTMaskBit & 0x1)
+	{
+		DBufferA = CurrentPayloadDBufferA;
+	}
+
+	BRANCH
+	if (RTMaskBit & 0x2)
+	{
+		// DecodeDBufferData expects DBufferB to have a specific scale and bias
+		DBufferB = float4(CurrentPayloadDBufferB.rgb * 0.5f + 128.0f / 255.0f, CurrentPayloadDBufferB.a);
+	}
+
+	BRANCH
+	if (RTMaskBit & 0x4)
+	{
+		DBufferC = CurrentPayloadDBufferC;
+	}
+#endif
+
+	return DecodeDBufferData(DBufferA, DBufferB, DBufferC);
+}
+
+/** Populates DBufferA, DBufferB, DBufferC as float4 and puts opacity in alpha for frame buffer blending */
+void ApplyDBufferData(
+	FDBufferData DBufferData, inout float3 WorldNormal, inout float3 SubsurfaceColor, inout float Roughness, 
+	inout float3 BaseColor, inout float Metallic, inout float Specular )
+{
+#if (MATERIALDECALRESPONSEMASK & 0x1)
+	BaseColor = BaseColor * DBufferData.ColorOpacity + DBufferData.PreMulColor;
+	SubsurfaceColor *= DBufferData.ColorOpacity;
+#endif
+
+#if (MATERIALDECALRESPONSEMASK & 0x2)
+	// We normalise the normal to get smoother visual result (it helps to avoid having D_GGX explodes toward infinity, and matches DecodeGBufferData)
+	WorldNormal = normalize(WorldNormal * DBufferData.NormalOpacity + DBufferData.PreMulWorldNormal);
+#endif
+
+#if (MATERIALDECALRESPONSEMASK & 0x4)
+	Roughness = Roughness * DBufferData.RoughnessOpacity + DBufferData.PreMulRoughness;
+	Metallic = Metallic * DBufferData.RoughnessOpacity + DBufferData.PreMulMetallic;
+	Specular = Specular * DBufferData.RoughnessOpacity + DBufferData.PreMulSpecular;
+#endif
+}
+#endif // STRATA_ENABLED

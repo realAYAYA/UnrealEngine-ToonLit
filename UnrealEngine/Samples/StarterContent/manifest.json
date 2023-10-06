@@ -1,0 +1,61 @@
+﻿{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Starter Content"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "初学者内容包"
+		},
+		{
+			"Language": "ko",
+			"Text": "시작용 콘텐츠"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "A collection of miscellaneous assets to include in your unreal project.\nSeveral static mesh props such as a table, a chair, a door, lamp etc.\nA number of textures, bricks, clay, wood and so forth.\nBasic mesh shapes a sphere, tube, torus etc.\nSample audio - an explosion, sparks, birds etc.\nParticles such as fire, dust and explosion.\nSome walls, floors and windows.\nSome sample blueprints."
+
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "为你的虚幻项目添加一系列资产。\n其中包含：静态网格体道具（如桌子、椅子、门、台灯等）\n一系列纹理（如砖块、陶土、木材等）\n基础网格体形状（如球体、管道和环形等）\n示例音频（如爆炸、火花、鸟鸣等）\n粒子效果（如火焰、尘土和爆炸等）\n墙壁、底板和窗户。\n示例蓝图。"
+
+		},
+		{
+
+			"Language": "ja",
+			"Text": "Unreal のプロジェクトに含めることができるさまざまなアセットのコレクションです。\nメッシュ プロップ ― テーブル、イス、ドア、ランプなど。\n多彩なテクスチャ ― レンガ、クレイ、木など。\n基本的なメッシュ図形 ― 球体、管、トーラスなど。\nサンプル オーディオ ― 爆発、火花、鳥など。\n壁、フロア、窓。\nサンプルのブループリント。"
+		},
+		{
+
+			"Language": "ko",
+			"Text": "언리얼 프로젝트에 추가할 수 있는 각종 애셋의 컬렉션입니다.\n식탁, 의자, 문, 램프 등 다양한 스태틱 메시 포함.\n텍스처, 벽돌, 클레이, 우드 등 다수의 텍스처 포함.\n스피어, 튜브, 토러스 등 기본적인 메시 셰이프 포함.\n폭발, 스파크, 새소리 등 샘플 오디오포함.\n불, 먼지, 폭발 등 파티클 포함.\n벽, 바닥, 창문 등 포함.\n샘플 블루프린트 포함."
+		}
+	],
+	"AssetTypes": [],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": "StarterContent,Props,Bush,Rock,Lamp,Table,Wall,Couch,Door,Pipe,Brick,Concrete,Wood,Metal,Rock,Tile,Cobble"
+		},
+		{
+
+			"Language": "ja",
+			"Text": "スターターコンテンツ,プロップ,ブッシュ,岩,ランプ,テーブル,壁,カウチ,ドア,管,レンガ,コンクリート,木,金属,岩,タイル,敷石"
+		}
+	],
+	"ClassTypes": "",
+	"Category": "Content",
+	"Thumbnail": "StarterContent.png",
+	"Screenshots":
+	[
+		"StarterContent_Preview.png"
+	]
+}

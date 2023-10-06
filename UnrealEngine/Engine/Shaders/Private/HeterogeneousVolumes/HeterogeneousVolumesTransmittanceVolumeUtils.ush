@@ -1,0 +1,33 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#ifndef DIM_USE_TRANSMITTANCE_VOLUME
+#define DIM_USE_TRANSMITTANCE_VOLUME 0
+#endif // DIM_USE_TRANSMITTANCE_VOLUME
+
+#define LIGHTING_CACHE_TRANSMITTANCE 0
+#define LIGHTING_CACHE_INSCATTERING 1
+
+uint3 LightingCacheResolution;
+float LightingCacheVoxelBias;
+Texture3D LightingCacheTexture;
+
+uint3 GetLightingCacheResolution()
+{
+	return LightingCacheResolution;
+}
+
+float GetLightingCacheVoxelBias()
+{
+	return LightingCacheVoxelBias;
+}
+
+float3 SampleLightingCache(float3 UVW, float MipLevel)
+{
+	float3 Transmittance = Texture3DSampleLevel(
+		LightingCacheTexture,
+		View.SharedTrilinearClampedSampler,
+		UVW,
+		MipLevel).xyz;
+
+	return Transmittance;
+}

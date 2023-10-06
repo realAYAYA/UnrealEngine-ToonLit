@@ -1,0 +1,4 @@
+../../../Templates/TP_MFG_HandheldARBP/manifest.json
+../../../Templates/TP_MFG_HandheldARBP/Config/config.ini
+../../../Templates/TP_MFG_HandheldARBP/Media/TP_MFG_HandheldARBP.png
+../../../Templates/TP_MFG_HandheldARBP/Media/TP_MFG_HandheldARBP_Preview.png

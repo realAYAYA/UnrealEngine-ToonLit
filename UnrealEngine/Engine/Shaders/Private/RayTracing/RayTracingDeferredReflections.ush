@@ -1,0 +1,155 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "RayTracingCommon.ush"
+#include "RayTracingReflectionsCommon.ush"
+
+#define REFLECTION_RAY_DIRECTION_SORT_TILE_SIZE 32
+
+struct FSortedReflectionRay
+{
+	float3	Origin;
+	uint	PixelCoordinates;
+	
+	uint2   DirectionPacked; // fp16
+	float   Pdf;
+
+	float3 GetDirection()
+	{
+		float3 Result;
+		Result.x = f16tof32(DirectionPacked.x & 0xFFFF);
+		Result.y = f16tof32(DirectionPacked.x >> 16);
+		Result.z = f16tof32(DirectionPacked.y);
+		return Result;
+	}
+
+	void SetDirection(float3 Direction)
+	{
+		uint X = f32tof16(Direction.x);
+		uint Y = f32tof16(Direction.y);
+		uint Z = f32tof16(Direction.z);
+		DirectionPacked.x = X | (Y << 16);
+		DirectionPacked.y = Z;
+	}
+
+	float	Roughness; // Only technically need 8 bits, the rest could be repurposed
+};
+
+uint PackPixelCoordinates(uint2 PixelCoordinates)
+{
+	return (PixelCoordinates.x & 0xFFFF)
+	     | (PixelCoordinates.y << 16);
+}
+
+uint2 UnpackPixelCoordinates(uint PixelCoordinates)
+{
+	return uint2(
+		PixelCoordinates & 0xFFFF,
+		PixelCoordinates >> 16);
+}
+
+float ApplySmoothBias(float Roughness, float SmoothBias)
+{
+	if (SmoothBias >= 0)
+	{
+		// SmoothStep-like function up to SmoothBias, original value above
+		float X = saturate(Roughness / SmoothBias);
+		return Roughness * X * X * (3.0 - 2.0 * X);
+	}
+	else
+	{
+		// Negative value forces mirror-like reflections
+		return 0;
+	}
+}
+
+float GetRayTracingClearCoatApproximateRoughness(FGBufferData GBuffer)
+{
+	// Use the similar clearcoat approximation as SSR: simply blend base and clear coat roughness
+	// #todo: stochastic clearcoat
+	if (GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+	{
+		const float ClearCoat = GBuffer.CustomData.x;
+		const float ClearCoatRoughness = GBuffer.CustomData.y;
+
+		// Combined reflection roughness is biased towards clear coat. 
+		// The approximation is quite arbitrary, based on empirical results.
+		return lerp(ClearCoatRoughness, GBuffer.Roughness, pow(1.0 - ClearCoat, 4.0));
+	}
+	else
+	{
+		return GBuffer.Roughness;
+	}
+}
+
+FSortedReflectionRay GenerateDeferredReflectionRay(uint2 PixelPos, float2 UpscaleFactor, float ReflectionMaxNormalBias, float SmoothBias)
+{
+	// NOTE: GetPixelCoord() helper is currently intentionally not used here, as it introduces noticeable jitter when upscale factor is used.
+	// Subpixels could potentially be taken into account at a later point, if denoiser can compensate for the jitter.
+	float2 SvPosition = floor(float2(PixelPos) * UpscaleFactor);
+	const float2 BufferUV = (SvPosition + 0.5) * View.BufferSizeAndInvSize.zw;
+
+    // not 'const', may need to be modified below
+	FGBufferData GBuffer         = GetGBufferDataFromSceneTextures(BufferUV);
+	float DeviceZ                = SampleDeviceZFromSceneTextures(BufferUV);
+
+	float3 TranslatedWorldPosition;
+	float3 CameraDirection;
+	ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(SvPosition, DeviceZ, TranslatedWorldPosition, CameraDirection);
+	float3 V = -CameraDirection;
+
+	ModifyGGXAnisotropicNormalRoughness(GBuffer.WorldTangent, GBuffer.Anisotropy, GBuffer.Roughness, GBuffer.WorldNormal, V);
+
+	FSortedReflectionRay Ray = (FSortedReflectionRay)0;
+	Ray.PixelCoordinates = PackPixelCoordinates(PixelPos);
+
+	if (GBuffer.ShadingModelID == SHADINGMODELID_HAIR 
+	 || GBuffer.ShadingModelID == SHADINGMODELID_UNLIT)
+	{
+		return Ray;
+	}
+
+	GBuffer.Roughness = GetRayTracingClearCoatApproximateRoughness(GBuffer);
+
+	float2 E = Rand1SPPDenoiserInput(PixelPos);
+	
+	const bool bOutputForDenoiser = true; // #todo: pass this in via constants when denoiser is on
+	if (bOutputForDenoiser)
+	{
+		E.y *= 1 - GGX_IMPORTANT_SAMPLE_BIAS;
+	}
+
+	float3 N = GBuffer.WorldNormal;
+	float3x3 TangentBasis = GetTangentBasis(N);
+	float3 TangentV       = mul(TangentBasis, V);
+
+	float3 L = (float3)0;
+
+	float SampleRoughness = ApplySmoothBias(GBuffer.Roughness, SmoothBias);
+
+	if (SampleRoughness > 0)
+	{
+		// Biased roughness is used for GGX sampling, but original value is still used to compute roughness threshold / fade.
+		// This means that biased roughness will never cause more rays to be traced, so will never cause performance drop.
+		float4 BRDFSample = ImportanceSampleVisibleGGX(E, Pow2(SampleRoughness), TangentV);
+		float3 H = mul(BRDFSample.xyz, TangentBasis);
+		L = 2 * dot(V, H) * H - V;
+		Ray.Pdf = BRDFSample.w;
+	}
+	else
+	{
+		L = reflect(-V, GBuffer.WorldNormal);
+		Ray.Pdf = 1;
+	}
+
+	Ray.Origin = TranslatedWorldPosition;
+	Ray.SetDirection(L);
+
+	ApplyCameraRelativeDepthBias(Ray.Origin, L, SvPosition, DeviceZ, GBuffer.WorldNormal, ReflectionMaxNormalBias);
+
+	Ray.Roughness = GBuffer.Roughness;
+
+	return Ray;
+}

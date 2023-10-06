@@ -1,0 +1,304 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../SplineMeshCommon.ush"
+
+#include "NaniteDataDecode.ush"
+#include "NaniteAttributeDecode.ush"
+
+Texture2D<UlongType> VisBuffer64;
+Texture2D<float> SceneDepth;
+Texture2D<uint> ShadingMask;
+ByteAddressBuffer MaterialSlotTable;
+ByteAddressBuffer MaterialDepthTable;
+ByteAddressBuffer MaterialEditorTable;
+ByteAddressBuffer MaterialHitProxyTable;
+
+StructuredBuffer<FNaniteShadingBinMeta> ShadingBinMeta;
+
+#if USE_EDITOR_SHADERS
+Buffer<uint> EditorSelectedHitProxyIds;
+#endif
+
+// .xy = min, .zw = max
+uint4 ViewRect;
+
+float InvShaderBudget;
+float3 SelectionColor;
+
+// Note: Must match EDebugViewMode in NaniteVisualize.h
+#define DEBUG_VIEW_NONE 0
+#define DEBUG_VIEW_WIREFRAME 1
+#define DEBUG_VIEW_SHADER_COMPLEXITY 2
+#define DEBUG_VIEW_LIGHTMAP_DENSITY 3
+uint DebugViewMode;
+
+#define SOBEL_WIREFRAME_FILTER_ONLY 0
+
+float3 ApplyWireframeFilter(uint2 PixelPosXY, uint DepthInt, float3 WireColor)
+{
+	// Sobel edge detect depth
+	static int SobelX[] =
+	{
+		1,  0, -1,
+		2,  0, -2,
+		1,  0, -1
+	};
+
+	static int SobelY[] =
+	{
+		 1,  2,  1,
+		 0,  0,  0,
+		-1, -2, -1
+	};
+
+	static uint2 UVSample[] =
+	{
+		{-1,  1},  {0,  1},  {1,  1},
+		{-1,  0},  {0,  0},  {1,  0},
+		{-1, -1},  {0, -1},  {1, -1}
+	};
+
+	float2 DepthGrad = 0.0f;
+	uint2 BitGrad = 0x88888888;
+
+	uint DepthIntCurrent;
+	uint VisibleClusterIndexCurrent;
+	uint TriIndexCurrent;
+
+	for (uint Tap = 0; Tap < 9u; ++Tap)
+	{
+		const UlongType VisPixelCurrent = VisBuffer64[PixelPosXY + UVSample[Tap]];
+		UnpackVisPixel(VisPixelCurrent, DepthIntCurrent, VisibleClusterIndexCurrent, TriIndexCurrent);
+
+		float SampleDensityDepth = log2(ConvertFromDeviceZ(asfloat(DepthIntCurrent)) + 1.0f) * 10.0f;
+
+		DepthGrad += float2(SobelX[Tap], SobelY[Tap]) * SampleDensityDepth;
+
+		uint Bits = 0;
+		for (uint BitIndex = 0; BitIndex < 8; ++BitIndex)
+		{
+			Bits |= ((TriIndexCurrent >> BitIndex) & 1u) << (BitIndex * 4u);
+		}
+
+		BitGrad.x += SobelX[Tap] * Bits;
+		BitGrad.y += SobelY[Tap] * Bits;
+	}
+
+	float Wireframe = 0;
+	for (uint BitIndex = 0; BitIndex < 8; ++BitIndex)
+	{
+		float2 Grad = (BitGrad >> (BitIndex * 4u)) & 0xF;
+		Wireframe = max(Wireframe, length(Grad - 8u));
+	}
+	Wireframe *= 0.25f;
+
+	BRANCH
+	if (Wireframe == 0.0f)
+	{
+		discard;
+	}
+
+	return saturate(WireColor * Wireframe);
+}
+
+
+uint GetHitProxySearchId(FInstanceSceneData InstanceData, FVisibleCluster VisibleCluster, uint TriIndex)
+{
+	uint SearchId = 0xFFFFFFFFu;
+
+#if USE_EDITOR_SHADERS
+	BRANCH
+	if ((InstanceData.Flags & INSTANCE_SCENE_DATA_FLAG_HAS_EDITOR_DATA) != 0u)
+	{
+		SearchId = InstanceData.EditorData.HitProxyPacked;
+	}
+	else
+	{
+		FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+		SearchId = GetMaterialHitProxyId(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialHitProxyTable);
+	}
+#endif
+
+	return SearchId;
+}
+
+bool IsInstanceSelected(FInstanceSceneData InstanceData, FVisibleCluster VisibleCluster, uint TriIndex)
+{
+	bool bIsSelected = false;
+
+#if USE_EDITOR_SHADERS
+	BRANCH
+	if ((InstanceData.Flags & INSTANCE_SCENE_DATA_FLAG_HAS_EDITOR_DATA) != 0u)
+	{
+		// We do not want to search for InstanceData.EditorData.HitProxyPacked in the selected hit proxy buffer, because
+		// this buffer will contain all instance IDs regardless of bIsSelected. Additional filtering would be needed in 
+		// AddRelevantHitProxiesToArray() in order to reduce this set to only contain selected entries, and performing a 
+		// search would be entirely unnecessary and much slower.
+		bIsSelected = InstanceData.EditorData.bIsSelected;
+	}
+	else
+	{
+		const uint SearchId = GetHitProxySearchId(InstanceData, VisibleCluster, TriIndex);
+		bIsSelected = BinarySearch(EditorSelectedHitProxyIds, EDITOR_SELECTED_BUFFER_COUNT, SearchId);
+	}
+#endif
+
+	return bIsSelected;
+}
+
+void ExportDebugViewPS(
+	in float4 SvPosition : SV_Position,
+	out float4 OutColor  : SV_Target0
+)
+{
+	const uint2 PixelPos = (uint2)SvPosition.xy;
+	const UlongType VisPixel = VisBuffer64[PixelPos];
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	if (VisibleClusterIndex != 0xFFFFFFFFu)
+	{
+		const float NaniteDepth = asfloat(DepthInt);
+		float SceneDepthValue = SceneDepth[PixelPos.xy];
+		if (NaniteDepth >= SceneDepthValue)
+		{
+			FNaniteView NaniteView = GetNaniteView(0);
+
+			FVisibleCluster VisibleCluster				= GetVisibleCluster(VisibleClusterIndex);
+			FInstanceSceneData InstanceData				= GetInstanceSceneData(VisibleCluster, false);
+			FPrimitiveSceneData PrimitiveData			= GetPrimitiveData(InstanceData.PrimitiveId);
+			FInstanceDynamicData InstanceDynamicData	= CalculateInstanceDynamicData(NaniteView, InstanceData);
+			FCluster Cluster							= GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+
+			FShadingMask UnpackedMask = UnpackShadingMask(ShadingMask[PixelPos]);
+			const uint MaterialEditorData = GetMaterialDepthId(UnpackedMask.ShadingBin, MaterialEditorTable);
+
+			BRANCH
+			if (DebugViewMode == DEBUG_VIEW_WIREFRAME)
+			{
+				const bool bIsSelected = IsInstanceSelected(InstanceData, VisibleCluster, TriIndex);
+				const float3 WireColor = CondMask(bIsSelected, SelectionColor, PrimitiveData.WireframeColor);
+				//const float3 WireColor = PrimitiveData.LevelColor;
+
+			#if SOBEL_WIREFRAME_FILTER_ONLY
+				const bool bUseSobelFilter = true;
+			#else
+				// If the visible cluster has WPO, we can't accurately calculate the screen positions of the triangles
+				// and therefore cannot compute the barycentrics. So in this case, fall back to the Sobel filter
+				const bool bUseSobelFilter = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+			#endif
+
+				BRANCH
+				if (bUseSobelFilter)
+				{
+					OutColor = float4(ApplyWireframeFilter(PixelPos, DepthInt, WireColor), 1.0f);
+				}
+				else
+				{
+					const uint3 TriIndices = DecodeTriangleIndices(Cluster, TriIndex);
+
+					float3 PointLocal0 = DecodePosition(TriIndices.x, Cluster);
+					float3 PointLocal1 = DecodePosition(TriIndices.y, Cluster);
+					float3 PointLocal2 = DecodePosition(TriIndices.z, Cluster);
+
+					// We can handle spline mesh deformation here because its deformation is fixed function
+					const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].MaterialFlags;
+					const FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(PackedFlags);
+
+					BRANCH
+					if (MaterialFlags.bSplineMesh)
+					{
+						FSplineMeshShaderParams SplineMeshParams = SplineMeshLoadParamsFromInstancePayload(InstanceData);
+						PointLocal0 = SplineMeshDeformLocalPos(SplineMeshParams, float4(PointLocal0, 1));
+						PointLocal1 = SplineMeshDeformLocalPos(SplineMeshParams, float4(PointLocal1, 1));
+						PointLocal2 = SplineMeshDeformLocalPos(SplineMeshParams, float4(PointLocal2, 1));
+					}
+
+					const float3 PointWorld0 = mul(float4(PointLocal0, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
+					const float3 PointWorld1 = mul(float4(PointLocal1, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
+					const float3 PointWorld2 = mul(float4(PointLocal2, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
+
+					const float4 PointClip0 = mul(float4(PointWorld0, 1), NaniteView.TranslatedWorldToClip);
+					const float4 PointClip1 = mul(float4(PointWorld1, 1), NaniteView.TranslatedWorldToClip);
+					const float4 PointClip2 = mul(float4(PointWorld2, 1), NaniteView.TranslatedWorldToClip);
+
+					const float2 PixelClip = (PixelPos + 0.5 - View.ViewRectMin.xy) * View.ViewSizeAndInvSize.zw * float2(2, -2) + float2(-1, 1);
+
+					// Calculate perspective correct barycentric coordinates with screen derivatives
+					const FBarycentrics Barycentrics = CalculateTriangleBarycentrics(PixelClip, PointClip0, PointClip1, PointClip2, View.ViewSizeAndInvSize.zw);
+					
+					float3 Deltas = abs(Barycentrics.UVW_dx) + abs(Barycentrics.UVW_dy);
+
+					float SmoothingVal = 1.0f; // 0-10
+					float ThicknessVal = 0.05f; // 0-10
+
+					float3 Smoothing = Deltas * SmoothingVal;
+					float3 Thickness = Deltas * ThicknessVal;
+
+					const float3 SmoothBarycentrics = smoothstep(Thickness, Thickness + Smoothing, Barycentrics.UVW);
+
+					const float MinBarycentrics = min3(SmoothBarycentrics.x, SmoothBarycentrics.y, SmoothBarycentrics.z);
+					if (MinBarycentrics == 1.0f)
+					{
+						discard;
+					}
+
+					OutColor = float4(WireColor, 1.0f - MinBarycentrics);
+				}
+			}
+		#if USE_EDITOR_SHADERS
+			else if (DebugViewMode == DEBUG_VIEW_SHADER_COMPLEXITY)
+			{
+				const uint NumPSInstructions = (MaterialEditorData & 0xFFFF0000u) >> 16u;
+				const uint NumVSInstructions = (MaterialEditorData & 0x0000FFFFu);
+
+				// If mode is DVSM_QuadComplexity, different calculations used
+				// See: FComplexityAccumulateInterface::GetDebugViewModeShaderBindings()
+
+				// float3(PS/ShaderBudget, VS/ShaderBudget, overdraw)
+				float3 NormalizedComplexity = float3(
+					NumPSInstructions * InvShaderBudget,
+					NumVSInstructions * InvShaderBudget,
+					1.0 / 32.0f
+				);
+
+				float3 FinalComplexity = NormalizedComplexity.xyz;
+
+				//BRANCH
+				//if (bShowQuadOverdraw && NormalizedComplexity.x > 0.0f)
+				//{
+				//	uint Coverage = ComputeQuadCoverage(Input.SvPosition.xy, Input.PrimitiveID, 24, false, false, 0);
+				//	// The extra cost from quad overdraw is assumed to be linear.
+				//	FinalComplexity.x *= 4.f / (float)(Coverage);
+				//}
+
+				// Use the maximum range allowed for scene color
+				// Alpha channel needs to be 1 to have decals working where the framebuffer blend is setup to multiply with alpha
+				OutColor = float4(FinalComplexity.xyz, 1.0f);
+			}
+		#endif
+			else
+			{
+				// Invalid debug mode mode
+				discard;
+			}
+		}
+		else
+		{
+			// Nanite is behind scene depth
+			discard;
+		}
+	}
+	else
+	{
+		// Not a Nanite pixel
+		discard;
+	}
+}
+

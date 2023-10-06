@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+  <Property Name="TestNames" Value="$(TestNames);ReplicationSystem" />
+  <Property Name="ReplicationSystemUsesCatch2" Value="True" />
+  <Property Name="ReplicationSystemDisabled" Value="False" />
+  <Property Name="ReplicationSystemShort" Value="Replication System" />
+  <Property Name="ReplicationSystemStagesWithProjectFile" Value="False" />
+  <Property Name="ReplicationSystemTarget" Value="ReplicationSystemLowLevelTests" />
+  <Property Name="ReplicationSystemBinariesRelative" Value="Engine\Binaries" />
+  <Property Name="ReplicationSystemReportType" Value="console" />
+  <Property Name="ReplicationSystemInitialExtraArgs" />
+  <Property Name="ReplicationSystemHasAfterSteps" Value="False" />
+  <Property Name="ReplicationSystemUsesCatch2" Value="True" />
+  <Option Name="RunReplicationSystemTests" DefaultValue="False" Description="Run Replication System Tests" />
+  <Property Name="ReplicationSystemSupportedPlatforms" Value="Win64;Linux" />
+  <Property Name="Win64ReplicationSystemTags" Value="" />
+  <Property Name="MacReplicationSystemTags" Value="" />
+  <Property Name="IOSReplicationSystemTags" Value="" />
+  <Property Name="AndroidReplicationSystemTags" Value="" />
+  <Property Name="LinuxReplicationSystemTags" Value="" />
+  <Property Name="LinuxArm64ReplicationSystemTags" Value="" />
+  <Property Name="TVOSReplicationSystemTags" Value="" />
+  <Property Name="Win64ReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="MacReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="IOSReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="AndroidReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="LinuxReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="LinuxArm64ReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="TVOSReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="Win64ReplicationSystemRunSupported" Value="True" />
+  <Property Name="MacReplicationSystemRunSupported" Value="True" />
+  <Property Name="IOSReplicationSystemRunSupported" Value="False" />
+  <Property Name="AndroidReplicationSystemRunSupported" Value="False" />
+  <Property Name="LinuxReplicationSystemRunSupported" Value="True" />
+  <Property Name="LinuxArm64ReplicationSystemRunSupported" Value="True" />
+  <Property Name="TVOSReplicationSystemRunSupported" Value="True" />
+</BuildGraph>

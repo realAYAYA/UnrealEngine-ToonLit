@@ -1,0 +1,11 @@
+/*
+ * SPDX-License-Identifier: MIT
+ * Copyright (C) 2004 - 2021 AJA Video Systems, Inc.
+ */
+
+#define AJA_NTV2_SDK_VERSION_MAJOR 16
+#define AJA_NTV2_SDK_VERSION_MINOR 2
+#define AJA_NTV2_SDK_VERSION_POINT 0
+#define AJA_NTV2_SDK_BUILD_NUMBER 1
+#define AJA_NTV2_SDK_BUILD_DATETIME "03/09/2022 +8:14:15:29"
+#define AJA_NTV2_SDK_BUILD_TYPE "d"

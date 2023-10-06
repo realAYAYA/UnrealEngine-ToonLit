@@ -1,0 +1,136 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "LumenMaterial.ush"
+
+#include "../DeferredShadingCommon.ush"
+#include "../BRDF.ush"
+#include "../SceneTextureParameters.ush"
+#include "LumenRadianceCacheMarkCommon.ush"
+#include "LumenRadianceCacheCommon.ush"
+#include "LumenReflectionsCombine.ush"
+#include "../ClearCoatCommon.ush"
+#include "../ReflectionEnvironmentShared.ush"
+
+float3 GetWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+	return WorldPosition;
+}
+
+float3 GetTranslatedWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	return mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+}
+
+#ifndef THREADGROUP_SIZE
+#define THREADGROUP_SIZE 1
+#endif
+
+/*
+
+Texture2D<float> FurthestHZBTexture;
+Texture2D<float> ClosestHZBTexture;
+uint HZBMipLevel;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void MarkRadianceProbesUsedByHZBCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	// Construct 8 corners of HZB tile in world space
+	// Compute indirection coord range
+	// if no gap, mark used
+	//		otherwise queue for full res
+
+	float2 HZBScreenUV = (DispatchThreadId.xy + .5f) * View.ViewSizeAndInvSize.zw * ViewportUVToHZBBufferUV;
+	float MinDepth = ConvertFromDeviceZ(ClosestHZBTexture.SampleLevel(GlobalPointClampedSampler, HZBScreenUV, HZBMipLevel).x);
+	float MaxDepth = ConvertFromDeviceZ(FurthestHZBTexture.SampleLevel(GlobalPointClampedSampler, HZBScreenUV, HZBMipLevel).x);
+
+	float3 WorldPosition000 = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+}
+*/
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void MarkRadianceProbesUsedByGBufferCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint2 SvPosition = DispatchThreadId.xy + View.ViewRectMinAndSize.xy;
+	float2 ScreenUV = (SvPosition + 0.5) * View.BufferSizeAndInvSize.zw;
+	float SceneDepth = CalcSceneDepth(ScreenUV);
+	float3 WorldPosition = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+
+	uint ClipmapIndex = GetRadianceProbeClipmapForMark(WorldPosition, InterleavedGradientNoise(SvPosition, View.StateFrameIndexMod8));
+
+	if (IsValidRadianceCacheClipmapForMark(ClipmapIndex))
+	{
+		MarkPositionUsedInIndirectionTexture(WorldPosition, ClipmapIndex);
+	}
+}
+
+RWTexture2D<float4> RWDiffuseIndirect;
+RWTexture2D<float3> RWRoughSpecularIndirect;
+float ProbeOcclusionViewBias;
+float ProbeOcclusionNormalBias;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void IrradianceFieldGatherCS(
+	uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 SvPosition = DispatchThreadId + View.ViewRectMinAndSize.xy;
+	float2 ScreenUV = (SvPosition + 0.5f) * View.BufferSizeAndInvSize.zw;
+	float SceneDepth = CalcSceneDepth(ScreenUV);
+
+	if (all(SvPosition < View.ViewRectMinAndSize.xy + View.ViewRectMinAndSize.zw))
+	{
+		const FLumenMaterialData Material = ReadMaterialData(SvPosition, ScreenUV);
+		
+		if (IsValid(Material))
+		{
+			float3 WorldPosition = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth);
+			float3 V = normalize(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
+			uint ClipmapIndex = GetRadianceProbeClipmap(WorldPosition, InterleavedGradientNoise(SvPosition, View.StateFrameIndexMod8));
+
+			float3 DiffuseLighting = 0;
+
+			if (ClipmapIndex < NumRadianceProbeClipmaps)
+			{
+				float3 BiasOffset = Material.WorldNormal * ProbeOcclusionNormalBias + V * ProbeOcclusionViewBias;
+				DiffuseLighting = SampleIrradianceCacheInterpolated(WorldPosition, Material.WorldNormal, BiasOffset, ClipmapIndex);
+			}
+			else
+			{
+				DiffuseLighting = GetSkySHDiffuse(Material.WorldNormal) * View.SkyLightColor.rgb;
+			}
+
+			// FDiffuseIndirectCompositePS applies DiffuseColor
+			RWDiffuseIndirect[SvPosition] = float4(DiffuseLighting * View.PreExposure, 0.0f);
+
+			float3 SpecularLighting = 0;
+
+#define COMPUTE_ROUGH_SPECULAR 1
+#if COMPUTE_ROUGH_SPECULAR
+
+			const float LumenSpecularRayAlpha = LumenCombineReflectionsAlpha(Material.Roughness, HasBackfaceDiffuse(Material));
+			if (LumenSpecularRayAlpha < 1.0f || IsClearCoat(Material))
+			{
+				//GBufferData.WorldNormal = GetClearCoatBottomNormal(GBufferData, GBufferData.WorldNormal);
+				//float ReflectionVector = reflect(-V, GBufferData.WorldNormal);
+				//SpecularLighting = SampleIrradianceCacheInterpolated(WorldPosition, ReflectionVector, V, ClipmapIndex);
+				SpecularLighting = DiffuseLighting;
+			}
+#endif
+			RWRoughSpecularIndirect[SvPosition] = SpecularLighting * View.PreExposure;
+		}
+		else
+		{
+			RWDiffuseIndirect[SvPosition] = 0;
+			RWRoughSpecularIndirect[SvPosition] = 0;
+		}
+	}
+}

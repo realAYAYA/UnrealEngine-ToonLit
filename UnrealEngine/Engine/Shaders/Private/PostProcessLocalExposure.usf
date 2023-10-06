@@ -1,0 +1,55 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+#include "ScreenPass.ush"
+#include "PostProcessHistogramCommon.ush"
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+SCREEN_PASS_TEXTURE_VIEWPORT(Output)
+
+Texture2D InputTexture;
+
+StructuredBuffer<float4> EyeAdaptationBuffer;
+
+Texture3D LumBilateralGrid;
+Texture2D BlurredLogLum;
+
+SamplerState TextureSampler;
+
+RWTexture2D<float> OutputFloat;
+RWTexture2D<float4> OutputFloat4;
+
+[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, 1)]
+void SetupLogLuminanceCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	float3 SceneColor = InputTexture.Load(uint3(Input_ViewportMin + DispatchThreadId.xy, 0)).rgb * View.OneOverPreExposure;
+	float LuminanceVal = CalculateEyeAdaptationLuminance(SceneColor);
+	OutputFloat[DispatchThreadId.xy] = log2(LuminanceVal);
+}
+
+[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, 1)]
+void ApplyLocalExposureCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 OutputPixelPos = DispatchThreadId + Output_ViewportMin;
+
+	if (all(OutputPixelPos < Output_ViewportMax))
+	{
+		const float2 UV = (DispatchThreadId + 0.5f) * Output_ExtentInverse;
+
+		float2 ExposureScaleMiddleGrey = EyeAdaptationBuffer[0].xw;
+		float ExposureScale = ExposureScaleMiddleGrey.x;
+		float MiddleGreyLumValue = log2(0.18 * ExposureScaleMiddleGrey.y * LocalExposure_MiddleGreyExposureCompensation);
+
+		float4 SceneColor = InputTexture.Load(uint3(DispatchThreadId + Input_ViewportMin, 0));
+
+		float LuminanceVal = CalculateEyeAdaptationLuminance(SceneColor.rgb * View.OneOverPreExposure);
+		float LogLuminance = log2(LuminanceVal);
+
+		float BaseLogLum = CalculateBaseLogLuminance(LogLuminance, LocalExposure_BlurredLuminanceBlend, ExposureScale, UV, LumBilateralGrid, BlurredLogLum, TextureSampler, TextureSampler);
+		float LocalExposure = CalculateLocalExposure(LogLuminance + log2(ExposureScale), BaseLogLum, MiddleGreyLumValue, LocalExposure_HighlightContrastScale, LocalExposure_ShadowContrastScale, LocalExposure_DetailStrength);
+
+		SceneColor.rgb *= LocalExposure;
+
+		OutputFloat4[OutputPixelPos] = SceneColor;
+	}
+}

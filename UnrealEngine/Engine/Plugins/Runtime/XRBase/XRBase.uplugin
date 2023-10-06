@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "XRBase",
+	"Description": "XR Base Feature Implementations.  (Generally this plugin will be automatically enabled by another plugin that requires it.)",
+	"Category": "Virtual Reality",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsExperimentalVersion": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "XRBase",
+			"Type": "Runtime"
+		},
+		{
+			"Name": "XRBaseEditor",
+			"Type": "Editor"
+		}
+	]
+}

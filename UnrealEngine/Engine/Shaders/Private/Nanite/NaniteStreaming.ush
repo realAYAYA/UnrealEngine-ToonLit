@@ -1,0 +1,43 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../WaveOpUtil.ush"
+#include "/Engine/Shared/NaniteDefinitions.h"
+
+struct FStreamingRequest
+{
+	uint RuntimeResourceID_Magic;
+	uint PageIndex_NumPages_Magic;
+	uint Priority_Magic;
+};
+
+void RequestPageRange( RWStructuredBuffer<FStreamingRequest> RequestsBuffer, uint RuntimeResourceID, uint StartPageIndex, uint NumPages, uint PriorityCategory, float Priority )
+{
+	if ((RenderFlags & NANITE_RENDER_FLAG_OUTPUT_STREAMING_REQUESTS) && NumPages > 0)
+	{
+		uint Index;
+		WaveInterlockedAddScalar_(RequestsBuffer[0].RuntimeResourceID_Magic, 1, Index);	// HACK: Store count in RuntimeResourceID_Magic of first request.
+		if (Index < NANITE_MAX_STREAMING_REQUESTS - 1)
+		{
+			const uint UIntPriority				= clamp((PriorityCategory << 30) | (asuint(Priority) >> 2), 1u, NANITE_MAX_PRIORITY_BEFORE_PARENTS);
+
+			FStreamingRequest Request;
+#if NANITE_SANITY_CHECK_STREAMING_REQUESTS
+			Request.RuntimeResourceID_Magic		= (RuntimeResourceID << NANITE_STREAMING_REQUEST_MAGIC_BITS);
+			Request.PageIndex_NumPages_Magic	= (((StartPageIndex << NANITE_MAX_GROUP_PARTS_BITS) | NumPages) << NANITE_STREAMING_REQUEST_MAGIC_BITS);
+			Request.Priority_Magic				= UIntPriority & ~NANITE_STREAMING_REQUEST_MAGIC_MASK;		// Mask off low bits to leave space for magic
+			const uint FrameNibble = StreamingRequestsBufferVersion & 0xF;
+			Request.RuntimeResourceID_Magic		|= 0xA0 | FrameNibble;
+			Request.PageIndex_NumPages_Magic	|= 0xB0 | FrameNibble;
+			Request.Priority_Magic				|= 0xC0 | FrameNibble;
+#else
+			Request.RuntimeResourceID_Magic		= RuntimeResourceID;
+			Request.PageIndex_NumPages_Magic	= (StartPageIndex << NANITE_MAX_GROUP_PARTS_BITS) | NumPages;
+			Request.Priority_Magic				= UIntPriority;
+#endif
+			RequestsBuffer[Index + 1]			= Request;
+		}
+	}
+}

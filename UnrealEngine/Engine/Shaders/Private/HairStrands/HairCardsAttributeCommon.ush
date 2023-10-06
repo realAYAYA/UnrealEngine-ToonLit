@@ -1,0 +1,152 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#if HAIR_CARD_MESH_FACTORY
+
+#include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
+
+////////////////////////////////////////////////////////////////////////////////
+
+#define EHairCardsFVFlags_InvertedUV 1
+#define EHairCardsFVFlags_TextureRootUV 2
+#define EHairCardsFVFlags_TextureGroupIndex 4
+#define EHairCardsFVFlags_TextureBaseColor 8
+#define EHairCardsFVFlags_TextureRoughness 10
+#define EHairCardsFVFlags_TextureAttribute 12
+
+struct FHairVertexAttributes
+{
+	float2 HairUV;
+	float2 HairRootUV;
+	float2 HairDimensions;
+	float3 HairBaseColor;
+	float  HairSeed;
+	float  HairRoughness;
+	float  HairGroupIndex;
+};
+
+float GetHairStrandsDepth(float2 InAtlasUV, float InDeviceZ)
+{
+	const bool bInvertUV = HairCardsVF.Flags & EHairCardsFVFlags_InvertedUV;
+	InAtlasUV.y = bInvertUV ? 1 - InAtlasUV.y : InAtlasUV.y;
+	const float SceneDepthOffset = Texture2DSample(HairCardsVF.DepthTexture, HairCardsVF.DepthSampler, InAtlasUV).x;
+	const float SceneDepth = ConvertFromDeviceZ(InDeviceZ);
+
+	return ConvertToDeviceZ(SceneDepth + SceneDepthOffset);
+}
+
+float3 GetHairStrandsTangent(float2 InAtlasUV, half3x3 TangentToWorld, bool bUseTangentSpace)
+{
+	const bool bInvertUV = HairCardsVF.Flags & EHairCardsFVFlags_InvertedUV;
+	InAtlasUV.y = bInvertUV ? 1 - InAtlasUV.y : InAtlasUV.y;
+	const float3 LocalTangent = Texture2DSample(HairCardsVF.TangentTexture, HairCardsVF.TangentSampler, InAtlasUV).xyz * 2 - 1;
+	const float3 WorldTangent = mul(LocalTangent, TangentToWorld);
+	return bUseTangentSpace ? LocalTangent : WorldTangent;
+}
+
+float GetHairStrandsCoverage(float2 InAtlasUV)
+{
+	const bool bInvertUV = HairCardsVF.Flags & EHairCardsFVFlags_InvertedUV;
+	InAtlasUV.y = bInvertUV ? 1 - InAtlasUV.y : InAtlasUV.y;
+	return Texture2DSample(HairCardsVF.CoverageTexture, HairCardsVF.CoverageSampler, InAtlasUV).x;
+}
+
+FHairVertexAttributes GetHairStrandsAttributes(float2 InAtlasUV, float2 InRootUV = float2(0, 0), float InCardLength = 0.f, float InCardGroupIndex = 0.f, float3 InCardBaseColor = 0.f, float InCardRoughness = 0.f)
+{
+	const bool bInvertUV = HairCardsVF.Flags & EHairCardsFVFlags_InvertedUV;
+	InAtlasUV.y = bInvertUV ? 1 - InAtlasUV.y : InAtlasUV.y;
+	const float4 Value = Texture2DSample(HairCardsVF.AttributeTexture, HairCardsVF.AttributeSampler, InAtlasUV);
+	const float CoordU = Value.z;
+	const float Seed = Value.w;
+	const float WorldRadius = 0.01f; // Hardcoded for cards
+	const float WorldLength = InCardLength;
+	
+	// Invert V to compensate image origin flip
+	// Similar to DecodeHairAttribute in HairStrandVertexFactoryCommon.ush
+	InRootUV.y = 1.0 - InRootUV.y;
+
+	FHairVertexAttributes Out;
+	Out.HairUV = float2(CoordU, 0.5f);
+	Out.HairRootUV = (HairCardsVF.Flags & EHairCardsFVFlags_TextureRootUV) ? Value.xy : InRootUV;
+	Out.HairDimensions = float2(WorldLength, WorldRadius);
+	Out.HairBaseColor = InCardBaseColor;
+	Out.HairSeed = Seed;
+	Out.HairRoughness = InCardRoughness;
+	Out.HairGroupIndex = InCardGroupIndex;
+	return Out;
+}
+
+float4 GetHairStrandsAuxilaryData(float2 HairPrimitiveUV)
+{
+	return Texture2DSample(HairCardsVF.AuxilaryDataTexture, HairCardsVF.AuxilaryDataSampler, HairPrimitiveUV);
+}
+
+float2 GetHairStrandsUV(float2 HairPrimitiveUV)
+{
+	return GetHairStrandsAttributes(HairPrimitiveUV).HairUV;
+}
+
+float2 GetHairStrandsDimensions(float2 HairPrimitiveUV, float HairPrimitiveLength)
+{
+	return GetHairStrandsAttributes(HairPrimitiveUV, float2(0, 0), HairPrimitiveLength).HairDimensions;
+}
+
+float2 GetHairStrandsRootUV(float2 HairPrimitiveUV, float2 InRootUV)
+{
+	// Invert V to compensate image origin flip
+	// Similar to DecodeHairAttribute in HairStrandVertexFactoryCommon.ush
+	InRootUV.y = 1.0 - InRootUV.y; 
+
+	// If VF use texture data (for helmet/meshes), fetch root UV from the attribute texture
+	if (HairCardsVF.Flags & EHairCardsFVFlags_TextureRootUV)
+	{
+		InRootUV = Texture2DSample(HairCardsVF.AttributeTexture, HairCardsVF.AttributeSampler, HairPrimitiveUV).xy;
+	}
+	return InRootUV;
+}
+
+float  GetHairStrandsSeed(float2 HairPrimitiveUV)
+{
+	return GetHairStrandsAttributes(HairPrimitiveUV).HairSeed;
+}
+
+uint3 GetHairStrandsClumpID(float2 HairPrimitiveUV)
+{
+	return 0;
+}
+
+float3 GetHairStrandsBaseColor(float2 InAtlasUV, float3 InBaseColor)
+{
+	if (HairCardsVF.Flags & EHairCardsFVFlags_TextureBaseColor)
+	{
+		const float3 BaseColorInSRGB = Texture2DSample(HairCardsVF.MaterialTexture, HairCardsVF.MaterialSampler, InAtlasUV).xyz;
+		InBaseColor = BaseColorInSRGB*BaseColorInSRGB; // Cheap sRGB -> Linear encoding
+	}
+	return InBaseColor;
+}
+
+float GetHairStrandsRoughness(float2 HairPrimitiveUV, float InRoughness)
+{
+	// For meshes, we don't support roughness yet
+	return (HairCardsVF.Flags & EHairCardsFVFlags_TextureRoughness) ? 0 : InRoughness;
+}
+
+float GetHairStrandsAO(float2 HairPrimitiveUV, float InAO)
+{
+	return 1.0f;
+}
+
+float GetHairStrandsGroupIndex(float2 InAtlasUV, float InHairPrimitiveGroupIndex)
+{
+	// * For hair cards,  group index is stored onto vertices
+	// * For hair meshes, group index is stored within a texture
+	if (HairCardsVF.Flags & EHairCardsFVFlags_TextureGroupIndex)
+	{
+		InHairPrimitiveGroupIndex = Texture2DSample(HairCardsVF.MaterialTexture, HairCardsVF.MaterialSampler, InAtlasUV).w * 255.f;
+	}
+	return InHairPrimitiveGroupIndex;
+}
+////////////////////////////////////////////////////////////////////////////////
+
+#endif // HAIR_CARD_MESH_FACTORY

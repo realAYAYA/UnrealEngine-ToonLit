@@ -1,0 +1,146 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteHierarchyTraversalCommon.ush"
+
+#define CULLING_PASS_NO_OCCLUSION				0
+#define CULLING_PASS_OCCLUSION_MAIN				1
+#define CULLING_PASS_OCCLUSION_POST				2
+#define CULLING_PASS_EXPLICIT_LIST				3
+
+struct FCandidateNode
+{
+	uint	Flags;
+	uint	ViewId;
+	uint	InstanceId;
+	uint	NodeIndex;
+	uint	EnabledBitmask;
+};
+
+uint GetCandidateNodeSize(bool bPostPass)		{ return bPostPass ? 12u : 8u; }
+uint GetCandidateClusterSize()					{ return 8u; }
+
+// NodesAndClusterBatches layout: Main Cluster Batches, Main Candidate Nodes, Post Cluster Batches, Post Candidate Nodes
+uint GetClusterBatchesOffset()					{ return 0u; }
+uint GetCandidateNodesOffset()					{ return GetMaxClusterBatches() * 4u; }
+uint GetNodesAndBatchesOffset(bool bPostPass)	{ return bPostPass ? (GetCandidateNodesOffset() + MaxNodes * GetCandidateNodeSize(false)) : 0u; }
+uint GetCandidateClusterOffset()				{ return 0u; }
+
+void StoreVisibleCluster(RWByteAddressBuffer VisibleClusters, uint ClusterIdx, FVisibleCluster VisibleCluster, bool bHasPageData = false)
+{
+	uint4 RawData = PackVisibleCluster(VisibleCluster, bHasPageData);
+	if (bHasPageData)
+	{
+		VisibleClusters.Store3(ClusterIdx * 12, RawData.xyz);
+	}
+	else
+	{
+		VisibleClusters.Store2(ClusterIdx * 8, RawData.xy);
+	}
+}
+
+uint4 PackCandidateNode(FCandidateNode Node)
+{
+	// Leave at least one bit unused in each of the fields, so 0xFFFFFFFFu is never a valid value.
+	uint4 RawData;
+	RawData.x = (Node.InstanceId << NANITE_NUM_CULLING_FLAG_BITS) | Node.Flags;
+	RawData.y = (Node.ViewId << NANITE_MAX_NODES_PER_PRIMITIVE_BITS) | Node.NodeIndex;
+	RawData.z = Node.EnabledBitmask;
+	RawData.w = 0;
+
+	checkSlow(RawData.x != 0xFFFFFFFFu && RawData.y != 0xFFFFFFFFu && RawData.z != 0xFFFFFFFFu);
+
+	return RawData;
+}
+
+FCandidateNode UnpackCandidateNode(uint4 RawData, bool bHasEnabledMask)
+{
+	FCandidateNode Node;
+	Node.Flags			= BitFieldExtractU32(RawData.x, NANITE_NUM_CULLING_FLAG_BITS, 0);
+	Node.InstanceId		= BitFieldExtractU32(RawData.x, NANITE_MAX_INSTANCES_BITS, NANITE_NUM_CULLING_FLAG_BITS);
+	Node.NodeIndex		= BitFieldExtractU32(RawData.y, NANITE_MAX_NODES_PER_PRIMITIVE_BITS, 0);
+	Node.ViewId			= BitFieldExtractU32(RawData.y, NANITE_MAX_VIEWS_PER_CULL_RASTERIZE_PASS_BITS, NANITE_MAX_NODES_PER_PRIMITIVE_BITS);
+	Node.EnabledBitmask = bHasEnabledMask ? RawData.z : 0xFFFFFFFFu;
+	return Node;
+}
+
+#ifndef ALLOW_TEMPLATES
+#define ALLOW_TEMPLATES 1
+#endif
+
+#if ALLOW_TEMPLATES
+
+// Load/Store/Clear are templated to also support globally coherent buffers
+template<typename BufferType>
+void StoreCandidateClusterNoCheck(BufferType CandidateClusters, uint ClusterIndex, FVisibleCluster VisibleCluster)
+{
+	uint4 RawData = PackVisibleCluster(VisibleCluster, false);
+	CandidateClusters.Store2(GetCandidateClusterOffset() + ClusterIndex * GetCandidateClusterSize(), RawData.xy);
+}
+
+template<typename BufferType>
+void StoreCandidateCluster(BufferType CandidateClusters, uint ClusterIndex, FVisibleCluster VisibleCluster)
+{
+	checkSlow(ClusterIndex < MaxCandidateClusters);
+	StoreCandidateClusterNoCheck(CandidateClusters, ClusterIndex, VisibleCluster);
+}
+
+template<typename BufferType>
+uint4 LoadCandidateNodeData(BufferType NodesAndClusterBatches, uint NodeIndex, bool bPostPass)
+{
+	checkSlow(NodeIndex < MaxNodes);
+	const uint Offset = GetNodesAndBatchesOffset(bPostPass) + GetCandidateNodesOffset();
+	return bPostPass ?	uint4(NodesAndClusterBatches.Load3(Offset + NodeIndex * 12), 0) :
+						uint4(NodesAndClusterBatches.Load2(Offset + NodeIndex * 8), 0, 0);
+}
+
+template<typename BufferType>
+void StoreCandidateNodeData(BufferType NodesAndClusterBatches, uint NodeIndex, uint4 RawData, bool bPostPass)
+{
+	checkSlow(NodeIndex < MaxNodes);
+	const uint Offset = GetNodesAndBatchesOffset(bPostPass) + GetCandidateNodesOffset();
+	if (bPostPass)
+		NodesAndClusterBatches.Store3(Offset + NodeIndex * 12, RawData.xyz);
+	else
+		NodesAndClusterBatches.Store2(Offset + NodeIndex * 8, RawData.xy);
+}
+
+template<typename BufferType>
+void StoreCandidateNode(BufferType NodesAndClusterBatches, uint NodeIndex, FCandidateNode Node, bool bPostPass)
+{
+	checkSlow(NodeIndex < MaxNodes);
+	StoreCandidateNodeData(NodesAndClusterBatches, NodeIndex, PackCandidateNode(Node), bPostPass);
+}
+
+template<typename BufferType>
+void ClearCandidateNode(BufferType NodesAndClusterBatches, uint NodeIndex, bool bPostPass)
+{
+	checkSlow(NodeIndex < MaxNodes);
+	StoreCandidateNodeData(NodesAndClusterBatches, NodeIndex, 0xFFFFFFFFu, bPostPass);
+}
+
+template<typename BufferType>
+uint LoadClusterBatch(BufferType NodesAndClusterBatches, uint BatchIndex, bool bPostPass)
+{
+	checkSlow(BatchIndex < GetMaxClusterBatches());
+	return NodesAndClusterBatches.Load(GetNodesAndBatchesOffset(bPostPass) + GetClusterBatchesOffset() + BatchIndex * 4);
+}
+
+template<typename BufferType>
+void AddToClusterBatch(BufferType NodesAndClusterBatches, uint BatchIndex, uint Add, bool bPostPass)
+{
+	checkSlow(BatchIndex < GetMaxClusterBatches());
+	NodesAndClusterBatches.InterlockedAdd(GetNodesAndBatchesOffset(bPostPass) + GetClusterBatchesOffset() + BatchIndex * 4, Add);
+}
+
+template<typename BufferType>
+void ClearClusterBatch(BufferType NodesAndClusterBatches, uint BatchIndex, bool bPostPass)
+{
+	checkSlow(BatchIndex < GetMaxClusterBatches());
+	NodesAndClusterBatches.Store(GetNodesAndBatchesOffset(bPostPass) + GetClusterBatchesOffset() + BatchIndex * 4, 0);
+}
+
+#endif // ALLOW_TEMPLATES

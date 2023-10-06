@@ -1,0 +1,334 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../DeferredShadingCommon.ush"
+#include "../SceneTextureParameters.ush"
+#include "../ScreenSpaceDenoise/SSDPublic.ush"
+#include "../MortonCode.ush"
+#include "../BRDF.ush"
+
+#include "RayTracingCommon.ush"
+#include "RayTracingReflectionsCommon.ush"
+#include "RayTracingDeferredReflections.ush"
+
+#ifndef THREADGROUP_SIZE_X
+#define THREADGROUP_SIZE_X 8
+#endif // THREADGROUP_SIZE_X
+
+#ifndef THREADGROUP_SIZE_Y
+#define THREADGROUP_SIZE_Y 8
+#endif // THREADGROUP_SIZE_Y
+
+// Config
+
+#define USE_TONEMAP 1
+#define USE_RAY_PDF 1
+
+// Inputs
+
+int2  RayTracingBufferSize;
+float2 UpscaleFactor;
+float ReflectionMaxRoughness;
+float ReflectionSmoothBias;
+float SpatialResolveMaxRadius;
+float ReflectionHistoryWeight;
+int   SpatialResolveNumSamples;
+float4 HistoryScreenPositionScaleBias;
+uint ThreadIdOffset;
+
+Texture2D DepthBufferHistory;
+Texture2D ReflectionHistory;
+Texture2D RawReflectionColor;
+Texture2D ReflectionDenoiserData; // xyz: camera-relative reflection hit position, w: 1/pdf
+
+// Outputs
+
+RWTexture2D<float4> ColorOutput;
+
+float3 FastTonemap(float3 c)
+{
+	return c * rcp(max3(c.r, c.g, c.b) + 1.0);
+}
+
+float3 InvFastTonemap(float3 c)
+{
+	return c * rcp(1.0 - max3(c.r, c.g, c.b));
+}
+
+#if USE_TONEMAP
+#	define TONEMAP(x) FastTonemap(x)
+#	define INV_TONEMAP(x) InvFastTonemap(x)
+#else // USE_TONEMAP
+#	define TONEMAP(x) (x)
+#	define INV_TONEMAP(x) (x)
+#endif // USE_TONEMAP
+
+#if defined(DIM_NUM_SAMPLES) && DIM_NUM_SAMPLES > 0
+	// Static unrolled loop (~30% measured speedup over dynamic loop)
+#	define NUM_SAMPLES DIM_NUM_SAMPLES
+#	define SAMPLE_LOOP_UNROLL UNROLL_N(DIM_NUM_SAMPLES)
+#else // DIM_NUM_SAMPLES
+	// Fully dynamic loop
+#	define NUM_SAMPLES SpatialResolveNumSamples
+#	define SAMPLE_LOOP_UNROLL
+#endif // DIM_NUM_SAMPLES
+
+float2 GetReprojectedBufferUV(float2 ScreenPos, float SceneDepth, float4 EncodedVelocity)
+{
+	float DeviceZ = ConvertToDeviceZ(SceneDepth);
+	float4 ThisClip = float4(ScreenPos, DeviceZ, 1);
+	float4 PrevClip = mul(ThisClip, View.ClipToPrevClip);
+	float2 PrevScreenPos = PrevClip.xy / PrevClip.w;
+	if (EncodedVelocity.x > 0.0)
+	{
+		// #yuriy_todo: use full 3D velocity when it's available
+		PrevScreenPos = ThisClip.xy - DecodeVelocityFromTexture(EncodedVelocity).xy;
+	}
+
+	PrevScreenPos.xy = clamp(PrevScreenPos.xy, (float2)-1, (float2)1);
+
+	return PrevScreenPos.xy * HistoryScreenPositionScaleBias.xy + HistoryScreenPositionScaleBias.zw;
+}
+
+bool DisocclusionHeuristic(float2 ScreenPos, float DeviceZ, float2 HistoryUV)
+{
+	float PrevDeviceZ = DepthBufferHistory.SampleLevel(GlobalPointClampedSampler, HistoryUV, 0).r;
+	float4 ThisClip = float4(ScreenPos, DeviceZ, 1);
+	float4 PrevClip = mul(ThisClip, View.ClipToPrevClip);
+	float3 PrevExpectedDeviceZ = PrevClip.z / PrevClip.w;
+
+	float3 CameraVelocity = LWCToFloat(LWCSubtract(PrimaryView.WorldViewOrigin, PrimaryView.PrevWorldViewOrigin));
+
+	float CompensatedPrevDeviceZ = ConvertToDeviceZ(ConvertFromDeviceZ(PrevDeviceZ) + length(CameraVelocity));
+
+	// Empirically chosen threshold to balance between aliasing/noise from false positives and ghosting from false negatives
+	float DisocclusionMaxDeviceZ = 0.001;
+
+	return and(PrevDeviceZ - DeviceZ > DisocclusionMaxDeviceZ, CompensatedPrevDeviceZ - PrevExpectedDeviceZ > DisocclusionMaxDeviceZ).x;
+}
+
+float RgbLuma(float3 Color)
+{
+	float3 LumaVec = float3(0.299, 0.587, 0.114);
+	return dot(Color, LumaVec);
+}
+
+groupshared uint SharedColorSamplesRG[THREADGROUP_SIZE_X * THREADGROUP_SIZE_Y];
+groupshared uint SharedColorSamplesBA[THREADGROUP_SIZE_X * THREADGROUP_SIZE_Y];
+
+void WriteSharedColorSample(uint2 Pos, float4 Color)
+{
+	uint i = Pos.x + Pos.y * THREADGROUP_SIZE_X;
+	SharedColorSamplesRG[i] = f32tof16(Color.r) | (f32tof16(Color.g) << 16);
+	SharedColorSamplesBA[i] = f32tof16(Color.b) | (f32tof16(Color.a) << 16);
+}
+
+float4 ReadSharedColorSample(uint2 Pos)
+{
+	uint i = Pos.x + Pos.y * THREADGROUP_SIZE_X;
+	float4 Color = 0;
+	Color.r = f16tof32(SharedColorSamplesRG[i] & 0xFFFF);
+	Color.g = f16tof32(SharedColorSamplesRG[i] >> 16);
+	Color.b = f16tof32(SharedColorSamplesBA[i] & 0xFFFF);
+	Color.a = f16tof32(SharedColorSamplesBA[i] >> 16);
+	return Color;
+}
+
+[numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, 1)]
+void RayTracingReflectionResolveCS(
+	uint2 DispatchThreadId : SV_DispatchThreadID,
+	uint2 GroupThreadId : SV_GroupThreadID,
+	uint2 GroupId : SV_GroupID)
+{
+	const uint2 ViewSize = uint2(View.ViewSizeAndInvSize.xy);
+	const bool bValidThread = all(DispatchThreadId < ViewSize);
+
+	// Temporal accumulation uses neighborhood colors in groupshared memory and clamps the lookup index, sometimes creating a discontinuity between 8x8 tiles.
+	// We can offset and wrap the thread ID every frame to move the tile border, hiding this discontinuity.
+	DispatchThreadId = (DispatchThreadId + ThreadIdOffset);
+	DispatchThreadId = select(DispatchThreadId < ViewSize, DispatchThreadId, DispatchThreadId - ViewSize); // faster than mod
+
+	const float2 BufferUV = (float2(DispatchThreadId + View.ViewRectMin.xy) + 0.5) * View.BufferSizeAndInvSize.zw;
+	const float2 ViewportUV = BufferUVToViewportUV(BufferUV);
+
+	const float2 ScreenPos = ViewportUVToScreenPos(ViewportUV);
+	const uint2 PixelRandomSeed = Rand3DPCG16(int3(DispatchThreadId, View.StateFrameIndexMod8)).xy;
+
+	const int2 ReflectionPixelPos = int2(BufferUV * RayTracingBufferSize);
+
+	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(BufferUV);
+	GBuffer.Roughness = GetRayTracingClearCoatApproximateRoughness(GBuffer);
+	GBuffer.Roughness = ApplySmoothBias(GBuffer.Roughness, ReflectionSmoothBias);
+
+	const float SceneDepth = GBuffer.Depth;
+
+	const float RoughnessFade = GetRoughnessFade(GBuffer.Roughness, ReflectionMaxRoughness);
+	const bool bValidPixel = RoughnessFade > 0;
+
+	// NOTE: Reflection image uses premultiplied alpha, so we must handle all 4 components during spatial filtering
+	float4 ReflectionColor = (float4)0;
+	float ReflectionHitDistance = 0;
+
+	if (bValidPixel && bValidThread)
+	{
+		const float3 PositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(ScreenPos, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+		const float3 V = normalize(View.TranslatedWorldCameraOrigin - PositionTranslatedWorld);
+		const float3 N = GBuffer.WorldNormal;
+
+		// Filter size is empirically chosen to be a good compromise between quality and performance.
+		// Low values result in blockiness, high values result in poor cache use.
+		const float2 MinFilterSize = UpscaleFactor; // Always want a bit of blur (more when input is lower res)
+		const float2 MaxFilterSize = SpatialResolveMaxRadius;
+
+		// Filter footprint is based on center pixel roughness to reduce mirror reflection blurriness.
+		const float2 FilterSize = lerp(MinFilterSize, MaxFilterSize, saturate(GBuffer.Roughness * 8));
+		const float NoV = max(0, dot(N, V));
+
+		const float a2 = max(1e-5, Pow4(GBuffer.Roughness));
+
+		float WeightSum = 0;
+
+		// All sample coordinates must fall into these inclusive bounds of the view rect.
+		const int4 ViewRectBounds = int4(float4(float2(View.ViewRectMin.xy), float2(View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy - 1)) / UpscaleFactor.xyxy);
+
+		SAMPLE_LOOP_UNROLL
+		for (int i = 0; i < NUM_SAMPLES; ++i)
+		{
+			float2 HammersleySample = Hammersley16(i, NUM_SAMPLES, PixelRandomSeed);
+			//float2 DiskSample = HammersleySample * 2.0 - 1.0; // cheapest, but may produce noticeable rectangular block artifacts
+			float2 DiskSample = UniformSampleDisk(HammersleySample); // slightly more expensive, but maybe slightly better? the jury is out...
+			//float2 DiskSample = UniformSampleDisk(RandomFloat2(PixelRandomSeed));
+			float2 SampleOffset = DiskSample * FilterSize;
+
+			const int2 SamplePixelId = clamp(int2(ReflectionPixelPos + SampleOffset), ViewRectBounds.xy, ViewRectBounds.zw);
+
+			const float4 DenoiserData = ReflectionDenoiserData.Load(uint3(SamplePixelId, 0));
+			float InvRayPdf = DenoiserData.w;
+
+			const float3 RayOriginRelativeHitPosition = DenoiserData.xyz;
+			const float RayLength = length(RayOriginRelativeHitPosition);
+
+			ReflectionHitDistance += RayLength;
+
+			const float3 SampleL = RayOriginRelativeHitPosition * rcp(RayLength);
+
+			const float4 SampleColor = RawReflectionColor.Load(uint3(SamplePixelId, 0));
+
+			const float3 SampleH = normalize(V + SampleL);
+
+			const float SampleNoH = max(0, dot(N, SampleH));
+			const float SampleNoL = max(0, dot(N, SampleL));
+
+			const float LocalBRDF = D_GGX(a2, SampleNoH) * Vis_Smith(a2, NoV, SampleNoL) * SampleNoL;
+
+			// Clamping PDF like this avoids some of the artifacts on mirror-like surfaces
+			InvRayPdf = lerp(1e-5, InvRayPdf, GBuffer.Roughness);
+
+		#if USE_RAY_PDF
+			const float Weight = LocalBRDF * InvRayPdf; // more accurate, but some objectionable halos around some objects / light leaking
+		#else // USE_RAY_PDF
+			const float Weight = LocalBRDF; // hacky / incorrect, loses definition of roughness maps, but significantly reduces light leaking
+		#endif // USE_RAY_PDF
+
+			ReflectionColor.rgb += TONEMAP(SampleColor.rgb) * Weight;
+			ReflectionColor.a += SampleColor.a * Weight;
+
+			WeightSum += Weight;
+		}
+
+		ReflectionHitDistance = ReflectionHitDistance / (float)NUM_SAMPLES;
+
+		ReflectionColor.rgb = INV_TONEMAP(ReflectionColor.rgb / WeightSum);
+		ReflectionColor.a = ReflectionColor.a / WeightSum;
+	}
+
+	if (ReflectionHistoryWeight > 0)
+	{
+		WriteSharedColorSample(GroupThreadId, ReflectionColor);
+		GroupMemoryBarrierWithGroupSync();
+	}
+
+	if (ReflectionHistoryWeight > 0 && bValidPixel && bValidThread)
+	{
+		// Compute neighborhood color bounds (as mean and variance)
+
+		// NOTE: Reflection image uses premultiplied alpha, so we must handle all 4 components during temporal filtering
+		float4 ColorM1 = (float4)0.0;
+		float4 ColorM2 = (float4)0.0;
+
+		// Technically this is incorrect and may introduce artifacts (discontinuities) on borders between thread groups.
+		// Can be seen quite clearly when screen percentage is very low, but not obvious or objectionable at typical resolutions.
+		// Per-frame thread offsetting is effective at masking the issue over time (enabled using SpatialResolve.TemporalQuality=2)
+		const int4 ValidTapBounds = int4(0, 0, THREADGROUP_SIZE_X-1, THREADGROUP_SIZE_Y-1);
+
+		int Count = 0;
+		for (int y = -1; y <= 1; ++y)
+		{
+			for (int x = -1; x <= 1; ++x)
+			{
+				int2 TapOffset = int2(x, y);
+				int2 TapPos = clamp(int2(GroupThreadId) + TapOffset, ValidTapBounds.xy, ValidTapBounds.zw);
+				float4 SampleColor = ReadSharedColorSample(TapPos);
+
+				// Welford's online algorithm for variance.
+				// More numerically stable than accumulating squares.
+				// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+				Count += 1;
+				float4 Delta1 = SampleColor - ColorM1;
+				ColorM1 += Delta1 / Count;
+				float4 Delta2 = SampleColor - ColorM1;
+				ColorM2 += Delta1 * Delta2;
+			}
+		}
+		ColorM2 /= (Count - 1); // normalization step to get final variance
+
+		float4 ColorStdDev = sqrt(ColorM2);
+
+		// Dual source reprojection as per DD2018: Tomasz Stachowiak - Stochastic all the things
+
+		float4 EncodedVelocity = Texture2DSampleLevel(GBufferVelocityTexture, GlobalPointClampedSampler, BufferUV, 0);
+
+		float2 BufferUV1 = GetReprojectedBufferUV(ScreenPos, SceneDepth, EncodedVelocity);
+		float2 BufferUV2 = GetReprojectedBufferUV(ScreenPos, SceneDepth + ReflectionHitDistance, EncodedVelocity);
+
+		float HistoryWeight = ReflectionHistoryWeight;
+
+		// NOTE: Bilinear sampling is intentionally used to sample the history buffer.
+		// If point filter is used, the rounding of texture coordinates can introduce a noticeable distortion artifact.
+		// Bilinaer filter will introduce blur, but it's less noticeable than the distortion.
+		// #yuriy_todo: can try to stochastically jitter the UV by 0.5 texel and still use point filter.
+		float4 HistoryColor1 = ReflectionHistory.SampleLevel(GlobalBilinearClampedSampler, BufferUV1, 0);
+		float4 HistoryColor2 = ReflectionHistory.SampleLevel(GlobalBilinearClampedSampler, BufferUV2, 0);
+
+		float ColorDistance1 = abs(RgbLuma(ColorM1.rgb) - RgbLuma(HistoryColor1.rgb));
+		float ColorDistance2 = abs(RgbLuma(ColorM1.rgb) - RgbLuma(HistoryColor2.rgb));
+
+		float4 HistoryColor = ColorDistance1 < ColorDistance2 ? HistoryColor1 : HistoryColor2;
+		float2 HistoryUV = ColorDistance1 < ColorDistance2 ? BufferUV1 : BufferUV2;
+
+		// Detect disocclusion and clamp history color closer to current neighborhood mean
+		if (DisocclusionHeuristic(ScreenPos, ConvertToDeviceZ(SceneDepth), HistoryUV))
+		{
+			ColorStdDev *= 0.25;
+
+		#if 0 // Disocclusion debug visualiztion:
+			ReflectionColor.r = 1;
+			HistoryWeight = 0;
+		#endif
+		}
+
+		// Basic color box clamp -- #yuriy_todo: try box clipping instead
+		float4 ColorMin = ColorM1 - ColorStdDev;
+		float4 ColorMax = ColorM1 + ColorStdDev;
+		HistoryColor = clamp(HistoryColor, ColorMin, ColorMax);
+
+		float4 SpatialReflectionColor = ReflectionColor;
+		ReflectionColor = lerp(ReflectionColor, HistoryColor, HistoryWeight);
+	}
+
+	if (bValidThread)
+	{
+		ColorOutput[View.ViewRectMin.xy + DispatchThreadId] = max(0, ReflectionColor);
+	}
+}
+

@@ -1,0 +1,52 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+#include "../VariableRateShading/VRSShadingRateCommon.ush"
+#include "../Visualization.ush"
+#include "../MortonCode.ush"
+
+#include "NaniteAttributeDecode.ush"
+
+struct FShadingElement
+{
+	uint2 TopLeft;
+	uint Mask;		// 0: TL, 1: TR, 2: BL, 3: BR
+					// Quad:  CoverageMask. At least one set bit.
+					// Pixel: WriteMask:	TL always 1.
+};
+
+uint PackQuadMask(bool4 Quad)
+{
+	// [X][Y]
+	// [Z][W] -> 0000 wzyx
+
+	uint Mask = 0u;
+	Mask |= select(Quad.x, 1u << 0u, 0u);
+	Mask |= select(Quad.y, 1u << 1u, 0u);
+	Mask |= select(Quad.z, 1u << 2u, 0u);
+	Mask |= select(Quad.w, 1u << 3u, 0u);
+	return Mask;
+}
+
+uint PackShadingElement(uint2 TopLeft, uint Mask)
+{
+	//  4 bits Mask
+	// 14 bits X
+	// 14 bits Y
+	uint Packed = 0;
+	Packed |= (BitFieldMaskU32( 4,  0) & Mask);
+	Packed |= (BitFieldMaskU32(14,  4) & (TopLeft.x << 4u));
+	Packed |= (BitFieldMaskU32(14, 18) & (TopLeft.y << 18u));
+	return Packed;
+}
+
+FShadingElement UnpackShadingElement(uint Packed)
+{
+	FShadingElement Element;
+	Element.Mask		= BitFieldExtractU32(Packed,  4, 0);
+	Element.TopLeft.x	= BitFieldExtractU32(Packed, 14, 4);
+	Element.TopLeft.y	= BitFieldExtractU32(Packed, 14, 18);
+	return Element;
+}

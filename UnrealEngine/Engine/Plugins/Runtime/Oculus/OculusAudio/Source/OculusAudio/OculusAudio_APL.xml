@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- steps to add to build additions -->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- init section is always evaluated once per architecture -->
+	<init>
+		<log text="OculusAudio init"/>
+		<setBool result="bSupported" value="false"/>
+		<isArch arch="armeabi-v7a">
+			<setBool result="bSupported" value="true"/>
+		</isArch>
+		<isArch arch="arm64-v8a">
+			<setBool result="bSupported" value="true"/>
+		</isArch>
+	</init>
+
+	<!-- optional files or directories to copy to Intermediate/Android/APK -->
+	<resourceCopies>
+		<isArch arch="armeabi-v7a">
+			<!-- TODO: make this conditional and only copy the required verion!
+			<log text="Copying libOculusSpatializerWwise.so"/>
+			<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/armeabi-v7a/libOculusSpatializerWwise.so"
+							  dst="$S(BuildDir)/libs/armeabi-v7a/libOculusSpatializerWwise.so" />
+			<log text="Copying libOculusSpatializerFMOD.so"/>
+			<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/armeabi-v7a/libOculusSpatializerFMOD.so"
+							  dst="$S(BuildDir)/libs/armeabi-v7a/libOculusSpatializerFMOD.so" />
+			-->
+			<log text="Copying libovraudio32.so"/>
+			<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/armeabi-v7a/libovraudio32.so"
+							  dst="$S(BuildDir)/libs/armeabi-v7a/libovraudio32.so" />
+		</isArch>
+		<isArch arch="arm64-v8a">
+			<!-- TODO: make this conditional and only copy the required verion!
+			<log text="Copying libOculusSpatializerWwise.so"/>
+			<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/arm64-v8a/libOculusSpatializerWwise.so"
+							  dst="$S(BuildDir)/libs/arm64-v8a/libOculusSpatializerWwise.so" />
+			<log text="Copying libOculusSpatializerFMOD.so"/>
+			<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/arm64-v8a/libOculusSpatializerFMOD.so"
+							  dst="$S(BuildDir)/libs/arm64-v8a/libOculusSpatializerFMOD.so" />
+			-->
+			<log text="Copying libovraudio64.so"/>
+			<copyFile src="$S(EngineDir)/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/arm64-v8a/libovraudio64.so"
+							  dst="$S(BuildDir)/libs/arm64-v8a/libovraudio64.so" />
+		</isArch>
+	</resourceCopies>
+</root>
