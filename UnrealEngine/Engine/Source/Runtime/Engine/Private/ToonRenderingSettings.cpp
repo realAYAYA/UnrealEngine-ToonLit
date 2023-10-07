@@ -45,9 +45,12 @@ UToonRenderingSettings::UToonRenderingSettings(const FObjectInitializer& ObjectI
 void UToonRenderingSettings::InitToonData() const
 {
 	if(RampTexture.GetAtlasTexture2DConst())
+	{
 		GEngine->ToonRampTexture = RampTexture.CurveLinearColorAtlas;
-
-	UE_LOG(LogTexture, Error, TEXT("%s"), *FString(__FUNCTION__));
+		return;
+	}
+	
+	UE_LOG(LogTexture, Error, TEXT("%s Failed"), *FString(__FUNCTION__));
 }
 
 void UToonRenderingSettings::PostInitProperties()
