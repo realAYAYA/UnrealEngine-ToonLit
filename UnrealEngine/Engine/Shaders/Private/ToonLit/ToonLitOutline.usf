@@ -132,6 +132,10 @@ void MainVS(
 	FPixelMaterialInputs PixelMaterialInputs;
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, Input.Position, true);
 
+	// Mask outline, depending on the material blend mode
+	if (GetMaterialOpacity(PixelMaterialInputs) <= 0)
+		discard;
+
 	// Expand along WorldNormal
 	float3 WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
 	if (WorldPositionOffset.x + WorldPositionOffset.y + WorldPositionOffset.z > 0)
