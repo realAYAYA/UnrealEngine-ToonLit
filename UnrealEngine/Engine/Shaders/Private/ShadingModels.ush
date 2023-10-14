@@ -965,7 +965,7 @@ FDirectLighting ToonShadow( FGBufferData GBuffer, half3 N, half3 V, half3 L, flo
 	FDirectLighting Lighting;
 
 	float RampID = GBuffer.Metallic;
-	float Y = saturate(dot(N, L) * .5 + .5);
+	float Y = 0;
 	
 	float3 ToonFallOffColor = Texture2DSampleLevel(View.ToonRamp, View.ToonRampSampler, float2(Y, RampID), 0).rgb;
 	Lighting.Diffuse = ToonFallOffColor * GBuffer.BaseColor / 3.1415927f;
