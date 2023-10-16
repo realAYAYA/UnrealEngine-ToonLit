@@ -46,6 +46,11 @@
 
 ## Log
 
+#### Add ThirdParty Python
+UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-packages\
+1. jinja2
+2. markupsafe
+
 #### Add Custom Variables in Material  
 1.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInterface.h  
 2.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\Material.h  
