@@ -93,11 +93,11 @@ float4 GetNewClipPosWithZOffset(float4 OriginalPositionCS, float ViewSpaceZOffse
 	return OriginalPositionCS;
 }
 
-float3 TransformPositionWSToOutlinePositionWS(float3 PositionWS, float PositionVS_Z, float3 NormalWS, float InOutlineWidth)
+float3 CalculateExtendDir(float PositionVS_Z, float3 NormalWS, float InOutlineWidth)
 {
 	//you can replace it to your own method! Here we will write a simple world space method for tutorial reason, it is not the best method!
 	float OutlineExpandAmount = InOutlineWidth * GetOutlineCameraFovAndDistanceFixMultiplier(PositionVS_Z);
-	return PositionWS + NormalWS * OutlineExpandAmount;
+	return NormalWS * OutlineExpandAmount;
 }
 
 // ----------------------------------------------------Shader-----------------------------------------------------------
@@ -124,6 +124,9 @@ void MainVS(
 	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
 
+	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
+	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+
 	// Interpolation
 	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 	
@@ -136,7 +139,7 @@ void MainVS(
 	if (GetMaterialOpacity(PixelMaterialInputs) <= 0)
 		discard;
 
-	// Expand along WorldNormal
+	// Expand along WorldNormal | 根据用户自定义材质来决定使用何种描边算法
 	float3 WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
 	if (WorldPositionOffset.x + WorldPositionOffset.y + WorldPositionOffset.z > 0)
 	{
@@ -147,11 +150,11 @@ void MainVS(
 	{
 		// Use NiloCat Outline Algorithm
 		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 1000;
-		WorldPos.xyz = TransformPositionWSToOutlinePositionWS(WorldPos.xyz, Input.Position.z, WorldNormal, OutlineWidth);
+		WorldPos.xyz += CalculateExtendDir(Output.Position.z, WorldNormal, OutlineWidth);
 	}
 
 	// WorldToClip
-	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
+	RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPos);
 	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
 
 	// [Remap ZOffset value]
