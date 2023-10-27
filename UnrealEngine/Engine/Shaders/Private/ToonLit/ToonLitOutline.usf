@@ -93,10 +93,10 @@ float4 GetNewClipPosWithZOffset(float4 OriginalPositionCS, float ViewSpaceZOffse
 	return OriginalPositionCS;
 }
 
-float3 CalculateExtendDir(float PositionVS_Z, float3 NormalWS, float InOutlineWidth)
+float3 CalculateExtendDir(float W, float PositionVS_Z, float3 NormalWS, float InOutlineWidth)
 {
 	//you can replace it to your own method! Here we will write a simple world space method for tutorial reason, it is not the best method!
-	float OutlineExpandAmount = InOutlineWidth * GetOutlineCameraFovAndDistanceFixMultiplier(PositionVS_Z);
+	float OutlineExpandAmount = W * InOutlineWidth * GetOutlineCameraFovAndDistanceFixMultiplier(PositionVS_Z);
 	return NormalWS * OutlineExpandAmount;
 }
 
@@ -150,7 +150,8 @@ void MainVS(
 	{
 		// Use NiloCat Outline Algorithm
 		float OutlineWidth = GetMaterialMetallic(PixelMaterialInputs) * 1000;
-		WorldPos.xyz += CalculateExtendDir(Output.Position.z, WorldNormal, OutlineWidth);
+		float Distance = GetMaterialPixelDepthOffset(PixelMaterialInputs);
+		WorldPos.xyz += CalculateExtendDir(Distance, Input.Position.z, WorldNormal, OutlineWidth);
 	}
 
 	// WorldToClip
