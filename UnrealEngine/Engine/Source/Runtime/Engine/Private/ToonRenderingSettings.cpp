@@ -50,7 +50,7 @@ void UToonRenderingSettings::InitToonData() const
 		return;
 	}
 	
-	UE_LOG(LogTexture, Error, TEXT("%s Failed"), *FString(__FUNCTION__));
+	UE_LOG(LogTexture, Warning, TEXT("%s Failed"), *FString(__FUNCTION__));
 }
 
 void UToonRenderingSettings::PostInitProperties()
