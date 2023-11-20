@@ -1882,6 +1882,7 @@ void UGeometryCollectionComponent::UpdateRepData()
 					{
 						if (!Root->Disabled())
 						{
+							Solver->GetEvolution()->GetIslandManager().RemoveParticle(Root);
 							Solver->GetEvolution()->DisableParticle(Root);
 							Solver->GetParticles().MarkTransientDirtyParticle(Root);
 						}

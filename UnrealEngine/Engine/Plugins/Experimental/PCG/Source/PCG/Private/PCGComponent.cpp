@@ -1331,6 +1331,11 @@ void UPCGComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 		DirtyGenerated(EPCGComponentDirtyFlag::Input);
 		Refresh();
 	}
+	else if (PropName == GET_MEMBER_NAME_CHECKED(UPCGComponent, Seed))
+	{
+		DirtyGenerated();
+		Refresh();
+	}
 	// General properties that don't affect behavior
 	else
 	{

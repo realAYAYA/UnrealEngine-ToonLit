@@ -112,6 +112,9 @@ private:
 	bool bIsHandlingStructValuePostChange = false;
 	
 	FDelegateHandle UserDefinedStructReinstancedHandle;
+
+protected:
+	void OnStructLayoutChanges();
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

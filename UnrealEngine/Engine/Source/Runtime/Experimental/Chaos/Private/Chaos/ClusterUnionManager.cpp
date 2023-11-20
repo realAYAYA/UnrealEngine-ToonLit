@@ -193,6 +193,7 @@ namespace Chaos
 			// geometry should switch this flag back on.
 			NewUnion.InternalCluster->SetHasBounds(false);
 		}
+		MEvolution.GetIslandManager().RemoveParticle(NewUnion.InternalCluster);
 		MEvolution.DisableParticle(NewUnion.InternalCluster);
 
 		ClusterUnions.Add(NewIndex, NewUnion);
@@ -530,6 +531,7 @@ namespace Chaos
 		{
 			// Note that if we have 0 child particles, our implicit object union will have an invalid bounding box.
 			// We must eject from the acceleration structure otherwise we risk cashes.
+			MEvolution.GetIslandManager().RemoveParticle(Union.InternalCluster);
 			MEvolution.DisableParticle(Union.InternalCluster);
 		}
 		MEvolution.GetParticles().MarkTransientDirtyParticle(Union.InternalCluster);

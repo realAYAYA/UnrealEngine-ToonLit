@@ -3021,9 +3021,9 @@ UE::Cook::EPollStatus UCookOnTheFlyServer::ConditionalCreateGeneratorPackage(UE:
 
 	TArray<Private::FRegisteredCookPackageSplitter*> FoundRegisteredSplitters;
 
-	for (FWeakObjectPtr& WeakObj : PackageData.GetCachedObjectsInOuter())
+	for (FCachedObjectInOuter& CachedObjectInOuter : PackageData.GetCachedObjectsInOuter())
 	{
-		UObject* Obj = WeakObj.Get();
+		UObject* Obj = CachedObjectInOuter.Object.Get();
 		if (!Obj)
 		{
 			continue;
@@ -3661,7 +3661,7 @@ UE::Cook::EPollStatus UCookOnTheFlyServer::PrepareSaveInternal(UE::Cook::FPackag
 			CookedPlatformDataNextIndex = 0;
 		}
 
-		TArray<FWeakObjectPtr>& CachedObjectsInOuter = PackageData.GetCachedObjectsInOuter();
+		TArray<FCachedObjectInOuter>& CachedObjectsInOuter = PackageData.GetCachedObjectsInOuter();
 		EPollStatus Result = CallBeginCacheOnObjects(PackageData, Package, CachedObjectsInOuter,
 			CookedPlatformDataNextIndex, Timer);
 		if (Result != EPollStatus::Success)
@@ -3746,7 +3746,7 @@ UE::Cook::EPollStatus UCookOnTheFlyServer::PrepareSaveInternal(UE::Cook::FPackag
 }
 
 UE::Cook::EPollStatus UCookOnTheFlyServer::CallBeginCacheOnObjects(UE::Cook::FPackageData& PackageData,
-	UPackage* Package, TArray<FWeakObjectPtr>& Objects, int32& NextIndex, UE::Cook::FCookerTimer& Timer)
+	UPackage* Package, TArray<UE::Cook::FCachedObjectInOuter>& Objects, int32& NextIndex, UE::Cook::FCookerTimer& Timer)
 {
 	using namespace UE::Cook;
 
@@ -3755,11 +3755,11 @@ UE::Cook::EPollStatus UCookOnTheFlyServer::CallBeginCacheOnObjects(UE::Cook::FPa
 	TArray<const ITargetPlatform*, TInlineAllocator<ExpectedMaxNumPlatforms>> TargetPlatforms;
 	PackageData.GetCachedObjectsInOuterPlatforms(TargetPlatforms);
 
-	FWeakObjectPtr* ObjectsData = Objects.GetData();
+	FCachedObjectInOuter* ObjectsData = Objects.GetData();
 	int NumObjects = Objects.Num();
 	for (; NextIndex < NumObjects; ++NextIndex)
 	{
-		UObject* Obj = ObjectsData[NextIndex].Get();
+		UObject* Obj = ObjectsData[NextIndex].Object.Get();
 		if (!Obj)
 		{
 			// Objects can be marked as pending kill even without a garbage collect, and our weakptr.get will return
@@ -3768,7 +3768,7 @@ UE::Cook::EPollStatus UCookOnTheFlyServer::CallBeginCacheOnObjects(UE::Cook::FPa
 			// BeginCacheForCookedPlatformData and ClearAllCachedCookedPlatformData
 			// In case the weakptr is merely pendingkill, set it to null explicitly so we don't think that we've called
 			// BeginCacheForCookedPlatformData on it if it gets unmarked pendingkill later
-			ObjectsData[NextIndex] = nullptr;
+			ObjectsData[NextIndex].Object = nullptr;
 			continue;
 		}
 		FCachedCookedPlatformDataState& CCPDState = PackageDatas->GetCachedCookedPlatformDataObjects().FindOrAdd(Obj);
@@ -3856,9 +3856,9 @@ void UCookOnTheFlyServer::ReleaseCookedPlatformData(UE::Cook::FPackageData& Pack
 		// Since we have completed CookedPlatformData, we know we called BeginCacheForCookedPlatformData on all
 		// objects in the package, and none are pending
 		UE_SCOPED_HIERARCHICAL_COOKTIMER(ClearAllCachedCookedPlatformData);
-		for (FWeakObjectPtr& WeakPtr : PackageData.GetCachedObjectsInOuter())
+		for (FCachedObjectInOuter& CachedObjectInOuter : PackageData.GetCachedObjectsInOuter())
 		{
-			UObject* Object = WeakPtr.Get();
+			UObject* Object = CachedObjectInOuter.Object.Get();
 			if (Object)
 			{
 				FPendingCookedPlatformData::ClearCachedCookedPlatformData(Object, PackageData,
@@ -3891,10 +3891,10 @@ void UCookOnTheFlyServer::ReleaseCookedPlatformData(UE::Cook::FPackageData& Pack
 
 
 		// Iterate over all objects in the FPackageData up to GetCookedPlatformDataNextIndex
-		TArray<FWeakObjectPtr>& CachedObjects = PackageData.GetCachedObjectsInOuter();
+		TArray<FCachedObjectInOuter>& CachedObjects = PackageData.GetCachedObjectsInOuter();
 		for (int32 ObjectIndex = 0; ObjectIndex < PackageData.GetCookedPlatformDataNextIndex(); ++ObjectIndex)
 		{
-			UObject* Object = CachedObjects[ObjectIndex].Get();
+			UObject* Object = CachedObjects[ObjectIndex].Object.Get();
 			if (!Object)
 			{
 				continue;
@@ -5183,7 +5183,24 @@ void UCookOnTheFlyServer::PostGarbageCollect()
 
 	TSet<UObject*> SaveQueueObjectsThatStillExist;
 
-	// If any PackageDatas with ObjectPointers had any of their object pointers deleted out from under them, demote them back to request
+	// If garbage collection deleted a UPackage WHILE WE WERE SAVING IT, then we have problems.
+	check(!SavingPackageData || SavingPackageData->GetPackage() != nullptr);
+
+	// If there was a GarbageCollect after we already started calling BeginCacheCookedPlatformData, then we
+	// have a list of the WeakObjectPtr to all objects in the package (FPackageData::CachedObjejectsInOuter)
+	// and some of those objects may have been set to null. We declare a reference to prevent GC for the RF_Public
+	// objects in that list, but we do not declare that reference for private objects. The private objects may
+	// therefore have been deleted and set to null 
+	// Side note: because objects can be marked as pending kill at any time and we use FObjectWeakPtr.Get(),
+	// which returns null if pending kill, we need to skip nulls in the array at any point, not just after GC.
+	// 
+	// We do not want to prevent GC of private objects in case there is the expectation by some
+	// systems (blueprints, licensee code) that removing references to an object during PreCollectGarbage will cause
+	// it to be deleted by GC and be replaceable afterwards. We add any new private objects after the garbage collect
+	// and continue with the save. Public objects have a different contract; they are not replaceable across a
+	// GC because anything outside the package could be referring to them. So we keep them referenced. But GC may
+	// force delete them despite our reference, and the package is then in an unknown state. If that happens we
+	// demote the package back to request and start its load and save over.
 	TArray<FPackageData*> Demotes;
 	for (FPackageData* PackageData : PackageDatas->GetSaveQueue())
 	{
@@ -5196,9 +5213,9 @@ void UCookOnTheFlyServer::PostGarbageCollect()
 		else
 		{
 			// Mark that the objects for this package should be kept in CachedCookedPlatformData records
-			for (FWeakObjectPtr& WeakObjectPtr : PackageData->GetCachedObjectsInOuter())
+			for (FCachedObjectInOuter& CachedObjectInOuter : PackageData->GetCachedObjectsInOuter())
 			{
-				UObject* Object = WeakObjectPtr.Get();
+				UObject* Object = CachedObjectInOuter.Object.Get();
 				if (Object)
 				{
 					SaveQueueObjectsThatStillExist.Add(Object);
@@ -5229,12 +5246,6 @@ void UCookOnTheFlyServer::PostGarbageCollect()
 
 	// Remove objects that were deleted by garbage collection from our containers that track raw object pointers
 	PackageDatas->CachedCookedPlatformDataObjectsPostGarbageCollect(SaveQueueObjectsThatStillExist);
-
-	// If there was a GarbageCollect while we are saving a package, some of the WeakObjectPtr in SavingPackageData->CachedObjectPointers may have been deleted and set to null
-	// We need to handle nulls in that array at any point after calling SavePackage. We do not want to declare them as references and prevent their GC, in case there is 
-	// the expectation by some licensee code that removing references to an object will cause it to not be saved
-	// However, if garbage collection deleted the package WHILE WE WERE SAVING IT, then we have problems.
-	check(!SavingPackageData || SavingPackageData->GetPackage() != nullptr);
 
 	GCKeepObjects.Empty();
 	UPackage::SoftGCPackageToObjectList.Empty();
@@ -12011,7 +12022,7 @@ EPackageWriterResult UCookOnTheFlyServer::SavePackageBeginCacheForCookedPlatform
 	FPackageData* PackageData = PackageDatas->FindPackageDataByPackageName(PackageName);
 	check(PackageData); // This callback is called from a packagesave we initiated, so it should exist
 
-	TArray<FWeakObjectPtr>& CachedObjectsInOuter = PackageData->GetCachedObjectsInOuter();
+	TArray<FCachedObjectInOuter>& CachedObjectsInOuter = PackageData->GetCachedObjectsInOuter();
 	int32& NextIndex = PackageData->GetCookedPlatformDataNextIndex();
 	TArray<UObject*> PendingObjects;
 	for (UObject* Object : SaveableObjects)
@@ -12022,11 +12033,11 @@ EPackageWriterResult UCookOnTheFlyServer::SavePackageBeginCacheForCookedPlatform
 			CCPDState.AddRefFrom(PackageData);
 
 			// NextIndex is usually at the end of CachedObjectsInOuter, but in case it is not, insert the new Object 
-			// at NextIndex so that we still record that we have not called BeginCace on objects after it. Then increment
+			// at NextIndex so that we still record that we have not called BeginCache on objects after it. Then increment
 			// NextIndex to indicate we have already called (down below) BeginCache on the added object, so that
 			// ReleaseCookedPlatformData knows that it needs to call Clear on it.
 			check(NextIndex >= 0);
-			CachedObjectsInOuter.Insert(Object, NextIndex);
+			CachedObjectsInOuter.Insert(FCachedObjectInOuter(Object), NextIndex);
 			++NextIndex;
 		}
 

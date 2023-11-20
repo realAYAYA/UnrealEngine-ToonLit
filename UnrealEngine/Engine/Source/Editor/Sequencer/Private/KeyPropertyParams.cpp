@@ -70,7 +70,7 @@ const UStruct* FCanKeyPropertyParams::FindPropertyContainer(const FProperty* For
 			bFoundProperty = Property == ForProperty;
 			if (bFoundProperty)
 			{
-				return Property->GetOwnerStruct();
+				return ObjectClass;
 			}
 		}
 		else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))

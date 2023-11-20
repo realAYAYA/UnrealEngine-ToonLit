@@ -140,10 +140,7 @@ struct FInertializationRequest
 			(A.BlendProfile == B.BlendProfile) &&
 			(A.bUseBlendMode == B.bUseBlendMode) &&
 			(A.BlendMode == B.BlendMode) &&
-			(A.CustomBlendCurve == B.CustomBlendCurve) &&
-			(A.Description.EqualTo(B.Description) &&
-			(A.NodeId == B.NodeId) &&
-			(A.AnimInstance == B.AnimInstance));
+			(A.CustomBlendCurve == B.CustomBlendCurve);
 	}
 
 	friend bool operator!=(const FInertializationRequest& A, const FInertializationRequest& B)

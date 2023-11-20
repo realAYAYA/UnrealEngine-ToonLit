@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Text;
+using System.Linq;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
 
@@ -13,6 +14,15 @@ namespace UnrealBuildTool
 	class PlatformProjectGeneratorCollection
 	{
 		Dictionary<UnrealTargetPlatform, PlatformProjectGenerator> ProjectGeneratorDictionary = new Dictionary<UnrealTargetPlatform, PlatformProjectGenerator>();
+
+		/// <summary>
+		/// Returns the list of platforms that have been registered in this collection
+		/// </summary>
+		/// <returns>Registered platforms</returns>
+		public List<UnrealTargetPlatform> GetRegisteredPlatforms()
+		{
+			return ProjectGeneratorDictionary.Keys.ToList();
+		}
 
 		/// <summary>
 		/// Register the given platforms UEPlatformProjectGenerator instance

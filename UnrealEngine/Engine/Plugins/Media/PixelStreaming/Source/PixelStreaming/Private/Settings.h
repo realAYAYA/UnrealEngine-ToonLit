@@ -51,6 +51,9 @@ namespace UE::PixelStreaming::Settings
 	extern TAutoConsoleVariable<float> CVarPixelStreamingWebRTCAudioGain;
 	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCNegotiateCodecs;
 	extern TAutoConsoleVariable<FString> CVarPixelStreamingWebRTCFieldTrials;
+	extern TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableFrameDropper;
+	extern TAutoConsoleVariable<float> CVarPixelStreamingWebRTCVideoPacingFactor;
+	extern TAutoConsoleVariable<float> CVarPixelStreamingWebRTCVideoPacingMaxDelay;
 	// End WebRTC CVars
 
 	// Begin Pixel Streaming Plugin CVars
@@ -96,6 +99,13 @@ namespace UE::PixelStreaming::Settings
 	bool GetSignallingServerUrl(FString& OutSignallingServerURL);
 	bool GetSignallingServerIP(FString& OutSignallingServerIP);
 	bool GetSignallingServerPort(uint16& OutSignallingServerPort);
+
+	/**
+	* @param OutPacingFactor The pacing factor to use for the field trial.
+	* @param OutMaxDelayMs The max delay to use for the field trial.
+	* @return True if WebRTC-Video-Pacing field trial is enabled.
+	*/
+	bool GetVideoPacing(float& OutPacingFactor, float& OutMaxDelayMs);
 	// End utility functions etc.
 
 	extern FPixelStreamingSimulcastParameters SimulcastParameters;

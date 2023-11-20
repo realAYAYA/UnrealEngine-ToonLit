@@ -566,7 +566,7 @@ public:
 
 	#if WITH_EDITOR
 		// Only allow boot cache with the editor. We don't want other tools and utilities (eg. SCW) writing to the same file.
-		CreateMemoryCacheStore(BootCache, TEXT("Boot"), Entry, this);
+		CreateMemoryCacheStore(BootCache, TEXT("Boot"), *WriteToString<128>(TEXT("-Boot "), Entry), this);
 	#endif
 
 		return !!BootCache;

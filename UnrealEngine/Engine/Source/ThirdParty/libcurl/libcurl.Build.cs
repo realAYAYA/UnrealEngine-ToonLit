@@ -10,25 +10,14 @@ public class libcurl : ModuleRules
 		Type = ModuleType.External;
 
 		PublicDefinitions.Add("WITH_LIBCURL=1");
+		PublicDefinitions.Add("CURL_STATICLIB=1");
 
-		string LinuxLibCurlPath = Target.UEThirdPartySourceDirectory + "libcurl/7.83.1/";
-		string MacLibCurlPath = Target.UEThirdPartySourceDirectory + "libcurl/7.83.1/";
-		string WinLibCurlPath = Target.UEThirdPartySourceDirectory + "libcurl/7.83.1/";
-		string AndroidLibCurlPath = Target.UEThirdPartySourceDirectory + "libcurl/7_75_0/";
+		string LibCurlPath = Target.UEThirdPartySourceDirectory + "libcurl/8.4.0/";
+		PublicSystemIncludePaths.Add(Path.Combine(LibCurlPath, "include"));
 
 		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
 		{
-			PublicSystemIncludePaths.Add(Path.Combine(LinuxLibCurlPath, "include"));
-			PublicAdditionalLibraries.Add(Path.Combine(LinuxLibCurlPath, "lib", "Unix", Target.Architecture.LinuxName, "Release", "libcurl.a"));
-			PublicDefinitions.Add("CURL_STATICLIB=1");
-
-			// Our build requires nghttp2, OpenSSL and zlib, so ensure they're linked in
-			AddEngineThirdPartyPrivateStaticDependencies(Target, new string[]
-			{
-				"nghttp2",
-				"OpenSSL",
-				"zlib"
-			});
+			PublicAdditionalLibraries.Add(Path.Combine(LibCurlPath, "lib", "Unix", Target.Architecture.LinuxName, "Release", "libcurl.a"));
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Android))
 		{
@@ -37,40 +26,27 @@ public class libcurl : ModuleRules
 				"x64",
 			};
  
-			PublicSystemIncludePaths.Add(AndroidLibCurlPath + "include/Android/");
 			foreach(var Architecture in Architectures)
 			{
-				PublicAdditionalLibraries.Add(AndroidLibCurlPath + "lib/Android/" + Architecture + "/libcurl.a");
+				PublicAdditionalLibraries.Add(Path.Combine(LibCurlPath, "lib", "Android", Architecture, "Release", "libcurl.a"));
 			}
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
-			PublicSystemIncludePaths.Add(Path.Combine(MacLibCurlPath, "include"));
-			PublicAdditionalLibraries.Add(Path.Combine(MacLibCurlPath, "lib", "Mac", "Release", "libcurl.a"));
-			PublicDefinitions.Add("CURL_STATICLIB=1");
+			PublicAdditionalLibraries.Add(Path.Combine(LibCurlPath, "lib", "Mac", "Release", "libcurl.a"));
 			PublicFrameworks.Add("SystemConfiguration");
-
-			// Our build requires nghttp2, OpenSSL and zlib, so ensure they're linked in
-			AddEngineThirdPartyPrivateStaticDependencies(Target, new string[]
-			{
-				"nghttp2",
-				"OpenSSL",
-				"zlib"
-			});
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Win64 && !Target.WindowsPlatform.bUseXCurl)
 		{
-			PublicSystemIncludePaths.Add(Path.Combine(WinLibCurlPath, "include"));
-			PublicAdditionalLibraries.Add(Path.Combine(WinLibCurlPath, "lib", Target.Platform.ToString(), "Release", "libcurl.lib"));
-			PublicDefinitions.Add("CURL_STATICLIB=1");
-
-			// Our build requires nghttp2, OpenSSL and zlib, so ensure they're linked in
-			AddEngineThirdPartyPrivateStaticDependencies(Target, new string[]
-			{
-				"nghttp2",
-				"OpenSSL",
-				"zlib"
-			});
+			PublicAdditionalLibraries.Add(Path.Combine(LibCurlPath, "lib", Target.Platform.ToString(), "Release", "libcurl.lib"));
 		}
+
+		// Our build requires nghttp2, OpenSSL and zlib, so ensure they're linked in
+		AddEngineThirdPartyPrivateStaticDependencies(Target, new string[]
+		{
+			"nghttp2",
+			"OpenSSL",
+			"zlib"
+		});
 	}
 }

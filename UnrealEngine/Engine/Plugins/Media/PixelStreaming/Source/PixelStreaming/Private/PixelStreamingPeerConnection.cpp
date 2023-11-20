@@ -868,6 +868,52 @@ void FPixelStreamingPeerConnection::RemoveAudioInput(TSharedPtr<IPixelStreamingA
 	AudioMixer->DisconnectInput(StaticCastSharedPtr<FAudioInput>(AudioInput));
 }
 
+
+void InitializeFieldTrials()
+{
+	FString FieldTrials = Settings::CVarPixelStreamingWebRTCFieldTrials.GetValueOnAnyThread();
+
+	// Set the WebRTC-FrameDropper/Disabled/ if the CVar is set
+	if(Settings::CVarPixelStreamingWebRTCDisableFrameDropper.GetValueOnAnyThread())
+	{
+		FieldTrials += TEXT("WebRTC-FrameDropper/Disabled/");
+	}
+
+	// Parse "WebRTC-Video-Pacing/" field trial
+	{
+		float OutPacingFactor = -1.0f;
+		float OutPacingMaxDelayMs = -1.0f;
+		bool bVideoPacingFieldTrial = Settings::GetVideoPacing(OutPacingFactor, OutPacingMaxDelayMs);
+		if(bVideoPacingFieldTrial)
+		{
+			FString VideoPacingFieldTrialStr = TEXT("WebRTC-Video-Pacing/");
+			bool bHasPacingFactor = OutPacingFactor >= 0.0f;
+			if(bHasPacingFactor)
+			{
+				VideoPacingFieldTrialStr += FString::Printf(TEXT("factor:%.1f"), OutPacingFactor);
+			}
+			bool bHasMaxDelay = OutPacingMaxDelayMs >= 0.0f;
+			if(bHasMaxDelay)
+			{
+				VideoPacingFieldTrialStr += bHasPacingFactor ? TEXT(",") : TEXT("");
+				VideoPacingFieldTrialStr += FString::Printf(TEXT("max_delay:%.0f"), OutPacingMaxDelayMs);
+			}
+			VideoPacingFieldTrialStr += TEXT("/");
+			FieldTrials += VideoPacingFieldTrialStr;
+		}
+	}
+
+	if (!FieldTrials.IsEmpty()) {
+		//Pass the field trials string to WebRTC. String must never be destroyed.
+		TStringConversion<TStringConvert<TCHAR, ANSICHAR>> Str = StringCast<ANSICHAR>(*FieldTrials);
+		int length = Str.Length() + 1;
+		char* WRTCFieldTrials = (char*)FMemory::SystemMalloc(length);
+		FMemory::Memcpy(WRTCFieldTrials, Str.Get(), Str.Length());
+		WRTCFieldTrials[length - 1] = '\0';
+		webrtc::field_trial::InitFieldTrialsFromString(WRTCFieldTrials);
+	}
+}
+
 void FPixelStreamingPeerConnection::CreatePeerConnectionFactory()
 {
 	using namespace UE::PixelStreaming;
@@ -925,17 +971,9 @@ void FPixelStreamingPeerConnection::CreatePeerConnectionFactory()
 
 	std::unique_ptr<FVideoEncoderFactoryLayered> VideoEncoderFactory = std::make_unique<FVideoEncoderFactoryLayered>();
 	GVideoEncoderFactory = VideoEncoderFactory.get();
-	 
-	FString FieldTrials = Settings::CVarPixelStreamingWebRTCFieldTrials.GetValueOnAnyThread();
-	if (!FieldTrials.IsEmpty()) {
-		//Pass the field trials string to WebRTC. String must never be destroyed.
-		TStringConversion<TStringConvert<TCHAR, ANSICHAR>> Str = StringCast<ANSICHAR>(*FieldTrials);
-		int length = Str.Length() + 1;
-		char* WRTCFieldTrials = (char*)FMemory::SystemMalloc(length);
-		FMemory::Memcpy(WRTCFieldTrials, Str.Get(), Str.Length());
-		WRTCFieldTrials[length - 1] = '\0';
-		webrtc::field_trial::InitFieldTrialsFromString(WRTCFieldTrials);
-	}
+
+	// Set up the field trials, read things from CVars etc
+	InitializeFieldTrials();
 
 	PeerConnectionFactory = webrtc::CreatePeerConnectionFactory(
 		nullptr,													   // network_thread

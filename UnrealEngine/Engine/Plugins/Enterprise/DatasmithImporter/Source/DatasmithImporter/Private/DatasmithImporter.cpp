@@ -1565,10 +1565,6 @@ AActor* FDatasmithImporter::FinalizeActor( FDatasmithImportContext& ImportContex
 
 		// The templates for the actor need to be applied after the components were created.
 		FDatasmithImporterImpl::ApplyMigratedTemplates( MigratedTemplates, DestinationActor );
-
-		// Actors that were created via blueprint (can happen with Dataprep) will have their components destroyed by the finalizer after this scope's end.
-		// This will disallow destruction of such components.
-		DestinationActor->bActorSeamlessTraveled = 1;
 	}
 
 	// Update label to match the source actor's

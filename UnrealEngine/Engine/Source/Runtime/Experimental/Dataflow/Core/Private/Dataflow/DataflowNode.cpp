@@ -5,8 +5,8 @@
 #include "ChaosLog.h"
 #include "Dataflow/DataflowInputOutput.h"
 #include "Dataflow/DataflowArchive.h"
-#include "Serialization/MemoryWriter.h"
-#include "Serialization/MemoryReader.h"
+#include "Serialization/ObjectWriter.h"
+#include "Serialization/ObjectReader.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DataflowNode)
 
@@ -660,10 +660,10 @@ void FDataflowNode::CopyNodeProperties(const TSharedPtr<FDataflowNode> CopyFromD
 {
 	TArray<uint8> NodeData;
 
-	FMemoryWriter ArWriter(NodeData);
+	FObjectWriter ArWriter(NodeData);
 	CopyFromDataflowNode->SerializeInternal(ArWriter);
 
-	FMemoryReader ArReader(NodeData);
+	FObjectReader ArReader(NodeData);
 	this->SerializeInternal(ArReader);
 }
 

@@ -197,6 +197,24 @@ namespace UE::PixelStreaming::Settings
 		TEXT("Sets the amount of gain to apply to audio. Default: 1.0"),
 		ECVF_Default);
 
+	TAutoConsoleVariable<bool> CVarPixelStreamingWebRTCDisableFrameDropper(
+		TEXT("PixelStreaming.WebRTC.DisableFrameDropper"),
+		false,
+		TEXT("Disables the WebRTC internal frame dropper using the field trial WebRTC-FrameDropper/Disabled/"),
+		ECVF_Default);
+
+	TAutoConsoleVariable<float> CVarPixelStreamingWebRTCVideoPacingMaxDelay(
+		TEXT("PixelStreaming.WebRTC.VideoPacing.MaxDelay"),
+		-1.0f,
+		TEXT("Enables the WebRTC-Video-Pacing field trial and sets the max delay (ms) parameter. Default: -1.0f (values below zero are discarded.)"),
+		ECVF_Default);
+
+	TAutoConsoleVariable<float> CVarPixelStreamingWebRTCVideoPacingFactor(
+		TEXT("PixelStreaming.WebRTC.VideoPacing.Factor"),
+		-1.0f,
+		TEXT("Enables the WebRTC-Video-Pacing field trial and sets the video pacing factor parameter. Larger values are more lenient on larger bitrates. Default: -1.0f (values below zero are discarded.)"),
+		ECVF_Default);
+
 	TAutoConsoleVariable<FString> CVarPixelStreamingWebRTCFieldTrials(
 		TEXT("PixelStreaming.WebRTC.FieldTrials"),
 		TEXT(""),
@@ -548,6 +566,14 @@ namespace UE::PixelStreaming::Settings
 		return FParse::Value(FCommandLine::Get(), TEXT("PixelStreamingPort="), OutSignallingServerPort);
 	}
 
+	bool GetVideoPacing(float& OutPacingFactor, float& OutMaxDelayMs)
+	{
+		OutPacingFactor = CVarPixelStreamingWebRTCVideoPacingFactor.GetValueOnAnyThread();
+		OutMaxDelayMs = CVarPixelStreamingWebRTCVideoPacingMaxDelay.GetValueOnAnyThread();
+		// Note: Use of OR operator here, field trial is enable if either of these is non-zero and positive.
+		return OutPacingFactor >= 0.0 || OutMaxDelayMs >= 0.0;
+	}
+
 	EInputControllerMode GetInputControllerMode()
 	{
 		// Convert the current value to all lowercase and remove any whitespace.
@@ -646,10 +672,12 @@ namespace UE::PixelStreaming::Settings
 		CommandLineParseValue(TEXT("PixelStreamingWebRTCMaxBitrate="), CVarPixelStreamingWebRTCMaxBitrate);
 		CommandLineParseValue(TEXT("PixelStreamingWebRTCLowQpThreshold="), CVarPixelStreamingWebRTCLowQpThreshold);
 		CommandLineParseValue(TEXT("PixelStreamingWebRTCHighQpThreshold="), CVarPixelStreamingWebRTCHighQpThreshold);
+		CommandLineParseValue(TEXT("PixelStreamingWebRTCVideoPacingFactor="), CVarPixelStreamingWebRTCVideoPacingFactor);
+		CommandLineParseValue(TEXT("PixelStreamingWebRTCVideoPacingMaxDelay="), CVarPixelStreamingWebRTCVideoPacingMaxDelay);
+		CommandLineParseValue(TEXT("PixelStreamingWebRTCFieldTrials="), CVarPixelStreamingWebRTCFieldTrials);
 		CommandLineParseValue(TEXT("PixelStreamingFreezeFrameQuality"), CVarPixelStreamingFreezeFrameQuality);
 		CommandLineParseValue(TEXT("PixelStreamingInputController="), CVarPixelStreamingInputController);
 		CommandLineParseValue(TEXT("PixelStreamingSignalingReconnectInterval="), CVarPixelStreamingSignalingReconnectInterval);
-		CommandLineParseValue(TEXT("PixelStreamingWebRTCFieldTrials="), CVarPixelStreamingWebRTCFieldTrials);
 
 		// Options parse (if these exist they are set to true)
 		CommandLineParseOption(TEXT("PixelStreamingOnScreenStats"), CVarPixelStreamingOnScreenStats);
@@ -660,6 +688,7 @@ namespace UE::PixelStreaming::Settings
 		CommandLineParseOption(TEXT("PixelStreamingWebRTCDisableReceiveAudio"), CVarPixelStreamingWebRTCDisableReceiveAudio);
 		CommandLineParseOption(TEXT("PixelStreamingWebRTCDisableTransmitAudio"), CVarPixelStreamingWebRTCDisableTransmitAudio);
 		CommandLineParseOption(TEXT("PixelStreamingWebRTCDisableAudioSync"), CVarPixelStreamingWebRTCDisableAudioSync);
+		CommandLineParseOption(TEXT("PixelStreamingWebRTCDisableFrameDropper"), CVarPixelStreamingWebRTCDisableFrameDropper);
 		CommandLineParseOption(TEXT("PixelStreamingSendPlayerIdAsInteger"), CVarSendPlayerIdAsInteger);
 		CommandLineParseOption(TEXT("PixelStreamingWebRTCUseLegacyAudioDevice"), CVarPixelStreamingWebRTCUseLegacyAudioDevice);
 		CommandLineParseOption(TEXT("PixelStreamingDisableLatencyTester"), CVarPixelStreamingDisableLatencyTester);

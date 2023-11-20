@@ -17,7 +17,7 @@ if [[ "${extension}" != "dSYM" &&  "${extension}" != "dsym" ]]; then
 fi
 
 # Cleanup any old dSYM
-if [ -e $2 ]; then
+if [ -e "$2" ]; then
 	echo "Deleting existing .dSYM"
 	rm -r "$2"
 fi

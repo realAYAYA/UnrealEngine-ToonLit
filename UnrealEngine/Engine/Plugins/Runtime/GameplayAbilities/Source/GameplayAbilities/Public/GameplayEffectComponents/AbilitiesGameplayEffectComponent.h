@@ -35,6 +35,8 @@ struct FGameplayAbilitySpecConfig
 UCLASS()
 class GAMEPLAYABILITIES_API UAbilitiesGameplayEffectComponent : public UGameplayEffectComponent
 {
+	friend class UGameplayEffect; // for upgrade path
+
 	GENERATED_BODY()
 
 public:

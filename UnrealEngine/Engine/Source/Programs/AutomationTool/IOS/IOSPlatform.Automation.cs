@@ -2000,15 +2000,25 @@ public class IOSPlatform : ApplePlatform
 			// Params.StageDirectory will be something like /.../Saved/StagedBuilds
 			// ClientApp will be something like /.../Saved/StagedBuilds/IOSClient/QAGame/Binaries/IOS/QAGameClient
 			// so we want the first directory in the CLientApp after Params.StageDirectory	
-			string TargetStageDir = ClientApp.Substring(0, ClientApp.IndexOf('/', Params.BaseStageDirectory.Length + 1));
-			if (AppleExports.UseModernXcode(Params.RawProjectPath))
+
+			// Currently (2023/09), Remote Mac builds from a Windows System are forced to Legacy mode and uses a different ClientApp value
+			if (OperatingSystem.IsMacOS())
 			{
-				// modern mode runs from the staged dir
-				PlistFile = Path.Combine(TargetStageDir, Path.GetFileNameWithoutExtension(ClientApp) + ".app", "Info.plist");
+				string TargetStageDir = ClientApp.Substring(0, ClientApp.IndexOf('/', Params.BaseStageDirectory.Length + 1));
+				if (AppleExports.UseModernXcode(Params.RawProjectPath))
+				{
+					// modern mode runs from the staged dir
+					PlistFile = Path.Combine(TargetStageDir, Path.GetFileNameWithoutExtension(ClientApp) + ".app", "Info.plist");
+				}
+				else
+				{
+					PlistFile = Path.Combine(TargetStageDir, "Info.plist");
+				}
 			}
 			else
 			{
-				PlistFile = Path.Combine(TargetStageDir, "Info.plist");
+				PlistFile = Path.Combine(Params.BaseStageDirectory, PlatformName);
+				PlistFile = Path.Combine(PlistFile, "Info.plist");
 			}
 
 			Logger.LogWarning("LOOKING IN PLIST {PListfile}", PlistFile);
@@ -2029,7 +2039,12 @@ public class IOSPlatform : ApplePlatform
 			Arguments += " --detach";
 			Arguments = GetLibimobileDeviceNetworkedArgument(Arguments, Params.DeviceNames[0]);
 			Arguments += " run '" + BundleIdentifier + "'";
-			Arguments += " " + ClientCmdLine;
+			
+			// ClientCmdLine is only relevant when running on a Mac
+			if (OperatingSystem.IsMacOS())
+			{
+				Arguments += " " + ClientCmdLine;
+			}
 
 			IProcessResult ClientProcess = Run(Program, Arguments, null, ClientRunFlags);
 			if (ClientProcess.ExitCode == -1)

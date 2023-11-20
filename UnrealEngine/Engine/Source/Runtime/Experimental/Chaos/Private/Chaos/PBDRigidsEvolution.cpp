@@ -1129,6 +1129,7 @@ namespace Chaos
 			Removal.BoundingBox = Particle->Geometry()->BoundingBox();
 		}
 		
+		GetIslandManager().RemoveParticle(Particle);
 		DisableParticle(Particle);
 	}
 

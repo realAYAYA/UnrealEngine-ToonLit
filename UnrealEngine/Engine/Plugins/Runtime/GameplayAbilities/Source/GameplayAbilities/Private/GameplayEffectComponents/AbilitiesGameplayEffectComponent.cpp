@@ -24,17 +24,8 @@ UAbilitiesGameplayEffectComponent::UAbilitiesGameplayEffectComponent()
 
 void UAbilitiesGameplayEffectComponent::AddGrantedAbilityConfig(const FGameplayAbilitySpecConfig& Config)
 {
-	for (const FGameplayAbilitySpecConfig& Existing : GrantAbilityConfigs)
-	{
-		if (Existing == Config)
-		{
-			return;
-		}
-	}
-
-	GrantAbilityConfigs.Emplace(Config);
+	GrantAbilityConfigs.AddUnique(Config);
 }
-
 
 // Reminder: this is happening on the authority only
 void UAbilitiesGameplayEffectComponent::OnInhibitionChanged(FActiveGameplayEffectHandle ActiveGEHandle, bool bIsInhibited) const

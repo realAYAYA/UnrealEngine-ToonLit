@@ -6288,6 +6288,15 @@ void FScene::UpdateAllPrimitiveSceneInfos(FRDGBuilder& GraphBuilder, EUpdateAllP
 		{
 			FPrimitiveSceneInfo* PrimitiveSceneInfo = Primitives[PrimitiveIndex];
 			PrimitivesNeedingStaticMeshUpdate[PrimitiveSceneInfo->PackedIndex] = true;
+
+			// HACK: Update Nanite primitives that need re-caching in GPU Scene
+			// TODO: Should be able to remove this after the move to compute materials.
+			if (bScenesPrimitivesNeedStaticMeshElementUpdate &&
+				PrimitiveSceneInfo->Proxy &&
+				PrimitiveSceneInfo->Proxy->IsNaniteMesh())
+			{
+				GPUScene.AddPrimitiveToUpdate(PrimitiveSceneInfo->GetIndex(), EPrimitiveDirtyState::ChangedOther);
+			}
 		}
 
 		bScenesPrimitivesNeedStaticMeshElementUpdate = false;

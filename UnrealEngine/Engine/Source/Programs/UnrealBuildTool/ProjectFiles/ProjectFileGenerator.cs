@@ -961,7 +961,7 @@ namespace UnrealBuildTool
 			{
 				foreach (FileReference GameUProjectFile in AllGameProjects)
 				{
-					NativeProjects.ConditionalMakeTempTargetForHybridProject(GameUProjectFile, new List<UnrealTargetPlatform>(1) { BuildHostPlatform.Current.Platform }, Logger);
+					NativeProjects.ConditionalMakeTempTargetForHybridProject(GameUProjectFile, PlatformProjectGenerators.GetRegisteredPlatforms(), Logger);
 				}
 
 				// they are created in a temp location, which we need to scan
@@ -2934,7 +2934,10 @@ namespace UnrealBuildTool
 						{
 							if (bMakeProjectPerTarget)
 							{
-								ProjectFile = FindOrAddProject(GetProjectLocation($"{ProjectName}{EngineTarget.TargetRules!.Type}"), ContentOnlyGameProject.Directory, IncludeInGeneratedProjects: true, bAlreadyExisted: out _);
+								// don't append Game suffix to the ContentOnly game target names, so the default case has the target/product named after the BP project name
+								// @note if this changes, see ApplePlatform.MakeContentOnlyTargetName
+								string TargetTypeSuffix = /*EngineTarget.TargetRules!.Type == TargetType.Game ? "" :*/ EngineTarget.TargetRules!.Type.ToString();
+								ProjectFile = FindOrAddProject(GetProjectLocation($"{ProjectName}{TargetTypeSuffix}"), ContentOnlyGameProject.Directory, IncludeInGeneratedProjects: true, bAlreadyExisted: out _);
 							}
 							else if (ProjectFile == null)
 							{

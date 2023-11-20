@@ -240,9 +240,10 @@ namespace ChaosTest
 		// Invalidate B
 		Test.Evolution.InvalidateParticle(Test.ParticleHandles[1]);
 
-		// Everything was kicked from the graph
-		EXPECT_FALSE(Test.ParticleHandles[0]->IsInConstraintGraph());
-		EXPECT_FALSE(Test.ParticleHandles[1]->IsInConstraintGraph());
+		// Constraint was kicked from the graph, but particles remain until
+		// explicitly removed or they have no constraint on next update
+		EXPECT_TRUE(Test.ParticleHandles[0]->IsInConstraintGraph());
+		EXPECT_TRUE(Test.ParticleHandles[1]->IsInConstraintGraph());
 		EXPECT_FALSE(Test.ConstraintHandles[0]->IsInConstraintGraph());
 
 		Test.Advance();

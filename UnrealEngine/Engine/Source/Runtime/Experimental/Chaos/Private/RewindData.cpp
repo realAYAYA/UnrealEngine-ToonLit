@@ -220,6 +220,7 @@ void FRewindData::ApplyTargets(const int32 Frame, const bool bResetSimulation)
 			{
 				if (Data.Disabled())
 				{
+					Solver->GetEvolution()->GetIslandManager().RemoveParticle(Particle);
 					Solver->GetEvolution()->DisableParticle(Particle);
 				}
 				else
@@ -344,6 +345,7 @@ bool FRewindData::RewindToFrame(int32 Frame)
 				//hasn't initialized yet, so disable
 				//must do this after rewind because SetDynamicsMisc will re-enable
 				//(the disable is a temp way to ignore objects not spawned yet, they weren't really disabled which is why it gets re-enabled)
+				Solver->GetEvolution()->GetIslandManager().RemoveParticle(DirtyParticleInfo.GetObjectPtr());
 				Solver->GetEvolution()->DisableParticle(DirtyParticleInfo.GetObjectPtr());
 			}
 		}

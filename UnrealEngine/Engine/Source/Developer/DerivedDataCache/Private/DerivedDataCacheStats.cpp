@@ -185,9 +185,9 @@ void FTimeAveragedStat::Update(FMonotonicTimePoint Time)
 		ActiveTime += RangeEnd - RangeStart;
 	}
 
-	if (AccumulatedValueCount && !ActiveTime.IsZero())
+	if (AccumulatedValueCount)
 	{
-		AverageRate = AccumulatedValue / ActiveTime.ToSeconds();
+		AverageRate = !ActiveTime.IsZero() ? AccumulatedValue / ActiveTime.ToSeconds() : 0.0;
 		AverageValue = AccumulatedValue / AccumulatedValueCount;
 	}
 }
@@ -202,6 +202,7 @@ FCacheStoreStats::FCacheStoreStats(FCacheStats& InCacheStats, ECacheStoreFlags I
 	, CacheStats(InCacheStats)
 {
 	const FMonotonicTimeSpan Period = FMonotonicTimeSpan::FromSeconds(60.0);
+	AverageLatency.SetPeriod(Period);
 	AveragePhysicalReadSize.SetPeriod(Period);
 	AveragePhysicalWriteSize.SetPeriod(Period);
 }

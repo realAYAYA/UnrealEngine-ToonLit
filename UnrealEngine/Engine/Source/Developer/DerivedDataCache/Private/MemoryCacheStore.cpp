@@ -129,7 +129,7 @@ FMemoryCacheStore::FMemoryCacheStore(
 	, bDisabled(false)
 	, CurrentCacheSize(0)
 	, bMaxSizeExceeded(false)
-	, bCanBeDisabled(false)
+	, bCanBeDisabled(FParse::Param(InConfig, TEXT("Boot")))
 {
 	OutCache = this;
 

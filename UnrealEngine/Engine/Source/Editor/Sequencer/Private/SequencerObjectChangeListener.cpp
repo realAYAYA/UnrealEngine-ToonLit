@@ -264,6 +264,30 @@ bool FSequencerObjectChangeListener::CanKeyProperty(FCanKeyPropertyParams CanKey
 	return CanKeyProperty_Internal(CanKeyPropertyParams, Delegate, Property, PropertyPath);
 }
 
+const UStruct* FindPropertyOwner(const FPropertyPath& InProperyPath, const UClass* InObjectClass, const FProperty* ForProperty)
+{
+	check(ForProperty);
+
+	bool bFoundProperty = false;
+	for (int32 Index = InProperyPath.GetNumProperties() - 1; Index >= 0; --Index)
+	{
+		FProperty* Property = InProperyPath.GetPropertyInfo(Index).Property.Get();
+		if (!bFoundProperty)
+		{
+			bFoundProperty = Property == ForProperty;
+			if (bFoundProperty)
+			{
+				return Property->GetOwnerStruct();
+			}
+		}
+		else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
+		{
+			return StructProperty->Struct;
+		}
+	}
+	return InObjectClass;
+}
+
 bool FSequencerObjectChangeListener::CanKeyProperty_Internal(FCanKeyPropertyParams CanKeyPropertyParams, FOnAnimatablePropertyChanged& InOutDelegate, FProperty*& InOutProperty, FPropertyPath& InOutPropertyPath) const
 {
 	if (CanKeyPropertyParams.PropertyPath.GetNumProperties() == 0)
@@ -288,63 +312,58 @@ bool FSequencerObjectChangeListener::CanKeyProperty_Internal(FCanKeyPropertyPara
 				continue;
 			}
 
-			const UStruct* PropertyContainer = CanKeyPropertyParams.FindPropertyContainer(Property);
-			if (PropertyContainer)
+			const UStruct* PropertyOwner = FindPropertyOwner(CanKeyPropertyParams.PropertyPath, CanKeyPropertyParams.ObjectClass, Property);
+			if (!PropertyOwner)
 			{
-				if (!FPropertyEditorPermissionList::Get().DoesPropertyPassFilter(PropertyContainer, Property->GetFName()))
+				continue;
+			}
+
+			if (!FPropertyEditorPermissionList::Get().DoesPropertyPassFilter(PropertyOwner, Property->GetFName()))
+			{
+				continue;
+			}
+
+			const UStruct* PropertyContainer = CanKeyPropertyParams.FindPropertyContainer(Property);
+			if (!PropertyContainer)
+			{
+				continue;
+			}
+
+			FAnimatedPropertyKey PropertyKey = FAnimatedPropertyKey::FromProperty(Property);
+
+			// If there is a custom accessor for this specific property path, it is animatable (as long as there is a supported track editor registered for the property type)
+			if (UE::MovieScene::GlobalCustomAccessorExists(CanKeyPropertyParams.ObjectClass, InOutPropertyPath.ToString(TEXT("."))))
+			{
+				if (const FOnAnimatablePropertyChanged* DelegatePtr = PropertyChangedEventMap.Find(PropertyKey))
 				{
-					continue;
+					InOutProperty = Property;
+					InOutDelegate = *DelegatePtr;
+					return true;
 				}
+			}
 
+			// Otherwise we check for magic named functions using the default logic
+			if (const FOnAnimatablePropertyChanged* DelegatePtr = FindPropertySetter(*PropertyContainer, PropertyKey, *Property))
+			{
+				InOutProperty = Property;
+				InOutDelegate = *DelegatePtr;
+				return true;
+			}
+
+			FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property);
+
+			// Check each level of the property hierarchy
+			FFieldClass* PropertyType = Property->GetClass();
+			while (PropertyType && PropertyType != FProperty::StaticClass())
+			{
+				FAnimatedPropertyKey Key = FAnimatedPropertyKey::FromPropertyTypeName(PropertyType->GetFName());
+
+				// For object properties, check each parent type of the object (ie, so a track that animates UBaseClass ptrs can be used with a UDerivedClass property)
+				UClass* ClassType = (ObjectProperty && ObjectProperty->PropertyClass) ? ObjectProperty->PropertyClass->GetSuperClass() : nullptr;
+				while (ClassType)
 				{
-					FAnimatedPropertyKey PropertyKey = FAnimatedPropertyKey::FromProperty(Property);
+					Key.ObjectTypeName = ClassType->GetFName();
 
-					// If there is a custom accessor for this specific property path, it is animatable (as long as there is a supported track editor registered for the property type)
-					if (UE::MovieScene::GlobalCustomAccessorExists(CanKeyPropertyParams.ObjectClass, InOutPropertyPath.ToString(TEXT("."))))
-					{
-						if (const FOnAnimatablePropertyChanged* DelegatePtr = PropertyChangedEventMap.Find(PropertyKey))
-						{
-							InOutProperty = Property;
-							InOutDelegate = *DelegatePtr;
-							return true;
-						}
-					}
-					// Otherwise we check for magic named functions using the default logic
-					const FOnAnimatablePropertyChanged* DelegatePtr = FindPropertySetter(*PropertyContainer, PropertyKey, *Property);
-					if (DelegatePtr != nullptr)
-					{
-						InOutProperty = Property;
-						InOutDelegate = *DelegatePtr;
-						return true;
-					}
-				}
-
-
-				FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property);
-
-				// Check each level of the property hierarchy
-				FFieldClass* PropertyType = Property->GetClass();
-				while (PropertyType && PropertyType != FProperty::StaticClass())
-				{
-					FAnimatedPropertyKey Key = FAnimatedPropertyKey::FromPropertyTypeName(PropertyType->GetFName());
-
-					// For object properties, check each parent type of the object (ie, so a track that animates UBaseClass ptrs can be used with a UDerivedClass property)
-					UClass* ClassType = (ObjectProperty && ObjectProperty->PropertyClass) ? ObjectProperty->PropertyClass->GetSuperClass() : nullptr;
-					while (ClassType)
-					{
-						Key.ObjectTypeName = ClassType->GetFName();
-
-						if (const FOnAnimatablePropertyChanged* DelegatePtr = FindPropertySetter(*PropertyContainer, Key, *Property))
-						{
-							InOutProperty = Property;
-							InOutDelegate = *DelegatePtr;
-							return true;
-						}
-
-						ClassType = ClassType->GetSuperClass();
-					}
-
-					Key.ObjectTypeName = NAME_None;
 					if (const FOnAnimatablePropertyChanged* DelegatePtr = FindPropertySetter(*PropertyContainer, Key, *Property))
 					{
 						InOutProperty = Property;
@@ -352,9 +371,19 @@ bool FSequencerObjectChangeListener::CanKeyProperty_Internal(FCanKeyPropertyPara
 						return true;
 					}
 
-					// Look at the property's super class
-					PropertyType = PropertyType->GetSuperClass();
+					ClassType = ClassType->GetSuperClass();
 				}
+
+				Key.ObjectTypeName = NAME_None;
+				if (const FOnAnimatablePropertyChanged* DelegatePtr = FindPropertySetter(*PropertyContainer, Key, *Property))
+				{
+					InOutProperty = Property;
+					InOutDelegate = *DelegatePtr;
+					return true;
+				}
+
+				// Look at the property's super class
+				PropertyType = PropertyType->GetSuperClass();
 			}
 		}
 	}

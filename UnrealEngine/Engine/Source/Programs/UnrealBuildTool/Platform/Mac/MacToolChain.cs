@@ -538,7 +538,7 @@ namespace UnrealBuildTool
 				LipoAction.CommandPath = FileReference.Combine(Info.Clang.Directory, "lipo");
 				LipoAction.CommandDescription = (bBuildImportLibraryOnly ? "LipoStub" : "Lipo");
 				LipoAction.CommandVersion = Info.ClangVersionString;
-				LipoAction.CommandArguments = String.Join(" ", PerArchOutputFiles) + $" -create -output {OutputFileItem.AbsolutePath}";
+				LipoAction.CommandArguments = String.Join(" ", PerArchOutputFiles.Select(x => $"\"{x}\"")) + $" -create -output \"{OutputFileItem.AbsolutePath}\"";
 				LipoAction.StatusDescription = Path.GetFileName(OutputFileItem.AbsolutePath);
 				LipoAction.bCanExecuteRemotely = false;
 			}

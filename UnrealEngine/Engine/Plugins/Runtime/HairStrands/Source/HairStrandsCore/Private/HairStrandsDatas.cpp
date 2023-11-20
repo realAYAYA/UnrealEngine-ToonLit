@@ -6,6 +6,7 @@
 #include "HairAttributes.h"
 #include "IO/IoDispatcher.h"
 #include "GroomRBFDeformer.h"
+#include "Misc/ScopeExit.h"
 
 #if WITH_EDITOR
 #include "DerivedDataCache.h"
@@ -357,7 +358,7 @@ bool FHairStreamingRequest::IsUnloading() const
 	return false; 
 }
 #if WITH_EDITORONLY_DATA
-static void RequestWarmCache(UE::DerivedData::FRequestOwner* RequestOwner, const TArray<UE::DerivedData::FCacheGetChunkRequest>& Requests)
+static bool RequestWarmCache(UE::DerivedData::FRequestOwner* RequestOwner, const TArray<UE::DerivedData::FCacheGetChunkRequest>& Requests)
 {
 	using namespace UE::DerivedData;
 
@@ -369,18 +370,20 @@ static void RequestWarmCache(UE::DerivedData::FRequestOwner* RequestOwner, const
 	{				
 		WarmRequest.Add({R.Name, R.Key, Policy, 0});
 	}
-	GetCache().GetValue(WarmRequest, *RequestOwner, [](FCacheGetValueResponse && Response) { /* If the data are not built the cache quert can return false. check(Response.Status == EStatus::Ok);*/ });
+	bool bHasDataInCache = true;
+	GetCache().GetValue(WarmRequest, *RequestOwner, [&bHasDataInCache](FCacheGetValueResponse && Response) { if (Response.Status != EStatus::Ok) { bHasDataInCache = false; } /* If the data are not built the cache query can return false. check(Response.Status == EStatus::Ok);*/ });
 	RequestOwner->Wait();
+	return bHasDataInCache;
 }
 
-void FHairStreamingRequest::WarmCache(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, int32 InLODIndex, FHairStrandsBulkCommon& In)
+bool FHairStreamingRequest::WarmCache(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, int32 InLODIndex, FHairStrandsBulkCommon& In)
 {
 	if (In.GetResourceCount() == 0 || InRequestedCurveCount == 0)
 	{
 		CurveCount = 0;
 		PointCount = 0;
 		LODIndex = -1;
-		return;
+		return true;
 	}
 	CurveCount = InRequestedCurveCount;
 	PointCount = InRequestedPointCount;
@@ -393,15 +396,26 @@ void FHairStreamingRequest::WarmCache(uint32 InRequestedCurveCount, uint32 InReq
 
 	check(DDCRequestOwner == nullptr);
 	DDCRequestOwner = MakeUnique<FRequestOwner>(UE::DerivedData::EPriority::Blocking);
-	RequestWarmCache(DDCRequestOwner.Get(), Requests);
+	return RequestWarmCache(DDCRequestOwner.Get(), Requests);
 }
 #endif
 
 // Request fullfil 2 use cases:
 // * Load IO/DDC data and upload them to GPU
 // * Load DDC data and store them into bulkdata for serialization
-void FHairStreamingRequest::Request(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, int32 InLODIndex, FHairStrandsBulkCommon& In, bool bWait, bool bFillBulkdata, bool bWarmCache, const FName& InOwnerName)
+void FHairStreamingRequest::Request(uint32 InRequestedCurveCount, uint32 InRequestedPointCount, int32 InLODIndex, FHairStrandsBulkCommon& In,
+	bool bWait, bool bFillBulkdata, bool bWarmCache, const FName& InOwnerName, bool* bWaitResult)
 {
+	bool bLogErrors = bWaitResult == nullptr;
+	bool bLocalWaitResult = true;
+	ON_SCOPE_EXIT
+	{
+		if (bWaitResult)
+		{
+			*bWaitResult = bLocalWaitResult;
+		}
+	};
+
 	if (In.GetResourceCount() == 0 || InRequestedCurveCount == 0)
 	{
 		CurveCount = 0;
@@ -443,7 +457,7 @@ void FHairStreamingRequest::Request(uint32 InRequestedCurveCount, uint32 InReque
 
 		//FRequestBarrier Barrier(*DDCRequestOwner);	// This is a critical section on the owner. It does not constrain ordering
 		GetCache().GetChunks(Requests, *DDCRequestOwner,
-		[this, &In, bFillBulkdata, InOwnerName](FCacheGetChunkResponse && Response)
+		[this, &In, bFillBulkdata, InOwnerName, bLogErrors](FCacheGetChunkResponse && Response)
 		{
 			if (Response.Status == UE::DerivedData::EStatus::Ok)
 			{
@@ -476,7 +490,8 @@ void FHairStreamingRequest::Request(uint32 InRequestedCurveCount, uint32 InReque
 			{
 				FHairStreamingRequest::FChunk& Chunk = *(FHairStreamingRequest::FChunk*)Response.UserData;
 				Chunk.Status = FHairStreamingRequest::FChunk::Failed;
-				UE_LOG(LogHairStrands, Error, TEXT("[Groom] DDC request failed for '%s' (Key:%s) "), *InOwnerName.ToString(), *In.DerivedDataKey);
+				UE_CLOG(bLogErrors, LogHairStrands, Error,
+					TEXT("[Groom] DDC request failed for '%s' (Key:%s) "), *InOwnerName.ToString(), *In.DerivedDataKey);
 			}
 		});
 
@@ -484,7 +499,14 @@ void FHairStreamingRequest::Request(uint32 InRequestedCurveCount, uint32 InReque
 		if (bWait || bFillBulkdata)
 		{
 			DDCRequestOwner->Wait();
-			check(IsCompleted());
+			if (!IsCompleted())
+			{
+				if (bLogErrors)
+				{
+					checkf(IsCompleted(), TEXT("HairStrands fatal error: DDC request failed."));
+				}
+				bLocalWaitResult = false;
+			}
 		}
 	}
 #endif

@@ -67,6 +67,14 @@ public:
 	FString CodeSigningPrefix;
 	
 	/**
+	 * The name of the Mac .app when making an archived build (for uploading to App Store, etc). The Finder shows Mac apps by their .app name, and we don't name the .app  with
+	 * "pretty" names during development. When packaging for distribution (or using Archive menu in Xcode) this will become the name of the .app, and will be what end users
+	 * will have on their Mac. If this is not set, the .app will have the name of the .uproject file
+	 */
+	UPROPERTY(EditAnywhere, config, Category=Xcode, meta = (EditCondition="bUseModernXcode", DisplayName = "Mac: Published App Name"))
+	FString ApplicationDisplayName;
+
+	/**
 	 * The App Category that will be used for Apple App Store submissions
 	 */
 	UPROPERTY(EditAnywhere, config, Category=Xcode, meta = (EditCondition="bUseModernXcode", DisplayName = "App Category"))

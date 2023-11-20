@@ -3938,7 +3938,15 @@ FAsyncPackage2* FAsyncLoadingThread2::FindOrInsertPackage(FAsyncLoadingThreadSta
 	// it is causing crashes and soft-locks in editor when FlushAsyncLoading is called on specific requests
 	// that are in the same postload group as their outer, preventing fine grained flush. So we disable this
 	// in editor for the time being since ALT is not yet activated by default and we'll sort out the race conditions instead.
-	constexpr bool bIsPostLoadGroupFeatureActive = !ALT2_ENABLE_LINKERLOAD_SUPPORT;
+#if ALT2_ENABLE_LINKERLOAD_SUPPORT
+	constexpr bool bIsPostLoadGroupFeatureActive = false;
+#else
+	// Prevents activating postload groups during boot because it was causing deadlock into the 
+	// highly recursive InitDefaultMaterials function on some platforms.
+	// Since postload groups are there to protect against race conditions between postloads and serialize,
+	// no such race can exists until the loading thread is started.
+	const bool bIsPostLoadGroupFeatureActive = bThreadStarted;
+#endif
 
 	if (bInserted)
 	{

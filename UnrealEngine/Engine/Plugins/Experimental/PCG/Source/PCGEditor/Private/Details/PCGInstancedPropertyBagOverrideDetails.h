@@ -12,6 +12,7 @@
 
 class UPCGGraphInstance;
 class UPCGSettings;
+struct FInstancedPropertyBag;
 
 class FPCGOverrideInstancedPropertyBagDetails : public IPropertyTypeCustomization
 {
@@ -42,4 +43,10 @@ private:
 	TWeakObjectPtr<UPCGGraphInstance> Owner;
 	TWeakObjectPtr<UPCGSettings> SettingsOwner;
 	TSharedPtr<IPropertyHandle> PropertiesIDsOverriddenHandle;
+
+public:
+	~FPCGOverrideInstancedPropertyBagDataDetails();
+
+	virtual void GenerateHeaderRowContent(FDetailWidgetRow& NodeRow) override;
+	void OnStructChange(const FInstancedPropertyBag&) { OnStructLayoutChanges(); }
 };

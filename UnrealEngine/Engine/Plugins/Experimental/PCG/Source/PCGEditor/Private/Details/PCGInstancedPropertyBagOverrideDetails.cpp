@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Details/PCGInstancedPropertyBagOverrideDetails.h"
+#include "PCGCommon.h"
 #include "PCGGraph.h"
 #include "PCGSettings.h"
 
@@ -94,6 +95,18 @@ FPCGOverrideInstancedPropertyBagDataDetails::FPCGOverrideInstancedPropertyBagDat
 			}
 		}
 	}
+}
+
+FPCGOverrideInstancedPropertyBagDataDetails::~FPCGOverrideInstancedPropertyBagDataDetails()
+{
+	PCGDelegates::OnInstancedPropertyBagLayoutChanged.RemoveAll(this);
+}
+
+void FPCGOverrideInstancedPropertyBagDataDetails::GenerateHeaderRowContent(FDetailWidgetRow& NodeRow)
+{
+	FInstancedStructDataDetails::GenerateHeaderRowContent(NodeRow);
+
+	PCGDelegates::OnInstancedPropertyBagLayoutChanged.AddSP(this, &FPCGOverrideInstancedPropertyBagDataDetails::OnStructChange);
 }
 
 EVisibility FPCGOverrideInstancedPropertyBagDataDetails::IsResetVisible(TSharedPtr<IPropertyHandle> InPropertyHandle) const

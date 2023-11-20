@@ -59,3 +59,10 @@ namespace PCGHiGenGrid
 		return 100 * static_cast<uint32>(EPCGHiGenGrid::Unbounded);
 	}
 }
+
+namespace PCGDelegates
+{
+#if WITH_EDITOR
+	FOnInstanceLayoutChanged OnInstancedPropertyBagLayoutChanged;
+#endif
+} // PCGDelegates

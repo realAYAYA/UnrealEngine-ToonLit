@@ -1107,6 +1107,63 @@ static FAutoConsoleVariableRef CVarGEnableThermalsReport(
 	return YES;
 }
 
+#if !PLATFORM_TVOS
+- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow*)window
+{
+	bool bSupportsPortrait;
+	bool bSupportsPortraitUpsideDown;
+	bool bSupportsLandscapeLeft;
+	bool bSupportsLandscapeRight;
+	
+	// This is called during app startup and IOSRuntimeSettings may not have been loaded yet
+	bool hasValue = GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsPortraitOrientation"), bSupportsPortrait, GEngineIni);
+	
+	NSArray<NSString*> *SupportedOrientations = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UISupportedInterfaceOrientations"];
+	if (!hasValue && SupportedOrientations != NULL)
+	{
+		// Loop through the Info.plist UISupportedInterfaceOrientations array values looking for "Portrait", "Left" and "Right"
+		NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF == %@", @"UIInterfaceOrientationPortrait"];
+		bSupportsPortrait = ([SupportedOrientations filteredArrayUsingPredicate:predicate].count > 0);
+		
+		NSPredicate *predicateDown = [NSPredicate predicateWithFormat:@"SELF == %@", @"UIInterfaceOrientationPortraitUpsideDown"];
+		bSupportsPortraitUpsideDown = ([SupportedOrientations filteredArrayUsingPredicate:predicateDown].count > 0);
+		
+		NSPredicate *PredicateLeft = [NSPredicate predicateWithFormat:@"SELF == %@", @"UIInterfaceOrientationLandscapeLeft"];
+		bSupportsLandscapeLeft = ([SupportedOrientations filteredArrayUsingPredicate:PredicateLeft].count > 0);
+		
+		NSPredicate *PredicateRight = [NSPredicate predicateWithFormat:@"SELF == %@", @"UIInterfaceOrientationLandscapeRight"];
+		bSupportsLandscapeRight = ([SupportedOrientations filteredArrayUsingPredicate:PredicateRight].count > 0);
+	}
+	else
+	{
+		GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsUpsideDownOrientation"), bSupportsPortraitUpsideDown, GEngineIni);
+		GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsLandscapeLeftOrientation"), bSupportsLandscapeLeft, GEngineIni);
+		GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsLandscapeRightOrientation"), bSupportsLandscapeRight, GEngineIni);
+	}
+	
+	UIInterfaceOrientationMask Mask = 0;
+	if (bSupportsPortrait)
+	{
+		Mask |= UIInterfaceOrientationMaskPortrait;
+	}
+	if (bSupportsPortraitUpsideDown)
+	{
+		Mask |= UIInterfaceOrientationMaskPortraitUpsideDown;
+	}
+	if (bSupportsLandscapeLeft)
+	{
+		Mask |= UIInterfaceOrientationMaskLandscapeLeft;
+	}
+	if (bSupportsLandscapeRight)
+	{
+		Mask |= UIInterfaceOrientationMaskLandscapeRight;
+	}
+	
+	// If no orientation constraints are set, default to MaskAll
+	return (Mask==0)?UIInterfaceOrientationMaskAll:Mask;
+}
+#endif
+
 #if WITH_ACCESSIBILITY
 -(void)OnVoiceOverStatusChanged
 {

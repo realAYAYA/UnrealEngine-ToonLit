@@ -728,6 +728,7 @@ namespace Chaos
 			if(Handle)
 			{
 				//Disable until particle is finally destroyed
+				GetEvolution()->GetIslandManager().RemoveParticle(Handle);
 				GetEvolution()->DisableParticle(Handle);
 			}
 
@@ -782,6 +783,7 @@ namespace Chaos
 				{
 					if (Handle)
 					{
+						MEvolution->GetIslandManager().RemoveParticle(Handle);
 						MEvolution->DisableParticle(Handle);
 
 						// It should be safe to defer here without an immediate call to HandleDeferredClusterUnionUpdateProperties.
@@ -845,6 +847,7 @@ namespace Chaos
 			{
 				if (Proxy->GetParticle_Internal())
 				{
+					MEvolution->GetIslandManager().RemoveParticle(Proxy->GetParticle_Internal());
 					MEvolution->DisableParticle(Proxy->GetParticle_Internal());
 				}
 				ClusterUnionPhysicsProxies_Internal.RemoveSingle(Proxy);
@@ -2362,6 +2365,7 @@ TRACE_COUNTER_SET(ChaosTraceCounter_##Name, Value)
 		{
 			if (DynamicMisc.Disabled())
 			{
+				GetEvolution()->GetIslandManager().RemoveParticle(Rigid);
 				GetEvolution()->DisableParticle(Rigid);
 			}
 			else

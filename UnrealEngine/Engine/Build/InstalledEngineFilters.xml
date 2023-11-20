@@ -339,8 +339,10 @@
 		Engine/Build/BatchFiles/Mac/RunMono.sh
 		Engine/Build/BatchFiles/Mac/RunXBuild.sh
 		Engine/Build/BatchFiles/Mac/XcodeBuild.sh
-        Engine/Build/BatchFiles/Mac/GenerateUniversalDSYM.sh
-        Engine/Build/BatchFiles/Mac/UpdateVersionAfterBuild.sh
+		Engine/Build/BatchFiles/Mac/GenerateUniversalDSYM.sh
+		Engine/Build/BatchFiles/Mac/ThinApp.sh
+		Engine/Build/BatchFiles/Mac/UpdateVersionAfterBuild.sh
+		Engine/Build/BatchFiles/Mac/SourceCodeLookup.sh
 		Engine/Build/BatchFiles/RunUAT.command
 		Engine/Build/BatchFiles/RunUAT.sh
 		Engine/Build/BatchFiles/RunUBT.sh

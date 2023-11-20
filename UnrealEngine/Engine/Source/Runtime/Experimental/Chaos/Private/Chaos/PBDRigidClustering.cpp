@@ -285,6 +285,7 @@ namespace Chaos
 				ClusteredChild->ClusterIds().Id = Cluster;
 			}
 
+			MEvolution.GetIslandManager().RemoveParticle(Handle);
 			MEvolution.DisableParticle(Handle);
 			MEvolution.GetParticles().MarkTransientDirtyParticle(Handle);
 		}
@@ -697,6 +698,7 @@ namespace Chaos
 				if (ClusteredParent->InternalCluster() && Children->IsEmpty() && ClusteredParent->PhysicsProxy() && ClusteredParent->PhysicsProxy()->GetType() == EPhysicsProxyType::GeometryCollectionType)
 				{
 					// It's safe to disable the particle until we get to the point where we want to destroy the particle.
+					MEvolution.GetIslandManager().RemoveParticle(ClusteredParent);
 					MEvolution.DisableParticle(ClusteredParent);
 
 					// We shouldn't ever need to do an AddUnique here since when we remove a child from a parent, the parent should only ever turn empty once.
@@ -1976,6 +1978,7 @@ namespace Chaos
 	void FRigidClustering::DisableCluster(FPBDRigidClusteredParticleHandle* ClusteredParticle)
 	{
 		// #note: we don't recursively descend to the children
+		MEvolution.GetIslandManager().RemoveParticle(ClusteredParticle);
 		MEvolution.DisableParticle(ClusteredParticle);
 		TopLevelClusterParents.Remove(ClusteredParticle);
 		TopLevelClusterParentsStrained.Remove(ClusteredParticle);
@@ -2021,6 +2024,7 @@ namespace Chaos
 		// disable within the solver
 		if (!ClusteredParticle->Disabled())
 		{
+			MEvolution.GetIslandManager().RemoveParticle(ClusteredParticle);
 			MEvolution.DisableParticle(ClusteredParticle);
 			ensure(ClusteredParticle->ClusterIds().Id == nullptr);
 		}

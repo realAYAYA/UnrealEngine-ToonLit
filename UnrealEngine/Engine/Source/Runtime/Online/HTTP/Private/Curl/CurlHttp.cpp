@@ -983,6 +983,11 @@ bool FCurlHttpRequest::SetupRequestHttpThread()
 	}
 #endif
 
+#if WITH_CURL_QUICKEXIT
+	// Avoid hanging and waiting for threaded resolver
+	curl_easy_setopt(EasyHandle, CURLOPT_QUICK_EXIT, 1L);
+#endif
+
 	UE_LOG(LogHttp, Log, TEXT("%p: Starting %s request to URL='%s'"), this, *Verb, *URL);
 
 	return true;

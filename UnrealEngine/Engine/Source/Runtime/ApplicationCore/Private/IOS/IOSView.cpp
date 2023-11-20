@@ -1034,21 +1034,28 @@ self.accessibilityElements = @[Window.accessibilityContainer];
 	[super viewDidUnload];
 }
 
+#if !PLATFORM_TVOS
 /**
  * Tell the OS about the default supported orientations
  */
 - (NSUInteger)supportedInterfaceOrientations
 {
-	const FIOSView *View = [[IOSAppDelegate GetDelegate] IOSView];
+	const IOSAppDelegate *AppDelegate = [IOSAppDelegate GetDelegate];
+	const FIOSView *View = [AppDelegate IOSView];
 	if (View != nil)
 	{
-		return View->SupportedInterfaceOrientations;
+		// if a Blueprint has changed the default rotation constraints, honour that change
+		if (View->SupportedInterfaceOrientations != UIInterfaceOrientationMaskAll)
+		{
+			return View->SupportedInterfaceOrientations;
+		}
 	}
-	else
-	{
-		return UIInterfaceOrientationMaskAll;
-	}
+
+	// View either not yet created or Blueprint is not overriding the default, so use what the Window has set
+	UIApplication *app = [UIApplication sharedApplication];
+	return [AppDelegate application:app supportedInterfaceOrientationsForWindow:[AppDelegate window]];
 }
+#endif
 
 /**
  * Tell the OS that our view controller can auto-rotate between supported orientations

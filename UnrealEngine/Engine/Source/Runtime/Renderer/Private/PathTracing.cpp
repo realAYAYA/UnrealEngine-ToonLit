@@ -1328,20 +1328,20 @@ public:
 		{
 			// only need to compile the intersection shader permutation if the VF actually requires it
 			return false;
-		}
-		if (SimplifyStrata && (!Strata::IsStrataEnabled() || CVarPathTracingSubstrateCompileSimplifiedMaterial.GetValueOnAnyThread() == 0))
-		{
-			// don't compile the extra strata permutation if:
-			//    Substrate is not enabled on this project
-			// or the user did not request the extra permutations to be compiled (default)
-			return false;
-		}
+		}		
 		if (IsGPULightmass)
 		{
 			return ShouldCompileGPULightmassShadersForProject(Parameters);
 		}
 		else
 		{
+			if (SimplifyStrata && (!Strata::IsStrataEnabled() || CVarPathTracingSubstrateCompileSimplifiedMaterial.GetValueOnAnyThread() == 0))
+			{
+				// don't compile the extra strata permutation if:
+				//    Substrate is not enabled on this project
+				// or the user did not request the extra permutations to be compiled (default)
+				return false;
+			}
 			return ShouldCompilePathTracingShadersForProject(Parameters.Platform);
 		}
 	}
@@ -1406,6 +1406,7 @@ using FPathTracingMaterialSimplifiedCHS_AHS_IS = TPathTracingMaterial<true , tru
 
 
 // NOTE: lightmass doesn't work with intersection shader VFs at the moment, so avoid instantiating permutations that will never generate any shaders
+// Also lightmass is always using simplified Substrate mode.
 using FGPULightmassCHS               = TPathTracingMaterial<false, false, true, true>;
 using FGPULightmassCHS_AHS           = TPathTracingMaterial<true , false, true, true>;
 

@@ -122,7 +122,25 @@ void UGameplayEffect::PostInitProperties()
 	Super::PostInitProperties();
 
 #if WITH_EDITORONLY_DATA
-	SetVersion(EGameplayEffectVersion::Monolithic);
+	// On the first load of this package, the version will be inherited from the parent class.
+	// We want to always stomp that value to say it's a Monolithic version (pre-UE5.3), ensuring a child class always
+	// executes the upgrade path at least once.  Once the package has been fully loaded, in PostLoad we will correctly
+	// set the package version.  However, this function will again be called on recompilation of the Blueprint.
+	// In order to account for that, we should check if the Package has a Linker:
+	// This will be True if it's already existed; False if being created (new asset).
+	if (const UPackage* Package = GetPackage())
+	{
+		const bool bAlreadyExists = (Package->GetLinker() != nullptr);
+		if (!bAlreadyExists)
+		{
+			constexpr bool bForceGameThreadValue = true;
+			SetVersion(static_cast<EGameplayEffectVersion>(UE::GameplayEffect::CVarGameplayEffectMaxVersion.GetValueOnAnyThread(bForceGameThreadValue)));
+		}
+		else
+		{
+			SetVersion(EGameplayEffectVersion::Monolithic);
+		}
+	}
 #endif
 }
 
@@ -345,12 +363,21 @@ void UGameplayEffect::ConvertAbilitiesComponent()
 	// Get the archetype to compare to
 	const UGameplayEffect* Archetype = CastChecked<UGameplayEffect>(GetArchetype());
 
+	// Due to the delta serialization, this will only be true if we're not inheriting the parent's values
 	const bool bChanged = !(GrantedAbilities == Archetype->GrantedAbilities);
 	if (bChanged && UE::GameplayEffect::EditorOnly::ShouldUpgradeVersion(GetVersion(), EGameplayEffectVersion::AbilitiesComponent53))
 	{
 		UAbilitiesGameplayEffectComponent& AbilitiesComponent = FindOrAddComponent<UAbilitiesGameplayEffectComponent>();
+
+		// Since we've already determined we're not inheriting the parent values, clobber the array
+		AbilitiesComponent.GrantAbilityConfigs.Empty();
 		for (const FGameplayAbilitySpecDef& GASpecDef : GrantedAbilities)
 		{
+			if (!GASpecDef.Ability.Get())
+			{
+				continue;
+			}
+
 			FGameplayAbilitySpecConfig GASpecConfig;
 			GASpecConfig.Ability = GASpecDef.Ability;
 			GASpecConfig.InputID = GASpecDef.InputID;
@@ -361,8 +388,12 @@ void UGameplayEffect::ConvertAbilitiesComponent()
 			AbilitiesComponent.AddGrantedAbilityConfig(GASpecConfig);
 		}
 
-		// We should empty these because the old code path that executes them is still around.
-		GrantedAbilities.Empty();
+		// We shouldn't just empty out the deprecated GrantedAbilities because then we wouldn't know if a Child's Empty array was an override or inheritance.
+		// Instead, let's null-out the entries so they won't affect gameplay, but the child will still inherit the nulled-out list rather than empty list.
+		for (FGameplayAbilitySpecDef& Entry : GrantedAbilities)
+		{
+			Entry.Ability = nullptr;
+		}
 	}
 }
 
@@ -1441,15 +1472,24 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	// ------------------------------------------------
 
 	// Make Granted AbilitySpecs (caller may modify these specs after creating spec, which is why we dont just reference them from the def)
-	// Note: These are going to be deprecated in the future in favor of immutable GameplayEffectComponents.
-	GrantedAbilitySpecs = InDef->GrantedAbilities;
+	// Note: GrantedAbilitySpecs is going to be removed in the future in favor of immutable GameplayEffectComponents.  Don't rely on this (dynamic) functionality.
+	GrantedAbilitySpecs.Empty();
 
 	// if we're granting abilities and they don't specify a source object use the source of this GE
-	for (FGameplayAbilitySpecDef& AbilitySpecDef : GrantedAbilitySpecs)
+	for (const FGameplayAbilitySpecDef& AbilitySpecDef : InDef->GrantedAbilities)
 	{
-		if (AbilitySpecDef.SourceObject == nullptr)
+		// Don't copy null entries over, these would have been nulled during the conversion to use GEComponents.
+		if (!AbilitySpecDef.Ability.Get())
 		{
-			AbilitySpecDef.SourceObject = InEffectContext.GetSourceObject();
+			continue;
+		}
+
+		UE_LOG(LogGameplayEffects, Error, TEXT("%s had GrantedAbilities dynamically added to it. This functionality is being deprecated"), *GetNameSafe(InDef));
+		FGameplayAbilitySpecDef& OurCopy = GrantedAbilitySpecs.Emplace_GetRef(AbilitySpecDef);
+
+		if (OurCopy.SourceObject == nullptr)
+		{
+			OurCopy.SourceObject = InEffectContext.GetSourceObject();
 		}
 	}
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
@@ -2270,6 +2310,7 @@ FActiveGameplayEffect::FActiveGameplayEffect(FActiveGameplayEffect&& Other)
 	: Handle(Other.Handle)
 	, Spec(MoveTemp(Other.Spec))
 	, PredictionKey(Other.PredictionKey)
+	, GrantedAbilityHandles(MoveTemp(Other.GrantedAbilityHandles))
 	, StartServerWorldTime(Other.StartServerWorldTime)
 	, CachedStartServerWorldTime(Other.CachedStartServerWorldTime)
 	, StartWorldTime(Other.StartWorldTime)
@@ -2294,6 +2335,7 @@ FActiveGameplayEffect& FActiveGameplayEffect::operator=(FActiveGameplayEffect&& 
 	Handle = Other.Handle;
 	Spec = MoveTemp(Other.Spec);
 	PredictionKey = Other.PredictionKey;
+	GrantedAbilityHandles = MoveTemp(Other.GrantedAbilityHandles);
 	StartServerWorldTime = Other.StartServerWorldTime;
 	CachedStartServerWorldTime = Other.CachedStartServerWorldTime;
 	StartWorldTime = Other.StartWorldTime;
@@ -2317,6 +2359,7 @@ FActiveGameplayEffect& FActiveGameplayEffect::operator=(const FActiveGameplayEff
 	Handle = Other.Handle;
 	Spec = Other.Spec;
 	PredictionKey = Other.PredictionKey;
+	GrantedAbilityHandles = Other.GrantedAbilityHandles;
 	StartServerWorldTime = Other.StartServerWorldTime;
 	CachedStartServerWorldTime = Other.CachedStartServerWorldTime;
 	StartWorldTime = Other.StartWorldTime;
@@ -3855,7 +3898,7 @@ void FActiveGameplayEffectsContainer::InternalOnActiveGameplayEffectAdded(FActiv
 
 	const bool bActive = EffectDef->OnAddedToActiveContainer(*this, Effect);
 
-	constexpr bool bInvokeCuesIfEnabled = true;
+	constexpr bool bInvokeCuesIfEnabled = false;
 	Effect.bIsInhibited = true; // Effect has to start inhibited, so our call to Inhibit will trigger if we should be active
 	Owner->InhibitActiveGameplayEffect(Effect.Handle, !bActive, bInvokeCuesIfEnabled);
 }
@@ -3941,6 +3984,11 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	{
 		for (FGameplayAbilitySpecDef& AbilitySpecDef : Effect.Spec.GrantedAbilitySpecs)
 		{
+			if (!AbilitySpecDef.Ability.Get())
+			{
+				continue;
+			}
+
 			// Only do this if we haven't assigned the ability yet! This prevents cases where stacking GEs
 			// would regrant the ability every time the stack was applied
 			if (AbilitySpecDef.AssignedHandle.IsValid() == false)

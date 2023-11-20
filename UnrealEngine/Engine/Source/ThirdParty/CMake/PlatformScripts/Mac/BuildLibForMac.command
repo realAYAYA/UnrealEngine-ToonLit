@@ -43,7 +43,7 @@ for Config in ${LIB_CONFIGS}; do
 	done
 	if [ -d ${LIB_DIR}/${LIB_ARCHS[-1]}/${Config} ]; then
 		mkdir -p ${LIB_DIR}/${Config}
-		for Archive in ${LIB_DIR}/${LIB_ARCHS[-1]}/${Config}/*; do
+		for Archive in ${LIB_DIR}/${LIB_ARCHS[-1]}/${Config}/*(N); do
 			Filename=$(basename ${Archive})
 			echo "Creating universal ${Filename}..."
 			lipo -create -output ${LIB_DIR}/${Config}/${Filename} ${LIB_DIR}/${^LIB_ARCHS}/${Config}/${Filename}
@@ -52,9 +52,9 @@ for Config in ${LIB_CONFIGS}; do
 	fi
 	if [ -d ${BIN_DIR}/${LIB_ARCHS[-1]}/${Config} ]; then
 		mkdir -p ${BIN_DIR}/${Config}
-		for Archive in ${BIN_DIR}/${LIB_ARCHS[-1]}/${Config}/*; do
-			echo "Creating universal ${Filename}..."
+		for Archive in ${BIN_DIR}/${LIB_ARCHS[-1]}/${Config}/*(N); do
 			Filename=$(basename ${Archive})
+			echo "Creating universal ${Filename}..."
 			lipo -create -output ${BIN_DIR}/${Config}/${Filename} ${BIN_DIR}/${^LIB_ARCHS}/${Config}/${Filename}
 		done
 		rm -rf ${BIN_DIR}/${^LIB_ARCHS}

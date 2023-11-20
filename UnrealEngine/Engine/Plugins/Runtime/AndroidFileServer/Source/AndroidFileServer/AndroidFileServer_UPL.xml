@@ -62,7 +62,13 @@
 					<true>
 						<if condition="bExternalStartAFS">
 							<true>
+								<!-- runtime permissions for foreground service -->
+								<addPermission android:name="android.permission.FOREGROUND_SERVICE"/>
+								<addPermission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+								<addPermission android:name="android.permission.POST_NOTIFICATIONS"/>
+								
 								<addElements tag="application">
+									<service android:name="com.epicgames.unreal.RemoteFileManagerService" android:foregroundServiceType="dataSync" android:exported="true" />
 									<activity android:name="com.epicgames.unreal.RemoteFileManagerActivity" android:exported="true" android:screenOrientation="sensor" android:theme="@android:style/Theme.NoDisplay">
 										<intent-filter>
 											<action android:name="com.epicgames.unreal.RemoteFileManager.intent.COMMAND2" />
@@ -87,7 +93,7 @@
 						</if>
 					</true>
 				</if>
-				
+
 				<!-- force bExternalFilesDir to true for all builds -->
 				<setBool result="bUpdatedExternal" value="false"/>
 				<loopElements tag="meta-data">
@@ -126,13 +132,16 @@
 				<if condition="bExternalStartAFS">
 					<true>
 						<copyFile src="$S(PluginDir)/Android/java/com/epicgames/unreal/RemoteFileManagerActivity.java" dst="$S(BuildDir)/src/com/epicgames/unreal/RemoteFileManagerActivity.java" />
+						<copyFile src="$S(PluginDir)/Android/java/com/epicgames/unreal/RemoteFileManagerService.java" dst="$S(BuildDir)/src/com/epicgames/unreal/RemoteFileManagerService.java" />
 					</true>
 					<false>
 						<isArch arch="arm64-v8a">
 							<deleteFiles filespec="arm64/src/com/epicgames/unreal/RemoteFileManagerActivity.java" />
+							<deleteFiles filespec="arm64/src/com/epicgames/unreal/RemoteFileManagerService.java" />
 						</isArch>
 						<isArch arch="x86_64">
 							<deleteFiles filespec="x64/src/com/epicgames/unreal/RemoteFileManagerActivity.java" />
+							<deleteFiles filespec="x64/src/com/epicgames/unreal/RemoteFileManagerService.java" />
 						</isArch>
 					</false>
 				</if>
@@ -141,10 +150,12 @@
 				<isArch arch="arm64-v8a">
 					<deleteFiles filespec="arm64/src/com/epicgames/unreal/RemoteFileManager.java" />
 					<deleteFiles filespec="arm64/src/com/epicgames/unreal/RemoteFileManagerActivity.java" />
+					<deleteFiles filespec="arm64/src/com/epicgames/unreal/RemoteFileManagerService.java" />
 				</isArch>
 				<isArch arch="x86_64">
 					<deleteFiles filespec="x64/src/com/epicgames/unreal/RemoteFileManager.java" />
 					<deleteFiles filespec="x64/src/com/epicgames/unreal/RemoteFileManagerActivity.java" />
+					<deleteFiles filespec="x64/src/com/epicgames/unreal/RemoteFileManagerService.java" />
 				</isArch>
 			</false>
 		</if>
@@ -276,19 +287,44 @@ tasks.whenTaskAdded { task ->
 
 	afs_infile = new File(rootProject.projectDir, 'app/src/main/AndroidManifest.xml')
 	afs_outfile = new File(rootProject.projectDir, 'AFSProject/app/src/main/AndroidManifest.xml')
+	def afs_hasForeServiceDataPerm = false;
+	def afs_hasForeServicePerm = false;
+	def afs_hasNotificationsPerm = false;
+	def afs_hasService = false
 	def afs_hasActivity = false
 	afs_outfile.withWriter { writer ->
 		afs_infile.withReader { reader ->
 			while ((afs_line = reader.readLine()) != null) {
-				if (afs_line.contains('com.epicgames.unreal.RemoteFileManagerActivity')) {
+				if (afs_line.contains('android.permission.FOREGROUND_SERVICE_DATA_SYNC')) {
+					afs_hasForeServiceDataPerm = true
+				} else if (afs_line.contains('android.permission.FOREGROUND_SERVICE')) {
+					afs_hasForeServicePerm = true
+				} else if (afs_line.contains('android.permission.POST_NOTIFICATIONS')) {
+					afs_hasNotificationsPerm = true
+				} else if (afs_line.contains('com.epicgames.unreal.RemoteFileManagerService')) {
+					afs_hasService = true
+				} else if (afs_line.contains('com.epicgames.unreal.RemoteFileManagerActivity')) {
 					afs_hasActivity = true
 				} else if (afs_line.contains('</application>')) {
+					if (afs_hasService == false) {
+						writer.writeLine('    <service android:name="com.epicgames.unreal.RemoteFileManagerService" android:foregroundServiceType="dataSync" android:exported="true" />')
+					}
 					if (afs_hasActivity == false) {
 						writer.writeLine('    <activity android:name="com.epicgames.unreal.RemoteFileManagerActivity" android:exported="true" android:screenOrientation="sensor">')
 						writer.writeLine('    	<intent-filter>')
 						writer.writeLine('    		<action android:name="com.epicgames.unreal.RemoteFileManager.intent.COMMAND2" />')
 						writer.writeLine('    	</intent-filter>')
 						writer.writeLine('    </activity>')
+					}
+				} else if (afs_line.contains('</manifest>')) {
+					if (afs_hasForeServicePerm == false) {
+						writer.writeLine('  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />')
+					}
+					if (afs_hasForeServiceDataPerm == false) {
+						writer.writeLine('  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />')
+					}
+					if (afs_hasNotificationsPerm == false) {
+						writer.writeLine('  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />')
 					}
 				}
 				writer.writeLine("${afs_line}")

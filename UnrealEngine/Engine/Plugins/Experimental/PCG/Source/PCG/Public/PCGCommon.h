@@ -186,3 +186,14 @@ enum class EPCGAttachOptions : uint32
 	Attached UMETA(Tooltip="Actor will be attached to the target actor in the given node"),
 	InFolder UMETA(Tooltip="Actor will be placed in an actor folder containing the name of the target actor.")
 };
+
+struct FInstancedPropertyBag;
+
+namespace PCGDelegates
+{
+#if WITH_EDITOR
+	/** Callback to hook in the UI to detect property bag changes, so the UI is reset and does not try to read in garbage memory. */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnInstanceLayoutChanged, const FInstancedPropertyBag& /*Instance*/);
+	extern PCG_API FOnInstanceLayoutChanged OnInstancedPropertyBagLayoutChanged;
+#endif
+}

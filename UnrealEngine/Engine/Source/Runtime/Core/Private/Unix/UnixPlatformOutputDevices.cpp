@@ -8,7 +8,6 @@
 #include "Misc/Build.h"
 #include "Misc/CommandLine.h"
 #include "Misc/OutputDeviceConsole.h"
-#include "Misc/OutputDeviceDebug.h"
 #include "Misc/OutputDeviceRedirector.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
@@ -34,17 +33,7 @@ void FUnixOutputDevices::SetupOutputDevices()
 			GLog->AddOutputDevice(GLogConsole);
 		}
 	}
-
-#if USE_DEBUG_LOGGING
-	// If the platform has a separate debug output channel (e.g. OutputDebugString) then add an output device
-	// unless logging is turned off
-		if (FPlatformMisc::HasSeparateChannelForDebugOutput() && !FParse::Param(FCommandLine::Get(), TEXT("NODEBUGOUTPUT")))
-		{
-			GLog->AddOutputDevice(new FOutputDeviceDebug());
-		}
-#endif // USE_DEBUG_LOGGING
-
-	GLog->AddOutputDevice(FPlatformOutputDevices::GetEventLog());
+	// debug and event logging is not really supported on Unix. 
 }
 
 FString FUnixOutputDevices::GetAbsoluteLogFilename()

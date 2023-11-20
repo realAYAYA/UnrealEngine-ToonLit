@@ -95,13 +95,21 @@ FString FXCodeSourceCodeAccessor::GetSolutionPath() const
 			
 			if (!FUProjectDictionary::GetDefault().IsForeignProject(CachedSolutionPath))
 			{
-				CachedSolutionPath = FPaths::Combine(FPaths::RootDir(), + TEXT("UE5.xcworkspace/contents.xcworkspacedata"));
+				CachedSolutionPath = FPaths::Combine(FPaths::RootDir(), + TEXT("UE5 (Mac).xcworkspace/contents.xcworkspacedata"));
 			}
 			else
 			{
 				FString BaseName = FApp::HasProjectName() ? FApp::GetProjectName() : FPaths::GetBaseFilename(CachedSolutionPath);
-				CachedSolutionPath = FPaths::Combine(CachedSolutionPath, BaseName + TEXT(".xcworkspace/contents.xcworkspacedata"));
+				CachedSolutionPath = FPaths::Combine(CachedSolutionPath, BaseName + TEXT(" (Mac).xcworkspace/contents.xcworkspacedata"));
 			}
+            
+            // If modern xcode project doesn't exist, use legacy name instead
+            const FString FullPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead( *CachedSolutionPath );
+            if(!FPaths::FileExists( FullPath ))
+            {
+                CachedSolutionPath.RemoveFromEnd(TEXT(" (Mac).xcworkspace/contents.xcworkspacedata"));
+                CachedSolutionPath += TEXT(".xcworkspace/contents.xcworkspacedata");
+            }
 		}
 	}
 	return CachedSolutionPath;
@@ -159,107 +167,23 @@ bool FXCodeSourceCodeAccessor::DoesSolutionExist() const
     return FPaths::FileExists( FullPath );
 }
 
+// ColumnNumber is not supported
 bool FXCodeSourceCodeAccessor::OpenFileAtLine(const FString& FullPath, int32 LineNumber, int32 ColumnNumber)
 {
-	ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>(TEXT("SourceCodeAccess"));
-
-	// column & line numbers are 1-based, so dont allow zero
-	if(LineNumber == 0)
-	{
-		LineNumber++;
-	}
-	if(ColumnNumber == 0)
-	{
-		ColumnNumber++;
-	}
-		 
-	bool ExecutionSucceeded = false;
-	
-    FString SolutionPath = GetSolutionPath();
-	{
-		const FString ProjPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead( *SolutionPath );
-		if ( FPaths::FileExists( ProjPath ) )
-		{
-			FString XcodePath = FPlatformMisc::GetXcodePath();
-			XcodePath.RemoveFromEnd(TEXT("/Contents/Developer"));
-			
-			NSString* ProjectPath = [ProjPath.GetNSString() stringByDeletingLastPathComponent];
-			[[NSWorkspace sharedWorkspace] openFile:ProjectPath withApplication:XcodePath.GetNSString() andDeactivate:YES];
-			
-			NSAppleScript* AppleScript = nil;
-			
-			NSString* AppleScriptString = [NSString stringWithCString:OpenXCodeAtFileAndLineAppleScript encoding:NSUTF8StringEncoding];
-			AppleScriptString = [AppleScriptString stringByReplacingOccurrencesOfString:@"{XCODE_PATH}" withString:XcodePath.GetNSString()];
-			AppleScript = [[NSAppleScript alloc] initWithSource:AppleScriptString];
-			
-			int PID = [[NSProcessInfo processInfo] processIdentifier];
-			NSAppleEventDescriptor* ThisApplication = [NSAppleEventDescriptor descriptorWithDescriptorType:typeKernelProcessID bytes:&PID length:sizeof(PID)];
-			
-			NSAppleEventDescriptor* ContainerEvent = [NSAppleEventDescriptor appleEventWithEventClass:'ascr' eventID:'psbr' targetDescriptor:ThisApplication returnID:kAutoGenerateReturnID transactionID:kAnyTransactionID];
-			
-			[ContainerEvent setParamDescriptor:[NSAppleEventDescriptor descriptorWithString:@"OpenXcodeAtFileAndLine"] forKeyword:'snam'];
-			
-			{
-				NSAppleEventDescriptor* Arguments = [[NSAppleEventDescriptor alloc] initListDescriptor];
-				
-				CFStringRef FileString = FPlatformString::TCHARToCFString(*FullPath);
-				NSString* Path = (NSString*)FileString;
-				
-				if([Path isAbsolutePath] == NO)
-				{
-					NSString* CurDir = [[NSFileManager defaultManager] currentDirectoryPath];
-					NSString* ResolvedPath = [[NSString stringWithFormat:@"%@/%@", CurDir, Path] stringByResolvingSymlinksInPath];
-					if([[NSFileManager defaultManager] fileExistsAtPath:ResolvedPath])
-					{
-						Path = ResolvedPath;
-					}
-					else // If it doesn't exist, supply only the filename, we'll use Open Quickly to try and find it from Xcode
-					{
-						Path = [Path lastPathComponent];
-					}
-				}
-				
-				[Arguments insertDescriptor:[NSAppleEventDescriptor descriptorWithString:Path] atIndex:([Arguments numberOfItems] + 1)];
-				CFRelease(FileString);
-				
-				CFStringRef LineString = FPlatformString::TCHARToCFString(*FString::FromInt(LineNumber));
-				if(LineString)
-				{
-					[Arguments insertDescriptor:[NSAppleEventDescriptor descriptorWithString:(NSString*)LineString] atIndex:([Arguments numberOfItems] + 1)];
-					CFRelease(LineString);
-				}
-				else
-				{
-					[Arguments insertDescriptor:[NSAppleEventDescriptor descriptorWithString:@"1"] atIndex:([Arguments numberOfItems] + 1)];
-				}
-				
-				[ContainerEvent setParamDescriptor:Arguments forKeyword:keyDirectObject];
-				[Arguments release];
-			}
-			
-			NSDictionary* ExecutionError = nil;
-			[AppleScript executeAppleEvent:ContainerEvent error:&ExecutionError];
-			if(ExecutionError == nil)
-			{
-				ExecutionSucceeded = true;
-			}
-			else
-			{
-				UE_LOG(LogXcodeAccessor, Error, TEXT("%s"), *FString([ExecutionError description]));
-			}
-			
-			[AppleScript release];
-			
-			// Fallback to trivial implementation when something goes wrong (like not having permission for UI scripting)
-			if(ExecutionSucceeded == false)
-			{
-				FPlatformProcess::LaunchFileInDefaultExternalApplication(*FullPath);
-				ExecutionSucceeded = true;
-			}
-		}
-	}
-		
-	return ExecutionSucceeded;
+    // We use xed to open a file at specified line number through Xcode, it also reuses your currently opened workspace if file exists in project
+    int32 ReturnCode = 0;
+    FString Errors;
+    FString XedCommand = FString::Printf(TEXT("xed -l %d \"%s\""), LineNumber, *FullPath);
+    FPlatformProcess::ExecProcess(TEXT("/usr/bin/env"), *XedCommand, &ReturnCode, NULL, &Errors);
+    
+    if(ReturnCode != 0)
+    {
+        UE_LOG(LogXcodeAccessor, Warning, TEXT("FXCodeSourceCodeAccessor::OpenFileAtLine failed to open xcode with %s"), *XedCommand);
+        // Fallback to trivial implementation when something goes wrong
+        FPlatformProcess::LaunchFileInDefaultExternalApplication(*FullPath);
+    }
+    
+    return true;
 }
 
 bool FXCodeSourceCodeAccessor::OpenSourceFiles(const TArray<FString>& AbsoluteSourcePaths)

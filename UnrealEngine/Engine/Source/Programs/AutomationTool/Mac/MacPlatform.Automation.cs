@@ -105,7 +105,9 @@ public class MacPlatform : ApplePlatform
 		foreach (UnrealBuild.BuildTarget Target in Agenda.Targets)
 		{
 			// if building for Distribution, and no arch is already specified, then get the distro architectures and use that for this build
-			if (Params.Distribution && !Target.UBTArgs.ToLower().Contains("-architecture="))
+			// editors aren't usually distributed, so if we are doing distribution, it's probably not for the editor target, and we don't want to make universal 
+			// editors just to make a distribution client
+			if (Params.Distribution && !Target.TargetName.Contains("Editor") && !Target.UBTArgs.ToLower().Contains("-architecture="))
 			{
 				UnrealArchitectures DistroArches = UnrealArchitectureConfig.ForPlatform(UnrealTargetPlatform.Mac).DistributionArchitectures(Params.RawProjectPath, Target.TargetName);
 				Target.UBTArgs += " -architecture=" + DistroArches.ToString();
@@ -356,7 +358,6 @@ public class MacPlatform : ApplePlatform
 			IProcessResult CommandResult = Run("otool", "-l \"" + ExePath + "\"", null, ERunOptions.None);
 			if (CommandResult.ExitCode == 0)
 			{
-				bool bModifiedWithInstallNameTool = false;
 				StringReader Reader = new StringReader(CommandResult.Output);
 				Regex RPathPattern = new Regex(@"^\s+path (?<rpath>.+)\s\(offset");
 				string ToRemovePattern = Params.CreateAppBundle ? "/../../../" : "@loader_path/../UE4/";
@@ -375,17 +376,9 @@ public class MacPlatform : ApplePlatform
 							if (RPath.Contains(ToRemovePattern))
 							{
 								Run("xcrun", "install_name_tool -delete_rpath \"" + RPath + "\" \"" + ExePath + "\"", null, ERunOptions.NoStdOutCapture);
-								bModifiedWithInstallNameTool = true;
 							}
 						}
 					}
-				}
-
-				// Now re-sign the exectuables if they were previously signed during staging. Modifying the binaries
-				// via install_name_tool _after_ signing them invalidates the signature.
-				if (bModifiedWithInstallNameTool && (Params.bCodeSign && !Params.SkipStage))
-				{
-					SC.StageTargetPlatform.SignExecutables(SC, Params);
 				}
 			}
 		}
@@ -649,28 +642,32 @@ public class MacPlatform : ApplePlatform
 				RemoveExtraRPaths(Params, SC);
 			}
 
-			// Sign everything we built
-			List<FileReference> FilesToSign = GetExecutableNames(SC);
-			Logger.LogInformation("{Text}", "RuntimeProjectRootDir: " + SC.RuntimeProjectRootDir);
-			foreach (var Exe in FilesToSign)
+			// with modern, the .app we'd want to sign is in the root of the staging directory, so this doesn't do anything,
+			// and that one is already signed. note this is only done when Staging, so it doesn't affect codesigning the editor
+			if (!AppleExports.UseModernXcode(Params.RawProjectPath))
 			{
-				Logger.LogInformation("{Text}", "Signing: " + Exe);
-				string AppBundlePath = "";
-				if (Exe.IsUnderDirectory(DirectoryReference.Combine(SC.RuntimeProjectRootDir, "Binaries", SC.PlatformDir)))
+				// Sign everything we built
+				List<FileReference> FilesToSign = GetExecutableNames(SC);
+				Logger.LogInformation("{Text}", "RuntimeProjectRootDir: " + SC.RuntimeProjectRootDir);
+				foreach (var Exe in FilesToSign)
 				{
-					Logger.LogInformation("Starts with Binaries");
-					AppBundlePath = CombinePaths(SC.RuntimeProjectRootDir.FullName, "Binaries", SC.PlatformDir, Path.GetFileNameWithoutExtension(Exe.FullName) + ".app");
-				}
-				else if (Exe.IsUnderDirectory(DirectoryReference.Combine(SC.RuntimeRootDir, "Engine/Binaries", SC.PlatformDir)))
-				{
-					Logger.LogInformation("Starts with Engine/Binaries");
-					AppBundlePath = CombinePaths("Engine/Binaries", SC.PlatformDir, Path.GetFileNameWithoutExtension(Exe.FullName) + ".app");
-				}
+					Logger.LogInformation("{Text}", "Signing: " + Exe);
+					string AppBundlePath = "";
+					if (Exe.IsUnderDirectory(DirectoryReference.Combine(SC.RuntimeProjectRootDir, "Binaries", SC.PlatformDir)))
+					{
+						Logger.LogInformation("Starts with Binaries");
+						AppBundlePath = CombinePaths(SC.RuntimeProjectRootDir.FullName, "Binaries", SC.PlatformDir, Path.GetFileNameWithoutExtension(Exe.FullName) + ".app");
+					}
+					else if (Exe.IsUnderDirectory(DirectoryReference.Combine(SC.RuntimeRootDir, "Engine/Binaries", SC.PlatformDir)))
+					{
+						Logger.LogInformation("Starts with Engine/Binaries");
+						AppBundlePath = CombinePaths("Engine/Binaries", SC.PlatformDir, Path.GetFileNameWithoutExtension(Exe.FullName) + ".app");
+					}
 
-				Logger.LogInformation("{Text}", "Signing: " + AppBundlePath);
-				CodeSign.SignMacFileOrFolder(AppBundlePath);
+					Logger.LogInformation("{Text}", "Signing: " + AppBundlePath);
+					CodeSign.SignMacFileOrFolder(AppBundlePath);
+				}
 			}
-
 		}
 		return true;
 	}

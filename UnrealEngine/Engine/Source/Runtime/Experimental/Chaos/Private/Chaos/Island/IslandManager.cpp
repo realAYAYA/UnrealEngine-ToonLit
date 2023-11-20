@@ -662,13 +662,27 @@ namespace Chaos::Private
 	{
 		if (FPBDIslandParticle* Node = GetGraphNode(Particle))
 		{
-			// All nodes in the graph have at least one edge
-			check(Node->Edges.Num() > 0);
+			// Wake the island(s) we are being removed from
+			if (Node->Flags.bIsDynamic)
+			{
+				EnqueueIslandCheckSleep(Node->Island, false);
+			}
+			else
+			{
+				for (FPBDIslandConstraint* Edge : Node->Edges)
+				{
+					EnqueueIslandCheckSleep(Edge->Island, false);
+				}
+			}
 
-			// Remove all the constraints attached to the particle. This will
-			// also destroy the particle's node (and possibly others) 
-			// because empty nodes are removed as they occur
+			// Remove all the constraints attached to the particle
 			RemoveParticleConstraints(Particle);
+
+			// Remove from our island
+			RemoveNodeFromIsland(Node);
+
+			// Destroy the node
+			DestroyGraphNode(Node);
 
 			// We should not be in the graph anymore
 			check(GetGraphNode(Particle) == nullptr);
@@ -682,10 +696,10 @@ namespace Chaos::Private
 		const int32 VisitEpoch = GetNextVisitEpoch();
 
 		// Process state changed from registered particles.
-		// It would be nice to iterate over transient particles here but the view we need
-		// (Particles.GetActiveDynamicMovingKinematicParticlesView()) actually iterates over
-		// arrays of handles so we lose the benefits. We would also have to visit nodes that
-		// are not represented in that view
+		// To reduce cache-misses it would be nice to iterate over transient particle handles 
+		// here but the view we need (Particles.GetActiveDynamicMovingKinematicParticlesView()) 
+		// actually holds non-transient handles so we lose the benefits.
+		// We would also have to visit nodes that are not represented in that view
 		for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
 		{
 			if (NodeIndex < Nodes.Num() - 1)
@@ -698,15 +712,17 @@ namespace Chaos::Private
 			UpdateGraphNode(Node);
 		}
 
-		// The above loop may leave orphaned nodes in the array when dyanmics are made
+		// The above loop may leave orphaned nodes in the Nodes array when dyanmics are made
 		// kinematic and we have removed any kinematic-kinematic constraints. We don't 
 		// handle node removal above because updating one node to kinematic can result 
 		// in removal of many nodes which is awkward while iterating
 		for (int32 NodeIndex = Nodes.Num() - 1; NodeIndex >= 0; --NodeIndex)
 		{
 			FPBDIslandParticle* Node = Nodes[NodeIndex];
-			if (Node->Edges.IsEmpty())
+			if (Node->Edges.IsEmpty() && (Node->Island == nullptr))
 			{
+				// We have an orphaned node - it must be removed from the graph here because
+				// all other loops are over islands and won't visit this node
 				DestroyGraphNode(Node);
 			}
 		}
@@ -734,36 +750,12 @@ namespace Chaos::Private
 		{
 			FPBDIslandParticle* Node0 = Edge->Nodes[0];
 			FPBDIslandParticle* Node1 = Edge->Nodes[1];
-			FPBDIsland* Island = Edge->Island;
 
 			// Remove edge from the island
 			RemoveEdgeFromIsland(Edge);
 
 			// Destroy the edge (also disconnects it from its nodes)
 			DestroyGraphEdge(Edge);
-
-			// Destroy the island if it is now empty of constraints
-			// NOTE: If the island is queued for merging we won't destroy it now. 
-			// It will get destroyed later anyway, but more importantly it may 
-			// contain particles that need to be copied to the merged island.
-			if ((Island != nullptr) && (Island->NumEdges == 0) && (Island->MergeSetIslandIndex == INDEX_NONE))
-			{
-				RemoveNodeFromIsland(Node0);
-				RemoveNodeFromIsland(Node1);
-				DestroyIsland(Island);
-			}
-
-			// Destroy the nodes if they have no constraints
-			if ((Node0 != nullptr) && Node0->Edges.IsEmpty())
-			{
-				RemoveNodeFromIsland(Node0);
-				DestroyGraphNode(Node0);
-			}
-			if ((Node1 != nullptr) && Node1->Edges.IsEmpty())
-			{
-				RemoveNodeFromIsland(Node1);
-				DestroyGraphNode(Node1);
-			}
 		}
 	}
 
@@ -779,9 +771,6 @@ namespace Chaos::Private
 				// NOTE: Destroys the edge and possibly this and other nodes (if this was their last constraint)
 				RemoveConstraint(Edge->Constraint);
 			}
-
-			// A node with no edges will have been removed
-			check(GetGraphNode(Particle) == nullptr);
 		}
 	}
 
@@ -823,9 +812,6 @@ namespace Chaos::Private
 			FPBDIslandConstraint* Edge = Edges[EdgeIndex];
 			RemoveConstraint(Edge->Constraint);
 		}
-
-		// Removing all constraints will remove all islands
-		check(Islands.IsEmpty());
 	}
 
 	void FPBDIslandManager::SetParticleIslandIsSleeping(FGeometryParticleHandle* Particle, const bool bInIsSleeping)
@@ -1879,13 +1865,6 @@ namespace Chaos::Private
 		{
 			FPBDIsland* Island = Islands[IslandIndex];
 
-			// Remove empty islands
-			if (Island->NumEdges == 0)
-			{
-				DestroyIsland(Island);
-				continue;
-			}
-
 			// If the island is awake or just changed state, make sure all the particles and constraints agree
 			// NOTE: also handles the case where we add to a sleeping island (by checking bCheckSleep)
 			// @todo(chaos): we should only need to do this when the state changes...?
@@ -1893,6 +1872,31 @@ namespace Chaos::Private
 			{
 				PropagateIslandSleep(Island);
 				Island->UpdateSyncState();
+			}
+
+			// Remove islands without constraints. NOTE: must come after PropagateIslandSleep
+			// so that we wake nodes the have been left on their own after all other nodes were removed.
+			if (Island->NumEdges == 0)
+			{
+				// Destroy any nodes left in the island
+				for (int32 IslandNodeIndex = Island->Nodes.Num() - 1; IslandNodeIndex >= 0; --IslandNodeIndex)
+				{
+					FPBDIslandParticle* Node = Island->Nodes[IslandNodeIndex];
+					check(Node->Edges.IsEmpty());
+
+					// If there was a dynamic particle left in the island, we need to transfer the island 
+					// sleep state to it for use in ProcessParticlesSleep()
+					if (FPBDRigidParticleHandle* Rigid = Node->GetParticle()->CastToRigidParticle())
+					{
+						Rigid->SetSleepCounter(int8(Island->SleepCounter));
+					}
+
+					RemoveNodeFromIsland(Node);
+					DestroyGraphNode(Node);
+				}
+
+				DestroyIsland(Island);
+				continue;
 			}
 
 			// Reset of the sleep counter if the island is:
@@ -2229,7 +2233,9 @@ namespace Chaos::Private
 			CHAOS_CONSTRAINTGRAPH_VALIDATE_TEST(Node->Flags.bIsDynamic || (Node->Island == nullptr));
 
 			// Nodes without edges should have been removed
-			CHAOS_CONSTRAINTGRAPH_VALIDATE_TEST(Node->Edges.Num() > 0);
+			// Actually kinematics with no edges may now remain in the graph until the
+			// next UpdateParticles (i.e., the next tick) after their edges were removed
+			CHAOS_CONSTRAINTGRAPH_VALIDATE_TEST(!Node->Flags.bIsDynamic || (Node->Edges.Num() > 0));
 
 			if (Node->Island != nullptr)
 			{

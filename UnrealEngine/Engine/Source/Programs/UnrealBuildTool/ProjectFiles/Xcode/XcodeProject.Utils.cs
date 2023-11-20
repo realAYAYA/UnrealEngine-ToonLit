@@ -76,25 +76,6 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 			return false;
 		}
 
-		public static string MakeExecutableFileName(string BinaryName, UnrealTargetPlatform Platform, UnrealTargetConfiguration Configuration, UnrealArchitectures Architectures, UnrealTargetConfiguration UndecoratedConfiguration)
-		{
-			StringBuilder Result = new StringBuilder();
-
-			Result.Append(BinaryName);
-
-			if (Configuration != UndecoratedConfiguration)
-			{
-				Result.AppendFormat("-{0}-{1}", Platform.ToString(), Configuration.ToString());
-			}
-
-			if (UnrealArchitectureConfig.ForPlatform(Platform).RequiresArchitectureFilenames(Architectures))
-			{
-				Result.Append(Architectures.ToString());
-			}
-
-			return Result.ToString();
-		}
-
 		// cache for the below function
 		static Dictionary<string, UnrealArchitectures> CachedMacProjectArchitectures = new();
 

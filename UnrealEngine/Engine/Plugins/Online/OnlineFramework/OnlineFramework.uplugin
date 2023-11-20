@@ -41,7 +41,10 @@
 		},
 		{
 			"Name": "LoginFlow",
-			"Type":  "ClientOnly"
+			"Type":  "ClientOnly",
+			"PlatformDenyList": [
+				"Mac"
+			]
 		}
 	],
 	"LocalizationTargets": [
