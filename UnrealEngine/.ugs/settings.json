@@ -1,0 +1,12 @@
+{
+  "ServerAndPort": "42.192.111.227:1666",
+  "UserName": "liudong",
+  "ClientName": "liudong_ProjectMMO",
+  "BranchPath": "",
+  "ProjectPath": "/ProjectMMO/Demo/Demo.uproject",
+  "Filter": {
+    "IncludeCategories": [],
+    "ExcludeCategories": [],
+    "View": []
+  }
+}

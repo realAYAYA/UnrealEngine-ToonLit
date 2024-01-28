@@ -1,0 +1,21 @@
+{
+  "SettingsTimeUtc": 638420481103191082,
+  "ClientName": "liudong_ProjectMMO",
+  "BranchPath": "",
+  "ProjectPath": "/ProjectMMO/Demo/Demo.uproject",
+  "StreamName": "//Demo/main",
+  "ProjectIdentifier": "//Demo/main/ProjectMMO/Demo/Demo.uproject",
+  "IsEnterpriseProject": false,
+  "CurrentChangeNumber": 25,
+  "CurrentCodeChangeNumber": 24,
+  "CurrentSyncFilterHash": "8803c1c00eec2d7d5ccde534093c229b204be51d",
+  "AdditionalChangeNumbers": [],
+  "LastSyncChangeNumber": 25,
+  "LastSyncResult": "Success",
+  "LastSyncResultMessage": "Update succeeded",
+  "LastSyncTime": "2024-01-28T12:54:11.3928353Z",
+  "LastSyncDurationSeconds": 133,
+  "LastBuiltChangeNumber": 25,
+  "ExpandedArchiveTypes": [],
+  "BisectChanges": []
+}
