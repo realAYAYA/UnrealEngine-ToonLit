@@ -136,8 +136,8 @@ void MainVS(
 	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, Input.Position, true);
 
 	// Mask outline, depending on the material blend mode
-	if (GetMaterialOpacity(PixelMaterialInputs) <= 0)
-		discard;
+	//if (GetMaterialOpacity(PixelMaterialInputs) <= 0)
+	//	discard;
 
 	// Expand along WorldNormal | 根据用户自定义材质来决定使用何种描边算法
 	float3 WorldPositionOffset = GetMaterialWorldPositionOffset(VertexParameters);
