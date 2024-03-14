@@ -2673,7 +2673,7 @@ void UAbilitySystemComponent::Debug_Internal(FAbilitySystemComponentDebugInfo& I
 				StatusText = FString::Printf(TEXT(" (CantActivate %s)"), *FailureTags.ToString());
 				AbilityTextColor = FColor::Red;
 
-				float Cooldown =  AbilitySpec.Ability->-(AbilityActorInfo.Get());
+				float Cooldown =  AbilitySpec.Ability->GetCooldownTimeRemaining(AbilityActorInfo.Get());
 				if (Cooldown > 0.f)
 				{
 					StatusText += FString::Printf(TEXT("   Cooldown: %.2f\n"), Cooldown);
