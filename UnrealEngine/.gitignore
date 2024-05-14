@@ -292,11 +292,3 @@ Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/**
 # Ignore vulkan registry
 /Engine/Source/ThirdParty/Vulkan/share/vulkan/registry/**
 
-# Add by liudong
-ProjectMMO/
-Engine/Source/Programs/UnrealGameSync/UnrealGameSync/bin/
-Engine/Source/Programs/UnrealGameSync/UnrealGameSyncLauncher/bin/
-Engine/Source/Programs/UnrealGameSync/UnrealGameSyncShared/bin/
-Engine/Source/Programs/UnrealGameSync/packages/
-/Engine/Source/Programs/UnrealGameSync/PostBadgeStatus/*
-/Engine/Source/Programs/UnrealGameSync/PostBadgeStatus/PostBadgeStatus.csproj
