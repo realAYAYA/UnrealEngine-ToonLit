@@ -1,0 +1,43 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "",
+	"Description": "",
+	"Category": "",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "MRpc",
+			"Type": "RuntimeAndProgram",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ZProtobuf",
+			"Enabled": true
+		},
+		{
+			"Name": "MProtocol",
+			"Enabled": true
+		},
+		{
+			"Name": "MCommon",
+			"Enabled": true
+		},
+		{
+			"Name": "NetLib",
+			"Enabled": true
+		}		
+	],	
+	"IsExperimentalVersion": false
+}
