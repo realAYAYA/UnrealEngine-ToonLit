@@ -31,14 +31,14 @@ TEMPL = """
 {%- for file_name in FullFiles %}
 
 # .proto 文件生成
-{{PBCMD}} --cpp_out=dllexport_decl=ZPROTOCOL_API:{{CWD}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
+{{PBCMD}} --cpp_out=dllexport_decl=MPROTOCOL_API:{{CWD}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
 
 # Mac中脚本调用mv似不支持通配符
 {{MVCMD}} {{CWD}}/{{file_name}}.pb.cc {{CWD}}/Private/
 {{MVCMD}} {{CWD}}/{{file_name}}.pb.h {{CWD}}/Public/
 
 # 生成Blueprint数据结构
-{{PB2BP}} -dllexport_decl=ZPROTOCOL_API -src_file={{CWD}}/{{file_name}}.proto -hpp_dst_dir={{CWD}}/Public/ -cpp_dst_dir={{CWD}}/Private/
+{{PB2BP}} -dllexport_decl=MPROTOCOL_API -src_file={{CWD}}/{{file_name}}.proto -hpp_dst_dir={{CWD}}/Public/ -cpp_dst_dir={{CWD}}/Private/
 
 # .ts 文件生成
 {{NPXCMD}} protoc --ts_opt=use_proto_field_name --ts_out={{TSDIR}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
@@ -59,7 +59,7 @@ TEMPL = """
 
 # -----------------------------------------------------------------------------
 # 针对特定文件的处理
-{{GAMESTATS}} -dllexport_decl=ZPROTOCOL_API -src_file={{CWD}}/game_stats.proto -hpp_dst_dir={{CWD}}/Public -cpp_dst_dir={{CWD}}/Private -ts_dst_dir={{TSDIR}}
+{{GAMESTATS}} -dllexport_decl=PROTOCOL_API -src_file={{CWD}}/game_stats.proto -hpp_dst_dir={{CWD}}/Public -cpp_dst_dir={{CWD}}/Private -ts_dst_dir={{TSDIR}}
 #
 # -----------------------------------------------------------------------------
 
@@ -82,13 +82,13 @@ def get_ue_platform_name():
 
 def main():
     platform = get_ue_platform_name()
-    root_dir = f'../../../../..'
+    root_dir = f'../../../../../..'# Engine\Plugins\MyProject\Shared\MProtocol\Source
     
-    project_dir = f'{root_dir}/Projects/IdleZT'
+    project_dir = f'{root_dir}/Projects/IdleZT'# 项目位置有待重设
     ts_dir = f'{project_dir}/TypeScript/protocol'
 
     engine_dir = f'{root_dir}/Engine'
-    pb_cmd = f'{engine_dir}/Plugins/ZThirdParty/ZProtobuf/Source/bin/{platform}/protoc'
+    pb_cmd = f'{engine_dir}/Plugins/ZThirdParty/ZProtobuf/Source/bin/{platform}/protoc'# 插件名有待重设
     node_dir = f'{engine_dir}/Binaries/ThirdParty/Nodejs/{platform}'
     if platform == 'Win64':
         py_cmd = f'{engine_dir}/Binaries/ThirdParty/Python3/{platform}/python.exe'
@@ -113,14 +113,14 @@ def main():
 
     meta_data = {
         "CWD": cwd,
-        'TSDIR': ts_dir,
+        #'TSDIR': ts_dir,
         'PBCMD': pb_cmd,
         'MVCMD': mv_cmd,
-        "P4CMD": p4_cmd,
+        #"P4CMD": p4_cmd,
         "PYCMD": py_cmd,
         'NPXCMD': npx_cmd,
         'PB2BP': f'{py_cmd} {pb2bp_cmd}',
-        'GAMESTATS': f'{py_cmd} {game_stats_cmd}', 
+        #'GAMESTATS': f'{py_cmd} {game_stats_cmd}', 
         'FullFiles': FullFiles,
         'TsOnlyFiles': TsOnlyFiles,
     }

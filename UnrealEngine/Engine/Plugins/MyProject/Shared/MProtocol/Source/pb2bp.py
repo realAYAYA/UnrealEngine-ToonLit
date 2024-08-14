@@ -71,7 +71,7 @@ struct {{dllexport_decl}} {{def_entry['name']}}
 {%- for member in def_entry['members'] %}
 
     /** {{member['comment']}} */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="IdleZ")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MProtocol")
     {{member['type']}} {{member['name']}};
 {%- endfor %}
 
@@ -333,9 +333,9 @@ def to_ue_type(old_type, enum_name_list):
     elif old_type == 'bytes':
         return 'TArray<uint8>'
     elif old_type in enum_name_list:
-        return 'EZ' + old_type
+        return 'EPb' + old_type
     else:
-        return 'FZ' + old_type
+        return 'FPb' + old_type
 
 
 def main(src_file, hpp_dst_dir, cpp_dst_dir, dllexport_decl):
@@ -414,10 +414,10 @@ def main(src_file, hpp_dst_dir, cpp_dst_dir, dllexport_decl):
 
                     cur_def['old_name'] = cur_def['name']
                     if op == 'enum':
-                        cur_def['name'] = 'EZ' + cur_def['name']
+                        cur_def['name'] = 'EPb' + cur_def['name']
                         enum_name_list.append(cur_def['old_name'])
                     else:
-                        cur_def['name'] = 'FZ' + cur_def['name']
+                        cur_def['name'] = 'FPb' + cur_def['name']
                     
                     cur_def['generated_simple_plus'] = 0
                     cur_def['generated_member_ptr'] = 0
@@ -501,7 +501,7 @@ def main(src_file, hpp_dst_dir, cpp_dst_dir, dllexport_decl):
                         member['type'] = f"TArray<{new_type}>"
                         member['is_array_value'] = True
                         member['is_string_value'] = new_type.startswith('FString')
-                        member['is_struct_value'] = new_type.startswith('FZ')
+                        member['is_struct_value'] = new_type.startswith('FPb')
                         member['is_native_value'] = new_type.startswith('int') or new_type == 'float'
                     elif is_map:
                         key_type = to_ue_type(member['key_type'], enum_name_list)
@@ -509,12 +509,12 @@ def main(src_file, hpp_dst_dir, cpp_dst_dir, dllexport_decl):
                         member['type'] = f'TMap<{key_type}, {value_type}>'
                         member['is_map_value'] = True
                         member['is_string_value'] = value_type.startswith('FString')
-                        member['is_struct_value'] = value_type.startswith('FZ')
+                        member['is_struct_value'] = value_type.startswith('FPb')
                         member['is_native_value'] = value_type.startswith('int') or value_type == 'float'
                     else:
                         member['type'] = to_ue_type(member['old_type'], enum_name_list)
-                        member['is_enum_value'] = member['type'].startswith('EZ')
-                        member['is_struct_value'] = member['type'].startswith('FZ')
+                        member['is_enum_value'] = member['type'].startswith('EPb')
+                        member['is_struct_value'] = member['type'].startswith('FPb')
                         member['is_string_value'] = member['type'].startswith('FString')
                         member['is_bytes_value'] = member['type'].startswith('TArray<uint8>')
                         member['is_native_value'] = member['type'].startswith('int') or member['type'] == 'float'
