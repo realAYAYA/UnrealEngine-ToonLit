@@ -11,9 +11,7 @@ FullFiles = [
     'common',
     'login',
     'game',
-    'world_common',
-    'world',
-    'gdd_global', 
+    'gdd_global',
 ]
 
 TsOnlyFiles = [    
@@ -21,10 +19,10 @@ TsOnlyFiles = [
 
 
 TEMPL = """
-# 签出所有可能影响到的文件
-{{P4CMD}} edit {{CWD}}/Private/*.*
-{{P4CMD}} edit {{CWD}}/Public/*.*
-{{P4CMD}} edit {{TSDIR}}/*.*
+# 签出所有可能影响到的文件 Todo 暂时不部署p4
+#{{P4CMD}} edit {{CWD}}/Private/*.*
+#{{P4CMD}} edit {{CWD}}/Public/*.*
+#{{P4CMD}} edit {{TSDIR}}/*.*
 
 # -----------------------------------------------------------------------------
 # 需生成 .cpp/.h/.ts 完整一系列文件
@@ -40,8 +38,8 @@ TEMPL = """
 # 生成Blueprint数据结构
 {{PB2BP}} -dllexport_decl=MPROTOCOL_API -src_file={{CWD}}/{{file_name}}.proto -hpp_dst_dir={{CWD}}/Public/ -cpp_dst_dir={{CWD}}/Private/
 
-# .ts 文件生成
-{{NPXCMD}} protoc --ts_opt=use_proto_field_name --ts_out={{TSDIR}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
+# .ts 文件生成 Todo 暂不部署Ts
+#{{NPXCMD}} protoc --ts_opt=use_proto_field_name --ts_out={{TSDIR}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
 
 {%- endfor %}
 # -----------------------------------------------------------------------------
@@ -50,23 +48,23 @@ TEMPL = """
 # 只需生成 .ts 文件
 {%- for file_name in TsOnlyFiles %}
 
-# .ts 文件生成
-{{NPXCMD}} protoc --ts_opt=use_proto_field_name --ts_out={{TSDIR}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
+# .ts 文件生成 Todo 暂不部署Ts
+#{{NPXCMD}} protoc --ts_opt=use_proto_field_name --ts_out={{TSDIR}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
 
 {%- endfor %}
 #
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
-# 针对特定文件的处理
-{{GAMESTATS}} -dllexport_decl=PROTOCOL_API -src_file={{CWD}}/game_stats.proto -hpp_dst_dir={{CWD}}/Public -cpp_dst_dir={{CWD}}/Private -ts_dst_dir={{TSDIR}}
+# 针对特定文件的处理 Todo 待清理的功能模块
+#{{GAMESTATS}} -dllexport_decl=PROTOCOL_API -src_file={{CWD}}/game_stats.proto -hpp_dst_dir={{CWD}}/Public -cpp_dst_dir={{CWD}}/Private -ts_dst_dir={{TSDIR}}
 #
 # -----------------------------------------------------------------------------
 
-# 还原未修改的文件
-{{P4CMD}} revert -a {{CWD}}/Private/...
-{{P4CMD}} revert -a {{CWD}}/Public/...
-{{P4CMD}} revert -a {{TSDIR}}/...
+# 还原未修改的文件 Todo 暂时不部署p4
+#{{P4CMD}} revert -a {{CWD}}/Private/...
+#{{P4CMD}} revert -a {{CWD}}/Public/...
+#{{P4CMD}} revert -a {{TSDIR}}/...
 """
 
 
@@ -88,7 +86,7 @@ def main():
     ts_dir = f'{project_dir}/TypeScript/protocol'
 
     engine_dir = f'{root_dir}/Engine'
-    pb_cmd = f'{engine_dir}/Plugins/ZThirdParty/ZProtobuf/Source/bin/{platform}/protoc'# 插件名有待重设
+    pb_cmd = f'{engine_dir}/Plugins/MyProject/ZThirdParty/ZProtobuf/Source/bin/{platform}/protoc'# 插件名有待重设
     node_dir = f'{engine_dir}/Binaries/ThirdParty/Nodejs/{platform}'
     if platform == 'Win64':
         py_cmd = f'{engine_dir}/Binaries/ThirdParty/Python3/{platform}/python.exe'
