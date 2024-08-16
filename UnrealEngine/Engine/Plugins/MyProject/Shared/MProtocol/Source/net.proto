@@ -1,0 +1,27 @@
+// PB2BP: BP_FILE_NAME=PbNet
+syntax = "proto3";
+package idlepb;
+
+enum RpcMessageOp {
+	RpcMessageOp_Notify = 0;  // 通知
+	RpcMessageOp_Request = 1;  // 请求
+	RpcMessageOp_Response = 2;  // 回应
+}
+
+enum RpcErrorCode {
+	RpcErrorCode_Ok = 0;  // 正常
+	RpcErrorCode_Unknown = 1;  // 未知错误
+	RpcErrorCode_Unimplemented = 2;  // 接口未实现
+	RpcErrorCode_Timeout = 3;  // 调用超时
+	RpcErrorCode_ReqDataError = 4;  // 请求数据错误
+	RpcErrorCode_RspDataError = 5;  // 返回数据错误
+}
+
+message PbRpcMessage {
+	RpcMessageOp op = 1;  // RPC消息类型
+	int64 sn = 2;  // 序号
+	RpcErrorCode error_code = 3;  // 错误码
+	uint64 rpc_id = 4;
+	uint64 body_type_id = 5;  // body 的 message type id
+	bytes body_data = 6;
+}

@@ -1,0 +1,861 @@
+// PB2BP: BP_FILE_NAME=ZPbDefines
+syntax = "proto3";
+package idlepb;
+
+//
+//  本文件放置和策划配置相关的枚举、结构定义
+//
+
+// 道具品质
+enum ItemQuality {
+	EQ_None = 0;  // 其他
+	EQ_White = 1;  // 白
+	EQ_Green = 2;  // 绿
+	EQ_Blue = 3;  // 蓝
+	EQ_Purple = 4;  // 紫
+	EQ_Orange = 5;  // 橙
+	EQ_Red = 6;  // 红
+}
+
+// 道具显示分类
+enum ItemShowType {
+	ItemShowType_None = 0;  // 其它
+	ItemShowType_Equipment = 1;  // 装备
+	ItemShowType_Pill = 2;  // 丹药
+	ItemShowType_Material = 3;  // 材料
+	ItemShowType_Special = 4;  // 特殊
+}
+
+// 道具类型
+enum ItemType {
+	ItemType_None = 0;  // 其它
+	ItemType_ExpPill = 1;  // 修为丹药
+	ItemType_Weapon = 2;  // 武器
+	ItemType_CLOTHING	 = 3;  // 防具
+	ItemType_JEWELRY = 4;  // 饰品
+	ItemType_SkillEquipment = 5;  // 法宝
+	ItemType_RecoverPill = 6;  // 回复丹药
+	ItemType_SkillBook = 7;  // 技能书(神通残篇)
+	ItemType_SecretPill = 8; // 秘药
+	ItemType_AttrPill = 9;  // 属性丹药
+	ItemType_BreakthroughPill = 10;  // 突破丹药
+	ItemType_PillMaterial = 11;  // 炼丹材料
+	ItemType_WeaponMaterial = 12;  // 铸器材料
+	ItemType_PillRecipe = 13;  // 炼丹配方
+	ItemType_EquipRecipe = 14;  // 炼器配方
+	ItemType_ForgeMaterial = 15;	// 炼器辅材
+	ItemType_GiftPackage = 16;	// 礼包
+	ItemType_SpaceMaterial = 17;	// 空间材料
+	ItemType_Seed = 18;				// 种子
+	ItemType_ShanHeTu = 20;			// 山河图道具
+	ItemType_QiWen = 21;			// 器纹材料
+	ItemType_QiLing = 22;			// 装备器灵材料
+	ItemType_GuBao = 23;  // 古宝
+	ItemType_GuBaoPiece = 24;  // 古宝碎片
+	ItemType_QiLingSkill = 25;  // 法宝器灵材料
+	ItemType_ZhuLingMeterial = 28;  // 古宝注灵材料
+	ItemType_FarmRipe = 36;  // 药园催熟
+	ItemType_Token = 100;  // 数值型道具
+}
+
+// 装备主类型
+enum EquipmentMainType {
+	EquipmentMainType_None = 0;  // 其它
+	EquipmentMainType_Weapon = 1;  // 武器
+	EquipmentMainType_CLOTHING = 2;  // 防具
+	EquipmentMainType_JEWELRY = 3;  // 饰品
+	EquipmentMainType_AttSkillEquipment = 4;  // 进攻类法宝
+	EquipmentMainType_DefSkillEquipment = 5;  // 防御类法宝
+}
+
+// 装备词条 - 效果增减类型
+enum PerkValueAddType {
+	PerkValueAddType_None = 0;  // 其他
+	PerkValueAddType_Add = 1;  // 增加
+	PerkValueAddType_Sub = 2;  // 减少
+}
+
+// 装备词条 - 效果数值类型
+enum PerkValueEffectType {
+	PerkValueEffectType_None = 0;  // 其他
+	PerkValueEffectType_EquipmentBasicAttribute = 1;  // 装备属性百分比
+	PerkValueEffectType_Attack = 2;  // 攻击
+	PerkValueEffectType_HpMp = 3;  // 气血&真元
+	PerkValueEffectType_Defence = 4;  // 防御
+	PerkValueEffectType_CritAndCritDef = 5;  // 会心和会心抗性
+	PerkValueEffectType_CritCoeff = 6;  // 会心倍率
+	PerkValueEffectType_StrengthIntellect = 7;  // 体魄内息
+	PerkValueEffectType_RecoverPercent = 8; // 气血真元回复
+	PerkValueEffectType_Agility = 9;  // 身法
+	PerkValueEffectType_DodgeHit = 10;  // 闪避命中
+	PerkValueEffectType_MoveSpeed = 11;  // 移动速度
+}
+
+// 词条ID常量
+enum PerkIdConsts {
+	PerkIdConsts_None = 0;  // 其它
+	PerkIdConsts_EquipmentBasicAttribute = 1;  // 装备属性百分比
+	PerkIdConsts_MagAttack = 2;  // 人物法攻
+	PerkIdConsts_PhyAttack = 3;  // 任务物攻
+	PerkIdConsts_Hp = 4;  // 人物气血
+	PerkIdConsts_Mp = 5;  // 人物真元
+	PerkIdConsts_PhyDefence = 6;  // 人物物防
+	PerkIdConsts_MagDefence = 7;  // 人物法防
+	PerkIdConsts_Crit = 8;  // 人物会心
+	PerkIdConsts_CritCoeff = 9;  // 人物会心倍率
+	PerkIdConsts_Strength = 11;  // 人物体魄
+	PerkIdConsts_Intellect = 12;  // 人物内息
+	PerkIdConsts_MpRecoverPercent = 13;  // 人物真元回复
+	PerkIdConsts_HpRecoverPercent = 14;  // 人物气血回复
+	PerkIdConsts_Agility = 15;  // 人物身法
+	PerkIdConsts_MagDodge = 16;  // 人物法术闪避
+	PerkIdConsts_PhyDodge = 17;  // 人物物理闪避
+	PerkIdConsts_CritDef = 18;  // 人物会心抗性
+	PerkIdConsts_PhyHit = 19;  // 人物物理命中
+	PerkIdConsts_MagHit = 20;  // 人物法术命中
+	PerkIdConsts_MoveSpeed = 25;  // 人物移动速度
+}
+
+// 装备格子状态
+enum EquipmentSlotState {
+	EquipmentSlotState_Locked = 0;  // 锁定
+	EquipmentSlotState_ToUnlock = 1;  // 待解锁
+	EquipmentSlotState_UnlockNoEquip = 2;  // 已解锁 - 无可用装备
+	EquipmentSlotState_UnlockEquipInBag = 3;  // 已解锁 - 有可用装备
+	EquipmentSlotState_Slotted = 4;  // 已装备
+}
+
+// 装备格子可穿戴类型
+enum EquipmentSlotWearType {
+	ESWT_Equipment = 0;  // 只允许装备道具
+	ESWT_Collection = 1;  // 只允许主动古宝
+}
+
+// 炼丹-保底类型
+enum AlchemyChanceType {
+	AlchemyChanceType_Normal = 0;  // 普通-无保底
+	AlchemyChanceType_Small = 1;  // 小保底
+	AlchemyChanceType_Big = 2;  // 大保底
+}
+
+// 服药类型
+enum PillType {
+	PillType_None = 0;  // 未知
+	PillType_Hp = 1;  // 气血
+	PillType_Mp = 2;  // 真元
+}
+
+// 修炼方向
+enum CultivationDirection {
+	CD_None = 0;  // 通用
+	CD_Physic = 1;  // 炼体
+	CD_Magic = 2;  // 修法
+}
+
+
+// 突破类型
+enum BreakthroughType {
+	BT_None = 0;  // 无需突破
+	BT_Layer = 1;  // 瓶颈
+	BT_Stage = 2;  // 破镜
+	BT_Degree = 3;  // 渡劫
+}
+
+
+// 地图类型(LevelType)
+enum WorldType {
+	WT_None = 0;  // 未知
+	WT_ClientOnly = 1;  // 客户端专用
+	WT_Arena = 2;  // 秘境地图
+	WT_Door = 3;  // 传送门地图
+	WT_MonsterTower = 4;  // 镇妖塔地图
+	WT_SoloArena = 5;  // 切磋地图
+	WT_SeptArena = 6;  // 中立秘境地图
+	WT_QuestFight = 7; // 任务对战地图
+	WT_DungeonKillAll = 8; // 剿灭型副本地图
+	WT_DungeonSurvive = 9; // 生存型副本地图
+	WT_SeptDemon = 10; // 镇魔深渊地图
+}
+
+// 物件类型
+enum EntityType {
+	ET_Unknown = 0;  // 未知
+	ET_Player = 1;  // 玩家
+	ET_Npc = 2;  // NPC
+}
+
+// 物件状态
+enum EntityState {
+	ES_None = 0;  // 未知
+	ES_Init = 1;  // 初始
+	ES_Normal = 2;  // 正常
+	ES_Death = 3;  // 死亡
+	ES_Recycle = 4;  // 收回
+}
+
+// NP类型
+enum NpcType {
+	NpcType_None = 0;  // 未知
+	NpcType_Function = 1;  // 功能NPC
+	NpcType_Monster = 2;  // 怪物
+	NpcType_SeptStone = 3;  // 中立秘境矿点
+	NpcType_SeptLand = 4;  // 中立秘境宗门领地
+}
+
+// 怪物类型
+enum MonsterType {
+	MonsterType_None = 0;  // 未知
+	MonsterType_Normal = 1;  // 普通
+	MonsterType_Elite = 2;  // 精英
+	MonsterType_Chief = 3;  // 首领
+	MonsterType_SuperBoss = 4;  // 神兽
+	MonsterType_SeptDemon = 5; // 镇魔深渊Npc
+}
+
+// 货币类型
+enum CurrencyType {
+	CurrencyType_None = 0;  // 未知类型
+	CurrencyType_Money = 1;  // 灵石
+	CurrencyType_Soul = 2;  // 天命
+	CurrencyType_Gold = 3;  // 机缘
+	CurrencyType_Item = 4;  // 天机令
+	CurrencyType_AbilityActivePoint = 5;  // 神通要诀
+	CurrencyType_AbilityUpgradePoint = 6;  // 神通心得
+	CurrencyType_KungfuPoint = 7;  // 功法点
+	CurrencyType_TreasureToken = 8;  // 天机石
+	CurrencyType_ChaosStone = 9;  // 混沌聚灵石
+	CurrencyType_StudyPoint = 10;  // 研习心得
+	CurrencyType_NingWenGem = 11;  // 凝纹宝玉
+	CurrencyType_HeroCard = 12;  // 英雄帖
+	CurrencyType_SeptDonation = 13;  // 宗门贡献
+	CurrencyType_SeptStone = 14;  // 宗门玄晶石
+	CurrencyType_SeptQuestExp = 15;  // 事务经验
+	CurrencyType_SeptQuestToken = 16;  // 事务令
+	CurrencyType_GongFaToken = 17;	// 功法要诀
+	CurrencyType_GachaTokenL1 = 18;	// 探宝令
+	CurrencyType_GachaTokenL2 = 19;	// 灵域探宝令
+	CurrencyType_GachaTokenL3 = 20;	// 仙魔令
+	CurrencyType_GachaTokenL4 = 21;	// 领域探宝令
+	CurrencyType_GachaTokenL5 = 22;	// 探宝灯
+	CurrencyType_TreasuryChest01 = 23;	// 流云玉简道具ID
+	CurrencyType_TreasuryChest02 = 24;	// 玄光玉简道具ID
+	CurrencyType_TreasuryChest03 = 25;	// 上古玉简道具ID
+	CurrencyType_TreasuryChest04 = 26;	// 灵兽玉简道具ID
+	CurrencyType_TreasuryChest05 = 27;	// 本命玉简道具ID
+	CurrencyType_TreasuryChest06 = 28;	// 仙魔玉简道具ID
+	CurrencyType_TreasuryChest07 = 29;	// 乾坤玉简道具ID
+	CurrencyType_TreasuryChest08 = 30;	// 造化玉简道具ID
+	CurrencyType_AppearanceMoney = 31;	// 外观商店货币道具ID
+}
+
+// 1v1对战类型
+enum SoloType {
+	SoloType_None = 0;  // 未知类型
+	SoloType_FriendlyPk = 1;  // 切磋
+	SoloType_SwordPk = 2;  // 论剑台挑战
+	SoloType_SwordPkRevenge = 3;  // 论剑台复仇
+	SoloType_RobberySeptStone = 4;  // 抢夺中立秘镜矿脉
+}
+
+// 任务相关
+
+// 任务要求类型
+enum QuestRequirementType {
+	QT_Kill = 0;  // 击杀
+	QT_Get = 1;  // 获得道具
+	QT_Submit = 2;  // 提交道具
+	QT_Rank = 3;  // 等级提升
+	QT_Event = 4;  // 特殊事件
+	QT_Alchemy = 5;  // 炼丹
+	QT_AlchemyRank = 6;  // 丹师等级
+	QT_SkillRank = 7;  // 神通等级
+	QT_Forge = 8;  // 炼器
+	QT_ForgeRank = 9;  // 器室等级
+	QT_ArenaDoor = 10; // 秘境传送阵
+	QT_MonsterTower = 11; // 镇妖塔
+	QT_QiCollector = 12; // 聚灵阵
+	QT_GongFa = 13; // 功法
+	QT_QuestFight = 14; // 任务对战
+	QT_SkillDegree = 15; // 神通品阶
+	QT_GongFaDegree = 16; // 功法品阶
+	QT_CollectorQuality = 17; // 古宝品质
+	QT_JoinSept = 18;		// 加入宗门
+	QT_FarmlandSeed = 19;	// 药园播种
+}
+
+// 任务操作类型
+enum QuestOpType {
+	QOp_Accept = 0;  // 接受
+	QOp_Finish = 1;  // 提交
+	QOp_GiveUp = 2;  // 放弃
+}
+
+// 任务特殊奖励
+enum QuestSpecialRewardType {
+	QSRT_FarmerFriendShip = 0;  // 药童好感
+}
+
+// 排行榜
+enum LeaderboardType {
+	LBT_Combat = 0;	// 战力榜
+	LBT_Magic = 1;	// 修法榜
+	LBT_Phy = 2;	// 炼体榜
+	LBT_Rich = 3;	// 财富榜
+	LBT_Pet = 4;	// 灵兽榜
+	LBT_Sect = 5;	// 宗门榜
+	LBT_Weapon = 6;	// 武器榜
+	LBT_Armor = 7;	// 防具榜
+	LBT_Jewelry = 8;	// 饰品榜
+	LBT_Treasure = 9;	// 法宝榜
+	LBT_Shanhetu = 10;	// 山河图开包榜
+	LBT_Shanhetu_Week = 11;	// 山河图开周榜
+
+	LBT_MonsterTower = 12;	// 镇妖塔
+	LBT_MainExp = 13;	// 修为榜
+
+	LBT_MaxNum = 14;	// 最大种类
+}
+
+// 炼丹状态
+enum AlchemyState {
+	AlchemyState_None = 0;  // 未开始
+	AlchemyState_Running = 1;  // 进行中
+	AlchemyState_Done = 2;  // 已经完成（待领取）
+}
+
+// 地图状态
+enum WorldState {
+	WS_None = 0;  // 未知
+	WS_Init = 1;  // 初始
+	WS_Normal = 2;  // 正常
+	WS_Closing = 3;  // 关闭中 
+	WS_Recycle = 4;  // 收回	
+}
+
+// 属性模块类型 (编号 < GSMT_Debug 的为汇总模块，编号 >= GSMT_Debug 的为基础模块)
+enum GameStatsModuleType {
+	GSMT_Summary = 0;  // 全汇总
+	GSMT_Base = 1;  // 基础属性汇总		
+	GSMT_CollectionBlue = 2;  // 古宝汇总 - 普通
+	GSMT_CollectionPurple = 3;  // 古宝汇总 - 珍宝
+	GSMT_CollectionOrange = 4;  // 古宝汇总 - 灵宝
+	GSMT_CollectionRed = 5;  // 古宝汇总 - 至宝
+	GSMT_CollectionSuitBlue = 6;  // 古宝套装汇总 - 普通
+	GSMT_CollectionSuitPurple = 7;  // 古宝套装汇总 - 珍宝
+	GSMT_CollectionSuitOrange = 8;  // 古宝套装汇总 - 灵宝
+	GSMT_CollectionSuitRed = 9;  // 古宝套装汇总 - 至宝	
+	
+	GSMT_EquipmentBase = 31;  // 装备道具 - 基础属性
+	GSMT_EquipmentReinforce = 32;  // 装备道具 - 强化属性
+	GSMT_EquipmentQiWen = 33;  // 装备道具 - 器纹属性
+	GSMT_EquipmentRefine = 34;  // 装备道具 - 精炼属性
+
+	GSMT_Debug = 50;  // 调试
+	GSMT_RankBreakthrough = 51;  // 境界突破
+	GSMT_RankPractice = 52;  // 境界修炼
+	GSMT_Collection = 53;  // 古宝
+	GSMT_CollectionSuit = 54;  // 古宝套装
+	GSMT_PillElixir = 55;  // 秘药
+	GSMT_PillProperty = 56;  // 丹药
+	GSMT_GongFa = 57;  // 功法
+	GSMT_QiCollector = 58;  // 聚灵阵
+	GSMT_Sept = 59;  // 宗门
+	GSMT_Equipment = 60;  // 装备
+	GSMT_Ability = 61;  // 技能
+	GSMT_EquipmentReinforceResonance = 62;  // 装备道具 - 祭炼共鸣属性
+	GSMT_EquipmentQiWenResonance = 63;  // 装备道具 - 器纹共鸣属性
+
+	GSMT_Leaderboard = 91;  // 来自排行榜的属性增益（福泽）
+}
+
+// 道具属性模块类型
+enum ItemStatsModuleType {
+	ISMT_Equipment = 0;  // 装备属性
+	ISMT_Reinforce = 2;  // 强化
+	ISMT_QiWen = 3;  // 器纹
+	ISMT_Refine = 4;  // 精炼
+}
+
+
+
+// 功能模块状态
+enum FunctionModuleState {
+	FMS_Hide = 0;  // 隐藏，未达到显示等级
+	FMS_Show = 1;  // 显示，未达到解锁等级
+	FMS_CanUnlock = 2;  // 显示，已达解锁等级还未解锁
+	FMS_Unlocked = 3;  // 已解锁
+}
+
+// 功能模块类型
+enum FunctionModuleType {
+	FMT_None = 0;			// 未知
+	FMT_Alchemy = 1;		// 丹房 (炼丹)
+	FMT_Shop = 2;			// 坊市
+	FMT_DeluxShop = 3;		// 天机阁
+	FMT_Leaderboard = 4;	// 排行榜
+	FMT_Mail = 5;			// 邮件
+	FMT_Forge = 6;			// 器室（炼器）
+	FMT_MonsterTower = 7;	// 镇妖塔
+	FMT_PillElixir = 8;		// 秘药
+	FMT_Ability = 9;		// 神通
+	FMT_GuBao = 10;			// 古宝
+	FMT_GongFa = 11;		// 功法
+	FMT_Share = 12;			// 分享
+	FMT_HuangZhuang = 13;	// 换装
+	FMT_ZhuangPei = 14;		// 装配
+	FMT_QiCollector = 15;	// 聚灵阵
+	FMT_Checklist = 16;		// 福缘
+	FMT_SwordPk = 17;		// 论剑台
+	FMT_TreasuryChest = 18;	// 宝藏阁
+	FMT_Appearance = 19;	// 外观
+	FMT_Farm = 20;			// 药园
+	FMT_Avatar = 21;		// 化身
+	FMT_Biography = 22;		// 传记
+	FMT_BiographyEvent = 23; // 史记
+	FMT_VipShop = 24;		// 仙阁商店
+}
+
+// 功能模块解锁方式
+enum FunctionModuleUnlockType {
+	FMUT_Click = 0;  // 需要玩家点击解锁
+	FMUT_Auto = 1;  // 到级别自动解锁
+}
+
+// 邮件类型
+enum MailType {
+	MT_System = 0;  // 系统公告
+	MT_Maintenance = 1;  // 维护公告
+	MT_Official = 2;  // 天道（官方）公告
+}
+
+// 邮箱操作结构
+enum MailOperation {
+	MOP_Fail = 0;  // 失败
+	MOP_Done = 1;  // 完成
+	MOP_InventoryIsFull = 2;  // 背包满
+}
+
+// 聊天消息类型
+enum ChatMessageType {
+	CMT_Normal = 0;			// 普通
+	CMT_SystemNotice = 1;	// 公告
+}
+
+// 聊天频道
+enum ChatMessageChannel {
+	CMC_ColonyServers = 0;	// 大区（万仙）
+	CMC_QuadServers = 1;	// 小区（异界）
+	CMC_LocalServer = 2;	// 本区
+	CMC_Organization = 3;	// 宗门
+	CMC_Private = 4;		// 私聊
+}
+
+// 炼器-保底类型
+enum ForgeChanceType {
+	ForgeChanceType_Normal = 0;  // 普通-无保底
+	ForgeChanceType_Small = 1;  // 小保底
+	ForgeChanceType_Big = 2;  // 大保底
+}
+
+// 炼器状态
+enum ForgeState {
+	ForgeState_None = 0;  // 未开始
+	ForgeState_Running = 1;  // 进行中
+	ForgeState_Done = 2;  // 已经完成（待领取）
+}
+
+// 秘药类型
+enum PillElixirType {
+	PillElixirType_Other = 0;  // 其它
+	PillElixirType_Exp = 1;  // 修为秘药
+	PillElixirType_Property = 2;  // 属性秘药
+	PillElixirType_Double = 3;  // 双修秘药
+}
+
+// 秘药效果类型
+enum PillElixrEffectType {
+	PillElixrEffectType_None = 0;  // 其它
+	PillElixrEffectType_PhyExp = 1;  // 炼体修为
+	PillElixrEffectType_MagicExp = 2;  // 练法修为
+	PillElixrEffectType_CriticalResist = 3;  // 会心抗性
+	PillElixrEffectType_Critical = 4;  // 会心
+	PillElixrEffectType_MagicDodge = 5;  // 法术闪避
+	PillElixrEffectType_MagicAccuraccy = 6;  // 法术命中
+	PillElixrEffectType_PhyDodge = 7;  // 物理闪避
+	PillElixrEffectType_PhyAccuraccy = 8; // 物理命中
+}
+
+
+//
+// 神通相关(BEGIN)
+
+// 神通操作返回类型
+enum PlayerAbilityActionResult {
+	PlayerAbilityAction_Success = 0;  // 成功
+	PlayerAbilityAction_Timeout = 1;  // 超时
+	PlayerAbilityAction_InvalidAbility = 2; // 无效神通ID
+
+	PlayerAbilityAction_GiveFailed_ExistAlready = 10;   // 习得神通-神通已经存在了
+	PlayerAbilityAction_GiveFailed_OwnerFailed = 11;    // 习得神通-Owner条件不满足
+
+	PlayerAbilityAction_UpgradeFailed_NonExist = 20;    // 升级失败-神通不存在
+	PlayerAbilityAction_UpgradeFailed_MaxGrade = 21;    // 升级失败-已到达最大值
+	PlayerAbilityAction_UpgradeFailed_OwnerFailed = 22; // 升级失败-Owner条件不满足
+
+	PlayerAbilityAction_ResetAll_CoolDown = 50;        // 一键重置神通冷却中
+}
+
+// 神通相关(END)
+//
+
+// 战斗模式
+enum FightMode {
+	FightMode_Peace = 0;  // 和平 (无法攻击其他修士，无法被其他修士攻击)
+	FightMode_All = 1;  // 全体 (可以攻击其他全体模式下的玩家)
+	FightMode_Sept = 2;  // 宗门
+	FightMode_Neutral = 3;  // 中立
+}
+
+
+// 攻击锁定方式
+enum AttackLockType {
+	AttackLockType_MinDistance = 0;  // 最近距离
+	AttackLockType_LowHpPct = 1;  // 剩余血量比例最低
+	AttackLockType_LowHpMpValue = 2;  // 气血真元绝对值最低
+}
+
+// 攻击取消锁定方式
+enum AttackUnlockType {
+	AttackUnlockType_MaxDistance = 0;  // 远距离
+	AttackUnlockType_NearDistance = 1;  // 近距离
+	AttackUnlockType_Screen = 2;  // 脱离屏幕
+}
+
+// BOSS入侵
+enum BossInvasionState {
+	BossInvasionState_None = 0;  // 未知
+	BossInvasionState_Wait = 1;  // 等待开始
+	BossInvasionState_Prepare = 2;  // 准备阶段
+	BossInvasionState_Fight = 3;  // 战斗阶段
+	BossInvasionState_End = 4;  // 战斗结束
+}
+
+// 论剑台
+enum SwordPkState {
+	SwordPkState_None = 0;  // 未知
+	SwordPkState_Init = 1;  // 初始化
+	SwordPkState_SeasonBegin = 2;  // 赛季开始
+	SwordPkState_SeasonDuring = 3;  // 赛季进行中
+	SwordPkState_SeasonEnd = 4;  // 赛季结束
+}
+
+// 福缘功能相关
+enum CheckListTaskType {
+	CLTT_None = 0;  // 
+	CLTT_Login = 1;  // 登录游戏
+	CLTT_EatPill = 2;  // 服用道行丹
+	CLTT_Practice = 3;  // 吐纳
+	CLTT_BuyInMarket = 4;  // 坊市购买
+	CLTT_MakePill = 5;  // 炼丹
+	CLTT_GongFa = 6;  // 修炼功法
+	CLTT_MonsterTower = 7;  // 挑战镇妖塔
+	CLTT_Portal = 8;  // 挑战秘境传送阵
+	CLTT_Plant = 9;  // 药园种植
+	CLTT_Forge = 10; // 锻造装备
+	CLTT_Ad = 11; // 观影
+	CLTT_Ability = 12; // 升级神通
+	CLTT_LocalPk = 13; // 论剑台
+	CLTT_Bounty = 14; // 完成悬赏令
+	CLTT_Reinforce = 15; // 祭炼装备
+	CLTT_CommonPk = 16; // 跨界论道
+	CLTT_BuyInDeluxShop = 17; // 天机阁购买
+	CLTT_MonsterInvasion = 18; // 神兽入侵
+	CLTT_WorldInvasion = 19; // 异界入侵
+	CLTT_Mine = 20; // 灵脉采集
+	CLTT_SectContribution = 21; // 宗门贡献点
+	CLTT_Quiz = 22; // 八荒竞猜
+	CLTT_Share = 23; // 分享
+	CLTT_MineTime = 24;	// 灵脉采集时长
+}
+
+// 宗门职位
+enum SeptPosition {
+	SeptPosition_None = 0;  // 未加入
+	SeptPosition_Normal = 1;  // 成员
+	SeptPosition_Manager = 2;  // 主事
+	SeptPosition_Senator = 3;  // 长老
+	SeptPosition_ViceChairman = 4;  // 副宗主
+	SeptPosition_Chairman = 5;  // 宗主
+}
+
+enum SeptLogType {
+	SLT_None = 0;		// 未知类型
+	SLT_Join = 1;		// 加入宗门
+	SLT_Leave = 2;		// 离开宗门
+	SLT_ChangeUp = 3;	// 升职
+	SLT_ChangeDown = 4;	// 降职
+}
+
+// 中立秘镜矿脉类型
+enum SeptArenaStoneType {
+	SeptArenaStoneType_None = 0;  // 未知类型
+	SeptArenaStoneType_Primary = 1;  // 初级
+	SeptArenaStoneType_Intermediate = 2;  // 中级
+	SeptArenaStoneType_Advanced = 3;  // 高级
+	SeptArenaStoneType_Top = 4;  // 顶级
+}
+
+// 功法状态
+enum GongFaState {
+	Unable = 0;			// 未达到领悟条件
+	ReadyToLearn = 1;	// 待领悟
+	Training = 2;		// 领悟中
+	Standby = 3;		// 待激活
+	Activated = 4;		// 已经激活
+}
+
+// 学习功法特殊条件
+enum GongFaCondition {
+	GFC_None = 0;				// 无条件
+	GFC_HerbalBlock = 1;		// 解锁药园土地的数量
+	GFC_CostItem = 2;			// 生涯消耗道具数量
+	GFC_GuBao = 3;				// 持有古宝且星级达到n
+	GFC_AvatarLevel = 4;		// 分身等级达到n
+	GFC_OrangeAlchemy = 5;		// 炼制橙色丹药
+	GFC_OrangeForge = 6;		// 炼制橙色装备
+	GFC_MaxHP = 7;				// 最大气血
+	GFC_MaxMP = 8;				// 最大真元
+	GFC_PetLevel = 9;			// 拥有灵兽且等级达到n 
+	GFC_SkillLevel = 10;		// 对应神通等级达到n
+	GFC_ImmortalRoad = 11;		// 完成全部飞升之路
+	GFC_Crit = 12;				// 会心
+	GFC_CritCoff = 13;			// 会心倍率
+	GFC_MagBreak = 14;			// 法术破防
+	GFC_PhyBreak = 15;			// 物理破防
+	GFC_MagBlock = 16;			// 法术格挡
+	GFC_PhyBlock = 17;			// 物理格挡
+}
+
+// 功法效果
+enum GongFaEffectType {
+	GFET_None = 0;				// 无条件
+	GFET_BaseAtt = 1;			// 功法全属性提升
+	GFET_DongFu = 2;			// 洞府灵气
+	GFET_PracticeNum = 3;		// 吐纳次数
+	GFET_PracticeUp = 4;		// 吐纳效果
+	GFET_MergePractive = 5;		// 将所有吐纳合一次完成
+	GFET_PillUp = 6;			// 修为丹药服用效果
+	GFET_PillUseNum = 7;		// 每日修为丹药服用次数提升
+	GFET_MoneyUp = 8;			// 秘境灵石产出
+	GFET_AttackMonsterDamageAddPercent = 9;			// 攻击怪物伤害加成
+	GFET_TakeMonsterDamageReducePercent = 10;		// 受怪物伤害减免
+	GFET_FaBaoDamageToPlayerAddPercent = 11;		// 攻击修士法宝伤害
+	GFET_FaBaoDamageToPlayerReducePercent = 12;		// 受到法宝伤害减免
+	GFET_ShenTongDamageToPlayerAddPercent = 13;		// 攻击修士神通伤害
+	GFET_ShenTongDamageToPlayerReducePercent = 14;	// 受到神通伤害减免
+	GFET_Mind = 15;						// 神识
+	GFET_MpRecoverPercent = 16;			// 真元回复
+	GFET_Mp = 17;						// 真元
+	GFET_BaseMp  = 18;					// 基础真元
+	GFET_HpRecoverPercent  = 19;		// 气血回复
+	GFET_Hp  = 20;						// 气血
+	GFET_BaseHp  = 21;					// 基础气血
+	GFET_MagAtt  = 22;					// 法术攻击
+	GFET_PhyAtt  = 23;					// 物理攻击
+	GFET_Crit  = 24;					// 会心
+	GFET_CritCoeff  = 25;				// 会心倍率
+	GFET_CritBlock  = 26;				// 会心格挡
+	GFET_ControlRateAtt  = 27;			// 控制概率强化
+	GFET_ControlRateDef  = 28;			// 控制概率抗性
+	GFET_ControlTimeAtt  = 29;			// 控制时间强化
+	GFET_ControlTimeDef  = 30;			// 控制时间抗性
+	GFET_MoveSpeed  = 31;				// 移动速度
+	GFET_Intellect  = 32;				// 内息
+	GFET_Strength  = 33;				// 体魄
+}
+
+// 福赠类型
+enum FuZengType {
+	FZT_None = 0;				// 无
+	FZT_CombatPower = 1;		// 战力
+	FZT_MonsterTower = 2;		// 镇妖塔
+	FZT_Ability = 3;			// 神通
+	FZT_Pill = 4;				// 秘药
+	FZT_GongFa = 5;				// 功法
+	FZT_GuBaoCollection = 6;	// 古宝收集
+	FZT_GuBaoLevel = 7;			// 古宝星级
+	FZT_GaCha = 8;				// 外域探宝
+
+
+	FZT_MaxNum = 9;				// 最大值
+}
+
+// 福赠状态
+enum FuZengState {
+	FZS_UnFinished = 0;		// 未完成
+	FZS_Finished = 1;		// 已完成待领取
+	FZS_Received = 2;		// 已领取
+}
+
+// 古宝升星加成方式
+enum CollectionStarAdditionType {
+	CSAT_Times = 0;  // 乘
+	CSAT_Plus = 1;  // 加	
+}
+
+// 古宝使用类型
+enum CollectionUseType {
+	CUT_Active = 0;  // 主动
+	CUT_Passive = 1;  // 被动
+	CUT_Functional = 2;  // 功能
+}
+
+// 古宝区域类型
+enum CollectionZoneType {
+	CZT_Unknown = 0;  // 未定义
+	CZT_RenJie = 1;  // 人界
+	CZT_LingJie = 2;  // 灵界
+	CZT_XianMo = 3;  // 仙魔
+	CZT_LiuYu = 4;  // 领域
+	CZT_QiTa = 5;  // 其他
+}
+
+// 古宝筛选类型
+enum CollectionFilterType {
+	CFT_Owned = 0;  // 已拥有
+	CFT_All = 1;  // 图鉴
+	CFT_Source = 2;  // 渊源
+	CFT_Suit = 3;  // 套装
+	CFT_CanUp = 4;  // 可升星
+}
+
+// 古宝排序类型
+enum CollectionOrderType {
+	COT_Quality = 0;  // 品质
+	COT_Property = 1;  // 属性
+	COT_Level = 2;  // 注灵
+	COT_Active = 3;  // 活动
+}
+
+// 古宝渊源状态
+enum CollectionHistoryState {
+	CHS_None = 0;  // 没有渊源
+	CHS_NotActive = 1;  // 还未激活
+	CHS_CanDraw = 2;  // 可以领取
+	CHS_DrawDone = 3;  // 已领取
+}
+
+// 古宝收集奖励状态
+enum CollectionZoneActiveAwardState {
+	CZAAS_None = 0;  // 无法领取
+	CZAAS_CanDraw = 1;  // 可以领取
+	CZAAS_DrawDone = 2;  // 已经领取
+}
+
+// 生涯计数类型
+enum LifeCounterType {
+	LCT_Unknown = 0;		// 未知
+	LCT_AlchemyQuality = 1;				// 炼制对应品质丹药
+	LCT_ForgeEquipmentQuality = 2;		// 炼制对应品质装备
+	LCT_ForgeSkillEquipmentQuality = 3;	// 炼制对应品质法宝
+	LCT_AbilityLevelPhy = 4;			// 体修神通升级
+	LCT_AbilityLevelMag = 5;			// 法修神通升级
+	LCT_KillCommonMonster = 6;			// 击杀普通小怪
+	LCT_KillEliteMonster = 7;			// 击杀精英怪
+	LCT_KillBoss = 8;					// 击杀首领
+	LCT_ActiveGongFaPoint = 9;			// 激活功法节点
+	LCT_FinishingGongFa = 10;			// 功法圆满
+	LCT_PillElixirUsed = 11;			// 秘药使用
+	LCT_InventoryItemUsed = 12;			// 背包道具使用按ID
+	LCT_InventoryItemUsedType = 13;		// 背包道具使用按类型
+	LCT_LoginGame = 14;					// 登录游戏每日
+	LCT_FuYuanPoint = 15;				// 福缘活跃度
+	LCT_SeptQuest = 16;					// 完成宗门事务
+	LCT_MonsterTower = 17;				// 镇妖塔层数
+	LCT_CollectionStar = 18;			// 古宝星级
+	LCT_CollectionNum = 19;				// 古宝收集
+	LCT_GaChaOpen = 20;					// 探宝计数
+	LCT_Shanhetu = 21;					// 山河图计数
+	LCT_PropertyPillUse = 22;			// 属性丹药按id计数
+	LCT_FarmBlockNum = 23;				// 药园地块解锁数
+	LCT_AlchemyType = 24;				// 炼制对应类型丹药
+}
+
+enum ModelType {
+	MT_Unknown = 0;		// 未知
+	MT_HeadIcon = 1;	// 头像
+	MT_HeadFrame = 2;	// 头像框
+	MT_Body = 3;		// 衣服
+	MT_Hair = 4;		// 发型
+	MT_Hat = 5;			// 头饰
+	MT_HeadDeco = 6;	// 额饰
+	MT_FaceDeco = 7;	// 面饰
+	MT_Mask = 8;		// 面具
+	MT_EarDeco = 9;		// 耳饰
+	MT_EyeBrows = 10;	// 眉眼
+	MT_Makeup = 11;		// 妆容
+	MT_FacePaint = 12;  // 面绘
+	MT_FacePrint = 13;  // 印容
+	MT_BackLight = 14;  // 灵光
+
+	MT_MaxNum = 15;		// 枚举容量
+}
+
+// 道具变化类型
+enum InventoryItemChangedType {
+	IICT_Modify = 0;  // 修改
+	IICT_Add = 1;  // 新增
+	IICT_Del = 2;  // 删除
+}
+
+// 秘境探索事件状态
+enum ArenaCheckListState {
+	ACLS_None = 0;          // 未知
+	ACLS_UnFinished = 1;	// 未完成
+	ACLS_Finished = 2;		// 已完成待领取
+	ACLS_Received = 3;		// 已领取
+}
+
+// 秘境探索事件奖励领取状态
+enum ArenaCheckListRewardState {
+	ACLRS_UnFinished = 0;		// 未完成
+	ACLRS_UnReceived = 1;		// 已完成待领取
+	ACLRS_Received = 2;			// 已领取
+}
+
+// 药童效果类型
+enum FarmLandState {
+    FLS_None = 0;	// 未解锁
+    FLS_Free = 1;  	// 所有灵植生长周期减少
+    FLS_InUse = 2;	// 正在使用
+}
+
+// 药童效果类型
+enum FarmerEffectType {
+    FET_None = 0;               // 未完成
+    FET_ReduceGrowthTime = 1;	// 所有灵植生长周期减少
+    FET_RipeningUp = 2;         // 催熟效果增加
+    FET_WateringUp = 3;         // 浇灌效果增加
+    FET_ExtraOneHarvest = 4;    // 收获灵植时有几率额外获得1株
+    FET_WateringNumUp = 5;      // 浇灌次数增加
+	FET_ReduceGrowthPeriod = 6; // 所有灵植生长周期减少百分比
+	FET_MaxNum = 7;				// 最大效果数
+}
+
+// 服务器计数器类型
+enum ServerCounterType {
+	SCT_None = 0;									// None
+	SCT_BiographyEventKillNpcWithHighDegree = 1;	// 史记-高等级怪物击杀
+	SCT_KillNpcWithHighDegree = 2;					// 高等级怪物击杀
+	SCT_DegreeUpPhy = 3;							// 玩家炼体升级计数
+	SCT_DegreeUpMag = 4;							// 玩家修法升级计数
+}
+
+// 刷新周期类型
+enum PeriodType {
+	PT_None = 0;  // 未知
+	PT_Day = 1;  // 日
+	PT_Week = 2;  // 周
+	PT_Mouth = 3;  // 月
+	PT_Year = 4;  // 年
+}

@@ -1,0 +1,465 @@
+// PB2BP: BP_FILE_NAME=ZPbWorld
+syntax = "proto3";
+package idlezt;
+
+import "defines.proto";
+import "common.proto";
+import "world_common.proto";
+
+
+// 请求切换地图
+message TravelToWorld {
+	int32 world_cfg_id = 1;
+}
+
+// 要求传送
+message Teleport {
+	int32 to_world_cfg_id = 1;
+	Vector3 to_pos = 2;
+}
+
+
+enum TeleportErrorCode {
+	TeleportFailedErrorCode_Ok = 0;  // 成功
+	TeleportFailedErrorCode_Other = 1;  // 其它错误
+	TeleportFailedErrorCode_PositionInvalid = 2;  // 目标坐标不合法
+	TeleportFailedErrorCode_WorldInvalid = 3;  // 目标地图不合法
+}
+
+// 通知传送失败
+message NotifyTeleportFailed {
+	int32 to_world_cfg_id = 1;
+	Vector3 to_pos = 2;
+	TeleportErrorCode code = 3;
+}
+
+
+// 移动
+message MoveTo {
+	Vector3 cur_pos = 1;  // 当前位置
+	Vector3 to_pos = 2;  // 目标位置
+	Vector3 dir = 3;    // 模型朝向
+	int64 world_id = 4;  //  WorldId
+}
+
+// 停止移动
+message MoveStop {
+	Vector3 cur_pos = 1;  // 当前位置
+	Vector3 dir = 2;  // 模型朝向
+	int64 world_id = 3;  //  WorldId
+}
+
+
+// 模型转向
+message TurnDir {
+	Vector3 dir = 1;  // 模型朝向
+}
+
+// 移动 - 下行消息
+message MoveToDown {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+	Vector3 cur_pos = 4;
+	Vector3 to_pos = 5;
+	Vector3 dir = 6;  
+}
+
+// 停止移动 - 下行消息
+message MoveStopDown {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+	Vector3 cur_pos = 3;
+	Vector3 dir = 4;  // 模型朝向
+}
+
+// 模型转向 - 下行消息
+message TurnDirDown {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+	Vector3 dir = 3;  // 模型朝向
+}
+
+// 坐标跳转
+message GotoPosition {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+	Vector3 pos = 3;  // 坐标
+	Vector3 dir = 4;  // 模型朝向
+	GotoType type = 5;  // 跳转类型	
+}
+
+// 获取指定地图信息
+message MapRoleInfo {
+	uint64 entity_id = 1;  // 玩家ID
+	Vector3 pos = 2;  // 坐标
+	CharacterModelConfig model = 3;  // 外形数据 
+}
+message GetMapInfoReq {
+	int32 world_cfg_id = 1;
+}
+message GetMapInfoAck {
+	repeated MapRoleInfo roles = 1;  // 所有玩家
+	repeated BossInfo boss_data = 2;  // BOSS数据
+	BossInfo super_boss_data = 3;  // 神兽数据
+	repeated SeptStoneInfo sept_stone_data = 4;  // 中立秘镜矿点数据
+	int64 world_id = 5;  // 当前地图的唯一ID
+	repeated SeptLandInfo sept_land_data = 6;  // 中立秘镜领地数据
+}
+
+
+message DungeonFightInfo {
+	BattleRoleInfo attacker = 1;  // 攻击方信息
+	BattleRoleInfo defender = 2;  // 防守方信息
+}
+
+// 主角进入地图
+message MainPlayerEnterWorld {
+	uint64 world_id = 1;
+	string entity_name = 2;
+	TravelWorldType travel_world_type = 3;  // 本值只在进入地图的一刻有效
+	WorldEntityData entity_data = 4;
+	WorldRuntimeData world_data = 5;
+	DungeonFightInfo dungeon_fight_info = 6;  // 副本对战信息
+}
+
+// 主角离开地图
+message MainPlayerLeaveWorld {
+	uint64 world_id = 1;
+}
+
+// 物件进入地图
+message EntityEnterWorld {
+	uint64 world_id = 1;
+	string entity_name = 2;
+	WorldEntityData entity_data = 3;
+}
+
+// 物件进入地图 - 完成
+message EntityEnterWorldDone {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+}
+
+// 物件离开地图
+message EntityLeaveWorld {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+}
+
+// 更新
+message SyncWorldEntity {
+	uint64 world_id = 1;
+	WorldEntityData data = 2;	
+}
+
+// 死亡
+message EntityDead {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+	uint64 murderer_eid = 3;
+	int64 relive_time = 4;  // 预计重生时间
+	int32 remain_num = 5;  // 剩余可加速次数
+	repeated DropItem drop_items = 6;  // 掉落道具
+}
+
+// 重生
+message EntityRelive {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+}
+
+// 加速重生
+message SpeedupReliveReq {
+}
+message SpeedupReliveAck {
+	bool ok = 1;
+	int64 relive_time = 2;  // 新的预计重生时间
+	int32 remain_num = 3;  // 剩余可加速次数
+}
+
+// 选择目标
+message SelectTarget {
+	uint64 target_eid = 1;  // 目标EntityId
+	int64 world_id = 2;
+}
+
+// 刷新物件的目标
+message RefreshEntitySelectedTarget {
+	uint64 world_id = 1;
+	uint64 entity_id = 2;
+	uint64 target_eid = 3;  // 目标EntityId
+}
+
+// 在指定位置显示调试方块
+message ShowDebugCube {
+	uint64 world_id = 1;
+	uint64 id = 2;
+	bool show = 3;  // true显示, false移除
+	Vector3 pos = 4;
+	Color color = 5;  // 颜色
+	float scale = 6;  // 缩放
+}
+
+// 同步地图运行时数据
+message NotifyWorldRuntimeData {
+	uint64 world_id = 1;
+	WorldRuntimeData data = 2;
+}
+
+// 设置地图TimeDilation
+message SetWorldTimeDilationReq {
+	float value = 1;
+}
+message SetWorldTimeDilationAck {
+	bool ok = 1;
+}
+
+message RefreshBossList {
+	uint64 world_id = 1;
+	repeated BossInfo data = 2;
+}
+
+message GetBossInvasionArenaSummaryReq {
+	int64 world_id = 1;	
+}
+message GetBossInvasionArenaSummaryRsp {
+	int64 npc_id = 1;  // BOSS唯一ID
+	int32 npc_cfg_id = 2;  // BOSS的配置ID
+	int32 self_rank = 3;  // 自己的伤害排名
+	float self_total_damage = 4;  // 自己的总伤害
+	float hp_pct = 5;  // BOSS的血量百分比 (1.0 == 100%)
+}
+
+message BossInvasionArenaTopListEntry {
+	int32 rank = 1;
+	int64 role_id = 2;
+	string role_name = 3;
+	CharacterModelConfig role_model = 4;
+	float total_damage = 5;
+}
+
+message GetBossInvasionArenaTopListReq {
+	int64 world_id = 1;	
+}
+message GetBossInvasionArenaTopListRsp {
+	repeated BossInvasionArenaTopListEntry all_entries = 1;
+	BossInvasionArenaTopListEntry self_entry = 2;
+}
+
+message RefreshBossInvasionState {
+	BossInvasionState state = 1;
+	int64 expire_ticks = 2;
+}
+
+
+message BossInvasionNpcInfo {
+	int64 world_id = 1;
+	int32 world_cfg_id = 2;
+	bool is_dead = 3;
+}
+
+
+message BossInvasionArenaInfo {
+	int32 arena_degree = 1;	
+	repeated BossInvasionNpcInfo npc_info = 2;
+}
+
+
+message GetBossInvasionInfoReq {
+
+}
+message GetBossInvasionInfoRsp {
+	int64 start_ticks = 1;  // 本轮入侵开始时间
+	repeated BossInvasionArenaInfo arena_info = 2;  // 各秘境情况
+	BossInvasionKillRewardData kill_reward = 3;  // 尾刀奖励
+	repeated BossInvasionDamageRewardData damage_reward = 4;  // 已获取的伤害排行奖励
+	bool is_damage_reward_draw_done = 5;  // 伤害排行奖励是否已领取	
+	int64 drawed_unique_id = 6;  // 已领取的伤害排行奖励 UniqueId
+}
+
+message DrawBossInvasionKillRewardReq {
+	int64 unique_id = 1;
+}
+message DrawBossInvasionKillRewardRsp {	
+	bool ok = 1;
+	repeated SimpleItemData items = 2;
+}
+
+message DrawBossInvasionDamageRewardReq {	
+	int64 unique_id = 1;
+}
+message DrawBossInvasionDamageRewardRsp {	
+	bool ok = 1;
+	repeated SimpleItemData items = 2;
+}
+
+message BossInvasionTeleportReq {
+	int64 world_id = 1;
+}
+message BossInvasionTeleportRsp {
+	bool ok = 1;	
+}
+
+message NotifyBossInvasionNpcKilled {
+	int32 rank = 1;
+	int64 killer_role_id = 2;
+	string killer_role_name = 3;
+}
+
+message GetSwordPkInfoReq {
+}
+message GetSwordPkInfoRsp {
+	int32 round_num = 1;  // 序号
+	int64 end_local_ticks = 2; // 结束时间
+	repeated SwordPkTopListEntry top_list = 3;  // 前三名
+	SwordPkTopListEntry self = 4;  // 自身排名
+}
+
+message SwordPkSignupReq {
+
+}
+message SwordPkSignupRsp {
+	bool ok = 1;
+}
+
+
+message SwordPkMatchingReq {
+
+}
+message SwordPkMatchingRsp {
+	repeated SwordPkTopListEntry candidates  = 1;
+	SwordPkTopListEntry self = 2;  // 自身排名	
+}
+
+
+message SwordPkChallengeReq {
+	int64 target_role_id = 1;
+}
+message SwordPkChallengeRsp {
+	bool ok = 1;
+}
+
+
+message SwordPkRevengeReq {
+	int64 history_world_id = 1;  // 复仇战斗的地图ID
+}
+message SwordPkRevengeRsp {
+	bool ok = 1;
+}
+
+
+message GetSwordPkTopListReq {
+
+}
+message GetSwordPkTopListRsp {
+	repeated SwordPkTopListEntry top_list = 1;
+	SwordPkTopListEntry self = 2;  // 自身排名
+}
+
+message SwordPkExchangeHeroCardReq {
+
+}
+message SwordPkExchangeHeroCardRsp {
+	bool ok = 1;
+}
+
+message RefreshNextTeleportTime {
+	int64 ticks = 1;
+}
+
+enum BeginOccupySeptStoneErrorCode {
+	BeginOccupySeptStoneErrorCode_Ok = 0;  // 成功
+	BeginOccupySeptStoneErrorCode_Other = 1;  // 其他错误
+	BeginOccupySeptStoneErrorCode_TimeIsTooShort = 2;  // 可采集时间太短
+	BeginOccupySeptStoneErrorCode_OtherRobbing = 3;  // 正在被其他人抢夺
+	BeginOccupySeptStoneErrorCode_RobColdDown = 4;  // 正在抢夺CD中
+	BeginOccupySeptStoneErrorCode_RobWaiting = 5;  // 已经发起抢夺，等待结果（不算出错）
+	BeginOccupySeptStoneErrorCode_NotFoundStone = 6;  // 找不到指定矿石
+	BeginOccupySeptStoneErrorCode_TooFar = 7;  // 太远(矿脉有归属后,角色必须在矿石旁边才能占领)
+	BeginOccupySeptStoneErrorCode_Fighting = 8;  // 正在战斗中无法采集
+}
+
+message BeginOccupySeptStoneReq {
+	int64 target_entity_id = 1;	  // 目标矿石NPC唯一ID
+	int64 target_world_id = 2;  // 目标矿石NPC所在地图的唯一ID
+}
+message BeginOccupySeptStoneAck {
+	BeginOccupySeptStoneErrorCode code = 1;
+}
+
+
+enum EndOccupySeptStoneErrorCode {
+	EndOccupySeptStoneErrorCode_Ok = 0;  // 成功
+	EndOccupySeptStoneErrorCode_Other = 1;  // 其他错误
+	EndOccupySeptStoneErrorCode_NotFoundStone = 2;  // 找不到指定矿石
+}
+
+message EndOccupySeptStoneReq {
+	int64 target_entity_id = 1;	 // 目标矿石NPC唯一ID
+	int64 target_world_id = 2;  // 目标矿石NPC所在地图的唯一ID
+}
+message EndOccupySeptStoneAck {
+	EndOccupySeptStoneErrorCode code = 1;
+}
+
+message RefreshOccupySeptStoneInfo {
+	int64 entity_id = 1;	 // 目标矿石NPC唯一ID
+	int64 world_id = 2;  // 目标矿石NPC所在地图的唯一ID
+}
+
+// 中立秘境矿脉采集结束类型
+enum OccupySeptStoneEndType {
+	OccupySeptStoneEndType_Manual = 0;  // 手动结束
+	OccupySeptStoneEndType_Timeout = 1;  // 采集时间到
+	OccupySeptStoneEndType_Robbed = 2;  // 被他人抢夺
+}
+
+// 通知玩家中立秘境矿脉采集结束
+message NotifySeptStoneOccupyEnd {
+	SeptArenaStoneType stone_type = 1;  // 矿脉类型	
+	OccupySeptStoneEndType end_type = 2;  // 结束类型
+	int32 item_num = 3;  // 获得道具数量
+	int32 cost_seconds = 4;  // 耗时(秒)
+}
+
+
+enum OccupySeptLandErrorCode {
+	OccupySeptLandErrorCode_Ok = 0;  // 成功
+	OccupySeptLandErrorCode_Other = 1;  // 其他错误
+	OccupySeptLandErrorCode_MoveColdown = 2;  // 正在迁移CD中
+	OccupySeptLandErrorCode_OtherOccupyed = 3;  // 已被其它宗门占领
+	OccupySeptLandErrorCode_NotFound = 4;  // 找不到指定领地
+	OccupySeptLandErrorCode_NoAccess = 5;  // 权限不够
+	OccupySeptLandErrorCode_InfluenceTooFew = 6;  // 势力值不够
+	OccupySeptLandErrorCode_RoleRankTooLow = 7;  // 玩家等级太低
+	OccupySeptLandErrorCode_SeptRankTooLow = 8;  // 宗门等级太低
+	OccupySeptLandErrorCode_LandTooClose = 9;  // 和其它领地距离太近
+}
+
+message OccupySeptLandReq {
+	int64 target_entity_id = 1;	  // 目标领地NPC唯一ID
+	int64 target_world_id = 2;  // 目标领地NPC所在地图唯一ID
+}
+message OccupySeptLandAck {
+	OccupySeptLandErrorCode code = 1;
+}
+
+
+message HurtMeListEntry {
+	int64 entity_id = 1;
+	int64 expire_ticks = 2;
+}
+
+message RefreshHurtMeList {
+	repeated HurtMeListEntry entries = 1;
+}
+
+// 副本挑战完毕
+message DungeonChallengeOver {
+	bool ok = 1;  // 是否成功
+}
+
+message DungeonChallengeFightStart {
+	int64 world_id = 1;
+	float world_seconds = 2;
+}

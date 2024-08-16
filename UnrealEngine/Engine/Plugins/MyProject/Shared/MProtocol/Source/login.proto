@@ -1,0 +1,16 @@
+// PB2BP: BP_FILE_NAME=ZPbLogin
+syntax = "proto3";
+package idlezt;
+
+import "defines.proto";
+import "common.proto";
+
+
+// 登录帐号
+message LoginAccountReq {
+	string account = 1;
+	string client_version = 2;
+}
+message LoginAccountAck {
+
+}
