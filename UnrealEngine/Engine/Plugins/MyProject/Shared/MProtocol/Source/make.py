@@ -29,7 +29,7 @@ TEMPL = """
 {%- for file_name in FullFiles %}
 
 # .proto 文件生成
-{{PBCMD}} --cpp_out=dllexport_decl=MPROTOCOL_API:{{CWD}} --proto_path={{CWD}} {{CWD}}/{{file_name}}.proto
+{{PBCMD}} --cpp_out=dllexport_decl=MPROTOCOL_API:{{CWD}} --proto_path={{CWD}} {{file_name}}.proto
 
 # Mac中脚本调用mv似不支持通配符
 {{MVCMD}} {{CWD}}/{{file_name}}.pb.cc {{CWD}}/Private/
@@ -139,7 +139,7 @@ def main():
                 if ret.returncode != 0:
                     raise Exception(f'code={ret.returncode}')
             except Exception as run_err:
-                raise Exception(f'指令执行失败\ncmd={line}\n{run_err} ')
+                raise Exception(f'\n指令执行失败\ncmd\n{line}\n{run_err} ')
 
 
 if __name__ == '__main__':
