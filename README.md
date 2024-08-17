@@ -52,6 +52,10 @@ UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-pac
 2. markupsafe
 3. xlrd
 
+4. UnrealEngine\Engine\Binaries\ThirdParty\Nodejs
+5. UnrealEngine\Engine\Binaries\ThirdParty\Windows\msys
+
+
 #### Add Custom Variables in Material  
 1.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\MaterialInterface.h  
 2.UnrealEngine\Engine\Source\Runtime\Engine\Classes\Materials\Material.h  
