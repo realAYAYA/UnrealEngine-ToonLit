@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ZNetFwd.h"
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
 #include "ZPbCommon.h"
 #include "ZPbGame.h"
@@ -525,7 +525,7 @@ class ZRPC_API UZGameRpcStub : public UObject
 
 public:
 
-    void Setup(FZRpcManager* InManager, const FZPbConnectionPtr& InConn);
+    void Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InConn);
     void Cleanup();    
 
     /**
@@ -2675,6 +2675,6 @@ public:
     
     
 private:
-    FZRpcManager* Manager = nullptr;
+    FMRpcManager* Manager = nullptr;
     FZPbConnectionPtr Connection;
 };

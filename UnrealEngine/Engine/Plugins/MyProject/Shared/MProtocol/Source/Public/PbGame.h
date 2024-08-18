@@ -1,8 +1,8 @@
 #pragma once
 #include "ZFmt.h"
-#include "ZPbDefines.h"
-#include "ZPbCommon.h"
-#include "ZPbGame.generated.h"
+#include "PbDefines.h"
+#include "PbCommon.h"
+#include "PbGame.generated.h"
 
 
 namespace idlepb {

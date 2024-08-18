@@ -1,6 +1,6 @@
 #include "LoginRpcInterface.h"
 
-FZLoginRpcInterface::FZLoginRpcInterface(FZRpcManager* InManager)
+FZLoginRpcInterface::FZLoginRpcInterface(FMRpcManager* InManager)
 {
 }
 
@@ -8,7 +8,7 @@ FZLoginRpcInterface::~FZLoginRpcInterface()
 {
 }
 
-void FZLoginRpcInterface::LoginAccountRegister(FZRpcManager* InManager, const FZLoginAccountCallback& InCallback)
+void FZLoginRpcInterface::LoginAccountRegister(FMRpcManager* InManager, const FZLoginAccountCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZLoginRpcInterface::LoginAccount;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -29,6 +29,6 @@ void FZLoginRpcInterface::LoginAccountRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }

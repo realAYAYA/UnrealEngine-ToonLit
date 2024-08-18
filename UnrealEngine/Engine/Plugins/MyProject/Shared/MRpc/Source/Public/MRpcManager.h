@@ -1,18 +1,18 @@
 #pragma once
 
 #include "common.pb.h"
-#include "ZPbCommon.h"
+#include "PbCommon.h"
 
-#include "ZTcpConnection.h"
-#include "ZPbDispatcher.h"
+#include "MyTcpConnection.h"
+#include "PbDispatcher.h"
 
-class ZRPC_API FZRpcManager
+class MRPC_API FMRpcManager
 {
 public:
 	typedef TFunction<void(FZPbMessageSupportBase*, const TSharedPtr<idlezt::ZRpcMessage>&)> FMethodCallback;
 	typedef TFunction<void(EZRpcErrorCode, const TSharedPtr<idlezt::ZRpcMessage>&)> FResponseCallback;
 
-	FZRpcManager();
+	FMRpcManager();
 
 	void TryInit(FZPbDispatcher& InDispatcher);
 	

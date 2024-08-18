@@ -14,8 +14,8 @@ import fnv1a
 
 STUB_HPP_TEMPL = """#pragma once
 
-#include "ZNetFwd.h"
-#include "ZRpcManager.h"
+#include "MyNetFwd.h"
+#include "MRpcManager.h"
 {% for inc in include_list %}
 #include "{{inc}}"
 {%- endfor %}

@@ -1,8 +1,8 @@
 #pragma once
 #include "ZFmt.h"
-#include "ZPbDefines.h"
-#include "ZPbCommon.h"
-#include "ZPbGddGlobal.generated.h"
+#include "PbDefines.h"
+#include "PbCommon.h"
+#include "PbGddGlobal.generated.h"
 
 
 namespace idlepb {

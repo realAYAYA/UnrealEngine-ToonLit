@@ -111,14 +111,14 @@ def main():
 
     meta_data = {
         "CWD": cwd,
-        #'TSDIR': ts_dir,
+        'TSDIR': ts_dir,
         'PBCMD': pb_cmd,
         'MVCMD': mv_cmd,
-        #"P4CMD": p4_cmd,
+        "P4CMD": p4_cmd,
         "PYCMD": py_cmd,
         'NPXCMD': npx_cmd,
         'PB2BP': f'{py_cmd} {pb2bp_cmd}',
-        #'GAMESTATS': f'{py_cmd} {game_stats_cmd}', 
+        'GAMESTATS': f'{py_cmd} {game_stats_cmd}', 
         'FullFiles': FullFiles,
         'TsOnlyFiles': TsOnlyFiles,
     }

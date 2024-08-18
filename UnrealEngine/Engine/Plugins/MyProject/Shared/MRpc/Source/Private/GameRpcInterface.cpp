@@ -1,6 +1,6 @@
 #include "GameRpcInterface.h"
 
-FZGameRpcInterface::FZGameRpcInterface(FZRpcManager* InManager)
+FZGameRpcInterface::FZGameRpcInterface(FMRpcManager* InManager)
 {
 }
 
@@ -8,7 +8,7 @@ FZGameRpcInterface::~FZGameRpcInterface()
 {
 }
 
-void FZGameRpcInterface::LoginGameRegister(FZRpcManager* InManager, const FZLoginGameCallback& InCallback)
+void FZGameRpcInterface::LoginGameRegister(FMRpcManager* InManager, const FZLoginGameCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::LoginGame;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -29,11 +29,11 @@ void FZGameRpcInterface::LoginGameRegister(FZRpcManager* InManager, const FZLogi
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetCurrentCultivationDirectionRegister(FZRpcManager* InManager, const FZSetCurrentCultivationDirectionCallback& InCallback)
+void FZGameRpcInterface::SetCurrentCultivationDirectionRegister(FMRpcManager* InManager, const FZSetCurrentCultivationDirectionCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetCurrentCultivationDirection;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -54,11 +54,11 @@ void FZGameRpcInterface::SetCurrentCultivationDirectionRegister(FZRpcManager* In
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DoBreakthroughRegister(FZRpcManager* InManager, const FZDoBreakthroughCallback& InCallback)
+void FZGameRpcInterface::DoBreakthroughRegister(FMRpcManager* InManager, const FZDoBreakthroughCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DoBreakthrough;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -79,11 +79,11 @@ void FZGameRpcInterface::DoBreakthroughRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestCommonCultivationDataRegister(FZRpcManager* InManager, const FZRequestCommonCultivationDataCallback& InCallback)
+void FZGameRpcInterface::RequestCommonCultivationDataRegister(FMRpcManager* InManager, const FZRequestCommonCultivationDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestCommonCultivationData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -104,11 +104,11 @@ void FZGameRpcInterface::RequestCommonCultivationDataRegister(FZRpcManager* InMa
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OneClickMergeBreathingRegister(FZRpcManager* InManager, const FZOneClickMergeBreathingCallback& InCallback)
+void FZGameRpcInterface::OneClickMergeBreathingRegister(FMRpcManager* InManager, const FZOneClickMergeBreathingCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickMergeBreathing;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -129,11 +129,11 @@ void FZGameRpcInterface::OneClickMergeBreathingRegister(FZRpcManager* InManager,
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReceiveBreathingExerciseRewardRegister(FZRpcManager* InManager, const FZReceiveBreathingExerciseRewardCallback& InCallback)
+void FZGameRpcInterface::ReceiveBreathingExerciseRewardRegister(FMRpcManager* InManager, const FZReceiveBreathingExerciseRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveBreathingExerciseReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -154,11 +154,11 @@ void FZGameRpcInterface::ReceiveBreathingExerciseRewardRegister(FZRpcManager* In
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetInventoryDataRegister(FZRpcManager* InManager, const FZGetInventoryDataCallback& InCallback)
+void FZGameRpcInterface::GetInventoryDataRegister(FMRpcManager* InManager, const FZGetInventoryDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetInventoryData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -179,11 +179,11 @@ void FZGameRpcInterface::GetInventoryDataRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetQuestDataRegister(FZRpcManager* InManager, const FZGetQuestDataCallback& InCallback)
+void FZGameRpcInterface::GetQuestDataRegister(FMRpcManager* InManager, const FZGetQuestDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetQuestData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -204,11 +204,11 @@ void FZGameRpcInterface::GetQuestDataRegister(FZRpcManager* InManager, const FZG
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::CreateCharacterRegister(FZRpcManager* InManager, const FZCreateCharacterCallback& InCallback)
+void FZGameRpcInterface::CreateCharacterRegister(FMRpcManager* InManager, const FZCreateCharacterCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::CreateCharacter;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -229,11 +229,11 @@ void FZGameRpcInterface::CreateCharacterRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UseItemRegister(FZRpcManager* InManager, const FZUseItemCallback& InCallback)
+void FZGameRpcInterface::UseItemRegister(FMRpcManager* InManager, const FZUseItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UseItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -254,11 +254,11 @@ void FZGameRpcInterface::UseItemRegister(FZRpcManager* InManager, const FZUseIte
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UseSelectGiftRegister(FZRpcManager* InManager, const FZUseSelectGiftCallback& InCallback)
+void FZGameRpcInterface::UseSelectGiftRegister(FMRpcManager* InManager, const FZUseSelectGiftCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UseSelectGift;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -279,11 +279,11 @@ void FZGameRpcInterface::UseSelectGiftRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SellItemRegister(FZRpcManager* InManager, const FZSellItemCallback& InCallback)
+void FZGameRpcInterface::SellItemRegister(FMRpcManager* InManager, const FZSellItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SellItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -304,11 +304,11 @@ void FZGameRpcInterface::SellItemRegister(FZRpcManager* InManager, const FZSellI
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UnlockEquipmentSlotRegister(FZRpcManager* InManager, const FZUnlockEquipmentSlotCallback& InCallback)
+void FZGameRpcInterface::UnlockEquipmentSlotRegister(FMRpcManager* InManager, const FZUnlockEquipmentSlotCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UnlockEquipmentSlot;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -329,11 +329,11 @@ void FZGameRpcInterface::UnlockEquipmentSlotRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AlchemyRefineStartRegister(FZRpcManager* InManager, const FZAlchemyRefineStartCallback& InCallback)
+void FZGameRpcInterface::AlchemyRefineStartRegister(FMRpcManager* InManager, const FZAlchemyRefineStartCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AlchemyRefineStart;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -354,11 +354,11 @@ void FZGameRpcInterface::AlchemyRefineStartRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AlchemyRefineCancelRegister(FZRpcManager* InManager, const FZAlchemyRefineCancelCallback& InCallback)
+void FZGameRpcInterface::AlchemyRefineCancelRegister(FMRpcManager* InManager, const FZAlchemyRefineCancelCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AlchemyRefineCancel;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -379,11 +379,11 @@ void FZGameRpcInterface::AlchemyRefineCancelRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AlchemyRefineExtractRegister(FZRpcManager* InManager, const FZAlchemyRefineExtractCallback& InCallback)
+void FZGameRpcInterface::AlchemyRefineExtractRegister(FMRpcManager* InManager, const FZAlchemyRefineExtractCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AlchemyRefineExtract;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -404,11 +404,11 @@ void FZGameRpcInterface::AlchemyRefineExtractRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleShopDataRegister(FZRpcManager* InManager, const FZGetRoleShopDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleShopDataRegister(FMRpcManager* InManager, const FZGetRoleShopDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleShopData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -429,11 +429,11 @@ void FZGameRpcInterface::GetRoleShopDataRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RefreshShopRegister(FZRpcManager* InManager, const FZRefreshShopCallback& InCallback)
+void FZGameRpcInterface::RefreshShopRegister(FMRpcManager* InManager, const FZRefreshShopCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshShop;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -454,11 +454,11 @@ void FZGameRpcInterface::RefreshShopRegister(FZRpcManager* InManager, const FZRe
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::BuyShopItemRegister(FZRpcManager* InManager, const FZBuyShopItemCallback& InCallback)
+void FZGameRpcInterface::BuyShopItemRegister(FMRpcManager* InManager, const FZBuyShopItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::BuyShopItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -479,11 +479,11 @@ void FZGameRpcInterface::BuyShopItemRegister(FZRpcManager* InManager, const FZBu
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleDeluxeShopDataRegister(FZRpcManager* InManager, const FZGetRoleDeluxeShopDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleDeluxeShopDataRegister(FMRpcManager* InManager, const FZGetRoleDeluxeShopDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleDeluxeShopData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -504,11 +504,11 @@ void FZGameRpcInterface::GetRoleDeluxeShopDataRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RefreshDeluxeShopRegister(FZRpcManager* InManager, const FZRefreshDeluxeShopCallback& InCallback)
+void FZGameRpcInterface::RefreshDeluxeShopRegister(FMRpcManager* InManager, const FZRefreshDeluxeShopCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshDeluxeShop;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -529,11 +529,11 @@ void FZGameRpcInterface::RefreshDeluxeShopRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::BuyDeluxeShopItemRegister(FZRpcManager* InManager, const FZBuyDeluxeShopItemCallback& InCallback)
+void FZGameRpcInterface::BuyDeluxeShopItemRegister(FMRpcManager* InManager, const FZBuyDeluxeShopItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::BuyDeluxeShopItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -554,11 +554,11 @@ void FZGameRpcInterface::BuyDeluxeShopItemRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetTemporaryPackageDataRegister(FZRpcManager* InManager, const FZGetTemporaryPackageDataCallback& InCallback)
+void FZGameRpcInterface::GetTemporaryPackageDataRegister(FMRpcManager* InManager, const FZGetTemporaryPackageDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetTemporaryPackageData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -579,11 +579,11 @@ void FZGameRpcInterface::GetTemporaryPackageDataRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ExtractTemporaryPackageItemsRegister(FZRpcManager* InManager, const FZExtractTemporaryPackageItemsCallback& InCallback)
+void FZGameRpcInterface::ExtractTemporaryPackageItemsRegister(FMRpcManager* InManager, const FZExtractTemporaryPackageItemsCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ExtractTemporaryPackageItems;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -604,11 +604,11 @@ void FZGameRpcInterface::ExtractTemporaryPackageItemsRegister(FZRpcManager* InMa
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SpeedupReliveRegister(FZRpcManager* InManager, const FZSpeedupReliveCallback& InCallback)
+void FZGameRpcInterface::SpeedupReliveRegister(FMRpcManager* InManager, const FZSpeedupReliveCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SpeedupRelive;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -629,11 +629,11 @@ void FZGameRpcInterface::SpeedupReliveRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetMapInfoRegister(FZRpcManager* InManager, const FZGetMapInfoCallback& InCallback)
+void FZGameRpcInterface::GetMapInfoRegister(FMRpcManager* InManager, const FZGetMapInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMapInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -654,11 +654,11 @@ void FZGameRpcInterface::GetMapInfoRegister(FZRpcManager* InManager, const FZGet
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UnlockArenaRegister(FZRpcManager* InManager, const FZUnlockArenaCallback& InCallback)
+void FZGameRpcInterface::UnlockArenaRegister(FMRpcManager* InManager, const FZUnlockArenaCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UnlockArena;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -679,11 +679,11 @@ void FZGameRpcInterface::UnlockArenaRegister(FZRpcManager* InManager, const FZUn
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::QuestOpRegister(FZRpcManager* InManager, const FZQuestOpCallback& InCallback)
+void FZGameRpcInterface::QuestOpRegister(FMRpcManager* InManager, const FZQuestOpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::QuestOp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -704,11 +704,11 @@ void FZGameRpcInterface::QuestOpRegister(FZRpcManager* InManager, const FZQuestO
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::EquipmentPutOnRegister(FZRpcManager* InManager, const FZEquipmentPutOnCallback& InCallback)
+void FZGameRpcInterface::EquipmentPutOnRegister(FMRpcManager* InManager, const FZEquipmentPutOnCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::EquipmentPutOn;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -729,11 +729,11 @@ void FZGameRpcInterface::EquipmentPutOnRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::EquipmentTakeOffRegister(FZRpcManager* InManager, const FZEquipmentTakeOffCallback& InCallback)
+void FZGameRpcInterface::EquipmentTakeOffRegister(FMRpcManager* InManager, const FZEquipmentTakeOffCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::EquipmentTakeOff;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -754,11 +754,11 @@ void FZGameRpcInterface::EquipmentTakeOffRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetLeaderboardPreviewRegister(FZRpcManager* InManager, const FZGetLeaderboardPreviewCallback& InCallback)
+void FZGameRpcInterface::GetLeaderboardPreviewRegister(FMRpcManager* InManager, const FZGetLeaderboardPreviewCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetLeaderboardPreview;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -779,11 +779,11 @@ void FZGameRpcInterface::GetLeaderboardPreviewRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetLeaderboardDataRegister(FZRpcManager* InManager, const FZGetLeaderboardDataCallback& InCallback)
+void FZGameRpcInterface::GetLeaderboardDataRegister(FMRpcManager* InManager, const FZGetLeaderboardDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetLeaderboardData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -804,11 +804,11 @@ void FZGameRpcInterface::GetLeaderboardDataRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleLeaderboardDataRegister(FZRpcManager* InManager, const FZGetRoleLeaderboardDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleLeaderboardDataRegister(FMRpcManager* InManager, const FZGetRoleLeaderboardDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleLeaderboardData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -829,11 +829,11 @@ void FZGameRpcInterface::GetRoleLeaderboardDataRegister(FZRpcManager* InManager,
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::LeaderboardClickLikeRegister(FZRpcManager* InManager, const FZLeaderboardClickLikeCallback& InCallback)
+void FZGameRpcInterface::LeaderboardClickLikeRegister(FMRpcManager* InManager, const FZLeaderboardClickLikeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::LeaderboardClickLike;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -854,11 +854,11 @@ void FZGameRpcInterface::LeaderboardClickLikeRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::LeaderboardUpdateMessageRegister(FZRpcManager* InManager, const FZLeaderboardUpdateMessageCallback& InCallback)
+void FZGameRpcInterface::LeaderboardUpdateMessageRegister(FMRpcManager* InManager, const FZLeaderboardUpdateMessageCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::LeaderboardUpdateMessage;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -879,11 +879,11 @@ void FZGameRpcInterface::LeaderboardUpdateMessageRegister(FZRpcManager* InManage
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetFuZeRewardRegister(FZRpcManager* InManager, const FZGetFuZeRewardCallback& InCallback)
+void FZGameRpcInterface::GetFuZeRewardRegister(FMRpcManager* InManager, const FZGetFuZeRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetFuZeReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -904,11 +904,11 @@ void FZGameRpcInterface::GetFuZeRewardRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleMailDataRegister(FZRpcManager* InManager, const FZGetRoleMailDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleMailDataRegister(FMRpcManager* InManager, const FZGetRoleMailDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleMailData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -929,11 +929,11 @@ void FZGameRpcInterface::GetRoleMailDataRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReadMailRegister(FZRpcManager* InManager, const FZReadMailCallback& InCallback)
+void FZGameRpcInterface::ReadMailRegister(FMRpcManager* InManager, const FZReadMailCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReadMail;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -954,11 +954,11 @@ void FZGameRpcInterface::ReadMailRegister(FZRpcManager* InManager, const FZReadM
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetMailAttachmentRegister(FZRpcManager* InManager, const FZGetMailAttachmentCallback& InCallback)
+void FZGameRpcInterface::GetMailAttachmentRegister(FMRpcManager* InManager, const FZGetMailAttachmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMailAttachment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -979,11 +979,11 @@ void FZGameRpcInterface::GetMailAttachmentRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DeleteMailRegister(FZRpcManager* InManager, const FZDeleteMailCallback& InCallback)
+void FZGameRpcInterface::DeleteMailRegister(FMRpcManager* InManager, const FZDeleteMailCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DeleteMail;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1004,11 +1004,11 @@ void FZGameRpcInterface::DeleteMailRegister(FZRpcManager* InManager, const FZDel
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OneClickGetMailAttachmentRegister(FZRpcManager* InManager, const FZOneClickGetMailAttachmentCallback& InCallback)
+void FZGameRpcInterface::OneClickGetMailAttachmentRegister(FMRpcManager* InManager, const FZOneClickGetMailAttachmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickGetMailAttachment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1029,11 +1029,11 @@ void FZGameRpcInterface::OneClickGetMailAttachmentRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OneClickReadMailRegister(FZRpcManager* InManager, const FZOneClickReadMailCallback& InCallback)
+void FZGameRpcInterface::OneClickReadMailRegister(FMRpcManager* InManager, const FZOneClickReadMailCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickReadMail;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1054,11 +1054,11 @@ void FZGameRpcInterface::OneClickReadMailRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OneClickDeleteMailRegister(FZRpcManager* InManager, const FZOneClickDeleteMailCallback& InCallback)
+void FZGameRpcInterface::OneClickDeleteMailRegister(FMRpcManager* InManager, const FZOneClickDeleteMailCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickDeleteMail;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1079,11 +1079,11 @@ void FZGameRpcInterface::OneClickDeleteMailRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UnlockFunctionModuleRegister(FZRpcManager* InManager, const FZUnlockFunctionModuleCallback& InCallback)
+void FZGameRpcInterface::UnlockFunctionModuleRegister(FMRpcManager* InManager, const FZUnlockFunctionModuleCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UnlockFunctionModule;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1104,11 +1104,11 @@ void FZGameRpcInterface::UnlockFunctionModuleRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetChatRecordRegister(FZRpcManager* InManager, const FZGetChatRecordCallback& InCallback)
+void FZGameRpcInterface::GetChatRecordRegister(FMRpcManager* InManager, const FZGetChatRecordCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetChatRecord;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1129,11 +1129,11 @@ void FZGameRpcInterface::GetChatRecordRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DeletePrivateChatRecordRegister(FZRpcManager* InManager, const FZDeletePrivateChatRecordCallback& InCallback)
+void FZGameRpcInterface::DeletePrivateChatRecordRegister(FMRpcManager* InManager, const FZDeletePrivateChatRecordCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DeletePrivateChatRecord;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1154,11 +1154,11 @@ void FZGameRpcInterface::DeletePrivateChatRecordRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SendChatMessageRegister(FZRpcManager* InManager, const FZSendChatMessageCallback& InCallback)
+void FZGameRpcInterface::SendChatMessageRegister(FMRpcManager* InManager, const FZSendChatMessageCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SendChatMessage;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1179,11 +1179,11 @@ void FZGameRpcInterface::SendChatMessageRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ClearChatUnreadNumRegister(FZRpcManager* InManager, const FZClearChatUnreadNumCallback& InCallback)
+void FZGameRpcInterface::ClearChatUnreadNumRegister(FMRpcManager* InManager, const FZClearChatUnreadNumCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ClearChatUnreadNum;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1204,11 +1204,11 @@ void FZGameRpcInterface::ClearChatUnreadNumRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ForgeRefineStartRegister(FZRpcManager* InManager, const FZForgeRefineStartCallback& InCallback)
+void FZGameRpcInterface::ForgeRefineStartRegister(FMRpcManager* InManager, const FZForgeRefineStartCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeRefineStart;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1229,11 +1229,11 @@ void FZGameRpcInterface::ForgeRefineStartRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ForgeRefineCancelRegister(FZRpcManager* InManager, const FZForgeRefineCancelCallback& InCallback)
+void FZGameRpcInterface::ForgeRefineCancelRegister(FMRpcManager* InManager, const FZForgeRefineCancelCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeRefineCancel;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1254,11 +1254,11 @@ void FZGameRpcInterface::ForgeRefineCancelRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ForgeRefineExtractRegister(FZRpcManager* InManager, const FZForgeRefineExtractCallback& InCallback)
+void FZGameRpcInterface::ForgeRefineExtractRegister(FMRpcManager* InManager, const FZForgeRefineExtractCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeRefineExtract;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1279,11 +1279,11 @@ void FZGameRpcInterface::ForgeRefineExtractRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetForgeLostEquipmentDataRegister(FZRpcManager* InManager, const FZGetForgeLostEquipmentDataCallback& InCallback)
+void FZGameRpcInterface::GetForgeLostEquipmentDataRegister(FMRpcManager* InManager, const FZGetForgeLostEquipmentDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetForgeLostEquipmentData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1304,11 +1304,11 @@ void FZGameRpcInterface::GetForgeLostEquipmentDataRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ForgeDestroyRegister(FZRpcManager* InManager, const FZForgeDestroyCallback& InCallback)
+void FZGameRpcInterface::ForgeDestroyRegister(FMRpcManager* InManager, const FZForgeDestroyCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeDestroy;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1329,11 +1329,11 @@ void FZGameRpcInterface::ForgeDestroyRegister(FZRpcManager* InManager, const FZF
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ForgeFindBackRegister(FZRpcManager* InManager, const FZForgeFindBackCallback& InCallback)
+void FZGameRpcInterface::ForgeFindBackRegister(FMRpcManager* InManager, const FZForgeFindBackCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeFindBack;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1354,11 +1354,11 @@ void FZGameRpcInterface::ForgeFindBackRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestPillElixirDataRegister(FZRpcManager* InManager, const FZRequestPillElixirDataCallback& InCallback)
+void FZGameRpcInterface::RequestPillElixirDataRegister(FMRpcManager* InManager, const FZRequestPillElixirDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestPillElixirData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1379,11 +1379,11 @@ void FZGameRpcInterface::RequestPillElixirDataRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetOnePillElixirDataRegister(FZRpcManager* InManager, const FZGetOnePillElixirDataCallback& InCallback)
+void FZGameRpcInterface::GetOnePillElixirDataRegister(FMRpcManager* InManager, const FZGetOnePillElixirDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetOnePillElixirData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1404,11 +1404,11 @@ void FZGameRpcInterface::GetOnePillElixirDataRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestModifyPillElixirFilterRegister(FZRpcManager* InManager, const FZRequestModifyPillElixirFilterCallback& InCallback)
+void FZGameRpcInterface::RequestModifyPillElixirFilterRegister(FMRpcManager* InManager, const FZRequestModifyPillElixirFilterCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestModifyPillElixirFilter;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1429,11 +1429,11 @@ void FZGameRpcInterface::RequestModifyPillElixirFilterRegister(FZRpcManager* InM
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UsePillElixirRegister(FZRpcManager* InManager, const FZUsePillElixirCallback& InCallback)
+void FZGameRpcInterface::UsePillElixirRegister(FMRpcManager* InManager, const FZUsePillElixirCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UsePillElixir;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1454,11 +1454,11 @@ void FZGameRpcInterface::UsePillElixirRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OneClickUsePillElixirRegister(FZRpcManager* InManager, const FZOneClickUsePillElixirCallback& InCallback)
+void FZGameRpcInterface::OneClickUsePillElixirRegister(FMRpcManager* InManager, const FZOneClickUsePillElixirCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickUsePillElixir;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1479,11 +1479,11 @@ void FZGameRpcInterface::OneClickUsePillElixirRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::TradePillElixirRegister(FZRpcManager* InManager, const FZTradePillElixirCallback& InCallback)
+void FZGameRpcInterface::TradePillElixirRegister(FMRpcManager* InManager, const FZTradePillElixirCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::TradePillElixir;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1504,11 +1504,11 @@ void FZGameRpcInterface::TradePillElixirRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReinforceEquipmentRegister(FZRpcManager* InManager, const FZReinforceEquipmentCallback& InCallback)
+void FZGameRpcInterface::ReinforceEquipmentRegister(FMRpcManager* InManager, const FZReinforceEquipmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReinforceEquipment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1529,11 +1529,11 @@ void FZGameRpcInterface::ReinforceEquipmentRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RefineEquipmentRegister(FZRpcManager* InManager, const FZRefineEquipmentCallback& InCallback)
+void FZGameRpcInterface::RefineEquipmentRegister(FMRpcManager* InManager, const FZRefineEquipmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RefineEquipment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1554,11 +1554,11 @@ void FZGameRpcInterface::RefineEquipmentRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::QiWenEquipmentRegister(FZRpcManager* InManager, const FZQiWenEquipmentCallback& InCallback)
+void FZGameRpcInterface::QiWenEquipmentRegister(FMRpcManager* InManager, const FZQiWenEquipmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::QiWenEquipment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1579,11 +1579,11 @@ void FZGameRpcInterface::QiWenEquipmentRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ResetEquipmentRegister(FZRpcManager* InManager, const FZResetEquipmentCallback& InCallback)
+void FZGameRpcInterface::ResetEquipmentRegister(FMRpcManager* InManager, const FZResetEquipmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ResetEquipment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1604,11 +1604,11 @@ void FZGameRpcInterface::ResetEquipmentRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::InheritEquipmentRegister(FZRpcManager* InManager, const FZInheritEquipmentCallback& InCallback)
+void FZGameRpcInterface::InheritEquipmentRegister(FMRpcManager* InManager, const FZInheritEquipmentCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::InheritEquipment;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1629,11 +1629,11 @@ void FZGameRpcInterface::InheritEquipmentRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::LockItemRegister(FZRpcManager* InManager, const FZLockItemCallback& InCallback)
+void FZGameRpcInterface::LockItemRegister(FMRpcManager* InManager, const FZLockItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::LockItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1654,11 +1654,11 @@ void FZGameRpcInterface::LockItemRegister(FZRpcManager* InManager, const FZLockI
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SoloArenaChallengeRegister(FZRpcManager* InManager, const FZSoloArenaChallengeCallback& InCallback)
+void FZGameRpcInterface::SoloArenaChallengeRegister(FMRpcManager* InManager, const FZSoloArenaChallengeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SoloArenaChallenge;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1679,11 +1679,11 @@ void FZGameRpcInterface::SoloArenaChallengeRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SoloArenaQuickEndRegister(FZRpcManager* InManager, const FZSoloArenaQuickEndCallback& InCallback)
+void FZGameRpcInterface::SoloArenaQuickEndRegister(FMRpcManager* InManager, const FZSoloArenaQuickEndCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SoloArenaQuickEnd;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1704,11 +1704,11 @@ void FZGameRpcInterface::SoloArenaQuickEndRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSoloArenaHistoryListRegister(FZRpcManager* InManager, const FZGetSoloArenaHistoryListCallback& InCallback)
+void FZGameRpcInterface::GetSoloArenaHistoryListRegister(FMRpcManager* InManager, const FZGetSoloArenaHistoryListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSoloArenaHistoryList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1729,11 +1729,11 @@ void FZGameRpcInterface::GetSoloArenaHistoryListRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::MonsterTowerChallengeRegister(FZRpcManager* InManager, const FZMonsterTowerChallengeCallback& InCallback)
+void FZGameRpcInterface::MonsterTowerChallengeRegister(FMRpcManager* InManager, const FZMonsterTowerChallengeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerChallenge;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1754,11 +1754,11 @@ void FZGameRpcInterface::MonsterTowerChallengeRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::MonsterTowerDrawIdleAwardRegister(FZRpcManager* InManager, const FZMonsterTowerDrawIdleAwardCallback& InCallback)
+void FZGameRpcInterface::MonsterTowerDrawIdleAwardRegister(FMRpcManager* InManager, const FZMonsterTowerDrawIdleAwardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerDrawIdleAward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1779,11 +1779,11 @@ void FZGameRpcInterface::MonsterTowerDrawIdleAwardRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::MonsterTowerClosedDoorTrainingRegister(FZRpcManager* InManager, const FZMonsterTowerClosedDoorTrainingCallback& InCallback)
+void FZGameRpcInterface::MonsterTowerClosedDoorTrainingRegister(FMRpcManager* InManager, const FZMonsterTowerClosedDoorTrainingCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerClosedDoorTraining;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1804,11 +1804,11 @@ void FZGameRpcInterface::MonsterTowerClosedDoorTrainingRegister(FZRpcManager* In
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::MonsterTowerQuickEndRegister(FZRpcManager* InManager, const FZMonsterTowerQuickEndCallback& InCallback)
+void FZGameRpcInterface::MonsterTowerQuickEndRegister(FMRpcManager* InManager, const FZMonsterTowerQuickEndCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerQuickEnd;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1829,11 +1829,11 @@ void FZGameRpcInterface::MonsterTowerQuickEndRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetMonsterTowerChallengeListRegister(FZRpcManager* InManager, const FZGetMonsterTowerChallengeListCallback& InCallback)
+void FZGameRpcInterface::GetMonsterTowerChallengeListRegister(FMRpcManager* InManager, const FZGetMonsterTowerChallengeListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMonsterTowerChallengeList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1854,11 +1854,11 @@ void FZGameRpcInterface::GetMonsterTowerChallengeListRegister(FZRpcManager* InMa
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetMonsterTowerChallengeRewardRegister(FZRpcManager* InManager, const FZGetMonsterTowerChallengeRewardCallback& InCallback)
+void FZGameRpcInterface::GetMonsterTowerChallengeRewardRegister(FMRpcManager* InManager, const FZGetMonsterTowerChallengeRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMonsterTowerChallengeReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1879,11 +1879,11 @@ void FZGameRpcInterface::GetMonsterTowerChallengeRewardRegister(FZRpcManager* In
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetWorldTimeDilationRegister(FZRpcManager* InManager, const FZSetWorldTimeDilationCallback& InCallback)
+void FZGameRpcInterface::SetWorldTimeDilationRegister(FMRpcManager* InManager, const FZSetWorldTimeDilationCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetWorldTimeDilation;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1904,11 +1904,11 @@ void FZGameRpcInterface::SetWorldTimeDilationRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetFightModeRegister(FZRpcManager* InManager, const FZSetFightModeCallback& InCallback)
+void FZGameRpcInterface::SetFightModeRegister(FMRpcManager* InManager, const FZSetFightModeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetFightMode;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1929,11 +1929,11 @@ void FZGameRpcInterface::SetFightModeRegister(FZRpcManager* InManager, const FZS
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UpgradeQiCollectorRegister(FZRpcManager* InManager, const FZUpgradeQiCollectorCallback& InCallback)
+void FZGameRpcInterface::UpgradeQiCollectorRegister(FMRpcManager* InManager, const FZUpgradeQiCollectorCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UpgradeQiCollector;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1954,11 +1954,11 @@ void FZGameRpcInterface::UpgradeQiCollectorRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleAllStatsRegister(FZRpcManager* InManager, const FZGetRoleAllStatsCallback& InCallback)
+void FZGameRpcInterface::GetRoleAllStatsRegister(FMRpcManager* InManager, const FZGetRoleAllStatsCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleAllStats;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -1979,11 +1979,11 @@ void FZGameRpcInterface::GetRoleAllStatsRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetShanhetuDataRegister(FZRpcManager* InManager, const FZGetShanhetuDataCallback& InCallback)
+void FZGameRpcInterface::GetShanhetuDataRegister(FMRpcManager* InManager, const FZGetShanhetuDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShanhetuData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2004,11 +2004,11 @@ void FZGameRpcInterface::GetShanhetuDataRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetShanhetuUseConfigRegister(FZRpcManager* InManager, const FZSetShanhetuUseConfigCallback& InCallback)
+void FZGameRpcInterface::SetShanhetuUseConfigRegister(FMRpcManager* InManager, const FZSetShanhetuUseConfigCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetShanhetuUseConfig;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2029,11 +2029,11 @@ void FZGameRpcInterface::SetShanhetuUseConfigRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UseShanhetuRegister(FZRpcManager* InManager, const FZUseShanhetuCallback& InCallback)
+void FZGameRpcInterface::UseShanhetuRegister(FMRpcManager* InManager, const FZUseShanhetuCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UseShanhetu;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2054,11 +2054,11 @@ void FZGameRpcInterface::UseShanhetuRegister(FZRpcManager* InManager, const FZUs
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::StepShanhetuRegister(FZRpcManager* InManager, const FZStepShanhetuCallback& InCallback)
+void FZGameRpcInterface::StepShanhetuRegister(FMRpcManager* InManager, const FZStepShanhetuCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::StepShanhetu;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2079,11 +2079,11 @@ void FZGameRpcInterface::StepShanhetuRegister(FZRpcManager* InManager, const FZS
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetShanhetuUseRecordRegister(FZRpcManager* InManager, const FZGetShanhetuUseRecordCallback& InCallback)
+void FZGameRpcInterface::GetShanhetuUseRecordRegister(FMRpcManager* InManager, const FZGetShanhetuUseRecordCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShanhetuUseRecord;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2104,11 +2104,11 @@ void FZGameRpcInterface::GetShanhetuUseRecordRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetAttackLockTypeRegister(FZRpcManager* InManager, const FZSetAttackLockTypeCallback& InCallback)
+void FZGameRpcInterface::SetAttackLockTypeRegister(FMRpcManager* InManager, const FZSetAttackLockTypeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetAttackLockType;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2129,11 +2129,11 @@ void FZGameRpcInterface::SetAttackLockTypeRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetAttackUnlockTypeRegister(FZRpcManager* InManager, const FZSetAttackUnlockTypeCallback& InCallback)
+void FZGameRpcInterface::SetAttackUnlockTypeRegister(FMRpcManager* InManager, const FZSetAttackUnlockTypeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetAttackUnlockType;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2154,11 +2154,11 @@ void FZGameRpcInterface::SetAttackUnlockTypeRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetShowUnlockButtonRegister(FZRpcManager* InManager, const FZSetShowUnlockButtonCallback& InCallback)
+void FZGameRpcInterface::SetShowUnlockButtonRegister(FMRpcManager* InManager, const FZSetShowUnlockButtonCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetShowUnlockButton;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2179,11 +2179,11 @@ void FZGameRpcInterface::SetShowUnlockButtonRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetUserVarRegister(FZRpcManager* InManager, const FZGetUserVarCallback& InCallback)
+void FZGameRpcInterface::GetUserVarRegister(FMRpcManager* InManager, const FZGetUserVarCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetUserVar;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2204,11 +2204,11 @@ void FZGameRpcInterface::GetUserVarRegister(FZRpcManager* InManager, const FZGet
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetUserVarsRegister(FZRpcManager* InManager, const FZGetUserVarsCallback& InCallback)
+void FZGameRpcInterface::GetUserVarsRegister(FMRpcManager* InManager, const FZGetUserVarsCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetUserVars;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2229,11 +2229,11 @@ void FZGameRpcInterface::GetUserVarsRegister(FZRpcManager* InManager, const FZGe
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetBossInvasionArenaSummaryRegister(FZRpcManager* InManager, const FZGetBossInvasionArenaSummaryCallback& InCallback)
+void FZGameRpcInterface::GetBossInvasionArenaSummaryRegister(FMRpcManager* InManager, const FZGetBossInvasionArenaSummaryCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBossInvasionArenaSummary;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2254,11 +2254,11 @@ void FZGameRpcInterface::GetBossInvasionArenaSummaryRegister(FZRpcManager* InMan
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetBossInvasionArenaTopListRegister(FZRpcManager* InManager, const FZGetBossInvasionArenaTopListCallback& InCallback)
+void FZGameRpcInterface::GetBossInvasionArenaTopListRegister(FMRpcManager* InManager, const FZGetBossInvasionArenaTopListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBossInvasionArenaTopList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2279,11 +2279,11 @@ void FZGameRpcInterface::GetBossInvasionArenaTopListRegister(FZRpcManager* InMan
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetBossInvasionInfoRegister(FZRpcManager* InManager, const FZGetBossInvasionInfoCallback& InCallback)
+void FZGameRpcInterface::GetBossInvasionInfoRegister(FMRpcManager* InManager, const FZGetBossInvasionInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBossInvasionInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2304,11 +2304,11 @@ void FZGameRpcInterface::GetBossInvasionInfoRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DrawBossInvasionKillRewardRegister(FZRpcManager* InManager, const FZDrawBossInvasionKillRewardCallback& InCallback)
+void FZGameRpcInterface::DrawBossInvasionKillRewardRegister(FMRpcManager* InManager, const FZDrawBossInvasionKillRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DrawBossInvasionKillReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2329,11 +2329,11 @@ void FZGameRpcInterface::DrawBossInvasionKillRewardRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DrawBossInvasionDamageRewardRegister(FZRpcManager* InManager, const FZDrawBossInvasionDamageRewardCallback& InCallback)
+void FZGameRpcInterface::DrawBossInvasionDamageRewardRegister(FMRpcManager* InManager, const FZDrawBossInvasionDamageRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DrawBossInvasionDamageReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2354,11 +2354,11 @@ void FZGameRpcInterface::DrawBossInvasionDamageRewardRegister(FZRpcManager* InMa
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::BossInvasionTeleportRegister(FZRpcManager* InManager, const FZBossInvasionTeleportCallback& InCallback)
+void FZGameRpcInterface::BossInvasionTeleportRegister(FMRpcManager* InManager, const FZBossInvasionTeleportCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::BossInvasionTeleport;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2379,11 +2379,11 @@ void FZGameRpcInterface::BossInvasionTeleportRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ShareSelfItemRegister(FZRpcManager* InManager, const FZShareSelfItemCallback& InCallback)
+void FZGameRpcInterface::ShareSelfItemRegister(FMRpcManager* InManager, const FZShareSelfItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ShareSelfItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2404,11 +2404,11 @@ void FZGameRpcInterface::ShareSelfItemRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ShareSelfItemsRegister(FZRpcManager* InManager, const FZShareSelfItemsCallback& InCallback)
+void FZGameRpcInterface::ShareSelfItemsRegister(FMRpcManager* InManager, const FZShareSelfItemsCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ShareSelfItems;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2429,11 +2429,11 @@ void FZGameRpcInterface::ShareSelfItemsRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetShareItemDataRegister(FZRpcManager* InManager, const FZGetShareItemDataCallback& InCallback)
+void FZGameRpcInterface::GetShareItemDataRegister(FMRpcManager* InManager, const FZGetShareItemDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShareItemData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2454,11 +2454,11 @@ void FZGameRpcInterface::GetShareItemDataRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleCollectionDataRegister(FZRpcManager* InManager, const FZGetRoleCollectionDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleCollectionDataRegister(FMRpcManager* InManager, const FZGetRoleCollectionDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleCollectionData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2479,11 +2479,11 @@ void FZGameRpcInterface::GetRoleCollectionDataRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RoleCollectionOpRegister(FZRpcManager* InManager, const FZRoleCollectionOpCallback& InCallback)
+void FZGameRpcInterface::RoleCollectionOpRegister(FMRpcManager* InManager, const FZRoleCollectionOpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RoleCollectionOp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2504,11 +2504,11 @@ void FZGameRpcInterface::RoleCollectionOpRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ShareSelfRoleCollectionRegister(FZRpcManager* InManager, const FZShareSelfRoleCollectionCallback& InCallback)
+void FZGameRpcInterface::ShareSelfRoleCollectionRegister(FMRpcManager* InManager, const FZShareSelfRoleCollectionCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ShareSelfRoleCollection;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2529,11 +2529,11 @@ void FZGameRpcInterface::ShareSelfRoleCollectionRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetShareRoleCollectionDataRegister(FZRpcManager* InManager, const FZGetShareRoleCollectionDataCallback& InCallback)
+void FZGameRpcInterface::GetShareRoleCollectionDataRegister(FMRpcManager* InManager, const FZGetShareRoleCollectionDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShareRoleCollectionData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2554,11 +2554,11 @@ void FZGameRpcInterface::GetShareRoleCollectionDataRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetChecklistDataRegister(FZRpcManager* InManager, const FZGetChecklistDataCallback& InCallback)
+void FZGameRpcInterface::GetChecklistDataRegister(FMRpcManager* InManager, const FZGetChecklistDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetChecklistData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2579,11 +2579,11 @@ void FZGameRpcInterface::GetChecklistDataRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ChecklistOpRegister(FZRpcManager* InManager, const FZChecklistOpCallback& InCallback)
+void FZGameRpcInterface::ChecklistOpRegister(FMRpcManager* InManager, const FZChecklistOpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ChecklistOp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2604,11 +2604,11 @@ void FZGameRpcInterface::ChecklistOpRegister(FZRpcManager* InManager, const FZCh
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UpdateChecklistRegister(FZRpcManager* InManager, const FZUpdateChecklistCallback& InCallback)
+void FZGameRpcInterface::UpdateChecklistRegister(FMRpcManager* InManager, const FZUpdateChecklistCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UpdateChecklist;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2629,11 +2629,11 @@ void FZGameRpcInterface::UpdateChecklistRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSwordPkInfoRegister(FZRpcManager* InManager, const FZGetSwordPkInfoCallback& InCallback)
+void FZGameRpcInterface::GetSwordPkInfoRegister(FMRpcManager* InManager, const FZGetSwordPkInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSwordPkInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2654,11 +2654,11 @@ void FZGameRpcInterface::GetSwordPkInfoRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SwordPkSignupRegister(FZRpcManager* InManager, const FZSwordPkSignupCallback& InCallback)
+void FZGameRpcInterface::SwordPkSignupRegister(FMRpcManager* InManager, const FZSwordPkSignupCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkSignup;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2679,11 +2679,11 @@ void FZGameRpcInterface::SwordPkSignupRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SwordPkMatchingRegister(FZRpcManager* InManager, const FZSwordPkMatchingCallback& InCallback)
+void FZGameRpcInterface::SwordPkMatchingRegister(FMRpcManager* InManager, const FZSwordPkMatchingCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkMatching;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2704,11 +2704,11 @@ void FZGameRpcInterface::SwordPkMatchingRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SwordPkChallengeRegister(FZRpcManager* InManager, const FZSwordPkChallengeCallback& InCallback)
+void FZGameRpcInterface::SwordPkChallengeRegister(FMRpcManager* InManager, const FZSwordPkChallengeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkChallenge;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2729,11 +2729,11 @@ void FZGameRpcInterface::SwordPkChallengeRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SwordPkRevengeRegister(FZRpcManager* InManager, const FZSwordPkRevengeCallback& InCallback)
+void FZGameRpcInterface::SwordPkRevengeRegister(FMRpcManager* InManager, const FZSwordPkRevengeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkRevenge;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2754,11 +2754,11 @@ void FZGameRpcInterface::SwordPkRevengeRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSwordPkTopListRegister(FZRpcManager* InManager, const FZGetSwordPkTopListCallback& InCallback)
+void FZGameRpcInterface::GetSwordPkTopListRegister(FMRpcManager* InManager, const FZGetSwordPkTopListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSwordPkTopList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2779,11 +2779,11 @@ void FZGameRpcInterface::GetSwordPkTopListRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SwordPkExchangeHeroCardRegister(FZRpcManager* InManager, const FZSwordPkExchangeHeroCardCallback& InCallback)
+void FZGameRpcInterface::SwordPkExchangeHeroCardRegister(FMRpcManager* InManager, const FZSwordPkExchangeHeroCardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkExchangeHeroCard;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2804,11 +2804,11 @@ void FZGameRpcInterface::SwordPkExchangeHeroCardRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetCommonItemExchangeDataRegister(FZRpcManager* InManager, const FZGetCommonItemExchangeDataCallback& InCallback)
+void FZGameRpcInterface::GetCommonItemExchangeDataRegister(FMRpcManager* InManager, const FZGetCommonItemExchangeDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetCommonItemExchangeData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2829,11 +2829,11 @@ void FZGameRpcInterface::GetCommonItemExchangeDataRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ExchangeCommonItemRegister(FZRpcManager* InManager, const FZExchangeCommonItemCallback& InCallback)
+void FZGameRpcInterface::ExchangeCommonItemRegister(FMRpcManager* InManager, const FZExchangeCommonItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ExchangeCommonItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2854,11 +2854,11 @@ void FZGameRpcInterface::ExchangeCommonItemRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SynthesisCommonItemRegister(FZRpcManager* InManager, const FZSynthesisCommonItemCallback& InCallback)
+void FZGameRpcInterface::SynthesisCommonItemRegister(FMRpcManager* InManager, const FZSynthesisCommonItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SynthesisCommonItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2879,11 +2879,11 @@ void FZGameRpcInterface::SynthesisCommonItemRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetCandidatesSeptListRegister(FZRpcManager* InManager, const FZGetCandidatesSeptListCallback& InCallback)
+void FZGameRpcInterface::GetCandidatesSeptListRegister(FMRpcManager* InManager, const FZGetCandidatesSeptListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetCandidatesSeptList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2904,11 +2904,11 @@ void FZGameRpcInterface::GetCandidatesSeptListRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SearchSeptRegister(FZRpcManager* InManager, const FZSearchSeptCallback& InCallback)
+void FZGameRpcInterface::SearchSeptRegister(FMRpcManager* InManager, const FZSearchSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SearchSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2929,11 +2929,11 @@ void FZGameRpcInterface::SearchSeptRegister(FZRpcManager* InManager, const FZSea
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptBaseInfoRegister(FZRpcManager* InManager, const FZGetSeptBaseInfoCallback& InCallback)
+void FZGameRpcInterface::GetSeptBaseInfoRegister(FMRpcManager* InManager, const FZGetSeptBaseInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptBaseInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2954,11 +2954,11 @@ void FZGameRpcInterface::GetSeptBaseInfoRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptMemberListRegister(FZRpcManager* InManager, const FZGetSeptMemberListCallback& InCallback)
+void FZGameRpcInterface::GetSeptMemberListRegister(FMRpcManager* InManager, const FZGetSeptMemberListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptMemberList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -2979,11 +2979,11 @@ void FZGameRpcInterface::GetSeptMemberListRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::CreateSeptRegister(FZRpcManager* InManager, const FZCreateSeptCallback& InCallback)
+void FZGameRpcInterface::CreateSeptRegister(FMRpcManager* InManager, const FZCreateSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::CreateSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3004,11 +3004,11 @@ void FZGameRpcInterface::CreateSeptRegister(FZRpcManager* InManager, const FZCre
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DismissSeptRegister(FZRpcManager* InManager, const FZDismissSeptCallback& InCallback)
+void FZGameRpcInterface::DismissSeptRegister(FMRpcManager* InManager, const FZDismissSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DismissSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3029,11 +3029,11 @@ void FZGameRpcInterface::DismissSeptRegister(FZRpcManager* InManager, const FZDi
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ExitSeptRegister(FZRpcManager* InManager, const FZExitSeptCallback& InCallback)
+void FZGameRpcInterface::ExitSeptRegister(FMRpcManager* InManager, const FZExitSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ExitSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3054,11 +3054,11 @@ void FZGameRpcInterface::ExitSeptRegister(FZRpcManager* InManager, const FZExitS
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ApplyJoinSeptRegister(FZRpcManager* InManager, const FZApplyJoinSeptCallback& InCallback)
+void FZGameRpcInterface::ApplyJoinSeptRegister(FMRpcManager* InManager, const FZApplyJoinSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ApplyJoinSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3079,11 +3079,11 @@ void FZGameRpcInterface::ApplyJoinSeptRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ApproveApplySeptRegister(FZRpcManager* InManager, const FZApproveApplySeptCallback& InCallback)
+void FZGameRpcInterface::ApproveApplySeptRegister(FMRpcManager* InManager, const FZApproveApplySeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ApproveApplySept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3104,11 +3104,11 @@ void FZGameRpcInterface::ApproveApplySeptRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetApplyJoinSeptListRegister(FZRpcManager* InManager, const FZGetApplyJoinSeptListCallback& InCallback)
+void FZGameRpcInterface::GetApplyJoinSeptListRegister(FMRpcManager* InManager, const FZGetApplyJoinSeptListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetApplyJoinSeptList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3129,11 +3129,11 @@ void FZGameRpcInterface::GetApplyJoinSeptListRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RespondInviteSeptRegister(FZRpcManager* InManager, const FZRespondInviteSeptCallback& InCallback)
+void FZGameRpcInterface::RespondInviteSeptRegister(FMRpcManager* InManager, const FZRespondInviteSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RespondInviteSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3154,11 +3154,11 @@ void FZGameRpcInterface::RespondInviteSeptRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetInviteMeJoinSeptListRegister(FZRpcManager* InManager, const FZGetInviteMeJoinSeptListCallback& InCallback)
+void FZGameRpcInterface::GetInviteMeJoinSeptListRegister(FMRpcManager* InManager, const FZGetInviteMeJoinSeptListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetInviteMeJoinSeptList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3179,11 +3179,11 @@ void FZGameRpcInterface::GetInviteMeJoinSeptListRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetCandidatesInviteRoleListRegister(FZRpcManager* InManager, const FZGetCandidatesInviteRoleListCallback& InCallback)
+void FZGameRpcInterface::GetCandidatesInviteRoleListRegister(FMRpcManager* InManager, const FZGetCandidatesInviteRoleListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetCandidatesInviteRoleList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3204,11 +3204,11 @@ void FZGameRpcInterface::GetCandidatesInviteRoleListRegister(FZRpcManager* InMan
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::InviteJoinSeptRegister(FZRpcManager* InManager, const FZInviteJoinSeptCallback& InCallback)
+void FZGameRpcInterface::InviteJoinSeptRegister(FMRpcManager* InManager, const FZInviteJoinSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::InviteJoinSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3229,11 +3229,11 @@ void FZGameRpcInterface::InviteJoinSeptRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetSeptSettingsRegister(FZRpcManager* InManager, const FZSetSeptSettingsCallback& InCallback)
+void FZGameRpcInterface::SetSeptSettingsRegister(FMRpcManager* InManager, const FZSetSeptSettingsCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetSeptSettings;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3254,11 +3254,11 @@ void FZGameRpcInterface::SetSeptSettingsRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::SetSeptAnnounceRegister(FZRpcManager* InManager, const FZSetSeptAnnounceCallback& InCallback)
+void FZGameRpcInterface::SetSeptAnnounceRegister(FMRpcManager* InManager, const FZSetSeptAnnounceCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::SetSeptAnnounce;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3279,11 +3279,11 @@ void FZGameRpcInterface::SetSeptAnnounceRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ChangeSeptNameRegister(FZRpcManager* InManager, const FZChangeSeptNameCallback& InCallback)
+void FZGameRpcInterface::ChangeSeptNameRegister(FMRpcManager* InManager, const FZChangeSeptNameCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ChangeSeptName;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3304,11 +3304,11 @@ void FZGameRpcInterface::ChangeSeptNameRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptLogRegister(FZRpcManager* InManager, const FZGetSeptLogCallback& InCallback)
+void FZGameRpcInterface::GetSeptLogRegister(FMRpcManager* InManager, const FZGetSeptLogCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptLog;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3329,11 +3329,11 @@ void FZGameRpcInterface::GetSeptLogRegister(FZRpcManager* InManager, const FZGet
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ConstructSeptRegister(FZRpcManager* InManager, const FZConstructSeptCallback& InCallback)
+void FZGameRpcInterface::ConstructSeptRegister(FMRpcManager* InManager, const FZConstructSeptCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ConstructSept;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3354,11 +3354,11 @@ void FZGameRpcInterface::ConstructSeptRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetConstructSeptLogRegister(FZRpcManager* InManager, const FZGetConstructSeptLogCallback& InCallback)
+void FZGameRpcInterface::GetConstructSeptLogRegister(FMRpcManager* InManager, const FZGetConstructSeptLogCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetConstructSeptLog;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3379,11 +3379,11 @@ void FZGameRpcInterface::GetConstructSeptLogRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptInvitedRoleDailyNumRegister(FZRpcManager* InManager, const FZGetSeptInvitedRoleDailyNumCallback& InCallback)
+void FZGameRpcInterface::GetSeptInvitedRoleDailyNumRegister(FMRpcManager* InManager, const FZGetSeptInvitedRoleDailyNumCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptInvitedRoleDailyNum;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3404,11 +3404,11 @@ void FZGameRpcInterface::GetSeptInvitedRoleDailyNumRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AppointSeptPositionRegister(FZRpcManager* InManager, const FZAppointSeptPositionCallback& InCallback)
+void FZGameRpcInterface::AppointSeptPositionRegister(FMRpcManager* InManager, const FZAppointSeptPositionCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AppointSeptPosition;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3429,11 +3429,11 @@ void FZGameRpcInterface::AppointSeptPositionRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ResignSeptChairmanRegister(FZRpcManager* InManager, const FZResignSeptChairmanCallback& InCallback)
+void FZGameRpcInterface::ResignSeptChairmanRegister(FMRpcManager* InManager, const FZResignSeptChairmanCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ResignSeptChairman;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3454,11 +3454,11 @@ void FZGameRpcInterface::ResignSeptChairmanRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::KickOutSeptMemberRegister(FZRpcManager* InManager, const FZKickOutSeptMemberCallback& InCallback)
+void FZGameRpcInterface::KickOutSeptMemberRegister(FMRpcManager* InManager, const FZKickOutSeptMemberCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::KickOutSeptMember;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3479,11 +3479,11 @@ void FZGameRpcInterface::KickOutSeptMemberRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleSeptShopDataRegister(FZRpcManager* InManager, const FZGetRoleSeptShopDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleSeptShopDataRegister(FMRpcManager* InManager, const FZGetRoleSeptShopDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleSeptShopData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3504,11 +3504,11 @@ void FZGameRpcInterface::GetRoleSeptShopDataRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::BuySeptShopItemRegister(FZRpcManager* InManager, const FZBuySeptShopItemCallback& InCallback)
+void FZGameRpcInterface::BuySeptShopItemRegister(FMRpcManager* InManager, const FZBuySeptShopItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::BuySeptShopItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3529,11 +3529,11 @@ void FZGameRpcInterface::BuySeptShopItemRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleSeptQuestDataRegister(FZRpcManager* InManager, const FZGetRoleSeptQuestDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleSeptQuestDataRegister(FMRpcManager* InManager, const FZGetRoleSeptQuestDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleSeptQuestData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3554,11 +3554,11 @@ void FZGameRpcInterface::GetRoleSeptQuestDataRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReqRoleSeptQuestOpRegister(FZRpcManager* InManager, const FZReqRoleSeptQuestOpCallback& InCallback)
+void FZGameRpcInterface::ReqRoleSeptQuestOpRegister(FMRpcManager* InManager, const FZReqRoleSeptQuestOpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReqRoleSeptQuestOp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3579,11 +3579,11 @@ void FZGameRpcInterface::ReqRoleSeptQuestOpRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RefreshSeptQuestRegister(FZRpcManager* InManager, const FZRefreshSeptQuestCallback& InCallback)
+void FZGameRpcInterface::RefreshSeptQuestRegister(FMRpcManager* InManager, const FZRefreshSeptQuestCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshSeptQuest;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3604,11 +3604,11 @@ void FZGameRpcInterface::RefreshSeptQuestRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReqSeptQuestRankUpRegister(FZRpcManager* InManager, const FZReqSeptQuestRankUpCallback& InCallback)
+void FZGameRpcInterface::ReqSeptQuestRankUpRegister(FMRpcManager* InManager, const FZReqSeptQuestRankUpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReqSeptQuestRankUp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3629,11 +3629,11 @@ void FZGameRpcInterface::ReqSeptQuestRankUpRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::BeginOccupySeptStoneRegister(FZRpcManager* InManager, const FZBeginOccupySeptStoneCallback& InCallback)
+void FZGameRpcInterface::BeginOccupySeptStoneRegister(FMRpcManager* InManager, const FZBeginOccupySeptStoneCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::BeginOccupySeptStone;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3654,11 +3654,11 @@ void FZGameRpcInterface::BeginOccupySeptStoneRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::EndOccupySeptStoneRegister(FZRpcManager* InManager, const FZEndOccupySeptStoneCallback& InCallback)
+void FZGameRpcInterface::EndOccupySeptStoneRegister(FMRpcManager* InManager, const FZEndOccupySeptStoneCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::EndOccupySeptStone;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3679,11 +3679,11 @@ void FZGameRpcInterface::EndOccupySeptStoneRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OccupySeptLandRegister(FZRpcManager* InManager, const FZOccupySeptLandCallback& InCallback)
+void FZGameRpcInterface::OccupySeptLandRegister(FMRpcManager* InManager, const FZOccupySeptLandCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OccupySeptLand;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3704,11 +3704,11 @@ void FZGameRpcInterface::OccupySeptLandRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetGongFaDataRegister(FZRpcManager* InManager, const FZGetGongFaDataCallback& InCallback)
+void FZGameRpcInterface::GetGongFaDataRegister(FMRpcManager* InManager, const FZGetGongFaDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetGongFaData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3729,11 +3729,11 @@ void FZGameRpcInterface::GetGongFaDataRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GongFaOpRegister(FZRpcManager* InManager, const FZGongFaOpCallback& InCallback)
+void FZGameRpcInterface::GongFaOpRegister(FMRpcManager* InManager, const FZGongFaOpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GongFaOp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3754,11 +3754,11 @@ void FZGameRpcInterface::GongFaOpRegister(FZRpcManager* InManager, const FZGongF
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ActivateGongFaMaxEffectRegister(FZRpcManager* InManager, const FZActivateGongFaMaxEffectCallback& InCallback)
+void FZGameRpcInterface::ActivateGongFaMaxEffectRegister(FMRpcManager* InManager, const FZActivateGongFaMaxEffectCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ActivateGongFaMaxEffect;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3779,11 +3779,11 @@ void FZGameRpcInterface::ActivateGongFaMaxEffectRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptLandDamageTopListRegister(FZRpcManager* InManager, const FZGetSeptLandDamageTopListCallback& InCallback)
+void FZGameRpcInterface::GetSeptLandDamageTopListRegister(FMRpcManager* InManager, const FZGetSeptLandDamageTopListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptLandDamageTopList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3804,11 +3804,11 @@ void FZGameRpcInterface::GetSeptLandDamageTopListRegister(FZRpcManager* InManage
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReceiveFuZengRewardsRegister(FZRpcManager* InManager, const FZReceiveFuZengRewardsCallback& InCallback)
+void FZGameRpcInterface::ReceiveFuZengRewardsRegister(FMRpcManager* InManager, const FZReceiveFuZengRewardsCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveFuZengRewards;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3829,11 +3829,11 @@ void FZGameRpcInterface::ReceiveFuZengRewardsRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleFuZengDataRegister(FZRpcManager* InManager, const FZGetRoleFuZengDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleFuZengDataRegister(FMRpcManager* InManager, const FZGetRoleFuZengDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleFuZengData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3854,11 +3854,11 @@ void FZGameRpcInterface::GetRoleFuZengDataRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleTreasuryDataRegister(FZRpcManager* InManager, const FZGetRoleTreasuryDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleTreasuryDataRegister(FMRpcManager* InManager, const FZGetRoleTreasuryDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleTreasuryData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3879,11 +3879,11 @@ void FZGameRpcInterface::GetRoleTreasuryDataRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OpenTreasuryChestRegister(FZRpcManager* InManager, const FZOpenTreasuryChestCallback& InCallback)
+void FZGameRpcInterface::OpenTreasuryChestRegister(FMRpcManager* InManager, const FZOpenTreasuryChestCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OpenTreasuryChest;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3904,11 +3904,11 @@ void FZGameRpcInterface::OpenTreasuryChestRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OneClickOpenTreasuryChestRegister(FZRpcManager* InManager, const FZOneClickOpenTreasuryChestCallback& InCallback)
+void FZGameRpcInterface::OneClickOpenTreasuryChestRegister(FMRpcManager* InManager, const FZOneClickOpenTreasuryChestCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickOpenTreasuryChest;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3929,11 +3929,11 @@ void FZGameRpcInterface::OneClickOpenTreasuryChestRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::OpenTreasuryGachaRegister(FZRpcManager* InManager, const FZOpenTreasuryGachaCallback& InCallback)
+void FZGameRpcInterface::OpenTreasuryGachaRegister(FMRpcManager* InManager, const FZOpenTreasuryGachaCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::OpenTreasuryGacha;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3954,11 +3954,11 @@ void FZGameRpcInterface::OpenTreasuryGachaRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RefreshTreasuryShopRegister(FZRpcManager* InManager, const FZRefreshTreasuryShopCallback& InCallback)
+void FZGameRpcInterface::RefreshTreasuryShopRegister(FMRpcManager* InManager, const FZRefreshTreasuryShopCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshTreasuryShop;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -3979,11 +3979,11 @@ void FZGameRpcInterface::RefreshTreasuryShopRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::TreasuryShopBuyRegister(FZRpcManager* InManager, const FZTreasuryShopBuyCallback& InCallback)
+void FZGameRpcInterface::TreasuryShopBuyRegister(FMRpcManager* InManager, const FZTreasuryShopBuyCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::TreasuryShopBuy;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4004,11 +4004,11 @@ void FZGameRpcInterface::TreasuryShopBuyRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetLifeCounterDataRegister(FZRpcManager* InManager, const FZGetLifeCounterDataCallback& InCallback)
+void FZGameRpcInterface::GetLifeCounterDataRegister(FMRpcManager* InManager, const FZGetLifeCounterDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetLifeCounterData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4029,11 +4029,11 @@ void FZGameRpcInterface::GetLifeCounterDataRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DoQuestFightRegister(FZRpcManager* InManager, const FZDoQuestFightCallback& InCallback)
+void FZGameRpcInterface::DoQuestFightRegister(FMRpcManager* InManager, const FZDoQuestFightCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DoQuestFight;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4054,11 +4054,11 @@ void FZGameRpcInterface::DoQuestFightRegister(FZRpcManager* InManager, const FZD
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::QuestFightQuickEndRegister(FZRpcManager* InManager, const FZQuestFightQuickEndCallback& InCallback)
+void FZGameRpcInterface::QuestFightQuickEndRegister(FMRpcManager* InManager, const FZQuestFightQuickEndCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::QuestFightQuickEnd;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4079,11 +4079,11 @@ void FZGameRpcInterface::QuestFightQuickEndRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetAppearanceDataRegister(FZRpcManager* InManager, const FZGetAppearanceDataCallback& InCallback)
+void FZGameRpcInterface::GetAppearanceDataRegister(FMRpcManager* InManager, const FZGetAppearanceDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetAppearanceData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4104,11 +4104,11 @@ void FZGameRpcInterface::GetAppearanceDataRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AppearanceAddRegister(FZRpcManager* InManager, const FZAppearanceAddCallback& InCallback)
+void FZGameRpcInterface::AppearanceAddRegister(FMRpcManager* InManager, const FZAppearanceAddCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceAdd;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4129,11 +4129,11 @@ void FZGameRpcInterface::AppearanceAddRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AppearanceActiveRegister(FZRpcManager* InManager, const FZAppearanceActiveCallback& InCallback)
+void FZGameRpcInterface::AppearanceActiveRegister(FMRpcManager* InManager, const FZAppearanceActiveCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceActive;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4154,11 +4154,11 @@ void FZGameRpcInterface::AppearanceActiveRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AppearanceWearRegister(FZRpcManager* InManager, const FZAppearanceWearCallback& InCallback)
+void FZGameRpcInterface::AppearanceWearRegister(FMRpcManager* InManager, const FZAppearanceWearCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceWear;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4179,11 +4179,11 @@ void FZGameRpcInterface::AppearanceWearRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AppearanceBuyRegister(FZRpcManager* InManager, const FZAppearanceBuyCallback& InCallback)
+void FZGameRpcInterface::AppearanceBuyRegister(FMRpcManager* InManager, const FZAppearanceBuyCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceBuy;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4204,11 +4204,11 @@ void FZGameRpcInterface::AppearanceBuyRegister(FZRpcManager* InManager, const FZ
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AppearanceChangeSkTypeRegister(FZRpcManager* InManager, const FZAppearanceChangeSkTypeCallback& InCallback)
+void FZGameRpcInterface::AppearanceChangeSkTypeRegister(FMRpcManager* InManager, const FZAppearanceChangeSkTypeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceChangeSkType;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4229,11 +4229,11 @@ void FZGameRpcInterface::AppearanceChangeSkTypeRegister(FZRpcManager* InManager,
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetBattleHistoryInfoRegister(FZRpcManager* InManager, const FZGetBattleHistoryInfoCallback& InCallback)
+void FZGameRpcInterface::GetBattleHistoryInfoRegister(FMRpcManager* InManager, const FZGetBattleHistoryInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBattleHistoryInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4254,11 +4254,11 @@ void FZGameRpcInterface::GetBattleHistoryInfoRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetArenaCheckListDataRegister(FZRpcManager* InManager, const FZGetArenaCheckListDataCallback& InCallback)
+void FZGameRpcInterface::GetArenaCheckListDataRegister(FMRpcManager* InManager, const FZGetArenaCheckListDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetArenaCheckListData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4279,11 +4279,11 @@ void FZGameRpcInterface::GetArenaCheckListDataRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ArenaCheckListSubmitRegister(FZRpcManager* InManager, const FZArenaCheckListSubmitCallback& InCallback)
+void FZGameRpcInterface::ArenaCheckListSubmitRegister(FMRpcManager* InManager, const FZArenaCheckListSubmitCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ArenaCheckListSubmit;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4304,11 +4304,11 @@ void FZGameRpcInterface::ArenaCheckListSubmitRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ArenaCheckListRewardSubmitRegister(FZRpcManager* InManager, const FZArenaCheckListRewardSubmitCallback& InCallback)
+void FZGameRpcInterface::ArenaCheckListRewardSubmitRegister(FMRpcManager* InManager, const FZArenaCheckListRewardSubmitCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ArenaCheckListRewardSubmit;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4329,11 +4329,11 @@ void FZGameRpcInterface::ArenaCheckListRewardSubmitRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DungeonKillAllChallengeRegister(FZRpcManager* InManager, const FZDungeonKillAllChallengeCallback& InCallback)
+void FZGameRpcInterface::DungeonKillAllChallengeRegister(FMRpcManager* InManager, const FZDungeonKillAllChallengeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonKillAllChallenge;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4354,11 +4354,11 @@ void FZGameRpcInterface::DungeonKillAllChallengeRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DungeonKillAllQuickEndRegister(FZRpcManager* InManager, const FZDungeonKillAllQuickEndCallback& InCallback)
+void FZGameRpcInterface::DungeonKillAllQuickEndRegister(FMRpcManager* InManager, const FZDungeonKillAllQuickEndCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonKillAllQuickEnd;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4379,11 +4379,11 @@ void FZGameRpcInterface::DungeonKillAllQuickEndRegister(FZRpcManager* InManager,
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DungeonKillAllDataRegister(FZRpcManager* InManager, const FZDungeonKillAllDataCallback& InCallback)
+void FZGameRpcInterface::DungeonKillAllDataRegister(FMRpcManager* InManager, const FZDungeonKillAllDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonKillAllData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4404,11 +4404,11 @@ void FZGameRpcInterface::DungeonKillAllDataRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetFarmlandDataRegister(FZRpcManager* InManager, const FZGetFarmlandDataCallback& InCallback)
+void FZGameRpcInterface::GetFarmlandDataRegister(FMRpcManager* InManager, const FZGetFarmlandDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetFarmlandData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4429,11 +4429,11 @@ void FZGameRpcInterface::GetFarmlandDataRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmlandUnlockBlockRegister(FZRpcManager* InManager, const FZFarmlandUnlockBlockCallback& InCallback)
+void FZGameRpcInterface::FarmlandUnlockBlockRegister(FMRpcManager* InManager, const FZFarmlandUnlockBlockCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandUnlockBlock;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4454,11 +4454,11 @@ void FZGameRpcInterface::FarmlandUnlockBlockRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmlandPlantSeedRegister(FZRpcManager* InManager, const FZFarmlandPlantSeedCallback& InCallback)
+void FZGameRpcInterface::FarmlandPlantSeedRegister(FMRpcManager* InManager, const FZFarmlandPlantSeedCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandPlantSeed;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4479,11 +4479,11 @@ void FZGameRpcInterface::FarmlandPlantSeedRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmlandWateringRegister(FZRpcManager* InManager, const FZFarmlandWateringCallback& InCallback)
+void FZGameRpcInterface::FarmlandWateringRegister(FMRpcManager* InManager, const FZFarmlandWateringCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandWatering;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4504,11 +4504,11 @@ void FZGameRpcInterface::FarmlandWateringRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmlandRipeningRegister(FZRpcManager* InManager, const FZFarmlandRipeningCallback& InCallback)
+void FZGameRpcInterface::FarmlandRipeningRegister(FMRpcManager* InManager, const FZFarmlandRipeningCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandRipening;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4529,11 +4529,11 @@ void FZGameRpcInterface::FarmlandRipeningRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmlandHarvestRegister(FZRpcManager* InManager, const FZFarmlandHarvestCallback& InCallback)
+void FZGameRpcInterface::FarmlandHarvestRegister(FMRpcManager* InManager, const FZFarmlandHarvestCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandHarvest;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4554,11 +4554,11 @@ void FZGameRpcInterface::FarmlandHarvestRegister(FZRpcManager* InManager, const 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmerRankUpRegister(FZRpcManager* InManager, const FZFarmerRankUpCallback& InCallback)
+void FZGameRpcInterface::FarmerRankUpRegister(FMRpcManager* InManager, const FZFarmerRankUpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmerRankUp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4579,11 +4579,11 @@ void FZGameRpcInterface::FarmerRankUpRegister(FZRpcManager* InManager, const FZF
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FarmlandSetManagementRegister(FZRpcManager* InManager, const FZFarmlandSetManagementCallback& InCallback)
+void FZGameRpcInterface::FarmlandSetManagementRegister(FMRpcManager* InManager, const FZFarmlandSetManagementCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandSetManagement;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4604,11 +4604,11 @@ void FZGameRpcInterface::FarmlandSetManagementRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::UpdateFarmlandStateRegister(FZRpcManager* InManager, const FZUpdateFarmlandStateCallback& InCallback)
+void FZGameRpcInterface::UpdateFarmlandStateRegister(FMRpcManager* InManager, const FZUpdateFarmlandStateCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::UpdateFarmlandState;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4629,11 +4629,11 @@ void FZGameRpcInterface::UpdateFarmlandStateRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DungeonSurviveChallengeRegister(FZRpcManager* InManager, const FZDungeonSurviveChallengeCallback& InCallback)
+void FZGameRpcInterface::DungeonSurviveChallengeRegister(FMRpcManager* InManager, const FZDungeonSurviveChallengeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonSurviveChallenge;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4654,11 +4654,11 @@ void FZGameRpcInterface::DungeonSurviveChallengeRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DungeonSurviveQuickEndRegister(FZRpcManager* InManager, const FZDungeonSurviveQuickEndCallback& InCallback)
+void FZGameRpcInterface::DungeonSurviveQuickEndRegister(FMRpcManager* InManager, const FZDungeonSurviveQuickEndCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonSurviveQuickEnd;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4679,11 +4679,11 @@ void FZGameRpcInterface::DungeonSurviveQuickEndRegister(FZRpcManager* InManager,
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DungeonSurviveDataRegister(FZRpcManager* InManager, const FZDungeonSurviveDataCallback& InCallback)
+void FZGameRpcInterface::DungeonSurviveDataRegister(FMRpcManager* InManager, const FZDungeonSurviveDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonSurviveData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4704,11 +4704,11 @@ void FZGameRpcInterface::DungeonSurviveDataRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRevertAllSkillCoolDownRegister(FZRpcManager* InManager, const FZGetRevertAllSkillCoolDownCallback& InCallback)
+void FZGameRpcInterface::GetRevertAllSkillCoolDownRegister(FMRpcManager* InManager, const FZGetRevertAllSkillCoolDownCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRevertAllSkillCoolDown;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4729,11 +4729,11 @@ void FZGameRpcInterface::GetRevertAllSkillCoolDownRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleFriendDataRegister(FZRpcManager* InManager, const FZGetRoleFriendDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleFriendDataRegister(FMRpcManager* InManager, const FZGetRoleFriendDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleFriendData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4754,11 +4754,11 @@ void FZGameRpcInterface::GetRoleFriendDataRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FriendOpRegister(FZRpcManager* InManager, const FZFriendOpCallback& InCallback)
+void FZGameRpcInterface::FriendOpRegister(FMRpcManager* InManager, const FZFriendOpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FriendOp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4779,11 +4779,11 @@ void FZGameRpcInterface::FriendOpRegister(FZRpcManager* InManager, const FZFrien
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReplyFriendRequestRegister(FZRpcManager* InManager, const FZReplyFriendRequestCallback& InCallback)
+void FZGameRpcInterface::ReplyFriendRequestRegister(FMRpcManager* InManager, const FZReplyFriendRequestCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReplyFriendRequest;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4804,11 +4804,11 @@ void FZGameRpcInterface::ReplyFriendRequestRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::FriendSearchRoleInfoRegister(FZRpcManager* InManager, const FZFriendSearchRoleInfoCallback& InCallback)
+void FZGameRpcInterface::FriendSearchRoleInfoRegister(FMRpcManager* InManager, const FZFriendSearchRoleInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::FriendSearchRoleInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4829,11 +4829,11 @@ void FZGameRpcInterface::FriendSearchRoleInfoRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleInfoCacheRegister(FZRpcManager* InManager, const FZGetRoleInfoCacheCallback& InCallback)
+void FZGameRpcInterface::GetRoleInfoCacheRegister(FMRpcManager* InManager, const FZGetRoleInfoCacheCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleInfoCache;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4854,11 +4854,11 @@ void FZGameRpcInterface::GetRoleInfoCacheRegister(FZRpcManager* InManager, const
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleInfoRegister(FZRpcManager* InManager, const FZGetRoleInfoCallback& InCallback)
+void FZGameRpcInterface::GetRoleInfoRegister(FMRpcManager* InManager, const FZGetRoleInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4879,11 +4879,11 @@ void FZGameRpcInterface::GetRoleInfoRegister(FZRpcManager* InManager, const FZGe
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleAvatarDataRegister(FZRpcManager* InManager, const FZGetRoleAvatarDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleAvatarDataRegister(FMRpcManager* InManager, const FZGetRoleAvatarDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleAvatarData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4904,11 +4904,11 @@ void FZGameRpcInterface::GetRoleAvatarDataRegister(FZRpcManager* InManager, cons
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::DispatchAvatarRegister(FZRpcManager* InManager, const FZDispatchAvatarCallback& InCallback)
+void FZGameRpcInterface::DispatchAvatarRegister(FMRpcManager* InManager, const FZDispatchAvatarCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::DispatchAvatar;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4929,11 +4929,11 @@ void FZGameRpcInterface::DispatchAvatarRegister(FZRpcManager* InManager, const F
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AvatarRankUpRegister(FZRpcManager* InManager, const FZAvatarRankUpCallback& InCallback)
+void FZGameRpcInterface::AvatarRankUpRegister(FMRpcManager* InManager, const FZAvatarRankUpCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AvatarRankUp;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4954,11 +4954,11 @@ void FZGameRpcInterface::AvatarRankUpRegister(FZRpcManager* InManager, const FZA
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReceiveAvatarTempPackageRegister(FZRpcManager* InManager, const FZReceiveAvatarTempPackageCallback& InCallback)
+void FZGameRpcInterface::ReceiveAvatarTempPackageRegister(FMRpcManager* InManager, const FZReceiveAvatarTempPackageCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveAvatarTempPackage;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -4979,11 +4979,11 @@ void FZGameRpcInterface::ReceiveAvatarTempPackageRegister(FZRpcManager* InManage
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetArenaExplorationStatisticalDataRegister(FZRpcManager* InManager, const FZGetArenaExplorationStatisticalDataCallback& InCallback)
+void FZGameRpcInterface::GetArenaExplorationStatisticalDataRegister(FMRpcManager* InManager, const FZGetArenaExplorationStatisticalDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetArenaExplorationStatisticalData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5004,11 +5004,11 @@ void FZGameRpcInterface::GetArenaExplorationStatisticalDataRegister(FZRpcManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleBiographyDataRegister(FZRpcManager* InManager, const FZGetRoleBiographyDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleBiographyDataRegister(FMRpcManager* InManager, const FZGetRoleBiographyDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleBiographyData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5029,11 +5029,11 @@ void FZGameRpcInterface::GetRoleBiographyDataRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReceiveBiographyItemRegister(FZRpcManager* InManager, const FZReceiveBiographyItemCallback& InCallback)
+void FZGameRpcInterface::ReceiveBiographyItemRegister(FMRpcManager* InManager, const FZReceiveBiographyItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveBiographyItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5054,11 +5054,11 @@ void FZGameRpcInterface::ReceiveBiographyItemRegister(FZRpcManager* InManager, c
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetBiographyEventDataRegister(FZRpcManager* InManager, const FZGetBiographyEventDataCallback& InCallback)
+void FZGameRpcInterface::GetBiographyEventDataRegister(FMRpcManager* InManager, const FZGetBiographyEventDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBiographyEventData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5079,11 +5079,11 @@ void FZGameRpcInterface::GetBiographyEventDataRegister(FZRpcManager* InManager, 
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::ReceiveBiographyEventItemRegister(FZRpcManager* InManager, const FZReceiveBiographyEventItemCallback& InCallback)
+void FZGameRpcInterface::ReceiveBiographyEventItemRegister(FMRpcManager* InManager, const FZReceiveBiographyEventItemCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveBiographyEventItem;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5104,11 +5104,11 @@ void FZGameRpcInterface::ReceiveBiographyEventItemRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::AddBiographyRoleLogRegister(FZRpcManager* InManager, const FZAddBiographyRoleLogCallback& InCallback)
+void FZGameRpcInterface::AddBiographyRoleLogRegister(FMRpcManager* InManager, const FZAddBiographyRoleLogCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::AddBiographyRoleLog;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5129,11 +5129,11 @@ void FZGameRpcInterface::AddBiographyRoleLogRegister(FZRpcManager* InManager, co
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestEnterSeptDemonWorldRegister(FZRpcManager* InManager, const FZRequestEnterSeptDemonWorldCallback& InCallback)
+void FZGameRpcInterface::RequestEnterSeptDemonWorldRegister(FMRpcManager* InManager, const FZRequestEnterSeptDemonWorldCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestEnterSeptDemonWorld;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5154,11 +5154,11 @@ void FZGameRpcInterface::RequestEnterSeptDemonWorldRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestLeaveSeptDemonWorldRegister(FZRpcManager* InManager, const FZRequestLeaveSeptDemonWorldCallback& InCallback)
+void FZGameRpcInterface::RequestLeaveSeptDemonWorldRegister(FMRpcManager* InManager, const FZRequestLeaveSeptDemonWorldCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestLeaveSeptDemonWorld;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5179,11 +5179,11 @@ void FZGameRpcInterface::RequestLeaveSeptDemonWorldRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestSeptDemonWorldDataRegister(FZRpcManager* InManager, const FZRequestSeptDemonWorldDataCallback& InCallback)
+void FZGameRpcInterface::RequestSeptDemonWorldDataRegister(FMRpcManager* InManager, const FZRequestSeptDemonWorldDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestSeptDemonWorldData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5204,11 +5204,11 @@ void FZGameRpcInterface::RequestSeptDemonWorldDataRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::RequestInSeptDemonWorldEndTimeRegister(FZRpcManager* InManager, const FZRequestInSeptDemonWorldEndTimeCallback& InCallback)
+void FZGameRpcInterface::RequestInSeptDemonWorldEndTimeRegister(FMRpcManager* InManager, const FZRequestInSeptDemonWorldEndTimeCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestInSeptDemonWorldEndTime;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5229,11 +5229,11 @@ void FZGameRpcInterface::RequestInSeptDemonWorldEndTimeRegister(FZRpcManager* In
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptDemonDamageTopListRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageTopListCallback& InCallback)
+void FZGameRpcInterface::GetSeptDemonDamageTopListRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageTopListCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageTopList;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5254,11 +5254,11 @@ void FZGameRpcInterface::GetSeptDemonDamageTopListRegister(FZRpcManager* InManag
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptDemonDamageSelfSummaryRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageSelfSummaryCallback& InCallback)
+void FZGameRpcInterface::GetSeptDemonDamageSelfSummaryRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageSelfSummaryCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageSelfSummary;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5279,11 +5279,11 @@ void FZGameRpcInterface::GetSeptDemonDamageSelfSummaryRegister(FZRpcManager* InM
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptDemonStageRewardNumRegister(FZRpcManager* InManager, const FZGetSeptDemonStageRewardNumCallback& InCallback)
+void FZGameRpcInterface::GetSeptDemonStageRewardNumRegister(FMRpcManager* InManager, const FZGetSeptDemonStageRewardNumCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonStageRewardNum;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5304,11 +5304,11 @@ void FZGameRpcInterface::GetSeptDemonStageRewardNumRegister(FZRpcManager* InMana
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptDemonStageRewardRegister(FZRpcManager* InManager, const FZGetSeptDemonStageRewardCallback& InCallback)
+void FZGameRpcInterface::GetSeptDemonStageRewardRegister(FMRpcManager* InManager, const FZGetSeptDemonStageRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonStageReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5329,11 +5329,11 @@ void FZGameRpcInterface::GetSeptDemonStageRewardRegister(FZRpcManager* InManager
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptDemonDamageRewardsInfoRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageRewardsInfoCallback& InCallback)
+void FZGameRpcInterface::GetSeptDemonDamageRewardsInfoRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageRewardsInfoCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageRewardsInfo;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5354,11 +5354,11 @@ void FZGameRpcInterface::GetSeptDemonDamageRewardsInfoRegister(FZRpcManager* InM
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetSeptDemonDamageRewardRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageRewardCallback& InCallback)
+void FZGameRpcInterface::GetSeptDemonDamageRewardRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageRewardCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageReward;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5379,11 +5379,11 @@ void FZGameRpcInterface::GetSeptDemonDamageRewardRegister(FZRpcManager* InManage
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::GetRoleVipShopDataRegister(FZRpcManager* InManager, const FZGetRoleVipShopDataCallback& InCallback)
+void FZGameRpcInterface::GetRoleVipShopDataRegister(FMRpcManager* InManager, const FZGetRoleVipShopDataCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleVipShopData;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5404,11 +5404,11 @@ void FZGameRpcInterface::GetRoleVipShopDataRegister(FZRpcManager* InManager, con
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 
-void FZGameRpcInterface::VipShopBuyRegister(FZRpcManager* InManager, const FZVipShopBuyCallback& InCallback)
+void FZGameRpcInterface::VipShopBuyRegister(FMRpcManager* InManager, const FZVipShopBuyCallback& InCallback)
 {
     static constexpr uint64 RpcId = FZGameRpcInterface::VipShopBuy;
     InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
@@ -5429,6 +5429,6 @@ void FZGameRpcInterface::VipShopBuyRegister(FZRpcManager* InManager, const FZVip
         {
             ErrorCode = idlezt::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }

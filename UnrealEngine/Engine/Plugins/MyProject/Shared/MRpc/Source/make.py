@@ -11,20 +11,20 @@ FullFiles = [
 
 TEMPL = """
 
-# 签出所有可能影响到的文件
-{{P4CMD}} edit {{CWD}}/Private/*.*
-{{P4CMD}} edit {{CWD}}/Public/*.*
-{{P4CMD}} edit {{TS_DIR}}/*.ts
+# 签出所有可能影响到的文件 Todo 暂不考虑p4
+#{{P4CMD}} edit {{CWD}}/Private/*.*
+#{{P4CMD}} edit {{CWD}}/Public/*.*
+#{{P4CMD}} edit {{TS_DIR}}/*.ts
 
-{%- for file_name in FullFiles %}
-{{RPC}} -dllexport_decl=ZRPC_API -src_file={{file_name}}.rpcdef -hpp_dst_dir={{CWD}}/Public/ -cpp_dst_dir={{CWD}}/Private/
-{{TS}} -src_file {{file_name}}.rpcdef -pb_src_dir={{PB_DIR}} -ts_dst_dir={{TS_DIR}}
+{%- for file_name in FullFiles %} # Todo 暂不考虑Ts
+{{RPC}} -dllexport_decl=MRPC_API -src_file={{file_name}}.rpcdef -hpp_dst_dir={{CWD}}/Public/ -cpp_dst_dir={{CWD}}/Private/
+#{{TS}} -src_file {{file_name}}.rpcdef -pb_src_dir={{PB_DIR}} -ts_dst_dir={{TS_DIR}}
 {%- endfor %}
 
-# 还原未修改的文件
-{{P4CMD}} revert -a {{CWD}}/Private/...
-{{P4CMD}} revert -a {{CWD}}/Public/...
-{{P4CMD}} revert -a {{TS_DIR}}/*.ts
+# 还原未修改的文件 Todo 暂不考虑p4
+#{{P4CMD}} revert -a {{CWD}}/Private/...
+#{{P4CMD}} revert -a {{CWD}}/Public/...
+#{{P4CMD}} revert -a {{TS_DIR}}/*.ts
 """
 
 
@@ -41,12 +41,12 @@ def get_ue_platform_name():
 def main():
     platform = get_ue_platform_name()
     ts_dir = '../../../../../Projects/IdleZT/TypeScript/rpc'
-    pb_dir = '../../ZProtocol/Source'
+    pb_dir = '../../MProtocol/Source'
     if platform == 'Win64':
-        py_cmd = f'../../../../Binaries/ThirdParty/Python3/{platform}/python.exe'
+        py_cmd = f'../../../../../Binaries/ThirdParty/Python3/{platform}/python.exe'
         p4_cmd = f'../../../../Binaries/ThirdParty/Perforce/{platform}/p4.exe'
     else:
-        py_cmd = f'../../../../Binaries/ThirdParty/Python3/{platform}/bin/python'
+        py_cmd = f'../../../../../Binaries/ThirdParty/Python3/{platform}/bin/python'
         p4_cmd = f'../../../../Binaries/ThirdParty/Perforce/{platform}/p4'
     cwd = os.getcwd()
     p4_cmd = os.path.abspath(cwd + '/' + p4_cmd)
@@ -81,7 +81,7 @@ def main():
                 if ret.returncode != 0:
                     raise Exception(f'code={ret.returncode}')
             except Exception as run_err:
-                raise Exception(f'指令执行失败\ncmd={line}\n{run_err} ')
+                raise Exception(f'指令执行失败\ncmd\n{line}\n{run_err} ')
 
 
 if __name__ == '__main__':

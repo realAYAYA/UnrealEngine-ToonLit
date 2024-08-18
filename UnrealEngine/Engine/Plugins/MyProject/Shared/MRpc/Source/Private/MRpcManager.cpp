@@ -1,8 +1,8 @@
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
 #include "ZTools.h"
 
-FZRpcManager::FZRpcManager()
+FMRpcManager::FMRpcManager()
 {
 	MessageDispatcher.Reg<idlezt::ZRpcMessage>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
 	{
@@ -11,14 +11,14 @@ FZRpcManager::FZRpcManager()
 	
 }
 
-uint64 FZRpcManager::CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, const FPbMessagePtr& InMessage, const FResponseCallback& Callback)
+uint64 FMRpcManager::CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, const FPbMessagePtr& InMessage, const FResponseCallback& Callback)
 {
 	const uint64 BodyTypeId = ZGeneratePbMessageTypeId(&*InMessage);
 	const std::string& BodyData = InMessage->SerializeAsString();
 	return CallRpc(InConn, InRpcId, BodyTypeId, BodyData.c_str(), BodyData.size(), Callback);
 }
 
-uint64 FZRpcManager::CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength, const FResponseCallback& Callback)
+uint64 FMRpcManager::CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength, const FResponseCallback& Callback)
 {
 	const uint64 SerialNum = SendRequest(InConn, InRpcId, InBodyTypeId, InBodyDataPtr, InBodyDataLength);
 
@@ -31,12 +31,12 @@ uint64 FZRpcManager::CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, uin
 	return SerialNum;
 }
 
-void FZRpcManager::AddMethod(uint64 InRpcId, const FMethodCallback& InCallback)
+void FMRpcManager::AddMethod(uint64 InRpcId, const FMethodCallback& InCallback)
 {
 	AllMethods.Emplace(InRpcId, InCallback);
 }
 
-uint64 FZRpcManager::SendRequest(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength)
+uint64 FMRpcManager::SendRequest(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength)
 {
 	const uint64 SerialNum = NextSn++;
 		
@@ -53,7 +53,7 @@ uint64 FZRpcManager::SendRequest(FZPbMessageSupportBase* InConn, uint64 InRpcId,
 }
 
 // static
-void FZRpcManager::SendResponse(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InReqSerialNum, const FPbMessagePtr& InMessage, idlezt::RpcErrorCode ErrorCode)
+void FMRpcManager::SendResponse(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InReqSerialNum, const FPbMessagePtr& InMessage, idlezt::RpcErrorCode ErrorCode)
 {
 	auto OutMessage = MakeShared<idlezt::ZRpcMessage>();
 	OutMessage->set_op(idlezt::RpcMessageOp_Response);
@@ -80,12 +80,12 @@ void FZRpcManager::SendResponse(FZPbMessageSupportBase* InConn, uint64 InRpcId, 
 // 	MessageDispatcher.Process(InConn, InCode, InDataPtr, InDataLen);	
 // }
 
-FZPbDispatcher& FZRpcManager::GetMessageDispatcher()
+FZPbDispatcher& FMRpcManager::GetMessageDispatcher()
 {
 	return MessageDispatcher;
 }
 
-void FZRpcManager::OnRpcMessage(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+void FMRpcManager::OnRpcMessage(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
 {
 	switch (InMessage->op())
 	{
@@ -110,12 +110,12 @@ void FZRpcManager::OnRpcMessage(FZPbMessageSupportBase* InConn, const TSharedPtr
 	
 }
 
-void FZRpcManager::OnNotify(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+void FMRpcManager::OnNotify(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
 {
 	
 }
 
-void FZRpcManager::OnRequest(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+void FMRpcManager::OnRequest(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
 {
 	if (auto Ret = AllMethods.Find(InMessage->rpc_id()))
 	{
@@ -127,7 +127,7 @@ void FZRpcManager::OnRequest(FZPbMessageSupportBase* InConn, const TSharedPtr<id
 	}
 }
 
-void FZRpcManager::OnResponse(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+void FMRpcManager::OnResponse(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
 {
 	const auto ReqSerialNum = InMessage->sn();
 	auto Ret = AllRequestPending.Find(ReqSerialNum);

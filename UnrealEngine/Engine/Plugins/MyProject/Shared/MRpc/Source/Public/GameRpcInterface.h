@@ -12,13 +12,13 @@
 #include "relation.pb.h"
 
 #include "ZTools.h"
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
 class ZRPC_API FZGameRpcInterface
 {
 public:
 
-    FZGameRpcInterface(FZRpcManager* InManager);
+    FZGameRpcInterface(FMRpcManager* InManager);
     virtual ~FZGameRpcInterface();
 
     const TCHAR* GetName() const { return TEXT("GameRpc"); }  
@@ -31,7 +31,7 @@ public:
     typedef TSharedPtr<idlezt::LoginGameReq> FZLoginGameReqPtr;
     typedef TSharedPtr<idlezt::LoginGameAck> FZLoginGameRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZLoginGameReqPtr&, const FZLoginGameRspPtr&)> FZLoginGameCallback;
-    static void LoginGameRegister(FZRpcManager* InManager, const FZLoginGameCallback& InCallback);
+    static void LoginGameRegister(FMRpcManager* InManager, const FZLoginGameCallback& InCallback);
     
     /**
      * 设置修炼方向
@@ -40,7 +40,7 @@ public:
     typedef TSharedPtr<idlezt::SetCurrentCultivationDirectionReq> FZSetCurrentCultivationDirectionReqPtr;
     typedef TSharedPtr<idlezt::SetCurrentCultivationDirectionAck> FZSetCurrentCultivationDirectionRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetCurrentCultivationDirectionReqPtr&, const FZSetCurrentCultivationDirectionRspPtr&)> FZSetCurrentCultivationDirectionCallback;
-    static void SetCurrentCultivationDirectionRegister(FZRpcManager* InManager, const FZSetCurrentCultivationDirectionCallback& InCallback);
+    static void SetCurrentCultivationDirectionRegister(FMRpcManager* InManager, const FZSetCurrentCultivationDirectionCallback& InCallback);
     
     /**
      * 突破
@@ -49,7 +49,7 @@ public:
     typedef TSharedPtr<idlezt::DoBreakthroughReq> FZDoBreakthroughReqPtr;
     typedef TSharedPtr<idlezt::DoBreakthroughAck> FZDoBreakthroughRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDoBreakthroughReqPtr&, const FZDoBreakthroughRspPtr&)> FZDoBreakthroughCallback;
-    static void DoBreakthroughRegister(FZRpcManager* InManager, const FZDoBreakthroughCallback& InCallback);
+    static void DoBreakthroughRegister(FMRpcManager* InManager, const FZDoBreakthroughCallback& InCallback);
     
     /**
      * 请求公共修炼数据
@@ -58,7 +58,7 @@ public:
     typedef TSharedPtr<idlezt::RequestCommonCultivationDataReq> FZRequestCommonCultivationDataReqPtr;
     typedef TSharedPtr<idlezt::RequestCommonCultivationDataAck> FZRequestCommonCultivationDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestCommonCultivationDataReqPtr&, const FZRequestCommonCultivationDataRspPtr&)> FZRequestCommonCultivationDataCallback;
-    static void RequestCommonCultivationDataRegister(FZRpcManager* InManager, const FZRequestCommonCultivationDataCallback& InCallback);
+    static void RequestCommonCultivationDataRegister(FMRpcManager* InManager, const FZRequestCommonCultivationDataCallback& InCallback);
     
     /**
      * 请求合并吐纳
@@ -67,7 +67,7 @@ public:
     typedef TSharedPtr<idlezt::OneClickMergeBreathingReq> FZOneClickMergeBreathingReqPtr;
     typedef TSharedPtr<idlezt::OneClickMergeBreathingAck> FZOneClickMergeBreathingRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOneClickMergeBreathingReqPtr&, const FZOneClickMergeBreathingRspPtr&)> FZOneClickMergeBreathingCallback;
-    static void OneClickMergeBreathingRegister(FZRpcManager* InManager, const FZOneClickMergeBreathingCallback& InCallback);
+    static void OneClickMergeBreathingRegister(FMRpcManager* InManager, const FZOneClickMergeBreathingCallback& InCallback);
     
     /**
      * 请求领取吐纳奖励
@@ -76,7 +76,7 @@ public:
     typedef TSharedPtr<idlezt::ReceiveBreathingExerciseRewardReq> FZReceiveBreathingExerciseRewardReqPtr;
     typedef TSharedPtr<idlezt::ReceiveBreathingExerciseRewardAck> FZReceiveBreathingExerciseRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReceiveBreathingExerciseRewardReqPtr&, const FZReceiveBreathingExerciseRewardRspPtr&)> FZReceiveBreathingExerciseRewardCallback;
-    static void ReceiveBreathingExerciseRewardRegister(FZRpcManager* InManager, const FZReceiveBreathingExerciseRewardCallback& InCallback);
+    static void ReceiveBreathingExerciseRewardRegister(FMRpcManager* InManager, const FZReceiveBreathingExerciseRewardCallback& InCallback);
     
     /**
      * 请求包裹数据
@@ -85,7 +85,7 @@ public:
     typedef TSharedPtr<idlezt::GetInventoryDataReq> FZGetInventoryDataReqPtr;
     typedef TSharedPtr<idlezt::GetInventoryDataAck> FZGetInventoryDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetInventoryDataReqPtr&, const FZGetInventoryDataRspPtr&)> FZGetInventoryDataCallback;
-    static void GetInventoryDataRegister(FZRpcManager* InManager, const FZGetInventoryDataCallback& InCallback);
+    static void GetInventoryDataRegister(FMRpcManager* InManager, const FZGetInventoryDataCallback& InCallback);
     
     /**
      * 请求任务数据
@@ -94,7 +94,7 @@ public:
     typedef TSharedPtr<idlezt::GetQuestDataReq> FZGetQuestDataReqPtr;
     typedef TSharedPtr<idlezt::GetQuestDataAck> FZGetQuestDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetQuestDataReqPtr&, const FZGetQuestDataRspPtr&)> FZGetQuestDataCallback;
-    static void GetQuestDataRegister(FZRpcManager* InManager, const FZGetQuestDataCallback& InCallback);
+    static void GetQuestDataRegister(FMRpcManager* InManager, const FZGetQuestDataCallback& InCallback);
     
     /**
      * 创建角色
@@ -103,7 +103,7 @@ public:
     typedef TSharedPtr<idlezt::CreateCharacterReq> FZCreateCharacterReqPtr;
     typedef TSharedPtr<idlezt::CreateCharacterAck> FZCreateCharacterRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZCreateCharacterReqPtr&, const FZCreateCharacterRspPtr&)> FZCreateCharacterCallback;
-    static void CreateCharacterRegister(FZRpcManager* InManager, const FZCreateCharacterCallback& InCallback);
+    static void CreateCharacterRegister(FMRpcManager* InManager, const FZCreateCharacterCallback& InCallback);
     
     /**
      * 使用道具
@@ -112,7 +112,7 @@ public:
     typedef TSharedPtr<idlezt::UseItemReq> FZUseItemReqPtr;
     typedef TSharedPtr<idlezt::UseItemAck> FZUseItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUseItemReqPtr&, const FZUseItemRspPtr&)> FZUseItemCallback;
-    static void UseItemRegister(FZRpcManager* InManager, const FZUseItemCallback& InCallback);
+    static void UseItemRegister(FMRpcManager* InManager, const FZUseItemCallback& InCallback);
     
     /**
      * 使用自选宝箱
@@ -121,7 +121,7 @@ public:
     typedef TSharedPtr<idlezt::UseSelectGiftReq> FZUseSelectGiftReqPtr;
     typedef TSharedPtr<idlezt::UseSelectGiftAck> FZUseSelectGiftRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUseSelectGiftReqPtr&, const FZUseSelectGiftRspPtr&)> FZUseSelectGiftCallback;
-    static void UseSelectGiftRegister(FZRpcManager* InManager, const FZUseSelectGiftCallback& InCallback);
+    static void UseSelectGiftRegister(FMRpcManager* InManager, const FZUseSelectGiftCallback& InCallback);
     
     /**
      * 出售道具
@@ -130,7 +130,7 @@ public:
     typedef TSharedPtr<idlezt::SellItemReq> FZSellItemReqPtr;
     typedef TSharedPtr<idlezt::SellItemAck> FZSellItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSellItemReqPtr&, const FZSellItemRspPtr&)> FZSellItemCallback;
-    static void SellItemRegister(FZRpcManager* InManager, const FZSellItemCallback& InCallback);
+    static void SellItemRegister(FMRpcManager* InManager, const FZSellItemCallback& InCallback);
     
     /**
      * 解锁装备槽位
@@ -139,7 +139,7 @@ public:
     typedef TSharedPtr<idlezt::UnlockEquipmentSlotReq> FZUnlockEquipmentSlotReqPtr;
     typedef TSharedPtr<idlezt::UnlockEquipmentSlotAck> FZUnlockEquipmentSlotRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUnlockEquipmentSlotReqPtr&, const FZUnlockEquipmentSlotRspPtr&)> FZUnlockEquipmentSlotCallback;
-    static void UnlockEquipmentSlotRegister(FZRpcManager* InManager, const FZUnlockEquipmentSlotCallback& InCallback);
+    static void UnlockEquipmentSlotRegister(FMRpcManager* InManager, const FZUnlockEquipmentSlotCallback& InCallback);
     
     /**
      * 开始炼丹
@@ -148,7 +148,7 @@ public:
     typedef TSharedPtr<idlezt::AlchemyRefineStartReq> FZAlchemyRefineStartReqPtr;
     typedef TSharedPtr<idlezt::AlchemyRefineStartAck> FZAlchemyRefineStartRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAlchemyRefineStartReqPtr&, const FZAlchemyRefineStartRspPtr&)> FZAlchemyRefineStartCallback;
-    static void AlchemyRefineStartRegister(FZRpcManager* InManager, const FZAlchemyRefineStartCallback& InCallback);
+    static void AlchemyRefineStartRegister(FMRpcManager* InManager, const FZAlchemyRefineStartCallback& InCallback);
     
     /**
      * 终止炼丹
@@ -157,7 +157,7 @@ public:
     typedef TSharedPtr<idlezt::AlchemyRefineCancelReq> FZAlchemyRefineCancelReqPtr;
     typedef TSharedPtr<idlezt::AlchemyRefineCancelAck> FZAlchemyRefineCancelRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAlchemyRefineCancelReqPtr&, const FZAlchemyRefineCancelRspPtr&)> FZAlchemyRefineCancelCallback;
-    static void AlchemyRefineCancelRegister(FZRpcManager* InManager, const FZAlchemyRefineCancelCallback& InCallback);
+    static void AlchemyRefineCancelRegister(FMRpcManager* InManager, const FZAlchemyRefineCancelCallback& InCallback);
     
     /**
      * 领取丹药
@@ -166,7 +166,7 @@ public:
     typedef TSharedPtr<idlezt::AlchemyRefineExtractReq> FZAlchemyRefineExtractReqPtr;
     typedef TSharedPtr<idlezt::AlchemyRefineExtractAck> FZAlchemyRefineExtractRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAlchemyRefineExtractReqPtr&, const FZAlchemyRefineExtractRspPtr&)> FZAlchemyRefineExtractCallback;
-    static void AlchemyRefineExtractRegister(FZRpcManager* InManager, const FZAlchemyRefineExtractCallback& InCallback);
+    static void AlchemyRefineExtractRegister(FMRpcManager* InManager, const FZAlchemyRefineExtractCallback& InCallback);
     
     /**
      * 获取坊市数据
@@ -175,7 +175,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleShopDataReq> FZGetRoleShopDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleShopDataAck> FZGetRoleShopDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleShopDataReqPtr&, const FZGetRoleShopDataRspPtr&)> FZGetRoleShopDataCallback;
-    static void GetRoleShopDataRegister(FZRpcManager* InManager, const FZGetRoleShopDataCallback& InCallback);
+    static void GetRoleShopDataRegister(FMRpcManager* InManager, const FZGetRoleShopDataCallback& InCallback);
     
     /**
      * 手动刷新坊市
@@ -184,7 +184,7 @@ public:
     typedef TSharedPtr<idlezt::RefreshShopReq> FZRefreshShopReqPtr;
     typedef TSharedPtr<idlezt::RefreshShopAck> FZRefreshShopRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRefreshShopReqPtr&, const FZRefreshShopRspPtr&)> FZRefreshShopCallback;
-    static void RefreshShopRegister(FZRpcManager* InManager, const FZRefreshShopCallback& InCallback);
+    static void RefreshShopRegister(FMRpcManager* InManager, const FZRefreshShopCallback& InCallback);
     
     /**
      * 购买坊市道具
@@ -193,7 +193,7 @@ public:
     typedef TSharedPtr<idlezt::BuyShopItemReq> FZBuyShopItemReqPtr;
     typedef TSharedPtr<idlezt::BuyShopItemAck> FZBuyShopItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZBuyShopItemReqPtr&, const FZBuyShopItemRspPtr&)> FZBuyShopItemCallback;
-    static void BuyShopItemRegister(FZRpcManager* InManager, const FZBuyShopItemCallback& InCallback);
+    static void BuyShopItemRegister(FMRpcManager* InManager, const FZBuyShopItemCallback& InCallback);
     
     /**
      * 获取天机阁数据
@@ -202,7 +202,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleDeluxeShopDataReq> FZGetRoleDeluxeShopDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleDeluxeShopDataAck> FZGetRoleDeluxeShopDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleDeluxeShopDataReqPtr&, const FZGetRoleDeluxeShopDataRspPtr&)> FZGetRoleDeluxeShopDataCallback;
-    static void GetRoleDeluxeShopDataRegister(FZRpcManager* InManager, const FZGetRoleDeluxeShopDataCallback& InCallback);
+    static void GetRoleDeluxeShopDataRegister(FMRpcManager* InManager, const FZGetRoleDeluxeShopDataCallback& InCallback);
     
     /**
      * 手动刷新天机阁
@@ -211,7 +211,7 @@ public:
     typedef TSharedPtr<idlezt::RefreshDeluxeShopReq> FZRefreshDeluxeShopReqPtr;
     typedef TSharedPtr<idlezt::RefreshDeluxeShopAck> FZRefreshDeluxeShopRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRefreshDeluxeShopReqPtr&, const FZRefreshDeluxeShopRspPtr&)> FZRefreshDeluxeShopCallback;
-    static void RefreshDeluxeShopRegister(FZRpcManager* InManager, const FZRefreshDeluxeShopCallback& InCallback);
+    static void RefreshDeluxeShopRegister(FMRpcManager* InManager, const FZRefreshDeluxeShopCallback& InCallback);
     
     /**
      * 购买天机阁道具
@@ -220,7 +220,7 @@ public:
     typedef TSharedPtr<idlezt::BuyDeluxeShopItemReq> FZBuyDeluxeShopItemReqPtr;
     typedef TSharedPtr<idlezt::BuyDeluxeShopItemAck> FZBuyDeluxeShopItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZBuyDeluxeShopItemReqPtr&, const FZBuyDeluxeShopItemRspPtr&)> FZBuyDeluxeShopItemCallback;
-    static void BuyDeluxeShopItemRegister(FZRpcManager* InManager, const FZBuyDeluxeShopItemCallback& InCallback);
+    static void BuyDeluxeShopItemRegister(FMRpcManager* InManager, const FZBuyDeluxeShopItemCallback& InCallback);
     
     /**
      * 获取临时包裹数据
@@ -229,7 +229,7 @@ public:
     typedef TSharedPtr<idlezt::GetTemporaryPackageDataReq> FZGetTemporaryPackageDataReqPtr;
     typedef TSharedPtr<idlezt::GetTemporaryPackageDataAck> FZGetTemporaryPackageDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetTemporaryPackageDataReqPtr&, const FZGetTemporaryPackageDataRspPtr&)> FZGetTemporaryPackageDataCallback;
-    static void GetTemporaryPackageDataRegister(FZRpcManager* InManager, const FZGetTemporaryPackageDataCallback& InCallback);
+    static void GetTemporaryPackageDataRegister(FMRpcManager* InManager, const FZGetTemporaryPackageDataCallback& InCallback);
     
     /**
      * 提取临时包裹中的道具
@@ -238,7 +238,7 @@ public:
     typedef TSharedPtr<idlezt::ExtractTemporaryPackageItemsReq> FZExtractTemporaryPackageItemsReqPtr;
     typedef TSharedPtr<idlezt::ExtractTemporaryPackageItemsAck> FZExtractTemporaryPackageItemsRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZExtractTemporaryPackageItemsReqPtr&, const FZExtractTemporaryPackageItemsRspPtr&)> FZExtractTemporaryPackageItemsCallback;
-    static void ExtractTemporaryPackageItemsRegister(FZRpcManager* InManager, const FZExtractTemporaryPackageItemsCallback& InCallback);
+    static void ExtractTemporaryPackageItemsRegister(FMRpcManager* InManager, const FZExtractTemporaryPackageItemsCallback& InCallback);
     
     /**
      * 加速重生
@@ -247,7 +247,7 @@ public:
     typedef TSharedPtr<idlezt::SpeedupReliveReq> FZSpeedupReliveReqPtr;
     typedef TSharedPtr<idlezt::SpeedupReliveAck> FZSpeedupReliveRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSpeedupReliveReqPtr&, const FZSpeedupReliveRspPtr&)> FZSpeedupReliveCallback;
-    static void SpeedupReliveRegister(FZRpcManager* InManager, const FZSpeedupReliveCallback& InCallback);
+    static void SpeedupReliveRegister(FMRpcManager* InManager, const FZSpeedupReliveCallback& InCallback);
     
     /**
      * 获取地图信息
@@ -256,7 +256,7 @@ public:
     typedef TSharedPtr<idlezt::GetMapInfoReq> FZGetMapInfoReqPtr;
     typedef TSharedPtr<idlezt::GetMapInfoAck> FZGetMapInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetMapInfoReqPtr&, const FZGetMapInfoRspPtr&)> FZGetMapInfoCallback;
-    static void GetMapInfoRegister(FZRpcManager* InManager, const FZGetMapInfoCallback& InCallback);
+    static void GetMapInfoRegister(FMRpcManager* InManager, const FZGetMapInfoCallback& InCallback);
     
     /**
      * 解锁指定秘境
@@ -265,7 +265,7 @@ public:
     typedef TSharedPtr<idlezt::UnlockArenaReq> FZUnlockArenaReqPtr;
     typedef TSharedPtr<idlezt::UnlockArenaAck> FZUnlockArenaRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUnlockArenaReqPtr&, const FZUnlockArenaRspPtr&)> FZUnlockArenaCallback;
-    static void UnlockArenaRegister(FZRpcManager* InManager, const FZUnlockArenaCallback& InCallback);
+    static void UnlockArenaRegister(FMRpcManager* InManager, const FZUnlockArenaCallback& InCallback);
     
     /**
      * 请求任务操作
@@ -274,7 +274,7 @@ public:
     typedef TSharedPtr<idlezt::QuestOpReq> FZQuestOpReqPtr;
     typedef TSharedPtr<idlezt::QuestOpAck> FZQuestOpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZQuestOpReqPtr&, const FZQuestOpRspPtr&)> FZQuestOpCallback;
-    static void QuestOpRegister(FZRpcManager* InManager, const FZQuestOpCallback& InCallback);
+    static void QuestOpRegister(FMRpcManager* InManager, const FZQuestOpCallback& InCallback);
     
     /**
      * 穿装备
@@ -283,7 +283,7 @@ public:
     typedef TSharedPtr<idlezt::EquipmentPutOnReq> FZEquipmentPutOnReqPtr;
     typedef TSharedPtr<idlezt::EquipmentPutOnAck> FZEquipmentPutOnRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZEquipmentPutOnReqPtr&, const FZEquipmentPutOnRspPtr&)> FZEquipmentPutOnCallback;
-    static void EquipmentPutOnRegister(FZRpcManager* InManager, const FZEquipmentPutOnCallback& InCallback);
+    static void EquipmentPutOnRegister(FMRpcManager* InManager, const FZEquipmentPutOnCallback& InCallback);
     
     /**
      * 脱装备
@@ -292,7 +292,7 @@ public:
     typedef TSharedPtr<idlezt::EquipmentTakeOffReq> FZEquipmentTakeOffReqPtr;
     typedef TSharedPtr<idlezt::EquipmentTakeOffAck> FZEquipmentTakeOffRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZEquipmentTakeOffReqPtr&, const FZEquipmentTakeOffRspPtr&)> FZEquipmentTakeOffCallback;
-    static void EquipmentTakeOffRegister(FZRpcManager* InManager, const FZEquipmentTakeOffCallback& InCallback);
+    static void EquipmentTakeOffRegister(FMRpcManager* InManager, const FZEquipmentTakeOffCallback& InCallback);
     
     /**
      * 请求排行榜预览，每个榜的榜一数据
@@ -301,7 +301,7 @@ public:
     typedef TSharedPtr<idlezt::GetLeaderboardPreviewReq> FZGetLeaderboardPreviewReqPtr;
     typedef TSharedPtr<idlezt::GetLeaderboardPreviewAck> FZGetLeaderboardPreviewRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetLeaderboardPreviewReqPtr&, const FZGetLeaderboardPreviewRspPtr&)> FZGetLeaderboardPreviewCallback;
-    static void GetLeaderboardPreviewRegister(FZRpcManager* InManager, const FZGetLeaderboardPreviewCallback& InCallback);
+    static void GetLeaderboardPreviewRegister(FMRpcManager* InManager, const FZGetLeaderboardPreviewCallback& InCallback);
     
     /**
      * 请求排行榜数据
@@ -310,7 +310,7 @@ public:
     typedef TSharedPtr<idlezt::GetLeaderboardDataReq> FZGetLeaderboardDataReqPtr;
     typedef TSharedPtr<idlezt::GetLeaderboardDataAck> FZGetLeaderboardDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetLeaderboardDataReqPtr&, const FZGetLeaderboardDataRspPtr&)> FZGetLeaderboardDataCallback;
-    static void GetLeaderboardDataRegister(FZRpcManager* InManager, const FZGetLeaderboardDataCallback& InCallback);
+    static void GetLeaderboardDataRegister(FMRpcManager* InManager, const FZGetLeaderboardDataCallback& InCallback);
     
     /**
      * 请求单个玩家排行榜数据
@@ -319,7 +319,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleLeaderboardDataReq> FZGetRoleLeaderboardDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleLeaderboardDataAck> FZGetRoleLeaderboardDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleLeaderboardDataReqPtr&, const FZGetRoleLeaderboardDataRspPtr&)> FZGetRoleLeaderboardDataCallback;
-    static void GetRoleLeaderboardDataRegister(FZRpcManager* InManager, const FZGetRoleLeaderboardDataCallback& InCallback);
+    static void GetRoleLeaderboardDataRegister(FMRpcManager* InManager, const FZGetRoleLeaderboardDataCallback& InCallback);
     
     /**
      * 请求排行榜点赞
@@ -328,7 +328,7 @@ public:
     typedef TSharedPtr<idlezt::LeaderboardClickLikeReq> FZLeaderboardClickLikeReqPtr;
     typedef TSharedPtr<idlezt::LeaderboardClickLikeAck> FZLeaderboardClickLikeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZLeaderboardClickLikeReqPtr&, const FZLeaderboardClickLikeRspPtr&)> FZLeaderboardClickLikeCallback;
-    static void LeaderboardClickLikeRegister(FZRpcManager* InManager, const FZLeaderboardClickLikeCallback& InCallback);
+    static void LeaderboardClickLikeRegister(FMRpcManager* InManager, const FZLeaderboardClickLikeCallback& InCallback);
     
     /**
      * 请求排行榜更新留言
@@ -337,7 +337,7 @@ public:
     typedef TSharedPtr<idlezt::LeaderboardUpdateMessageReq> FZLeaderboardUpdateMessageReqPtr;
     typedef TSharedPtr<idlezt::LeaderboardUpdateMessageAck> FZLeaderboardUpdateMessageRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZLeaderboardUpdateMessageReqPtr&, const FZLeaderboardUpdateMessageRspPtr&)> FZLeaderboardUpdateMessageCallback;
-    static void LeaderboardUpdateMessageRegister(FZRpcManager* InManager, const FZLeaderboardUpdateMessageCallback& InCallback);
+    static void LeaderboardUpdateMessageRegister(FMRpcManager* InManager, const FZLeaderboardUpdateMessageCallback& InCallback);
     
     /**
      * 请求领取福泽奖励
@@ -346,7 +346,7 @@ public:
     typedef TSharedPtr<idlezt::GetFuZeRewardReq> FZGetFuZeRewardReqPtr;
     typedef TSharedPtr<idlezt::GetFuZeRewardAck> FZGetFuZeRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetFuZeRewardReqPtr&, const FZGetFuZeRewardRspPtr&)> FZGetFuZeRewardCallback;
-    static void GetFuZeRewardRegister(FZRpcManager* InManager, const FZGetFuZeRewardCallback& InCallback);
+    static void GetFuZeRewardRegister(FMRpcManager* InManager, const FZGetFuZeRewardCallback& InCallback);
     
     /**
      * 请求邮箱数据
@@ -355,7 +355,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleMailDataReq> FZGetRoleMailDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleMailDataAck> FZGetRoleMailDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleMailDataReqPtr&, const FZGetRoleMailDataRspPtr&)> FZGetRoleMailDataCallback;
-    static void GetRoleMailDataRegister(FZRpcManager* InManager, const FZGetRoleMailDataCallback& InCallback);
+    static void GetRoleMailDataRegister(FMRpcManager* InManager, const FZGetRoleMailDataCallback& InCallback);
     
     /**
      * 请求邮箱已读
@@ -364,7 +364,7 @@ public:
     typedef TSharedPtr<idlezt::ReadMailReq> FZReadMailReqPtr;
     typedef TSharedPtr<idlezt::ReadMailAck> FZReadMailRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReadMailReqPtr&, const FZReadMailRspPtr&)> FZReadMailCallback;
-    static void ReadMailRegister(FZRpcManager* InManager, const FZReadMailCallback& InCallback);
+    static void ReadMailRegister(FMRpcManager* InManager, const FZReadMailCallback& InCallback);
     
     /**
      * 请求邮箱领取
@@ -373,7 +373,7 @@ public:
     typedef TSharedPtr<idlezt::GetMailAttachmentReq> FZGetMailAttachmentReqPtr;
     typedef TSharedPtr<idlezt::GetMailAttachmentAck> FZGetMailAttachmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetMailAttachmentReqPtr&, const FZGetMailAttachmentRspPtr&)> FZGetMailAttachmentCallback;
-    static void GetMailAttachmentRegister(FZRpcManager* InManager, const FZGetMailAttachmentCallback& InCallback);
+    static void GetMailAttachmentRegister(FMRpcManager* InManager, const FZGetMailAttachmentCallback& InCallback);
     
     /**
      * 请求删除邮件
@@ -382,7 +382,7 @@ public:
     typedef TSharedPtr<idlezt::DeleteMailReq> FZDeleteMailReqPtr;
     typedef TSharedPtr<idlezt::DeleteMailAck> FZDeleteMailRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDeleteMailReqPtr&, const FZDeleteMailRspPtr&)> FZDeleteMailCallback;
-    static void DeleteMailRegister(FZRpcManager* InManager, const FZDeleteMailCallback& InCallback);
+    static void DeleteMailRegister(FMRpcManager* InManager, const FZDeleteMailCallback& InCallback);
     
     /**
      * 请求邮件一键领取
@@ -391,7 +391,7 @@ public:
     typedef TSharedPtr<idlezt::OneClickGetMailAttachmentReq> FZOneClickGetMailAttachmentReqPtr;
     typedef TSharedPtr<idlezt::OneClickGetMailAttachmentAck> FZOneClickGetMailAttachmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOneClickGetMailAttachmentReqPtr&, const FZOneClickGetMailAttachmentRspPtr&)> FZOneClickGetMailAttachmentCallback;
-    static void OneClickGetMailAttachmentRegister(FZRpcManager* InManager, const FZOneClickGetMailAttachmentCallback& InCallback);
+    static void OneClickGetMailAttachmentRegister(FMRpcManager* InManager, const FZOneClickGetMailAttachmentCallback& InCallback);
     
     /**
      * 请求邮件一键已读
@@ -400,7 +400,7 @@ public:
     typedef TSharedPtr<idlezt::OneClickReadMailReq> FZOneClickReadMailReqPtr;
     typedef TSharedPtr<idlezt::OneClickReadMailAck> FZOneClickReadMailRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOneClickReadMailReqPtr&, const FZOneClickReadMailRspPtr&)> FZOneClickReadMailCallback;
-    static void OneClickReadMailRegister(FZRpcManager* InManager, const FZOneClickReadMailCallback& InCallback);
+    static void OneClickReadMailRegister(FMRpcManager* InManager, const FZOneClickReadMailCallback& InCallback);
     
     /**
      * 请求邮件一键删除
@@ -409,7 +409,7 @@ public:
     typedef TSharedPtr<idlezt::OneClickDeleteMailReq> FZOneClickDeleteMailReqPtr;
     typedef TSharedPtr<idlezt::OneClickDeleteMailAck> FZOneClickDeleteMailRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOneClickDeleteMailReqPtr&, const FZOneClickDeleteMailRspPtr&)> FZOneClickDeleteMailCallback;
-    static void OneClickDeleteMailRegister(FZRpcManager* InManager, const FZOneClickDeleteMailCallback& InCallback);
+    static void OneClickDeleteMailRegister(FMRpcManager* InManager, const FZOneClickDeleteMailCallback& InCallback);
     
     /**
      * 解锁指定模块
@@ -418,7 +418,7 @@ public:
     typedef TSharedPtr<idlezt::UnlockFunctionModuleReq> FZUnlockFunctionModuleReqPtr;
     typedef TSharedPtr<idlezt::UnlockFunctionModuleAck> FZUnlockFunctionModuleRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUnlockFunctionModuleReqPtr&, const FZUnlockFunctionModuleRspPtr&)> FZUnlockFunctionModuleCallback;
-    static void UnlockFunctionModuleRegister(FZRpcManager* InManager, const FZUnlockFunctionModuleCallback& InCallback);
+    static void UnlockFunctionModuleRegister(FMRpcManager* InManager, const FZUnlockFunctionModuleCallback& InCallback);
     
     /**
      * 请求聊天消息
@@ -427,7 +427,7 @@ public:
     typedef TSharedPtr<idlezt::GetChatRecordReq> FZGetChatRecordReqPtr;
     typedef TSharedPtr<idlezt::GetChatRecordAck> FZGetChatRecordRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetChatRecordReqPtr&, const FZGetChatRecordRspPtr&)> FZGetChatRecordCallback;
-    static void GetChatRecordRegister(FZRpcManager* InManager, const FZGetChatRecordCallback& InCallback);
+    static void GetChatRecordRegister(FMRpcManager* InManager, const FZGetChatRecordCallback& InCallback);
     
     /**
      * 请求删除私聊消息
@@ -436,7 +436,7 @@ public:
     typedef TSharedPtr<idlezt::DeletePrivateChatRecordReq> FZDeletePrivateChatRecordReqPtr;
     typedef TSharedPtr<idlezt::DeletePrivateChatRecordAck> FZDeletePrivateChatRecordRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDeletePrivateChatRecordReqPtr&, const FZDeletePrivateChatRecordRspPtr&)> FZDeletePrivateChatRecordCallback;
-    static void DeletePrivateChatRecordRegister(FZRpcManager* InManager, const FZDeletePrivateChatRecordCallback& InCallback);
+    static void DeletePrivateChatRecordRegister(FMRpcManager* InManager, const FZDeletePrivateChatRecordCallback& InCallback);
     
     /**
      * 发送聊天消息
@@ -445,7 +445,7 @@ public:
     typedef TSharedPtr<idlezt::SendChatMessageReq> FZSendChatMessageReqPtr;
     typedef TSharedPtr<idlezt::SendChatMessageAck> FZSendChatMessageRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSendChatMessageReqPtr&, const FZSendChatMessageRspPtr&)> FZSendChatMessageCallback;
-    static void SendChatMessageRegister(FZRpcManager* InManager, const FZSendChatMessageCallback& InCallback);
+    static void SendChatMessageRegister(FMRpcManager* InManager, const FZSendChatMessageCallback& InCallback);
     
     /**
      * 请求聊天记录已读
@@ -454,7 +454,7 @@ public:
     typedef TSharedPtr<idlezt::ClearChatUnreadNumReq> FZClearChatUnreadNumReqPtr;
     typedef TSharedPtr<idlezt::ClearChatUnreadNumAck> FZClearChatUnreadNumRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZClearChatUnreadNumReqPtr&, const FZClearChatUnreadNumRspPtr&)> FZClearChatUnreadNumCallback;
-    static void ClearChatUnreadNumRegister(FZRpcManager* InManager, const FZClearChatUnreadNumCallback& InCallback);
+    static void ClearChatUnreadNumRegister(FMRpcManager* InManager, const FZClearChatUnreadNumCallback& InCallback);
     
     /**
      * 开始炼器
@@ -463,7 +463,7 @@ public:
     typedef TSharedPtr<idlezt::ForgeRefineStartReq> FZForgeRefineStartReqPtr;
     typedef TSharedPtr<idlezt::ForgeRefineStartAck> FZForgeRefineStartRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZForgeRefineStartReqPtr&, const FZForgeRefineStartRspPtr&)> FZForgeRefineStartCallback;
-    static void ForgeRefineStartRegister(FZRpcManager* InManager, const FZForgeRefineStartCallback& InCallback);
+    static void ForgeRefineStartRegister(FMRpcManager* InManager, const FZForgeRefineStartCallback& InCallback);
     
     /**
      * 终止炼器
@@ -472,7 +472,7 @@ public:
     typedef TSharedPtr<idlezt::ForgeRefineCancelReq> FZForgeRefineCancelReqPtr;
     typedef TSharedPtr<idlezt::ForgeRefineCancelAck> FZForgeRefineCancelRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZForgeRefineCancelReqPtr&, const FZForgeRefineCancelRspPtr&)> FZForgeRefineCancelCallback;
-    static void ForgeRefineCancelRegister(FZRpcManager* InManager, const FZForgeRefineCancelCallback& InCallback);
+    static void ForgeRefineCancelRegister(FMRpcManager* InManager, const FZForgeRefineCancelCallback& InCallback);
     
     /**
      * 领取炼器生成的道具
@@ -481,7 +481,7 @@ public:
     typedef TSharedPtr<idlezt::ForgeRefineExtractReq> FZForgeRefineExtractReqPtr;
     typedef TSharedPtr<idlezt::ForgeRefineExtractAck> FZForgeRefineExtractRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZForgeRefineExtractReqPtr&, const FZForgeRefineExtractRspPtr&)> FZForgeRefineExtractCallback;
-    static void ForgeRefineExtractRegister(FZRpcManager* InManager, const FZForgeRefineExtractCallback& InCallback);
+    static void ForgeRefineExtractRegister(FMRpcManager* InManager, const FZForgeRefineExtractCallback& InCallback);
     
     /**
      * 请求找回装备数据
@@ -490,7 +490,7 @@ public:
     typedef TSharedPtr<idlezt::GetForgeLostEquipmentDataReq> FZGetForgeLostEquipmentDataReqPtr;
     typedef TSharedPtr<idlezt::GetForgeLostEquipmentDataAck> FZGetForgeLostEquipmentDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetForgeLostEquipmentDataReqPtr&, const FZGetForgeLostEquipmentDataRspPtr&)> FZGetForgeLostEquipmentDataCallback;
-    static void GetForgeLostEquipmentDataRegister(FZRpcManager* InManager, const FZGetForgeLostEquipmentDataCallback& InCallback);
+    static void GetForgeLostEquipmentDataRegister(FMRpcManager* InManager, const FZGetForgeLostEquipmentDataCallback& InCallback);
     
     /**
      * 请求销毁装备
@@ -499,7 +499,7 @@ public:
     typedef TSharedPtr<idlezt::ForgeDestroyReq> FZForgeDestroyReqPtr;
     typedef TSharedPtr<idlezt::ForgeDestroyAck> FZForgeDestroyRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZForgeDestroyReqPtr&, const FZForgeDestroyRspPtr&)> FZForgeDestroyCallback;
-    static void ForgeDestroyRegister(FZRpcManager* InManager, const FZForgeDestroyCallback& InCallback);
+    static void ForgeDestroyRegister(FMRpcManager* InManager, const FZForgeDestroyCallback& InCallback);
     
     /**
      * 请求找回装备
@@ -508,7 +508,7 @@ public:
     typedef TSharedPtr<idlezt::ForgeFindBackReq> FZForgeFindBackReqPtr;
     typedef TSharedPtr<idlezt::ForgeFindBackAck> FZForgeFindBackRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZForgeFindBackReqPtr&, const FZForgeFindBackRspPtr&)> FZForgeFindBackCallback;
-    static void ForgeFindBackRegister(FZRpcManager* InManager, const FZForgeFindBackCallback& InCallback);
+    static void ForgeFindBackRegister(FMRpcManager* InManager, const FZForgeFindBackCallback& InCallback);
     
     /**
      * 请求秘药数据
@@ -517,7 +517,7 @@ public:
     typedef TSharedPtr<idlezt::RequestPillElixirDataReq> FZRequestPillElixirDataReqPtr;
     typedef TSharedPtr<idlezt::RequestPillElixirDataAck> FZRequestPillElixirDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestPillElixirDataReqPtr&, const FZRequestPillElixirDataRspPtr&)> FZRequestPillElixirDataCallback;
-    static void RequestPillElixirDataRegister(FZRpcManager* InManager, const FZRequestPillElixirDataCallback& InCallback);
+    static void RequestPillElixirDataRegister(FMRpcManager* InManager, const FZRequestPillElixirDataCallback& InCallback);
     
     /**
      * 请求单种秘药数据
@@ -526,7 +526,7 @@ public:
     typedef TSharedPtr<idlezt::GetOnePillElixirDataReq> FZGetOnePillElixirDataReqPtr;
     typedef TSharedPtr<idlezt::GetOnePillElixirDataAck> FZGetOnePillElixirDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetOnePillElixirDataReqPtr&, const FZGetOnePillElixirDataRspPtr&)> FZGetOnePillElixirDataCallback;
-    static void GetOnePillElixirDataRegister(FZRpcManager* InManager, const FZGetOnePillElixirDataCallback& InCallback);
+    static void GetOnePillElixirDataRegister(FMRpcManager* InManager, const FZGetOnePillElixirDataCallback& InCallback);
     
     /**
      * 请求修改秘药过滤配置
@@ -535,7 +535,7 @@ public:
     typedef TSharedPtr<idlezt::RequestModifyPillElixirFilterReq> FZRequestModifyPillElixirFilterReqPtr;
     typedef TSharedPtr<idlezt::RequestModifyPillElixirFilterAck> FZRequestModifyPillElixirFilterRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestModifyPillElixirFilterReqPtr&, const FZRequestModifyPillElixirFilterRspPtr&)> FZRequestModifyPillElixirFilterCallback;
-    static void RequestModifyPillElixirFilterRegister(FZRpcManager* InManager, const FZRequestModifyPillElixirFilterCallback& InCallback);
+    static void RequestModifyPillElixirFilterRegister(FMRpcManager* InManager, const FZRequestModifyPillElixirFilterCallback& InCallback);
     
     /**
      * 使用单颗秘药
@@ -544,7 +544,7 @@ public:
     typedef TSharedPtr<idlezt::UsePillElixirReq> FZUsePillElixirReqPtr;
     typedef TSharedPtr<idlezt::UsePillElixirAck> FZUsePillElixirRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUsePillElixirReqPtr&, const FZUsePillElixirRspPtr&)> FZUsePillElixirCallback;
-    static void UsePillElixirRegister(FZRpcManager* InManager, const FZUsePillElixirCallback& InCallback);
+    static void UsePillElixirRegister(FMRpcManager* InManager, const FZUsePillElixirCallback& InCallback);
     
     /**
      * 一键使用秘药
@@ -553,7 +553,7 @@ public:
     typedef TSharedPtr<idlezt::OneClickUsePillElixirReq> FZOneClickUsePillElixirReqPtr;
     typedef TSharedPtr<idlezt::OneClickUsePillElixirAck> FZOneClickUsePillElixirRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOneClickUsePillElixirReqPtr&, const FZOneClickUsePillElixirRspPtr&)> FZOneClickUsePillElixirCallback;
-    static void OneClickUsePillElixirRegister(FZRpcManager* InManager, const FZOneClickUsePillElixirCallback& InCallback);
+    static void OneClickUsePillElixirRegister(FMRpcManager* InManager, const FZOneClickUsePillElixirCallback& InCallback);
     
     /**
      * 请求秘药兑换天机石
@@ -562,7 +562,7 @@ public:
     typedef TSharedPtr<idlezt::TradePillElixirReq> FZTradePillElixirReqPtr;
     typedef TSharedPtr<idlezt::TradePillElixirAck> FZTradePillElixirRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZTradePillElixirReqPtr&, const FZTradePillElixirRspPtr&)> FZTradePillElixirCallback;
-    static void TradePillElixirRegister(FZRpcManager* InManager, const FZTradePillElixirCallback& InCallback);
+    static void TradePillElixirRegister(FMRpcManager* InManager, const FZTradePillElixirCallback& InCallback);
     
     /**
      * 请求强化装备
@@ -571,7 +571,7 @@ public:
     typedef TSharedPtr<idlezt::ReinforceEquipmentReq> FZReinforceEquipmentReqPtr;
     typedef TSharedPtr<idlezt::ReinforceEquipmentAck> FZReinforceEquipmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReinforceEquipmentReqPtr&, const FZReinforceEquipmentRspPtr&)> FZReinforceEquipmentCallback;
-    static void ReinforceEquipmentRegister(FZRpcManager* InManager, const FZReinforceEquipmentCallback& InCallback);
+    static void ReinforceEquipmentRegister(FMRpcManager* InManager, const FZReinforceEquipmentCallback& InCallback);
     
     /**
      * 请求精炼装备
@@ -580,7 +580,7 @@ public:
     typedef TSharedPtr<idlezt::RefineEquipmentReq> FZRefineEquipmentReqPtr;
     typedef TSharedPtr<idlezt::RefineEquipmentAck> FZRefineEquipmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRefineEquipmentReqPtr&, const FZRefineEquipmentRspPtr&)> FZRefineEquipmentCallback;
-    static void RefineEquipmentRegister(FZRpcManager* InManager, const FZRefineEquipmentCallback& InCallback);
+    static void RefineEquipmentRegister(FMRpcManager* InManager, const FZRefineEquipmentCallback& InCallback);
     
     /**
      * 请求器纹装备
@@ -589,7 +589,7 @@ public:
     typedef TSharedPtr<idlezt::QiWenEquipmentReq> FZQiWenEquipmentReqPtr;
     typedef TSharedPtr<idlezt::QiWenEquipmentAck> FZQiWenEquipmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZQiWenEquipmentReqPtr&, const FZQiWenEquipmentRspPtr&)> FZQiWenEquipmentCallback;
-    static void QiWenEquipmentRegister(FZRpcManager* InManager, const FZQiWenEquipmentCallback& InCallback);
+    static void QiWenEquipmentRegister(FMRpcManager* InManager, const FZQiWenEquipmentCallback& InCallback);
     
     /**
      * 请求还原装备
@@ -598,7 +598,7 @@ public:
     typedef TSharedPtr<idlezt::ResetEquipmentReq> FZResetEquipmentReqPtr;
     typedef TSharedPtr<idlezt::ResetEquipmentAck> FZResetEquipmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZResetEquipmentReqPtr&, const FZResetEquipmentRspPtr&)> FZResetEquipmentCallback;
-    static void ResetEquipmentRegister(FZRpcManager* InManager, const FZResetEquipmentCallback& InCallback);
+    static void ResetEquipmentRegister(FMRpcManager* InManager, const FZResetEquipmentCallback& InCallback);
     
     /**
      * 请求继承装备
@@ -607,7 +607,7 @@ public:
     typedef TSharedPtr<idlezt::InheritEquipmentReq> FZInheritEquipmentReqPtr;
     typedef TSharedPtr<idlezt::InheritEquipmentAck> FZInheritEquipmentRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZInheritEquipmentReqPtr&, const FZInheritEquipmentRspPtr&)> FZInheritEquipmentCallback;
-    static void InheritEquipmentRegister(FZRpcManager* InManager, const FZInheritEquipmentCallback& InCallback);
+    static void InheritEquipmentRegister(FMRpcManager* InManager, const FZInheritEquipmentCallback& InCallback);
     
     /**
      * 请求锁定/解锁道具
@@ -616,7 +616,7 @@ public:
     typedef TSharedPtr<idlezt::LockItemReq> FZLockItemReqPtr;
     typedef TSharedPtr<idlezt::LockItemAck> FZLockItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZLockItemReqPtr&, const FZLockItemRspPtr&)> FZLockItemCallback;
-    static void LockItemRegister(FZRpcManager* InManager, const FZLockItemCallback& InCallback);
+    static void LockItemRegister(FMRpcManager* InManager, const FZLockItemCallback& InCallback);
     
     /**
      * 发起切磋
@@ -625,7 +625,7 @@ public:
     typedef TSharedPtr<idlezt::SoloArenaChallengeReq> FZSoloArenaChallengeReqPtr;
     typedef TSharedPtr<idlezt::SoloArenaChallengeAck> FZSoloArenaChallengeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSoloArenaChallengeReqPtr&, const FZSoloArenaChallengeRspPtr&)> FZSoloArenaChallengeCallback;
-    static void SoloArenaChallengeRegister(FZRpcManager* InManager, const FZSoloArenaChallengeCallback& InCallback);
+    static void SoloArenaChallengeRegister(FMRpcManager* InManager, const FZSoloArenaChallengeCallback& InCallback);
     
     /**
      * 快速结束切磋
@@ -634,7 +634,7 @@ public:
     typedef TSharedPtr<idlezt::SoloArenaQuickEndReq> FZSoloArenaQuickEndReqPtr;
     typedef TSharedPtr<idlezt::SoloArenaQuickEndAck> FZSoloArenaQuickEndRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSoloArenaQuickEndReqPtr&, const FZSoloArenaQuickEndRspPtr&)> FZSoloArenaQuickEndCallback;
-    static void SoloArenaQuickEndRegister(FZRpcManager* InManager, const FZSoloArenaQuickEndCallback& InCallback);
+    static void SoloArenaQuickEndRegister(FMRpcManager* InManager, const FZSoloArenaQuickEndCallback& InCallback);
     
     /**
      * 获取切磋历史列表
@@ -643,7 +643,7 @@ public:
     typedef TSharedPtr<idlezt::GetSoloArenaHistoryListReq> FZGetSoloArenaHistoryListReqPtr;
     typedef TSharedPtr<idlezt::GetSoloArenaHistoryListAck> FZGetSoloArenaHistoryListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSoloArenaHistoryListReqPtr&, const FZGetSoloArenaHistoryListRspPtr&)> FZGetSoloArenaHistoryListCallback;
-    static void GetSoloArenaHistoryListRegister(FZRpcManager* InManager, const FZGetSoloArenaHistoryListCallback& InCallback);
+    static void GetSoloArenaHistoryListRegister(FMRpcManager* InManager, const FZGetSoloArenaHistoryListCallback& InCallback);
     
     /**
      * 挑战镇妖塔
@@ -652,7 +652,7 @@ public:
     typedef TSharedPtr<idlezt::MonsterTowerChallengeReq> FZMonsterTowerChallengeReqPtr;
     typedef TSharedPtr<idlezt::MonsterTowerChallengeAck> FZMonsterTowerChallengeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZMonsterTowerChallengeReqPtr&, const FZMonsterTowerChallengeRspPtr&)> FZMonsterTowerChallengeCallback;
-    static void MonsterTowerChallengeRegister(FZRpcManager* InManager, const FZMonsterTowerChallengeCallback& InCallback);
+    static void MonsterTowerChallengeRegister(FMRpcManager* InManager, const FZMonsterTowerChallengeCallback& InCallback);
     
     /**
      * 领取镇妖塔挂机奖励
@@ -661,7 +661,7 @@ public:
     typedef TSharedPtr<idlezt::MonsterTowerDrawIdleAwardReq> FZMonsterTowerDrawIdleAwardReqPtr;
     typedef TSharedPtr<idlezt::MonsterTowerDrawIdleAwardAck> FZMonsterTowerDrawIdleAwardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZMonsterTowerDrawIdleAwardReqPtr&, const FZMonsterTowerDrawIdleAwardRspPtr&)> FZMonsterTowerDrawIdleAwardCallback;
-    static void MonsterTowerDrawIdleAwardRegister(FZRpcManager* InManager, const FZMonsterTowerDrawIdleAwardCallback& InCallback);
+    static void MonsterTowerDrawIdleAwardRegister(FMRpcManager* InManager, const FZMonsterTowerDrawIdleAwardCallback& InCallback);
     
     /**
      * 镇妖塔闭关
@@ -670,7 +670,7 @@ public:
     typedef TSharedPtr<idlezt::MonsterTowerClosedDoorTrainingReq> FZMonsterTowerClosedDoorTrainingReqPtr;
     typedef TSharedPtr<idlezt::MonsterTowerClosedDoorTrainingAck> FZMonsterTowerClosedDoorTrainingRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZMonsterTowerClosedDoorTrainingReqPtr&, const FZMonsterTowerClosedDoorTrainingRspPtr&)> FZMonsterTowerClosedDoorTrainingCallback;
-    static void MonsterTowerClosedDoorTrainingRegister(FZRpcManager* InManager, const FZMonsterTowerClosedDoorTrainingCallback& InCallback);
+    static void MonsterTowerClosedDoorTrainingRegister(FMRpcManager* InManager, const FZMonsterTowerClosedDoorTrainingCallback& InCallback);
     
     /**
      * 镇妖塔快速结束
@@ -679,7 +679,7 @@ public:
     typedef TSharedPtr<idlezt::MonsterTowerQuickEndReq> FZMonsterTowerQuickEndReqPtr;
     typedef TSharedPtr<idlezt::MonsterTowerQuickEndAck> FZMonsterTowerQuickEndRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZMonsterTowerQuickEndReqPtr&, const FZMonsterTowerQuickEndRspPtr&)> FZMonsterTowerQuickEndCallback;
-    static void MonsterTowerQuickEndRegister(FZRpcManager* InManager, const FZMonsterTowerQuickEndCallback& InCallback);
+    static void MonsterTowerQuickEndRegister(FMRpcManager* InManager, const FZMonsterTowerQuickEndCallback& InCallback);
     
     /**
      * 镇妖塔挑战榜数据
@@ -688,7 +688,7 @@ public:
     typedef TSharedPtr<idlezt::GetMonsterTowerChallengeListReq> FZGetMonsterTowerChallengeListReqPtr;
     typedef TSharedPtr<idlezt::GetMonsterTowerChallengeListAck> FZGetMonsterTowerChallengeListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetMonsterTowerChallengeListReqPtr&, const FZGetMonsterTowerChallengeListRspPtr&)> FZGetMonsterTowerChallengeListCallback;
-    static void GetMonsterTowerChallengeListRegister(FZRpcManager* InManager, const FZGetMonsterTowerChallengeListCallback& InCallback);
+    static void GetMonsterTowerChallengeListRegister(FMRpcManager* InManager, const FZGetMonsterTowerChallengeListCallback& InCallback);
     
     /**
      * 镇妖塔挑战榜奖励
@@ -697,7 +697,7 @@ public:
     typedef TSharedPtr<idlezt::GetMonsterTowerChallengeRewardReq> FZGetMonsterTowerChallengeRewardReqPtr;
     typedef TSharedPtr<idlezt::GetMonsterTowerChallengeRewardAck> FZGetMonsterTowerChallengeRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetMonsterTowerChallengeRewardReqPtr&, const FZGetMonsterTowerChallengeRewardRspPtr&)> FZGetMonsterTowerChallengeRewardCallback;
-    static void GetMonsterTowerChallengeRewardRegister(FZRpcManager* InManager, const FZGetMonsterTowerChallengeRewardCallback& InCallback);
+    static void GetMonsterTowerChallengeRewardRegister(FMRpcManager* InManager, const FZGetMonsterTowerChallengeRewardCallback& InCallback);
     
     /**
      * 设置地图TimeDilation
@@ -706,7 +706,7 @@ public:
     typedef TSharedPtr<idlezt::SetWorldTimeDilationReq> FZSetWorldTimeDilationReqPtr;
     typedef TSharedPtr<idlezt::SetWorldTimeDilationAck> FZSetWorldTimeDilationRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetWorldTimeDilationReqPtr&, const FZSetWorldTimeDilationRspPtr&)> FZSetWorldTimeDilationCallback;
-    static void SetWorldTimeDilationRegister(FZRpcManager* InManager, const FZSetWorldTimeDilationCallback& InCallback);
+    static void SetWorldTimeDilationRegister(FMRpcManager* InManager, const FZSetWorldTimeDilationCallback& InCallback);
     
     /**
      * 设置战斗模式
@@ -715,7 +715,7 @@ public:
     typedef TSharedPtr<idlezt::SetFightModeReq> FZSetFightModeReqPtr;
     typedef TSharedPtr<idlezt::SetFightModeAck> FZSetFightModeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetFightModeReqPtr&, const FZSetFightModeRspPtr&)> FZSetFightModeCallback;
-    static void SetFightModeRegister(FZRpcManager* InManager, const FZSetFightModeCallback& InCallback);
+    static void SetFightModeRegister(FMRpcManager* InManager, const FZSetFightModeCallback& InCallback);
     
     /**
      * 升级聚灵阵
@@ -724,7 +724,7 @@ public:
     typedef TSharedPtr<idlezt::UpgradeQiCollectorReq> FZUpgradeQiCollectorReqPtr;
     typedef TSharedPtr<idlezt::UpgradeQiCollectorAck> FZUpgradeQiCollectorRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUpgradeQiCollectorReqPtr&, const FZUpgradeQiCollectorRspPtr&)> FZUpgradeQiCollectorCallback;
-    static void UpgradeQiCollectorRegister(FZRpcManager* InManager, const FZUpgradeQiCollectorCallback& InCallback);
+    static void UpgradeQiCollectorRegister(FMRpcManager* InManager, const FZUpgradeQiCollectorCallback& InCallback);
     
     /**
      * 请求玩家的游戏数值数据
@@ -733,7 +733,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleAllStatsReq> FZGetRoleAllStatsReqPtr;
     typedef TSharedPtr<idlezt::GetRoleAllStatsAck> FZGetRoleAllStatsRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleAllStatsReqPtr&, const FZGetRoleAllStatsRspPtr&)> FZGetRoleAllStatsCallback;
-    static void GetRoleAllStatsRegister(FZRpcManager* InManager, const FZGetRoleAllStatsCallback& InCallback);
+    static void GetRoleAllStatsRegister(FMRpcManager* InManager, const FZGetRoleAllStatsCallback& InCallback);
     
     /**
      * 请求玩家山河图数据
@@ -742,7 +742,7 @@ public:
     typedef TSharedPtr<idlezt::GetShanhetuDataReq> FZGetShanhetuDataReqPtr;
     typedef TSharedPtr<idlezt::GetShanhetuDataAck> FZGetShanhetuDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetShanhetuDataReqPtr&, const FZGetShanhetuDataRspPtr&)> FZGetShanhetuDataCallback;
-    static void GetShanhetuDataRegister(FZRpcManager* InManager, const FZGetShanhetuDataCallback& InCallback);
+    static void GetShanhetuDataRegister(FMRpcManager* InManager, const FZGetShanhetuDataCallback& InCallback);
     
     /**
      * 请求修改山河图使用配置
@@ -751,7 +751,7 @@ public:
     typedef TSharedPtr<idlezt::SetShanhetuUseConfigReq> FZSetShanhetuUseConfigReqPtr;
     typedef TSharedPtr<idlezt::SetShanhetuUseConfigAck> FZSetShanhetuUseConfigRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetShanhetuUseConfigReqPtr&, const FZSetShanhetuUseConfigRspPtr&)> FZSetShanhetuUseConfigCallback;
-    static void SetShanhetuUseConfigRegister(FZRpcManager* InManager, const FZSetShanhetuUseConfigCallback& InCallback);
+    static void SetShanhetuUseConfigRegister(FMRpcManager* InManager, const FZSetShanhetuUseConfigCallback& InCallback);
     
     /**
      * 请求使用山河图
@@ -760,7 +760,7 @@ public:
     typedef TSharedPtr<idlezt::UseShanhetuReq> FZUseShanhetuReqPtr;
     typedef TSharedPtr<idlezt::UseShanhetuAck> FZUseShanhetuRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUseShanhetuReqPtr&, const FZUseShanhetuRspPtr&)> FZUseShanhetuCallback;
-    static void UseShanhetuRegister(FZRpcManager* InManager, const FZUseShanhetuCallback& InCallback);
+    static void UseShanhetuRegister(FMRpcManager* InManager, const FZUseShanhetuCallback& InCallback);
     
     /**
      * 探索山河图
@@ -769,7 +769,7 @@ public:
     typedef TSharedPtr<idlezt::StepShanhetuReq> FZStepShanhetuReqPtr;
     typedef TSharedPtr<idlezt::StepShanhetuAck> FZStepShanhetuRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZStepShanhetuReqPtr&, const FZStepShanhetuRspPtr&)> FZStepShanhetuCallback;
-    static void StepShanhetuRegister(FZRpcManager* InManager, const FZStepShanhetuCallback& InCallback);
+    static void StepShanhetuRegister(FMRpcManager* InManager, const FZStepShanhetuCallback& InCallback);
     
     /**
      * 请求山河图记录
@@ -778,7 +778,7 @@ public:
     typedef TSharedPtr<idlezt::GetShanhetuUseRecordReq> FZGetShanhetuUseRecordReqPtr;
     typedef TSharedPtr<idlezt::GetShanhetuUseRecordAck> FZGetShanhetuUseRecordRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetShanhetuUseRecordReqPtr&, const FZGetShanhetuUseRecordRspPtr&)> FZGetShanhetuUseRecordCallback;
-    static void GetShanhetuUseRecordRegister(FZRpcManager* InManager, const FZGetShanhetuUseRecordCallback& InCallback);
+    static void GetShanhetuUseRecordRegister(FMRpcManager* InManager, const FZGetShanhetuUseRecordCallback& InCallback);
     
     /**
      * 设置锁定方式
@@ -787,7 +787,7 @@ public:
     typedef TSharedPtr<idlezt::SetAttackLockTypeReq> FZSetAttackLockTypeReqPtr;
     typedef TSharedPtr<idlezt::SetAttackLockTypeAck> FZSetAttackLockTypeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetAttackLockTypeReqPtr&, const FZSetAttackLockTypeRspPtr&)> FZSetAttackLockTypeCallback;
-    static void SetAttackLockTypeRegister(FZRpcManager* InManager, const FZSetAttackLockTypeCallback& InCallback);
+    static void SetAttackLockTypeRegister(FMRpcManager* InManager, const FZSetAttackLockTypeCallback& InCallback);
     
     /**
      * 设置取消锁定方式
@@ -796,7 +796,7 @@ public:
     typedef TSharedPtr<idlezt::SetAttackUnlockTypeReq> FZSetAttackUnlockTypeReqPtr;
     typedef TSharedPtr<idlezt::SetAttackUnlockTypeAck> FZSetAttackUnlockTypeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetAttackUnlockTypeReqPtr&, const FZSetAttackUnlockTypeRspPtr&)> FZSetAttackUnlockTypeCallback;
-    static void SetAttackUnlockTypeRegister(FZRpcManager* InManager, const FZSetAttackUnlockTypeCallback& InCallback);
+    static void SetAttackUnlockTypeRegister(FMRpcManager* InManager, const FZSetAttackUnlockTypeCallback& InCallback);
     
     /**
      * 设置是否显示解锁按钮
@@ -805,7 +805,7 @@ public:
     typedef TSharedPtr<idlezt::SetShowUnlockButtonReq> FZSetShowUnlockButtonReqPtr;
     typedef TSharedPtr<idlezt::SetShowUnlockButtonAck> FZSetShowUnlockButtonRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetShowUnlockButtonReqPtr&, const FZSetShowUnlockButtonRspPtr&)> FZSetShowUnlockButtonCallback;
-    static void SetShowUnlockButtonRegister(FZRpcManager* InManager, const FZSetShowUnlockButtonCallback& InCallback);
+    static void SetShowUnlockButtonRegister(FMRpcManager* InManager, const FZSetShowUnlockButtonCallback& InCallback);
     
     /**
      * 获取用户变量内容
@@ -814,7 +814,7 @@ public:
     typedef TSharedPtr<idlezt::GetUserVarReq> FZGetUserVarReqPtr;
     typedef TSharedPtr<idlezt::GetUserVarRsp> FZGetUserVarRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetUserVarReqPtr&, const FZGetUserVarRspPtr&)> FZGetUserVarCallback;
-    static void GetUserVarRegister(FZRpcManager* InManager, const FZGetUserVarCallback& InCallback);
+    static void GetUserVarRegister(FMRpcManager* InManager, const FZGetUserVarCallback& InCallback);
     
     /**
      * 获取多个用户变量内容
@@ -823,7 +823,7 @@ public:
     typedef TSharedPtr<idlezt::GetUserVarsReq> FZGetUserVarsReqPtr;
     typedef TSharedPtr<idlezt::GetUserVarsRsp> FZGetUserVarsRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetUserVarsReqPtr&, const FZGetUserVarsRspPtr&)> FZGetUserVarsCallback;
-    static void GetUserVarsRegister(FZRpcManager* InManager, const FZGetUserVarsCallback& InCallback);
+    static void GetUserVarsRegister(FMRpcManager* InManager, const FZGetUserVarsCallback& InCallback);
     
     /**
      * 获取指定秘境BOSS入侵情况
@@ -832,7 +832,7 @@ public:
     typedef TSharedPtr<idlezt::GetBossInvasionArenaSummaryReq> FZGetBossInvasionArenaSummaryReqPtr;
     typedef TSharedPtr<idlezt::GetBossInvasionArenaSummaryRsp> FZGetBossInvasionArenaSummaryRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetBossInvasionArenaSummaryReqPtr&, const FZGetBossInvasionArenaSummaryRspPtr&)> FZGetBossInvasionArenaSummaryCallback;
-    static void GetBossInvasionArenaSummaryRegister(FZRpcManager* InManager, const FZGetBossInvasionArenaSummaryCallback& InCallback);
+    static void GetBossInvasionArenaSummaryRegister(FMRpcManager* InManager, const FZGetBossInvasionArenaSummaryCallback& InCallback);
     
     /**
      * 获取指定秘境BOSS入侵伤害排行榜
@@ -841,7 +841,7 @@ public:
     typedef TSharedPtr<idlezt::GetBossInvasionArenaTopListReq> FZGetBossInvasionArenaTopListReqPtr;
     typedef TSharedPtr<idlezt::GetBossInvasionArenaTopListRsp> FZGetBossInvasionArenaTopListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetBossInvasionArenaTopListReqPtr&, const FZGetBossInvasionArenaTopListRspPtr&)> FZGetBossInvasionArenaTopListCallback;
-    static void GetBossInvasionArenaTopListRegister(FZRpcManager* InManager, const FZGetBossInvasionArenaTopListCallback& InCallback);
+    static void GetBossInvasionArenaTopListRegister(FMRpcManager* InManager, const FZGetBossInvasionArenaTopListCallback& InCallback);
     
     /**
      * 获取BOSS入侵情况
@@ -850,7 +850,7 @@ public:
     typedef TSharedPtr<idlezt::GetBossInvasionInfoReq> FZGetBossInvasionInfoReqPtr;
     typedef TSharedPtr<idlezt::GetBossInvasionInfoRsp> FZGetBossInvasionInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetBossInvasionInfoReqPtr&, const FZGetBossInvasionInfoRspPtr&)> FZGetBossInvasionInfoCallback;
-    static void GetBossInvasionInfoRegister(FZRpcManager* InManager, const FZGetBossInvasionInfoCallback& InCallback);
+    static void GetBossInvasionInfoRegister(FMRpcManager* InManager, const FZGetBossInvasionInfoCallback& InCallback);
     
     /**
      * 领取击杀奖励
@@ -859,7 +859,7 @@ public:
     typedef TSharedPtr<idlezt::DrawBossInvasionKillRewardReq> FZDrawBossInvasionKillRewardReqPtr;
     typedef TSharedPtr<idlezt::DrawBossInvasionKillRewardRsp> FZDrawBossInvasionKillRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDrawBossInvasionKillRewardReqPtr&, const FZDrawBossInvasionKillRewardRspPtr&)> FZDrawBossInvasionKillRewardCallback;
-    static void DrawBossInvasionKillRewardRegister(FZRpcManager* InManager, const FZDrawBossInvasionKillRewardCallback& InCallback);
+    static void DrawBossInvasionKillRewardRegister(FMRpcManager* InManager, const FZDrawBossInvasionKillRewardCallback& InCallback);
     
     /**
      * 领取伤害排行奖励
@@ -868,7 +868,7 @@ public:
     typedef TSharedPtr<idlezt::DrawBossInvasionDamageRewardReq> FZDrawBossInvasionDamageRewardReqPtr;
     typedef TSharedPtr<idlezt::DrawBossInvasionDamageRewardRsp> FZDrawBossInvasionDamageRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDrawBossInvasionDamageRewardReqPtr&, const FZDrawBossInvasionDamageRewardRspPtr&)> FZDrawBossInvasionDamageRewardCallback;
-    static void DrawBossInvasionDamageRewardRegister(FZRpcManager* InManager, const FZDrawBossInvasionDamageRewardCallback& InCallback);
+    static void DrawBossInvasionDamageRewardRegister(FMRpcManager* InManager, const FZDrawBossInvasionDamageRewardCallback& InCallback);
     
     /**
     */
@@ -876,7 +876,7 @@ public:
     typedef TSharedPtr<idlezt::BossInvasionTeleportReq> FZBossInvasionTeleportReqPtr;
     typedef TSharedPtr<idlezt::BossInvasionTeleportRsp> FZBossInvasionTeleportRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZBossInvasionTeleportReqPtr&, const FZBossInvasionTeleportRspPtr&)> FZBossInvasionTeleportCallback;
-    static void BossInvasionTeleportRegister(FZRpcManager* InManager, const FZBossInvasionTeleportCallback& InCallback);
+    static void BossInvasionTeleportRegister(FMRpcManager* InManager, const FZBossInvasionTeleportCallback& InCallback);
     
     /**
      * 分享自己的道具
@@ -885,7 +885,7 @@ public:
     typedef TSharedPtr<idlezt::ShareSelfItemReq> FZShareSelfItemReqPtr;
     typedef TSharedPtr<idlezt::ShareSelfItemRsp> FZShareSelfItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZShareSelfItemReqPtr&, const FZShareSelfItemRspPtr&)> FZShareSelfItemCallback;
-    static void ShareSelfItemRegister(FZRpcManager* InManager, const FZShareSelfItemCallback& InCallback);
+    static void ShareSelfItemRegister(FMRpcManager* InManager, const FZShareSelfItemCallback& InCallback);
     
     /**
      * 分享自己的多个道具
@@ -894,7 +894,7 @@ public:
     typedef TSharedPtr<idlezt::ShareSelfItemsReq> FZShareSelfItemsReqPtr;
     typedef TSharedPtr<idlezt::ShareSelfItemsRsp> FZShareSelfItemsRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZShareSelfItemsReqPtr&, const FZShareSelfItemsRspPtr&)> FZShareSelfItemsCallback;
-    static void ShareSelfItemsRegister(FZRpcManager* InManager, const FZShareSelfItemsCallback& InCallback);
+    static void ShareSelfItemsRegister(FMRpcManager* InManager, const FZShareSelfItemsCallback& InCallback);
     
     /**
      * 获取分享道具数据
@@ -903,7 +903,7 @@ public:
     typedef TSharedPtr<idlezt::GetShareItemDataReq> FZGetShareItemDataReqPtr;
     typedef TSharedPtr<idlezt::GetShareItemDataRsp> FZGetShareItemDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetShareItemDataReqPtr&, const FZGetShareItemDataRspPtr&)> FZGetShareItemDataCallback;
-    static void GetShareItemDataRegister(FZRpcManager* InManager, const FZGetShareItemDataCallback& InCallback);
+    static void GetShareItemDataRegister(FMRpcManager* InManager, const FZGetShareItemDataCallback& InCallback);
     
     /**
      * 获取玩家古宝数据
@@ -912,7 +912,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleCollectionDataReq> FZGetRoleCollectionDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleCollectionDataRsp> FZGetRoleCollectionDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleCollectionDataReqPtr&, const FZGetRoleCollectionDataRspPtr&)> FZGetRoleCollectionDataCallback;
-    static void GetRoleCollectionDataRegister(FZRpcManager* InManager, const FZGetRoleCollectionDataCallback& InCallback);
+    static void GetRoleCollectionDataRegister(FMRpcManager* InManager, const FZGetRoleCollectionDataCallback& InCallback);
     
     /**
      * 古宝操作
@@ -921,7 +921,7 @@ public:
     typedef TSharedPtr<idlezt::RoleCollectionOpReq> FZRoleCollectionOpReqPtr;
     typedef TSharedPtr<idlezt::RoleCollectionOpAck> FZRoleCollectionOpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRoleCollectionOpReqPtr&, const FZRoleCollectionOpRspPtr&)> FZRoleCollectionOpCallback;
-    static void RoleCollectionOpRegister(FZRpcManager* InManager, const FZRoleCollectionOpCallback& InCallback);
+    static void RoleCollectionOpRegister(FMRpcManager* InManager, const FZRoleCollectionOpCallback& InCallback);
     
     /**
      * 分享自己的古宝
@@ -930,7 +930,7 @@ public:
     typedef TSharedPtr<idlezt::ShareSelfRoleCollectionReq> FZShareSelfRoleCollectionReqPtr;
     typedef TSharedPtr<idlezt::ShareSelfRoleCollectionRsp> FZShareSelfRoleCollectionRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZShareSelfRoleCollectionReqPtr&, const FZShareSelfRoleCollectionRspPtr&)> FZShareSelfRoleCollectionCallback;
-    static void ShareSelfRoleCollectionRegister(FZRpcManager* InManager, const FZShareSelfRoleCollectionCallback& InCallback);
+    static void ShareSelfRoleCollectionRegister(FMRpcManager* InManager, const FZShareSelfRoleCollectionCallback& InCallback);
     
     /**
      * 获取分享古宝数据
@@ -939,7 +939,7 @@ public:
     typedef TSharedPtr<idlezt::GetShareRoleCollectionDataReq> FZGetShareRoleCollectionDataReqPtr;
     typedef TSharedPtr<idlezt::GetShareRoleCollectionDataRsp> FZGetShareRoleCollectionDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetShareRoleCollectionDataReqPtr&, const FZGetShareRoleCollectionDataRspPtr&)> FZGetShareRoleCollectionDataCallback;
-    static void GetShareRoleCollectionDataRegister(FZRpcManager* InManager, const FZGetShareRoleCollectionDataCallback& InCallback);
+    static void GetShareRoleCollectionDataRegister(FMRpcManager* InManager, const FZGetShareRoleCollectionDataCallback& InCallback);
     
     /**
      * 获取玩家福缘数据
@@ -948,7 +948,7 @@ public:
     typedef TSharedPtr<idlezt::GetChecklistDataReq> FZGetChecklistDataReqPtr;
     typedef TSharedPtr<idlezt::GetChecklistDataAck> FZGetChecklistDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetChecklistDataReqPtr&, const FZGetChecklistDataRspPtr&)> FZGetChecklistDataCallback;
-    static void GetChecklistDataRegister(FZRpcManager* InManager, const FZGetChecklistDataCallback& InCallback);
+    static void GetChecklistDataRegister(FMRpcManager* InManager, const FZGetChecklistDataCallback& InCallback);
     
     /**
      * 福缘功能操作
@@ -957,7 +957,7 @@ public:
     typedef TSharedPtr<idlezt::ChecklistOpReq> FZChecklistOpReqPtr;
     typedef TSharedPtr<idlezt::ChecklistOpAck> FZChecklistOpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZChecklistOpReqPtr&, const FZChecklistOpRspPtr&)> FZChecklistOpCallback;
-    static void ChecklistOpRegister(FZRpcManager* InManager, const FZChecklistOpCallback& InCallback);
+    static void ChecklistOpRegister(FMRpcManager* InManager, const FZChecklistOpCallback& InCallback);
     
     /**
      * 福缘任务进度更新
@@ -966,7 +966,7 @@ public:
     typedef TSharedPtr<idlezt::UpdateChecklistReq> FZUpdateChecklistReqPtr;
     typedef TSharedPtr<idlezt::UpdateChecklistAck> FZUpdateChecklistRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUpdateChecklistReqPtr&, const FZUpdateChecklistRspPtr&)> FZUpdateChecklistCallback;
-    static void UpdateChecklistRegister(FZRpcManager* InManager, const FZUpdateChecklistCallback& InCallback);
+    static void UpdateChecklistRegister(FMRpcManager* InManager, const FZUpdateChecklistCallback& InCallback);
     
     /**
      * 请求论剑台状态
@@ -975,7 +975,7 @@ public:
     typedef TSharedPtr<idlezt::GetSwordPkInfoReq> FZGetSwordPkInfoReqPtr;
     typedef TSharedPtr<idlezt::GetSwordPkInfoRsp> FZGetSwordPkInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSwordPkInfoReqPtr&, const FZGetSwordPkInfoRspPtr&)> FZGetSwordPkInfoCallback;
-    static void GetSwordPkInfoRegister(FZRpcManager* InManager, const FZGetSwordPkInfoCallback& InCallback);
+    static void GetSwordPkInfoRegister(FMRpcManager* InManager, const FZGetSwordPkInfoCallback& InCallback);
     
     /**
      * 注册论剑台
@@ -984,7 +984,7 @@ public:
     typedef TSharedPtr<idlezt::SwordPkSignupReq> FZSwordPkSignupReqPtr;
     typedef TSharedPtr<idlezt::SwordPkSignupRsp> FZSwordPkSignupRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSwordPkSignupReqPtr&, const FZSwordPkSignupRspPtr&)> FZSwordPkSignupCallback;
-    static void SwordPkSignupRegister(FZRpcManager* InManager, const FZSwordPkSignupCallback& InCallback);
+    static void SwordPkSignupRegister(FMRpcManager* InManager, const FZSwordPkSignupCallback& InCallback);
     
     /**
      * 论剑台匹配
@@ -993,7 +993,7 @@ public:
     typedef TSharedPtr<idlezt::SwordPkMatchingReq> FZSwordPkMatchingReqPtr;
     typedef TSharedPtr<idlezt::SwordPkMatchingRsp> FZSwordPkMatchingRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSwordPkMatchingReqPtr&, const FZSwordPkMatchingRspPtr&)> FZSwordPkMatchingCallback;
-    static void SwordPkMatchingRegister(FZRpcManager* InManager, const FZSwordPkMatchingCallback& InCallback);
+    static void SwordPkMatchingRegister(FMRpcManager* InManager, const FZSwordPkMatchingCallback& InCallback);
     
     /**
      * 论剑台挑战
@@ -1002,7 +1002,7 @@ public:
     typedef TSharedPtr<idlezt::SwordPkChallengeReq> FZSwordPkChallengeReqPtr;
     typedef TSharedPtr<idlezt::SwordPkChallengeRsp> FZSwordPkChallengeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSwordPkChallengeReqPtr&, const FZSwordPkChallengeRspPtr&)> FZSwordPkChallengeCallback;
-    static void SwordPkChallengeRegister(FZRpcManager* InManager, const FZSwordPkChallengeCallback& InCallback);
+    static void SwordPkChallengeRegister(FMRpcManager* InManager, const FZSwordPkChallengeCallback& InCallback);
     
     /**
      * 论剑台复仇
@@ -1011,7 +1011,7 @@ public:
     typedef TSharedPtr<idlezt::SwordPkRevengeReq> FZSwordPkRevengeReqPtr;
     typedef TSharedPtr<idlezt::SwordPkRevengeRsp> FZSwordPkRevengeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSwordPkRevengeReqPtr&, const FZSwordPkRevengeRspPtr&)> FZSwordPkRevengeCallback;
-    static void SwordPkRevengeRegister(FZRpcManager* InManager, const FZSwordPkRevengeCallback& InCallback);
+    static void SwordPkRevengeRegister(FMRpcManager* InManager, const FZSwordPkRevengeCallback& InCallback);
     
     /**
      * 获取论剑台排行榜
@@ -1020,7 +1020,7 @@ public:
     typedef TSharedPtr<idlezt::GetSwordPkTopListReq> FZGetSwordPkTopListReqPtr;
     typedef TSharedPtr<idlezt::GetSwordPkTopListRsp> FZGetSwordPkTopListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSwordPkTopListReqPtr&, const FZGetSwordPkTopListRspPtr&)> FZGetSwordPkTopListCallback;
-    static void GetSwordPkTopListRegister(FZRpcManager* InManager, const FZGetSwordPkTopListCallback& InCallback);
+    static void GetSwordPkTopListRegister(FMRpcManager* InManager, const FZGetSwordPkTopListCallback& InCallback);
     
     /**
      * 兑换英雄令
@@ -1029,7 +1029,7 @@ public:
     typedef TSharedPtr<idlezt::SwordPkExchangeHeroCardReq> FZSwordPkExchangeHeroCardReqPtr;
     typedef TSharedPtr<idlezt::SwordPkExchangeHeroCardRsp> FZSwordPkExchangeHeroCardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSwordPkExchangeHeroCardReqPtr&, const FZSwordPkExchangeHeroCardRspPtr&)> FZSwordPkExchangeHeroCardCallback;
-    static void SwordPkExchangeHeroCardRegister(FZRpcManager* InManager, const FZSwordPkExchangeHeroCardCallback& InCallback);
+    static void SwordPkExchangeHeroCardRegister(FMRpcManager* InManager, const FZSwordPkExchangeHeroCardCallback& InCallback);
     
     /**
      * 获取玩家通用道具兑换数据
@@ -1038,7 +1038,7 @@ public:
     typedef TSharedPtr<idlezt::GetCommonItemExchangeDataReq> FZGetCommonItemExchangeDataReqPtr;
     typedef TSharedPtr<idlezt::GetCommonItemExchangeDataAck> FZGetCommonItemExchangeDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetCommonItemExchangeDataReqPtr&, const FZGetCommonItemExchangeDataRspPtr&)> FZGetCommonItemExchangeDataCallback;
-    static void GetCommonItemExchangeDataRegister(FZRpcManager* InManager, const FZGetCommonItemExchangeDataCallback& InCallback);
+    static void GetCommonItemExchangeDataRegister(FMRpcManager* InManager, const FZGetCommonItemExchangeDataCallback& InCallback);
     
     /**
      * 请求兑换通用道具
@@ -1047,7 +1047,7 @@ public:
     typedef TSharedPtr<idlezt::ExchangeCommonItemReq> FZExchangeCommonItemReqPtr;
     typedef TSharedPtr<idlezt::ExchangeCommonItemAck> FZExchangeCommonItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZExchangeCommonItemReqPtr&, const FZExchangeCommonItemRspPtr&)> FZExchangeCommonItemCallback;
-    static void ExchangeCommonItemRegister(FZRpcManager* InManager, const FZExchangeCommonItemCallback& InCallback);
+    static void ExchangeCommonItemRegister(FMRpcManager* InManager, const FZExchangeCommonItemCallback& InCallback);
     
     /**
      * 请求合成通用道具
@@ -1056,7 +1056,7 @@ public:
     typedef TSharedPtr<idlezt::SynthesisCommonItemReq> FZSynthesisCommonItemReqPtr;
     typedef TSharedPtr<idlezt::SynthesisCommonItemAck> FZSynthesisCommonItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSynthesisCommonItemReqPtr&, const FZSynthesisCommonItemRspPtr&)> FZSynthesisCommonItemCallback;
-    static void SynthesisCommonItemRegister(FZRpcManager* InManager, const FZSynthesisCommonItemCallback& InCallback);
+    static void SynthesisCommonItemRegister(FMRpcManager* InManager, const FZSynthesisCommonItemCallback& InCallback);
     
     /**
      * 请求可加入宗门列表
@@ -1065,7 +1065,7 @@ public:
     typedef TSharedPtr<idlezt::GetCandidatesSeptListReq> FZGetCandidatesSeptListReqPtr;
     typedef TSharedPtr<idlezt::GetCandidatesSeptListAck> FZGetCandidatesSeptListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetCandidatesSeptListReqPtr&, const FZGetCandidatesSeptListRspPtr&)> FZGetCandidatesSeptListCallback;
-    static void GetCandidatesSeptListRegister(FZRpcManager* InManager, const FZGetCandidatesSeptListCallback& InCallback);
+    static void GetCandidatesSeptListRegister(FMRpcManager* InManager, const FZGetCandidatesSeptListCallback& InCallback);
     
     /**
      * 搜索宗门
@@ -1074,7 +1074,7 @@ public:
     typedef TSharedPtr<idlezt::SearchSeptReq> FZSearchSeptReqPtr;
     typedef TSharedPtr<idlezt::SearchSeptAck> FZSearchSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSearchSeptReqPtr&, const FZSearchSeptRspPtr&)> FZSearchSeptCallback;
-    static void SearchSeptRegister(FZRpcManager* InManager, const FZSearchSeptCallback& InCallback);
+    static void SearchSeptRegister(FMRpcManager* InManager, const FZSearchSeptCallback& InCallback);
     
     /**
      * 获取指定宗门基本信息
@@ -1083,7 +1083,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptBaseInfoReq> FZGetSeptBaseInfoReqPtr;
     typedef TSharedPtr<idlezt::GetSeptBaseInfoAck> FZGetSeptBaseInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptBaseInfoReqPtr&, const FZGetSeptBaseInfoRspPtr&)> FZGetSeptBaseInfoCallback;
-    static void GetSeptBaseInfoRegister(FZRpcManager* InManager, const FZGetSeptBaseInfoCallback& InCallback);
+    static void GetSeptBaseInfoRegister(FMRpcManager* InManager, const FZGetSeptBaseInfoCallback& InCallback);
     
     /**
      * 获取宗门成员列表
@@ -1092,7 +1092,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptMemberListReq> FZGetSeptMemberListReqPtr;
     typedef TSharedPtr<idlezt::GetSeptMemberListAck> FZGetSeptMemberListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptMemberListReqPtr&, const FZGetSeptMemberListRspPtr&)> FZGetSeptMemberListCallback;
-    static void GetSeptMemberListRegister(FZRpcManager* InManager, const FZGetSeptMemberListCallback& InCallback);
+    static void GetSeptMemberListRegister(FMRpcManager* InManager, const FZGetSeptMemberListCallback& InCallback);
     
     /**
      * 创建宗门
@@ -1101,7 +1101,7 @@ public:
     typedef TSharedPtr<idlezt::CreateSeptReq> FZCreateSeptReqPtr;
     typedef TSharedPtr<idlezt::CreateSeptAck> FZCreateSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZCreateSeptReqPtr&, const FZCreateSeptRspPtr&)> FZCreateSeptCallback;
-    static void CreateSeptRegister(FZRpcManager* InManager, const FZCreateSeptCallback& InCallback);
+    static void CreateSeptRegister(FMRpcManager* InManager, const FZCreateSeptCallback& InCallback);
     
     /**
      * 解散宗门
@@ -1110,7 +1110,7 @@ public:
     typedef TSharedPtr<idlezt::DismissSeptReq> FZDismissSeptReqPtr;
     typedef TSharedPtr<idlezt::DismissSeptAck> FZDismissSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDismissSeptReqPtr&, const FZDismissSeptRspPtr&)> FZDismissSeptCallback;
-    static void DismissSeptRegister(FZRpcManager* InManager, const FZDismissSeptCallback& InCallback);
+    static void DismissSeptRegister(FMRpcManager* InManager, const FZDismissSeptCallback& InCallback);
     
     /**
      * 离开宗门
@@ -1119,7 +1119,7 @@ public:
     typedef TSharedPtr<idlezt::ExitSeptReq> FZExitSeptReqPtr;
     typedef TSharedPtr<idlezt::ExitSeptAck> FZExitSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZExitSeptReqPtr&, const FZExitSeptRspPtr&)> FZExitSeptCallback;
-    static void ExitSeptRegister(FZRpcManager* InManager, const FZExitSeptCallback& InCallback);
+    static void ExitSeptRegister(FMRpcManager* InManager, const FZExitSeptCallback& InCallback);
     
     /**
      * 申请加入宗门
@@ -1128,7 +1128,7 @@ public:
     typedef TSharedPtr<idlezt::ApplyJoinSeptReq> FZApplyJoinSeptReqPtr;
     typedef TSharedPtr<idlezt::ApplyJoinSeptAck> FZApplyJoinSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZApplyJoinSeptReqPtr&, const FZApplyJoinSeptRspPtr&)> FZApplyJoinSeptCallback;
-    static void ApplyJoinSeptRegister(FZRpcManager* InManager, const FZApplyJoinSeptCallback& InCallback);
+    static void ApplyJoinSeptRegister(FMRpcManager* InManager, const FZApplyJoinSeptCallback& InCallback);
     
     /**
      * 审批入宗请求
@@ -1137,7 +1137,7 @@ public:
     typedef TSharedPtr<idlezt::ApproveApplySeptReq> FZApproveApplySeptReqPtr;
     typedef TSharedPtr<idlezt::ApproveApplySeptAck> FZApproveApplySeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZApproveApplySeptReqPtr&, const FZApproveApplySeptRspPtr&)> FZApproveApplySeptCallback;
-    static void ApproveApplySeptRegister(FZRpcManager* InManager, const FZApproveApplySeptCallback& InCallback);
+    static void ApproveApplySeptRegister(FMRpcManager* InManager, const FZApproveApplySeptCallback& InCallback);
     
     /**
      * 获取入宗申请列表
@@ -1146,7 +1146,7 @@ public:
     typedef TSharedPtr<idlezt::GetApplyJoinSeptListReq> FZGetApplyJoinSeptListReqPtr;
     typedef TSharedPtr<idlezt::GetApplyJoinSeptListAck> FZGetApplyJoinSeptListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetApplyJoinSeptListReqPtr&, const FZGetApplyJoinSeptListRspPtr&)> FZGetApplyJoinSeptListCallback;
-    static void GetApplyJoinSeptListRegister(FZRpcManager* InManager, const FZGetApplyJoinSeptListCallback& InCallback);
+    static void GetApplyJoinSeptListRegister(FMRpcManager* InManager, const FZGetApplyJoinSeptListCallback& InCallback);
     
     /**
      * 回复入宗邀请
@@ -1155,7 +1155,7 @@ public:
     typedef TSharedPtr<idlezt::RespondInviteSeptReq> FZRespondInviteSeptReqPtr;
     typedef TSharedPtr<idlezt::RespondInviteSeptAck> FZRespondInviteSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRespondInviteSeptReqPtr&, const FZRespondInviteSeptRspPtr&)> FZRespondInviteSeptCallback;
-    static void RespondInviteSeptRegister(FZRpcManager* InManager, const FZRespondInviteSeptCallback& InCallback);
+    static void RespondInviteSeptRegister(FMRpcManager* InManager, const FZRespondInviteSeptCallback& InCallback);
     
     /**
      * 获取邀请我入宗的宗门列表
@@ -1164,7 +1164,7 @@ public:
     typedef TSharedPtr<idlezt::GetInviteMeJoinSeptListReq> FZGetInviteMeJoinSeptListReqPtr;
     typedef TSharedPtr<idlezt::GetInviteMeJoinSeptListAck> FZGetInviteMeJoinSeptListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetInviteMeJoinSeptListReqPtr&, const FZGetInviteMeJoinSeptListRspPtr&)> FZGetInviteMeJoinSeptListCallback;
-    static void GetInviteMeJoinSeptListRegister(FZRpcManager* InManager, const FZGetInviteMeJoinSeptListCallback& InCallback);
+    static void GetInviteMeJoinSeptListRegister(FMRpcManager* InManager, const FZGetInviteMeJoinSeptListCallback& InCallback);
     
     /**
      * 获取可邀请入宗玩家列表
@@ -1173,7 +1173,7 @@ public:
     typedef TSharedPtr<idlezt::GetCandidatesInviteRoleListReq> FZGetCandidatesInviteRoleListReqPtr;
     typedef TSharedPtr<idlezt::GetCandidatesInviteRoleListAck> FZGetCandidatesInviteRoleListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetCandidatesInviteRoleListReqPtr&, const FZGetCandidatesInviteRoleListRspPtr&)> FZGetCandidatesInviteRoleListCallback;
-    static void GetCandidatesInviteRoleListRegister(FZRpcManager* InManager, const FZGetCandidatesInviteRoleListCallback& InCallback);
+    static void GetCandidatesInviteRoleListRegister(FMRpcManager* InManager, const FZGetCandidatesInviteRoleListCallback& InCallback);
     
     /**
      * 邀请加入宗门
@@ -1182,7 +1182,7 @@ public:
     typedef TSharedPtr<idlezt::InviteJoinSeptReq> FZInviteJoinSeptReqPtr;
     typedef TSharedPtr<idlezt::InviteJoinSeptAck> FZInviteJoinSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZInviteJoinSeptReqPtr&, const FZInviteJoinSeptRspPtr&)> FZInviteJoinSeptCallback;
-    static void InviteJoinSeptRegister(FZRpcManager* InManager, const FZInviteJoinSeptCallback& InCallback);
+    static void InviteJoinSeptRegister(FMRpcManager* InManager, const FZInviteJoinSeptCallback& InCallback);
     
     /**
      * 设置宗门设置
@@ -1191,7 +1191,7 @@ public:
     typedef TSharedPtr<idlezt::SetSeptSettingsReq> FZSetSeptSettingsReqPtr;
     typedef TSharedPtr<idlezt::SetSeptSettingsAck> FZSetSeptSettingsRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetSeptSettingsReqPtr&, const FZSetSeptSettingsRspPtr&)> FZSetSeptSettingsCallback;
-    static void SetSeptSettingsRegister(FZRpcManager* InManager, const FZSetSeptSettingsCallback& InCallback);
+    static void SetSeptSettingsRegister(FMRpcManager* InManager, const FZSetSeptSettingsCallback& InCallback);
     
     /**
      * 设置宗门公告
@@ -1200,7 +1200,7 @@ public:
     typedef TSharedPtr<idlezt::SetSeptAnnounceReq> FZSetSeptAnnounceReqPtr;
     typedef TSharedPtr<idlezt::SetSeptAnnounceAck> FZSetSeptAnnounceRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZSetSeptAnnounceReqPtr&, const FZSetSeptAnnounceRspPtr&)> FZSetSeptAnnounceCallback;
-    static void SetSeptAnnounceRegister(FZRpcManager* InManager, const FZSetSeptAnnounceCallback& InCallback);
+    static void SetSeptAnnounceRegister(FMRpcManager* InManager, const FZSetSeptAnnounceCallback& InCallback);
     
     /**
      * 宗门改名
@@ -1209,7 +1209,7 @@ public:
     typedef TSharedPtr<idlezt::ChangeSeptNameReq> FZChangeSeptNameReqPtr;
     typedef TSharedPtr<idlezt::ChangeSeptNameAck> FZChangeSeptNameRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZChangeSeptNameReqPtr&, const FZChangeSeptNameRspPtr&)> FZChangeSeptNameCallback;
-    static void ChangeSeptNameRegister(FZRpcManager* InManager, const FZChangeSeptNameCallback& InCallback);
+    static void ChangeSeptNameRegister(FMRpcManager* InManager, const FZChangeSeptNameCallback& InCallback);
     
     /**
      * 请求宗门日志
@@ -1218,7 +1218,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptLogReq> FZGetSeptLogReqPtr;
     typedef TSharedPtr<idlezt::GetSeptLogAck> FZGetSeptLogRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptLogReqPtr&, const FZGetSeptLogRspPtr&)> FZGetSeptLogCallback;
-    static void GetSeptLogRegister(FZRpcManager* InManager, const FZGetSeptLogCallback& InCallback);
+    static void GetSeptLogRegister(FMRpcManager* InManager, const FZGetSeptLogCallback& InCallback);
     
     /**
      * 宗门建设
@@ -1227,7 +1227,7 @@ public:
     typedef TSharedPtr<idlezt::ConstructSeptReq> FZConstructSeptReqPtr;
     typedef TSharedPtr<idlezt::ConstructSeptAck> FZConstructSeptRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZConstructSeptReqPtr&, const FZConstructSeptRspPtr&)> FZConstructSeptCallback;
-    static void ConstructSeptRegister(FZRpcManager* InManager, const FZConstructSeptCallback& InCallback);
+    static void ConstructSeptRegister(FMRpcManager* InManager, const FZConstructSeptCallback& InCallback);
     
     /**
      * 获取宗门建设记录
@@ -1236,7 +1236,7 @@ public:
     typedef TSharedPtr<idlezt::GetConstructSeptLogReq> FZGetConstructSeptLogReqPtr;
     typedef TSharedPtr<idlezt::GetConstructSeptLogAck> FZGetConstructSeptLogRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetConstructSeptLogReqPtr&, const FZGetConstructSeptLogRspPtr&)> FZGetConstructSeptLogCallback;
-    static void GetConstructSeptLogRegister(FZRpcManager* InManager, const FZGetConstructSeptLogCallback& InCallback);
+    static void GetConstructSeptLogRegister(FMRpcManager* InManager, const FZGetConstructSeptLogCallback& InCallback);
     
     /**
      * 获取角色每日已邀请入宗次数
@@ -1245,7 +1245,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptInvitedRoleDailyNumReq> FZGetSeptInvitedRoleDailyNumReqPtr;
     typedef TSharedPtr<idlezt::GetSeptInvitedRoleDailyNumAck> FZGetSeptInvitedRoleDailyNumRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptInvitedRoleDailyNumReqPtr&, const FZGetSeptInvitedRoleDailyNumRspPtr&)> FZGetSeptInvitedRoleDailyNumCallback;
-    static void GetSeptInvitedRoleDailyNumRegister(FZRpcManager* InManager, const FZGetSeptInvitedRoleDailyNumCallback& InCallback);
+    static void GetSeptInvitedRoleDailyNumRegister(FMRpcManager* InManager, const FZGetSeptInvitedRoleDailyNumCallback& InCallback);
     
     /**
      * 任命职位
@@ -1254,7 +1254,7 @@ public:
     typedef TSharedPtr<idlezt::AppointSeptPositionReq> FZAppointSeptPositionReqPtr;
     typedef TSharedPtr<idlezt::AppointSeptPositionAck> FZAppointSeptPositionRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAppointSeptPositionReqPtr&, const FZAppointSeptPositionRspPtr&)> FZAppointSeptPositionCallback;
-    static void AppointSeptPositionRegister(FZRpcManager* InManager, const FZAppointSeptPositionCallback& InCallback);
+    static void AppointSeptPositionRegister(FMRpcManager* InManager, const FZAppointSeptPositionCallback& InCallback);
     
     /**
      * 转让宗主
@@ -1263,7 +1263,7 @@ public:
     typedef TSharedPtr<idlezt::ResignSeptChairmanReq> FZResignSeptChairmanReqPtr;
     typedef TSharedPtr<idlezt::ResignSeptChairmanAck> FZResignSeptChairmanRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZResignSeptChairmanReqPtr&, const FZResignSeptChairmanRspPtr&)> FZResignSeptChairmanCallback;
-    static void ResignSeptChairmanRegister(FZRpcManager* InManager, const FZResignSeptChairmanCallback& InCallback);
+    static void ResignSeptChairmanRegister(FMRpcManager* InManager, const FZResignSeptChairmanCallback& InCallback);
     
     /**
      * 开除宗门成员
@@ -1272,7 +1272,7 @@ public:
     typedef TSharedPtr<idlezt::KickOutSeptMemberReq> FZKickOutSeptMemberReqPtr;
     typedef TSharedPtr<idlezt::KickOutSeptMemberAck> FZKickOutSeptMemberRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZKickOutSeptMemberReqPtr&, const FZKickOutSeptMemberRspPtr&)> FZKickOutSeptMemberCallback;
-    static void KickOutSeptMemberRegister(FZRpcManager* InManager, const FZKickOutSeptMemberCallback& InCallback);
+    static void KickOutSeptMemberRegister(FMRpcManager* InManager, const FZKickOutSeptMemberCallback& InCallback);
     
     /**
      * 请求玩家宗门商店数据
@@ -1281,7 +1281,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleSeptShopDataReq> FZGetRoleSeptShopDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleSeptShopDataAck> FZGetRoleSeptShopDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleSeptShopDataReqPtr&, const FZGetRoleSeptShopDataRspPtr&)> FZGetRoleSeptShopDataCallback;
-    static void GetRoleSeptShopDataRegister(FZRpcManager* InManager, const FZGetRoleSeptShopDataCallback& InCallback);
+    static void GetRoleSeptShopDataRegister(FMRpcManager* InManager, const FZGetRoleSeptShopDataCallback& InCallback);
     
     /**
      * 请求兑换宗门商店道具
@@ -1290,7 +1290,7 @@ public:
     typedef TSharedPtr<idlezt::BuySeptShopItemReq> FZBuySeptShopItemReqPtr;
     typedef TSharedPtr<idlezt::BuySeptShopItemAck> FZBuySeptShopItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZBuySeptShopItemReqPtr&, const FZBuySeptShopItemRspPtr&)> FZBuySeptShopItemCallback;
-    static void BuySeptShopItemRegister(FZRpcManager* InManager, const FZBuySeptShopItemCallback& InCallback);
+    static void BuySeptShopItemRegister(FMRpcManager* InManager, const FZBuySeptShopItemCallback& InCallback);
     
     /**
      * 请求玩家宗门事务数据
@@ -1299,7 +1299,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleSeptQuestDataReq> FZGetRoleSeptQuestDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleSeptQuestDataAck> FZGetRoleSeptQuestDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleSeptQuestDataReqPtr&, const FZGetRoleSeptQuestDataRspPtr&)> FZGetRoleSeptQuestDataCallback;
-    static void GetRoleSeptQuestDataRegister(FZRpcManager* InManager, const FZGetRoleSeptQuestDataCallback& InCallback);
+    static void GetRoleSeptQuestDataRegister(FMRpcManager* InManager, const FZGetRoleSeptQuestDataCallback& InCallback);
     
     /**
      * 玩家宗门事务操作
@@ -1308,7 +1308,7 @@ public:
     typedef TSharedPtr<idlezt::ReqRoleSeptQuestOpReq> FZReqRoleSeptQuestOpReqPtr;
     typedef TSharedPtr<idlezt::ReqRoleSeptQuestOpAck> FZReqRoleSeptQuestOpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReqRoleSeptQuestOpReqPtr&, const FZReqRoleSeptQuestOpRspPtr&)> FZReqRoleSeptQuestOpCallback;
-    static void ReqRoleSeptQuestOpRegister(FZRpcManager* InManager, const FZReqRoleSeptQuestOpCallback& InCallback);
+    static void ReqRoleSeptQuestOpRegister(FMRpcManager* InManager, const FZReqRoleSeptQuestOpCallback& InCallback);
     
     /**
      * 玩家宗门事务手动刷新
@@ -1317,7 +1317,7 @@ public:
     typedef TSharedPtr<idlezt::RefreshSeptQuestReq> FZRefreshSeptQuestReqPtr;
     typedef TSharedPtr<idlezt::RefreshSeptQuestAck> FZRefreshSeptQuestRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRefreshSeptQuestReqPtr&, const FZRefreshSeptQuestRspPtr&)> FZRefreshSeptQuestCallback;
-    static void RefreshSeptQuestRegister(FZRpcManager* InManager, const FZRefreshSeptQuestCallback& InCallback);
+    static void RefreshSeptQuestRegister(FMRpcManager* InManager, const FZRefreshSeptQuestCallback& InCallback);
     
     /**
      * 玩家宗门事务升级
@@ -1326,7 +1326,7 @@ public:
     typedef TSharedPtr<idlezt::ReqSeptQuestRankUpReq> FZReqSeptQuestRankUpReqPtr;
     typedef TSharedPtr<idlezt::ReqSeptQuestRankUpAck> FZReqSeptQuestRankUpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReqSeptQuestRankUpReqPtr&, const FZReqSeptQuestRankUpRspPtr&)> FZReqSeptQuestRankUpCallback;
-    static void ReqSeptQuestRankUpRegister(FZRpcManager* InManager, const FZReqSeptQuestRankUpCallback& InCallback);
+    static void ReqSeptQuestRankUpRegister(FMRpcManager* InManager, const FZReqSeptQuestRankUpCallback& InCallback);
     
     /**
      * 开始占据中立秘镜矿脉
@@ -1335,7 +1335,7 @@ public:
     typedef TSharedPtr<idlezt::BeginOccupySeptStoneReq> FZBeginOccupySeptStoneReqPtr;
     typedef TSharedPtr<idlezt::BeginOccupySeptStoneAck> FZBeginOccupySeptStoneRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZBeginOccupySeptStoneReqPtr&, const FZBeginOccupySeptStoneRspPtr&)> FZBeginOccupySeptStoneCallback;
-    static void BeginOccupySeptStoneRegister(FZRpcManager* InManager, const FZBeginOccupySeptStoneCallback& InCallback);
+    static void BeginOccupySeptStoneRegister(FMRpcManager* InManager, const FZBeginOccupySeptStoneCallback& InCallback);
     
     /**
      * 结束占领中立秘镜矿脉
@@ -1344,7 +1344,7 @@ public:
     typedef TSharedPtr<idlezt::EndOccupySeptStoneReq> FZEndOccupySeptStoneReqPtr;
     typedef TSharedPtr<idlezt::EndOccupySeptStoneAck> FZEndOccupySeptStoneRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZEndOccupySeptStoneReqPtr&, const FZEndOccupySeptStoneRspPtr&)> FZEndOccupySeptStoneCallback;
-    static void EndOccupySeptStoneRegister(FZRpcManager* InManager, const FZEndOccupySeptStoneCallback& InCallback);
+    static void EndOccupySeptStoneRegister(FMRpcManager* InManager, const FZEndOccupySeptStoneCallback& InCallback);
     
     /**
      * 占领宗门领地
@@ -1353,7 +1353,7 @@ public:
     typedef TSharedPtr<idlezt::OccupySeptLandReq> FZOccupySeptLandReqPtr;
     typedef TSharedPtr<idlezt::OccupySeptLandAck> FZOccupySeptLandRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOccupySeptLandReqPtr&, const FZOccupySeptLandRspPtr&)> FZOccupySeptLandCallback;
-    static void OccupySeptLandRegister(FZRpcManager* InManager, const FZOccupySeptLandCallback& InCallback);
+    static void OccupySeptLandRegister(FMRpcManager* InManager, const FZOccupySeptLandCallback& InCallback);
     
     /**
      * 获取功法数据
@@ -1362,7 +1362,7 @@ public:
     typedef TSharedPtr<idlezt::GetGongFaDataReq> FZGetGongFaDataReqPtr;
     typedef TSharedPtr<idlezt::GetGongFaDataAck> FZGetGongFaDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetGongFaDataReqPtr&, const FZGetGongFaDataRspPtr&)> FZGetGongFaDataCallback;
-    static void GetGongFaDataRegister(FZRpcManager* InManager, const FZGetGongFaDataCallback& InCallback);
+    static void GetGongFaDataRegister(FMRpcManager* InManager, const FZGetGongFaDataCallback& InCallback);
     
     /**
      * 功法操作：领悟 | 激活 | 升级
@@ -1371,7 +1371,7 @@ public:
     typedef TSharedPtr<idlezt::GongFaOpReq> FZGongFaOpReqPtr;
     typedef TSharedPtr<idlezt::GongFaOpAck> FZGongFaOpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGongFaOpReqPtr&, const FZGongFaOpRspPtr&)> FZGongFaOpCallback;
-    static void GongFaOpRegister(FZRpcManager* InManager, const FZGongFaOpCallback& InCallback);
+    static void GongFaOpRegister(FMRpcManager* InManager, const FZGongFaOpCallback& InCallback);
     
     /**
      * 激活功法圆满效果
@@ -1380,7 +1380,7 @@ public:
     typedef TSharedPtr<idlezt::ActivateGongFaMaxEffectReq> FZActivateGongFaMaxEffectReqPtr;
     typedef TSharedPtr<idlezt::ActivateGongFaMaxEffectAck> FZActivateGongFaMaxEffectRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZActivateGongFaMaxEffectReqPtr&, const FZActivateGongFaMaxEffectRspPtr&)> FZActivateGongFaMaxEffectCallback;
-    static void ActivateGongFaMaxEffectRegister(FZRpcManager* InManager, const FZActivateGongFaMaxEffectCallback& InCallback);
+    static void ActivateGongFaMaxEffectRegister(FMRpcManager* InManager, const FZActivateGongFaMaxEffectCallback& InCallback);
     
     /**
      * 获取宗门领地伤害排行榜
@@ -1389,7 +1389,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptLandDamageTopListReq> FZGetSeptLandDamageTopListReqPtr;
     typedef TSharedPtr<idlezt::GetSeptLandDamageTopListAck> FZGetSeptLandDamageTopListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptLandDamageTopListReqPtr&, const FZGetSeptLandDamageTopListRspPtr&)> FZGetSeptLandDamageTopListCallback;
-    static void GetSeptLandDamageTopListRegister(FZRpcManager* InManager, const FZGetSeptLandDamageTopListCallback& InCallback);
+    static void GetSeptLandDamageTopListRegister(FMRpcManager* InManager, const FZGetSeptLandDamageTopListCallback& InCallback);
     
     /**
      * 领取福赠奖励
@@ -1398,7 +1398,7 @@ public:
     typedef TSharedPtr<idlezt::ReceiveFuZengRewardsReq> FZReceiveFuZengRewardsReqPtr;
     typedef TSharedPtr<idlezt::ReceiveFuZengRewardsAck> FZReceiveFuZengRewardsRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReceiveFuZengRewardsReqPtr&, const FZReceiveFuZengRewardsRspPtr&)> FZReceiveFuZengRewardsCallback;
-    static void ReceiveFuZengRewardsRegister(FZRpcManager* InManager, const FZReceiveFuZengRewardsCallback& InCallback);
+    static void ReceiveFuZengRewardsRegister(FMRpcManager* InManager, const FZReceiveFuZengRewardsCallback& InCallback);
     
     /**
      * 获取福赠数据
@@ -1407,7 +1407,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleFuZengDataReq> FZGetRoleFuZengDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleFuZengDataAck> FZGetRoleFuZengDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleFuZengDataReqPtr&, const FZGetRoleFuZengDataRspPtr&)> FZGetRoleFuZengDataCallback;
-    static void GetRoleFuZengDataRegister(FZRpcManager* InManager, const FZGetRoleFuZengDataCallback& InCallback);
+    static void GetRoleFuZengDataRegister(FMRpcManager* InManager, const FZGetRoleFuZengDataCallback& InCallback);
     
     /**
      * 获取宝藏阁数据
@@ -1416,7 +1416,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleTreasuryDataReq> FZGetRoleTreasuryDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleTreasuryDataAck> FZGetRoleTreasuryDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleTreasuryDataReqPtr&, const FZGetRoleTreasuryDataRspPtr&)> FZGetRoleTreasuryDataCallback;
-    static void GetRoleTreasuryDataRegister(FZRpcManager* InManager, const FZGetRoleTreasuryDataCallback& InCallback);
+    static void GetRoleTreasuryDataRegister(FMRpcManager* InManager, const FZGetRoleTreasuryDataCallback& InCallback);
     
     /**
      * 请求开箱
@@ -1425,7 +1425,7 @@ public:
     typedef TSharedPtr<idlezt::OpenTreasuryChestReq> FZOpenTreasuryChestReqPtr;
     typedef TSharedPtr<idlezt::OpenTreasuryChestAck> FZOpenTreasuryChestRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOpenTreasuryChestReqPtr&, const FZOpenTreasuryChestRspPtr&)> FZOpenTreasuryChestCallback;
-    static void OpenTreasuryChestRegister(FZRpcManager* InManager, const FZOpenTreasuryChestCallback& InCallback);
+    static void OpenTreasuryChestRegister(FMRpcManager* InManager, const FZOpenTreasuryChestCallback& InCallback);
     
     /**
      * 请求一键全开箱
@@ -1434,7 +1434,7 @@ public:
     typedef TSharedPtr<idlezt::OneClickOpenTreasuryChestReq> FZOneClickOpenTreasuryChestReqPtr;
     typedef TSharedPtr<idlezt::OneClickOpenTreasuryChestAck> FZOneClickOpenTreasuryChestRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOneClickOpenTreasuryChestReqPtr&, const FZOneClickOpenTreasuryChestRspPtr&)> FZOneClickOpenTreasuryChestCallback;
-    static void OneClickOpenTreasuryChestRegister(FZRpcManager* InManager, const FZOneClickOpenTreasuryChestCallback& InCallback);
+    static void OneClickOpenTreasuryChestRegister(FMRpcManager* InManager, const FZOneClickOpenTreasuryChestCallback& InCallback);
     
     /**
      * 请求探索卡池
@@ -1443,7 +1443,7 @@ public:
     typedef TSharedPtr<idlezt::OpenTreasuryGachaReq> FZOpenTreasuryGachaReqPtr;
     typedef TSharedPtr<idlezt::OpenTreasuryGachaAck> FZOpenTreasuryGachaRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZOpenTreasuryGachaReqPtr&, const FZOpenTreasuryGachaRspPtr&)> FZOpenTreasuryGachaCallback;
-    static void OpenTreasuryGachaRegister(FZRpcManager* InManager, const FZOpenTreasuryGachaCallback& InCallback);
+    static void OpenTreasuryGachaRegister(FMRpcManager* InManager, const FZOpenTreasuryGachaCallback& InCallback);
     
     /**
      * 请求刷新古修商店
@@ -1452,7 +1452,7 @@ public:
     typedef TSharedPtr<idlezt::RefreshTreasuryShopReq> FZRefreshTreasuryShopReqPtr;
     typedef TSharedPtr<idlezt::RefreshTreasuryShopAck> FZRefreshTreasuryShopRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRefreshTreasuryShopReqPtr&, const FZRefreshTreasuryShopRspPtr&)> FZRefreshTreasuryShopCallback;
-    static void RefreshTreasuryShopRegister(FZRpcManager* InManager, const FZRefreshTreasuryShopCallback& InCallback);
+    static void RefreshTreasuryShopRegister(FMRpcManager* InManager, const FZRefreshTreasuryShopCallback& InCallback);
     
     /**
      * 请求古修商店中购买
@@ -1461,7 +1461,7 @@ public:
     typedef TSharedPtr<idlezt::TreasuryShopBuyReq> FZTreasuryShopBuyReqPtr;
     typedef TSharedPtr<idlezt::TreasuryShopBuyAck> FZTreasuryShopBuyRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZTreasuryShopBuyReqPtr&, const FZTreasuryShopBuyRspPtr&)> FZTreasuryShopBuyCallback;
-    static void TreasuryShopBuyRegister(FZRpcManager* InManager, const FZTreasuryShopBuyCallback& InCallback);
+    static void TreasuryShopBuyRegister(FMRpcManager* InManager, const FZTreasuryShopBuyCallback& InCallback);
     
     /**
      * 获取生涯计数器数据
@@ -1470,7 +1470,7 @@ public:
     typedef TSharedPtr<idlezt::GetLifeCounterDataReq> FZGetLifeCounterDataReqPtr;
     typedef TSharedPtr<idlezt::GetLifeCounterDataAck> FZGetLifeCounterDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetLifeCounterDataReqPtr&, const FZGetLifeCounterDataRspPtr&)> FZGetLifeCounterDataCallback;
-    static void GetLifeCounterDataRegister(FZRpcManager* InManager, const FZGetLifeCounterDataCallback& InCallback);
+    static void GetLifeCounterDataRegister(FMRpcManager* InManager, const FZGetLifeCounterDataCallback& InCallback);
     
     /**
      * 进行任务对战
@@ -1479,7 +1479,7 @@ public:
     typedef TSharedPtr<idlezt::DoQuestFightReq> FZDoQuestFightReqPtr;
     typedef TSharedPtr<idlezt::DoQuestFightAck> FZDoQuestFightRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDoQuestFightReqPtr&, const FZDoQuestFightRspPtr&)> FZDoQuestFightCallback;
-    static void DoQuestFightRegister(FZRpcManager* InManager, const FZDoQuestFightCallback& InCallback);
+    static void DoQuestFightRegister(FMRpcManager* InManager, const FZDoQuestFightCallback& InCallback);
     
     /**
      * 结束任务对战
@@ -1488,7 +1488,7 @@ public:
     typedef TSharedPtr<idlezt::QuestFightQuickEndReq> FZQuestFightQuickEndReqPtr;
     typedef TSharedPtr<idlezt::QuestFightQuickEndAck> FZQuestFightQuickEndRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZQuestFightQuickEndReqPtr&, const FZQuestFightQuickEndRspPtr&)> FZQuestFightQuickEndCallback;
-    static void QuestFightQuickEndRegister(FZRpcManager* InManager, const FZQuestFightQuickEndCallback& InCallback);
+    static void QuestFightQuickEndRegister(FMRpcManager* InManager, const FZQuestFightQuickEndCallback& InCallback);
     
     /**
      * 请求外观数据
@@ -1497,7 +1497,7 @@ public:
     typedef TSharedPtr<idlezt::GetAppearanceDataReq> FZGetAppearanceDataReqPtr;
     typedef TSharedPtr<idlezt::GetAppearanceDataAck> FZGetAppearanceDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetAppearanceDataReqPtr&, const FZGetAppearanceDataRspPtr&)> FZGetAppearanceDataCallback;
-    static void GetAppearanceDataRegister(FZRpcManager* InManager, const FZGetAppearanceDataCallback& InCallback);
+    static void GetAppearanceDataRegister(FMRpcManager* InManager, const FZGetAppearanceDataCallback& InCallback);
     
     /**
      * 请求添加外观（使用包含外观的礼包道具）
@@ -1506,7 +1506,7 @@ public:
     typedef TSharedPtr<idlezt::AppearanceAddReq> FZAppearanceAddReqPtr;
     typedef TSharedPtr<idlezt::AppearanceAddAck> FZAppearanceAddRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAppearanceAddReqPtr&, const FZAppearanceAddRspPtr&)> FZAppearanceAddCallback;
-    static void AppearanceAddRegister(FZRpcManager* InManager, const FZAppearanceAddCallback& InCallback);
+    static void AppearanceAddRegister(FMRpcManager* InManager, const FZAppearanceAddCallback& InCallback);
     
     /**
      * 请求激活外观
@@ -1515,7 +1515,7 @@ public:
     typedef TSharedPtr<idlezt::AppearanceActiveReq> FZAppearanceActiveReqPtr;
     typedef TSharedPtr<idlezt::AppearanceActiveAck> FZAppearanceActiveRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAppearanceActiveReqPtr&, const FZAppearanceActiveRspPtr&)> FZAppearanceActiveCallback;
-    static void AppearanceActiveRegister(FZRpcManager* InManager, const FZAppearanceActiveCallback& InCallback);
+    static void AppearanceActiveRegister(FMRpcManager* InManager, const FZAppearanceActiveCallback& InCallback);
     
     /**
      * 请求穿戴外观
@@ -1524,7 +1524,7 @@ public:
     typedef TSharedPtr<idlezt::AppearanceWearReq> FZAppearanceWearReqPtr;
     typedef TSharedPtr<idlezt::AppearanceWearAck> FZAppearanceWearRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAppearanceWearReqPtr&, const FZAppearanceWearRspPtr&)> FZAppearanceWearCallback;
-    static void AppearanceWearRegister(FZRpcManager* InManager, const FZAppearanceWearCallback& InCallback);
+    static void AppearanceWearRegister(FMRpcManager* InManager, const FZAppearanceWearCallback& InCallback);
     
     /**
      * 请求外观商店购买
@@ -1533,7 +1533,7 @@ public:
     typedef TSharedPtr<idlezt::AppearanceBuyReq> FZAppearanceBuyReqPtr;
     typedef TSharedPtr<idlezt::AppearanceBuyAck> FZAppearanceBuyRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAppearanceBuyReqPtr&, const FZAppearanceBuyRspPtr&)> FZAppearanceBuyCallback;
-    static void AppearanceBuyRegister(FZRpcManager* InManager, const FZAppearanceBuyCallback& InCallback);
+    static void AppearanceBuyRegister(FMRpcManager* InManager, const FZAppearanceBuyCallback& InCallback);
     
     /**
      * 请求修改外形
@@ -1542,7 +1542,7 @@ public:
     typedef TSharedPtr<idlezt::AppearanceChangeSkTypeReq> FZAppearanceChangeSkTypeReqPtr;
     typedef TSharedPtr<idlezt::AppearanceChangeSkTypeAck> FZAppearanceChangeSkTypeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAppearanceChangeSkTypeReqPtr&, const FZAppearanceChangeSkTypeRspPtr&)> FZAppearanceChangeSkTypeCallback;
-    static void AppearanceChangeSkTypeRegister(FZRpcManager* InManager, const FZAppearanceChangeSkTypeCallback& InCallback);
+    static void AppearanceChangeSkTypeRegister(FMRpcManager* InManager, const FZAppearanceChangeSkTypeCallback& InCallback);
     
     /**
      * 请求指定战斗信息
@@ -1551,7 +1551,7 @@ public:
     typedef TSharedPtr<idlezt::GetBattleHistoryInfoReq> FZGetBattleHistoryInfoReqPtr;
     typedef TSharedPtr<idlezt::GetBattleHistoryInfoAck> FZGetBattleHistoryInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetBattleHistoryInfoReqPtr&, const FZGetBattleHistoryInfoRspPtr&)> FZGetBattleHistoryInfoCallback;
-    static void GetBattleHistoryInfoRegister(FZRpcManager* InManager, const FZGetBattleHistoryInfoCallback& InCallback);
+    static void GetBattleHistoryInfoRegister(FMRpcManager* InManager, const FZGetBattleHistoryInfoCallback& InCallback);
     
     /**
      * 请求秘境探索数据
@@ -1560,7 +1560,7 @@ public:
     typedef TSharedPtr<idlezt::GetArenaCheckListDataReq> FZGetArenaCheckListDataReqPtr;
     typedef TSharedPtr<idlezt::GetArenaCheckListDataAck> FZGetArenaCheckListDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetArenaCheckListDataReqPtr&, const FZGetArenaCheckListDataRspPtr&)> FZGetArenaCheckListDataCallback;
-    static void GetArenaCheckListDataRegister(FZRpcManager* InManager, const FZGetArenaCheckListDataCallback& InCallback);
+    static void GetArenaCheckListDataRegister(FMRpcManager* InManager, const FZGetArenaCheckListDataCallback& InCallback);
     
     /**
      * 请求提交秘境探索事件
@@ -1569,7 +1569,7 @@ public:
     typedef TSharedPtr<idlezt::ArenaCheckListSubmitReq> FZArenaCheckListSubmitReqPtr;
     typedef TSharedPtr<idlezt::ArenaCheckListSubmitAck> FZArenaCheckListSubmitRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZArenaCheckListSubmitReqPtr&, const FZArenaCheckListSubmitRspPtr&)> FZArenaCheckListSubmitCallback;
-    static void ArenaCheckListSubmitRegister(FZRpcManager* InManager, const FZArenaCheckListSubmitCallback& InCallback);
+    static void ArenaCheckListSubmitRegister(FMRpcManager* InManager, const FZArenaCheckListSubmitCallback& InCallback);
     
     /**
      * 请求提交秘境探索奖励
@@ -1578,7 +1578,7 @@ public:
     typedef TSharedPtr<idlezt::ArenaCheckListRewardSubmitReq> FZArenaCheckListRewardSubmitReqPtr;
     typedef TSharedPtr<idlezt::ArenaCheckListRewardSubmitAck> FZArenaCheckListRewardSubmitRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZArenaCheckListRewardSubmitReqPtr&, const FZArenaCheckListRewardSubmitRspPtr&)> FZArenaCheckListRewardSubmitCallback;
-    static void ArenaCheckListRewardSubmitRegister(FZRpcManager* InManager, const FZArenaCheckListRewardSubmitCallback& InCallback);
+    static void ArenaCheckListRewardSubmitRegister(FMRpcManager* InManager, const FZArenaCheckListRewardSubmitCallback& InCallback);
     
     /**
      * 请求开启剿灭副本
@@ -1587,7 +1587,7 @@ public:
     typedef TSharedPtr<idlezt::DungeonKillAllChallengeReq> FZDungeonKillAllChallengeReqPtr;
     typedef TSharedPtr<idlezt::DungeonKillAllChallengeAck> FZDungeonKillAllChallengeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDungeonKillAllChallengeReqPtr&, const FZDungeonKillAllChallengeRspPtr&)> FZDungeonKillAllChallengeCallback;
-    static void DungeonKillAllChallengeRegister(FZRpcManager* InManager, const FZDungeonKillAllChallengeCallback& InCallback);
+    static void DungeonKillAllChallengeRegister(FMRpcManager* InManager, const FZDungeonKillAllChallengeCallback& InCallback);
     
     /**
      * 请求剿灭副本快速结束
@@ -1596,7 +1596,7 @@ public:
     typedef TSharedPtr<idlezt::DungeonKillAllQuickEndReq> FZDungeonKillAllQuickEndReqPtr;
     typedef TSharedPtr<idlezt::DungeonKillAllQuickEndAck> FZDungeonKillAllQuickEndRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDungeonKillAllQuickEndReqPtr&, const FZDungeonKillAllQuickEndRspPtr&)> FZDungeonKillAllQuickEndCallback;
-    static void DungeonKillAllQuickEndRegister(FZRpcManager* InManager, const FZDungeonKillAllQuickEndCallback& InCallback);
+    static void DungeonKillAllQuickEndRegister(FMRpcManager* InManager, const FZDungeonKillAllQuickEndCallback& InCallback);
     
     /**
      * 询问剿灭副本是否完成
@@ -1605,7 +1605,7 @@ public:
     typedef TSharedPtr<idlezt::DungeonKillAllDataReq> FZDungeonKillAllDataReqPtr;
     typedef TSharedPtr<idlezt::DungeonKillAllDataAck> FZDungeonKillAllDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDungeonKillAllDataReqPtr&, const FZDungeonKillAllDataRspPtr&)> FZDungeonKillAllDataCallback;
-    static void DungeonKillAllDataRegister(FZRpcManager* InManager, const FZDungeonKillAllDataCallback& InCallback);
+    static void DungeonKillAllDataRegister(FMRpcManager* InManager, const FZDungeonKillAllDataCallback& InCallback);
     
     /**
      * 药园数据请求
@@ -1614,7 +1614,7 @@ public:
     typedef TSharedPtr<idlezt::GetFarmlandDataReq> FZGetFarmlandDataReqPtr;
     typedef TSharedPtr<idlezt::GetFarmlandDataAck> FZGetFarmlandDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetFarmlandDataReqPtr&, const FZGetFarmlandDataRspPtr&)> FZGetFarmlandDataCallback;
-    static void GetFarmlandDataRegister(FZRpcManager* InManager, const FZGetFarmlandDataCallback& InCallback);
+    static void GetFarmlandDataRegister(FMRpcManager* InManager, const FZGetFarmlandDataCallback& InCallback);
     
     /**
      * 药园地块解锁
@@ -1623,7 +1623,7 @@ public:
     typedef TSharedPtr<idlezt::FarmlandUnlockBlockReq> FZFarmlandUnlockBlockReqPtr;
     typedef TSharedPtr<idlezt::FarmlandUnlockBlockAck> FZFarmlandUnlockBlockRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmlandUnlockBlockReqPtr&, const FZFarmlandUnlockBlockRspPtr&)> FZFarmlandUnlockBlockCallback;
-    static void FarmlandUnlockBlockRegister(FZRpcManager* InManager, const FZFarmlandUnlockBlockCallback& InCallback);
+    static void FarmlandUnlockBlockRegister(FMRpcManager* InManager, const FZFarmlandUnlockBlockCallback& InCallback);
     
     /**
      * 药园种植或铲除
@@ -1632,7 +1632,7 @@ public:
     typedef TSharedPtr<idlezt::FarmlandPlantSeedReq> FZFarmlandPlantSeedReqPtr;
     typedef TSharedPtr<idlezt::FarmlandPlantSeedAck> FZFarmlandPlantSeedRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmlandPlantSeedReqPtr&, const FZFarmlandPlantSeedRspPtr&)> FZFarmlandPlantSeedCallback;
-    static void FarmlandPlantSeedRegister(FZRpcManager* InManager, const FZFarmlandPlantSeedCallback& InCallback);
+    static void FarmlandPlantSeedRegister(FMRpcManager* InManager, const FZFarmlandPlantSeedCallback& InCallback);
     
     /**
      * 药园浇灌
@@ -1641,7 +1641,7 @@ public:
     typedef TSharedPtr<idlezt::FarmlandWateringReq> FZFarmlandWateringReqPtr;
     typedef TSharedPtr<idlezt::FarmlandWateringAck> FZFarmlandWateringRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmlandWateringReqPtr&, const FZFarmlandWateringRspPtr&)> FZFarmlandWateringCallback;
-    static void FarmlandWateringRegister(FZRpcManager* InManager, const FZFarmlandWateringCallback& InCallback);
+    static void FarmlandWateringRegister(FMRpcManager* InManager, const FZFarmlandWateringCallback& InCallback);
     
     /**
      * 药园催熟
@@ -1650,7 +1650,7 @@ public:
     typedef TSharedPtr<idlezt::FarmlandRipeningReq> FZFarmlandRipeningReqPtr;
     typedef TSharedPtr<idlezt::FarmlandRipeningAck> FZFarmlandRipeningRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmlandRipeningReqPtr&, const FZFarmlandRipeningRspPtr&)> FZFarmlandRipeningCallback;
-    static void FarmlandRipeningRegister(FZRpcManager* InManager, const FZFarmlandRipeningCallback& InCallback);
+    static void FarmlandRipeningRegister(FMRpcManager* InManager, const FZFarmlandRipeningCallback& InCallback);
     
     /**
      * 药园收获
@@ -1659,7 +1659,7 @@ public:
     typedef TSharedPtr<idlezt::FarmlandHarvestReq> FZFarmlandHarvestReqPtr;
     typedef TSharedPtr<idlezt::FarmlandHarvestAck> FZFarmlandHarvestRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmlandHarvestReqPtr&, const FZFarmlandHarvestRspPtr&)> FZFarmlandHarvestCallback;
-    static void FarmlandHarvestRegister(FZRpcManager* InManager, const FZFarmlandHarvestCallback& InCallback);
+    static void FarmlandHarvestRegister(FMRpcManager* InManager, const FZFarmlandHarvestCallback& InCallback);
     
     /**
      * 药园药童升级
@@ -1668,7 +1668,7 @@ public:
     typedef TSharedPtr<idlezt::FarmerRankUpReq> FZFarmerRankUpReqPtr;
     typedef TSharedPtr<idlezt::FarmerRankUpAck> FZFarmerRankUpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmerRankUpReqPtr&, const FZFarmerRankUpRspPtr&)> FZFarmerRankUpCallback;
-    static void FarmerRankUpRegister(FZRpcManager* InManager, const FZFarmerRankUpCallback& InCallback);
+    static void FarmerRankUpRegister(FMRpcManager* InManager, const FZFarmerRankUpCallback& InCallback);
     
     /**
      * 药园打理
@@ -1677,7 +1677,7 @@ public:
     typedef TSharedPtr<idlezt::FarmlandSetManagementReq> FZFarmlandSetManagementReqPtr;
     typedef TSharedPtr<idlezt::FarmlandSetManagementAck> FZFarmlandSetManagementRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFarmlandSetManagementReqPtr&, const FZFarmlandSetManagementRspPtr&)> FZFarmlandSetManagementCallback;
-    static void FarmlandSetManagementRegister(FZRpcManager* InManager, const FZFarmlandSetManagementCallback& InCallback);
+    static void FarmlandSetManagementRegister(FMRpcManager* InManager, const FZFarmlandSetManagementCallback& InCallback);
     
     /**
      * 获取药园状态，自动收获
@@ -1686,7 +1686,7 @@ public:
     typedef TSharedPtr<idlezt::UpdateFarmlandStateReq> FZUpdateFarmlandStateReqPtr;
     typedef TSharedPtr<idlezt::UpdateFarmlandStateAck> FZUpdateFarmlandStateRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZUpdateFarmlandStateReqPtr&, const FZUpdateFarmlandStateRspPtr&)> FZUpdateFarmlandStateCallback;
-    static void UpdateFarmlandStateRegister(FZRpcManager* InManager, const FZUpdateFarmlandStateCallback& InCallback);
+    static void UpdateFarmlandStateRegister(FMRpcManager* InManager, const FZUpdateFarmlandStateCallback& InCallback);
     
     /**
      * 请求开启生存副本
@@ -1695,7 +1695,7 @@ public:
     typedef TSharedPtr<idlezt::DungeonSurviveChallengeReq> FZDungeonSurviveChallengeReqPtr;
     typedef TSharedPtr<idlezt::DungeonSurviveChallengeAck> FZDungeonSurviveChallengeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDungeonSurviveChallengeReqPtr&, const FZDungeonSurviveChallengeRspPtr&)> FZDungeonSurviveChallengeCallback;
-    static void DungeonSurviveChallengeRegister(FZRpcManager* InManager, const FZDungeonSurviveChallengeCallback& InCallback);
+    static void DungeonSurviveChallengeRegister(FMRpcManager* InManager, const FZDungeonSurviveChallengeCallback& InCallback);
     
     /**
      * 请求生存副本快速结束
@@ -1704,7 +1704,7 @@ public:
     typedef TSharedPtr<idlezt::DungeonSurviveQuickEndReq> FZDungeonSurviveQuickEndReqPtr;
     typedef TSharedPtr<idlezt::DungeonSurviveQuickEndAck> FZDungeonSurviveQuickEndRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDungeonSurviveQuickEndReqPtr&, const FZDungeonSurviveQuickEndRspPtr&)> FZDungeonSurviveQuickEndCallback;
-    static void DungeonSurviveQuickEndRegister(FZRpcManager* InManager, const FZDungeonSurviveQuickEndCallback& InCallback);
+    static void DungeonSurviveQuickEndRegister(FMRpcManager* InManager, const FZDungeonSurviveQuickEndCallback& InCallback);
     
     /**
      * 询问生存副本是否完成
@@ -1713,7 +1713,7 @@ public:
     typedef TSharedPtr<idlezt::DungeonSurviveDataReq> FZDungeonSurviveDataReqPtr;
     typedef TSharedPtr<idlezt::DungeonSurviveDataAck> FZDungeonSurviveDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDungeonSurviveDataReqPtr&, const FZDungeonSurviveDataRspPtr&)> FZDungeonSurviveDataCallback;
-    static void DungeonSurviveDataRegister(FZRpcManager* InManager, const FZDungeonSurviveDataCallback& InCallback);
+    static void DungeonSurviveDataRegister(FMRpcManager* InManager, const FZDungeonSurviveDataCallback& InCallback);
     
     /**
      * 神通一键重置CD请求
@@ -1722,7 +1722,7 @@ public:
     typedef TSharedPtr<idlezt::GetRevertAllSkillCoolDownReq> FZGetRevertAllSkillCoolDownReqPtr;
     typedef TSharedPtr<idlezt::GetRevertAllSkillCoolDownAck> FZGetRevertAllSkillCoolDownRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRevertAllSkillCoolDownReqPtr&, const FZGetRevertAllSkillCoolDownRspPtr&)> FZGetRevertAllSkillCoolDownCallback;
-    static void GetRevertAllSkillCoolDownRegister(FZRpcManager* InManager, const FZGetRevertAllSkillCoolDownCallback& InCallback);
+    static void GetRevertAllSkillCoolDownRegister(FMRpcManager* InManager, const FZGetRevertAllSkillCoolDownCallback& InCallback);
     
     /**
      * 获取道友功能数据
@@ -1731,7 +1731,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleFriendDataReq> FZGetRoleFriendDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleFriendDataAck> FZGetRoleFriendDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleFriendDataReqPtr&, const FZGetRoleFriendDataRspPtr&)> FZGetRoleFriendDataCallback;
-    static void GetRoleFriendDataRegister(FZRpcManager* InManager, const FZGetRoleFriendDataCallback& InCallback);
+    static void GetRoleFriendDataRegister(FMRpcManager* InManager, const FZGetRoleFriendDataCallback& InCallback);
     
     /**
      * 发起 好友申请/或移除好友 拉黑/或移除拉黑 成为道侣或解除道侣
@@ -1740,7 +1740,7 @@ public:
     typedef TSharedPtr<idlezt::FriendOpReq> FZFriendOpReqPtr;
     typedef TSharedPtr<idlezt::FriendOpAck> FZFriendOpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFriendOpReqPtr&, const FZFriendOpRspPtr&)> FZFriendOpCallback;
-    static void FriendOpRegister(FZRpcManager* InManager, const FZFriendOpCallback& InCallback);
+    static void FriendOpRegister(FMRpcManager* InManager, const FZFriendOpCallback& InCallback);
     
     /**
      * 处理好友申请
@@ -1749,7 +1749,7 @@ public:
     typedef TSharedPtr<idlezt::ReplyFriendRequestReq> FZReplyFriendRequestReqPtr;
     typedef TSharedPtr<idlezt::ReplyFriendRequestAck> FZReplyFriendRequestRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReplyFriendRequestReqPtr&, const FZReplyFriendRequestRspPtr&)> FZReplyFriendRequestCallback;
-    static void ReplyFriendRequestRegister(FZRpcManager* InManager, const FZReplyFriendRequestCallback& InCallback);
+    static void ReplyFriendRequestRegister(FMRpcManager* InManager, const FZReplyFriendRequestCallback& InCallback);
     
     /**
      * 查找玩家（道友功能）
@@ -1758,7 +1758,7 @@ public:
     typedef TSharedPtr<idlezt::FriendSearchRoleInfoReq> FZFriendSearchRoleInfoReqPtr;
     typedef TSharedPtr<idlezt::FriendSearchRoleInfoAck> FZFriendSearchRoleInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZFriendSearchRoleInfoReqPtr&, const FZFriendSearchRoleInfoRspPtr&)> FZFriendSearchRoleInfoCallback;
-    static void FriendSearchRoleInfoRegister(FZRpcManager* InManager, const FZFriendSearchRoleInfoCallback& InCallback);
+    static void FriendSearchRoleInfoRegister(FMRpcManager* InManager, const FZFriendSearchRoleInfoCallback& InCallback);
     
     /**
      * 请求玩家信息缓存(Todo 用于聊天查找，可能需要整合)
@@ -1767,7 +1767,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleInfoCacheReq> FZGetRoleInfoCacheReqPtr;
     typedef TSharedPtr<idlezt::GetRoleInfoCacheAck> FZGetRoleInfoCacheRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleInfoCacheReqPtr&, const FZGetRoleInfoCacheRspPtr&)> FZGetRoleInfoCacheCallback;
-    static void GetRoleInfoCacheRegister(FZRpcManager* InManager, const FZGetRoleInfoCacheCallback& InCallback);
+    static void GetRoleInfoCacheRegister(FMRpcManager* InManager, const FZGetRoleInfoCacheCallback& InCallback);
     
     /**
      * 请求玩家个人信息(Todo 老接口，可能需要整合)
@@ -1776,7 +1776,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleInfoReq> FZGetRoleInfoReqPtr;
     typedef TSharedPtr<idlezt::GetRoleInfoAck> FZGetRoleInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleInfoReqPtr&, const FZGetRoleInfoRspPtr&)> FZGetRoleInfoCallback;
-    static void GetRoleInfoRegister(FZRpcManager* InManager, const FZGetRoleInfoCallback& InCallback);
+    static void GetRoleInfoRegister(FMRpcManager* InManager, const FZGetRoleInfoCallback& InCallback);
     
     /**
      * 获取化身数据
@@ -1785,7 +1785,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleAvatarDataReq> FZGetRoleAvatarDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleAvatarDataAck> FZGetRoleAvatarDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleAvatarDataReqPtr&, const FZGetRoleAvatarDataRspPtr&)> FZGetRoleAvatarDataCallback;
-    static void GetRoleAvatarDataRegister(FZRpcManager* InManager, const FZGetRoleAvatarDataCallback& InCallback);
+    static void GetRoleAvatarDataRegister(FMRpcManager* InManager, const FZGetRoleAvatarDataCallback& InCallback);
     
     /**
      * 派遣化身
@@ -1794,7 +1794,7 @@ public:
     typedef TSharedPtr<idlezt::DispatchAvatarReq> FZDispatchAvatarReqPtr;
     typedef TSharedPtr<idlezt::DispatchAvatarAck> FZDispatchAvatarRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZDispatchAvatarReqPtr&, const FZDispatchAvatarRspPtr&)> FZDispatchAvatarCallback;
-    static void DispatchAvatarRegister(FZRpcManager* InManager, const FZDispatchAvatarCallback& InCallback);
+    static void DispatchAvatarRegister(FMRpcManager* InManager, const FZDispatchAvatarCallback& InCallback);
     
     /**
      * 化身升级
@@ -1803,7 +1803,7 @@ public:
     typedef TSharedPtr<idlezt::AvatarRankUpReq> FZAvatarRankUpReqPtr;
     typedef TSharedPtr<idlezt::AvatarRankUpAck> FZAvatarRankUpRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAvatarRankUpReqPtr&, const FZAvatarRankUpRspPtr&)> FZAvatarRankUpCallback;
-    static void AvatarRankUpRegister(FZRpcManager* InManager, const FZAvatarRankUpCallback& InCallback);
+    static void AvatarRankUpRegister(FMRpcManager* InManager, const FZAvatarRankUpCallback& InCallback);
     
     /**
      * 收获化身包裹道具
@@ -1812,7 +1812,7 @@ public:
     typedef TSharedPtr<idlezt::ReceiveAvatarTempPackageReq> FZReceiveAvatarTempPackageReqPtr;
     typedef TSharedPtr<idlezt::ReceiveAvatarTempPackageAck> FZReceiveAvatarTempPackageRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReceiveAvatarTempPackageReqPtr&, const FZReceiveAvatarTempPackageRspPtr&)> FZReceiveAvatarTempPackageCallback;
-    static void ReceiveAvatarTempPackageRegister(FZRpcManager* InManager, const FZReceiveAvatarTempPackageCallback& InCallback);
+    static void ReceiveAvatarTempPackageRegister(FMRpcManager* InManager, const FZReceiveAvatarTempPackageCallback& InCallback);
     
     /**
      * 获取秘境探索统计数据
@@ -1821,7 +1821,7 @@ public:
     typedef TSharedPtr<idlezt::GetArenaExplorationStatisticalDataReq> FZGetArenaExplorationStatisticalDataReqPtr;
     typedef TSharedPtr<idlezt::GetArenaExplorationStatisticalDataAck> FZGetArenaExplorationStatisticalDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetArenaExplorationStatisticalDataReqPtr&, const FZGetArenaExplorationStatisticalDataRspPtr&)> FZGetArenaExplorationStatisticalDataCallback;
-    static void GetArenaExplorationStatisticalDataRegister(FZRpcManager* InManager, const FZGetArenaExplorationStatisticalDataCallback& InCallback);
+    static void GetArenaExplorationStatisticalDataRegister(FMRpcManager* InManager, const FZGetArenaExplorationStatisticalDataCallback& InCallback);
     
     /**
      * 获取角色传记数据
@@ -1830,7 +1830,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleBiographyDataReq> FZGetRoleBiographyDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleBiographyDataAck> FZGetRoleBiographyDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleBiographyDataReqPtr&, const FZGetRoleBiographyDataRspPtr&)> FZGetRoleBiographyDataCallback;
-    static void GetRoleBiographyDataRegister(FZRpcManager* InManager, const FZGetRoleBiographyDataCallback& InCallback);
+    static void GetRoleBiographyDataRegister(FMRpcManager* InManager, const FZGetRoleBiographyDataCallback& InCallback);
     
     /**
      * 请求领取传记奖励
@@ -1839,7 +1839,7 @@ public:
     typedef TSharedPtr<idlezt::ReceiveBiographyItemReq> FZReceiveBiographyItemReqPtr;
     typedef TSharedPtr<idlezt::ReceiveBiographyItemAck> FZReceiveBiographyItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReceiveBiographyItemReqPtr&, const FZReceiveBiographyItemRspPtr&)> FZReceiveBiographyItemCallback;
-    static void ReceiveBiographyItemRegister(FZRpcManager* InManager, const FZReceiveBiographyItemCallback& InCallback);
+    static void ReceiveBiographyItemRegister(FMRpcManager* InManager, const FZReceiveBiographyItemCallback& InCallback);
     
     /**
      * 请求领取史记数据
@@ -1848,7 +1848,7 @@ public:
     typedef TSharedPtr<idlezt::GetBiographyEventDataReq> FZGetBiographyEventDataReqPtr;
     typedef TSharedPtr<idlezt::GetBiographyEventDataAck> FZGetBiographyEventDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetBiographyEventDataReqPtr&, const FZGetBiographyEventDataRspPtr&)> FZGetBiographyEventDataCallback;
-    static void GetBiographyEventDataRegister(FZRpcManager* InManager, const FZGetBiographyEventDataCallback& InCallback);
+    static void GetBiographyEventDataRegister(FMRpcManager* InManager, const FZGetBiographyEventDataCallback& InCallback);
     
     /**
      * 请求领取史记奖励
@@ -1857,7 +1857,7 @@ public:
     typedef TSharedPtr<idlezt::ReceiveBiographyEventItemReq> FZReceiveBiographyEventItemReqPtr;
     typedef TSharedPtr<idlezt::ReceiveBiographyEventItemAck> FZReceiveBiographyEventItemRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZReceiveBiographyEventItemReqPtr&, const FZReceiveBiographyEventItemRspPtr&)> FZReceiveBiographyEventItemCallback;
-    static void ReceiveBiographyEventItemRegister(FZRpcManager* InManager, const FZReceiveBiographyEventItemCallback& InCallback);
+    static void ReceiveBiographyEventItemRegister(FMRpcManager* InManager, const FZReceiveBiographyEventItemCallback& InCallback);
     
     /**
      * 请求上传纪念日志
@@ -1866,7 +1866,7 @@ public:
     typedef TSharedPtr<idlezt::AddBiographyRoleLogReq> FZAddBiographyRoleLogReqPtr;
     typedef TSharedPtr<idlezt::AddBiographyRoleLogAck> FZAddBiographyRoleLogRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZAddBiographyRoleLogReqPtr&, const FZAddBiographyRoleLogRspPtr&)> FZAddBiographyRoleLogCallback;
-    static void AddBiographyRoleLogRegister(FZRpcManager* InManager, const FZAddBiographyRoleLogCallback& InCallback);
+    static void AddBiographyRoleLogRegister(FMRpcManager* InManager, const FZAddBiographyRoleLogCallback& InCallback);
     
     /**
      * 请求进入镇魔深渊
@@ -1875,7 +1875,7 @@ public:
     typedef TSharedPtr<idlezt::RequestEnterSeptDemonWorldReq> FZRequestEnterSeptDemonWorldReqPtr;
     typedef TSharedPtr<idlezt::RequestEnterSeptDemonWorldAck> FZRequestEnterSeptDemonWorldRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestEnterSeptDemonWorldReqPtr&, const FZRequestEnterSeptDemonWorldRspPtr&)> FZRequestEnterSeptDemonWorldCallback;
-    static void RequestEnterSeptDemonWorldRegister(FZRpcManager* InManager, const FZRequestEnterSeptDemonWorldCallback& InCallback);
+    static void RequestEnterSeptDemonWorldRegister(FMRpcManager* InManager, const FZRequestEnterSeptDemonWorldCallback& InCallback);
     
     /**
      * 请求退出镇魔深渊
@@ -1884,7 +1884,7 @@ public:
     typedef TSharedPtr<idlezt::RequestLeaveSeptDemonWorldReq> FZRequestLeaveSeptDemonWorldReqPtr;
     typedef TSharedPtr<idlezt::RequestLeaveSeptDemonWorldAck> FZRequestLeaveSeptDemonWorldRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestLeaveSeptDemonWorldReqPtr&, const FZRequestLeaveSeptDemonWorldRspPtr&)> FZRequestLeaveSeptDemonWorldCallback;
-    static void RequestLeaveSeptDemonWorldRegister(FZRpcManager* InManager, const FZRequestLeaveSeptDemonWorldCallback& InCallback);
+    static void RequestLeaveSeptDemonWorldRegister(FMRpcManager* InManager, const FZRequestLeaveSeptDemonWorldCallback& InCallback);
     
     /**
      * 请求镇魔深渊相关数据
@@ -1893,7 +1893,7 @@ public:
     typedef TSharedPtr<idlezt::RequestSeptDemonWorldDataReq> FZRequestSeptDemonWorldDataReqPtr;
     typedef TSharedPtr<idlezt::RequestSeptDemonWorldDataAck> FZRequestSeptDemonWorldDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestSeptDemonWorldDataReqPtr&, const FZRequestSeptDemonWorldDataRspPtr&)> FZRequestSeptDemonWorldDataCallback;
-    static void RequestSeptDemonWorldDataRegister(FZRpcManager* InManager, const FZRequestSeptDemonWorldDataCallback& InCallback);
+    static void RequestSeptDemonWorldDataRegister(FMRpcManager* InManager, const FZRequestSeptDemonWorldDataCallback& InCallback);
     
     /**
      * 请求在镇魔深渊待的最后时间点
@@ -1902,7 +1902,7 @@ public:
     typedef TSharedPtr<idlezt::RequestInSeptDemonWorldEndTimeReq> FZRequestInSeptDemonWorldEndTimeReqPtr;
     typedef TSharedPtr<idlezt::RequestInSeptDemonWorldEndTimeAck> FZRequestInSeptDemonWorldEndTimeRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZRequestInSeptDemonWorldEndTimeReqPtr&, const FZRequestInSeptDemonWorldEndTimeRspPtr&)> FZRequestInSeptDemonWorldEndTimeCallback;
-    static void RequestInSeptDemonWorldEndTimeRegister(FZRpcManager* InManager, const FZRequestInSeptDemonWorldEndTimeCallback& InCallback);
+    static void RequestInSeptDemonWorldEndTimeRegister(FMRpcManager* InManager, const FZRequestInSeptDemonWorldEndTimeCallback& InCallback);
     
     /**
      * 请求镇魔深渊待伤害排行榜
@@ -1911,7 +1911,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptDemonDamageTopListReq> FZGetSeptDemonDamageTopListReqPtr;
     typedef TSharedPtr<idlezt::GetSeptDemonDamageTopListAck> FZGetSeptDemonDamageTopListRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptDemonDamageTopListReqPtr&, const FZGetSeptDemonDamageTopListRspPtr&)> FZGetSeptDemonDamageTopListCallback;
-    static void GetSeptDemonDamageTopListRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageTopListCallback& InCallback);
+    static void GetSeptDemonDamageTopListRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageTopListCallback& InCallback);
     
     /**
      * 请求镇魔深渊待玩家伤害预览信息
@@ -1920,7 +1920,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptDemonDamageSelfSummaryReq> FZGetSeptDemonDamageSelfSummaryReqPtr;
     typedef TSharedPtr<idlezt::GetSeptDemonDamageSelfSummaryAck> FZGetSeptDemonDamageSelfSummaryRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptDemonDamageSelfSummaryReqPtr&, const FZGetSeptDemonDamageSelfSummaryRspPtr&)> FZGetSeptDemonDamageSelfSummaryCallback;
-    static void GetSeptDemonDamageSelfSummaryRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageSelfSummaryCallback& InCallback);
+    static void GetSeptDemonDamageSelfSummaryRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageSelfSummaryCallback& InCallback);
     
     /**
      * 请求镇魔深渊待宝库奖励剩余抽奖次数
@@ -1929,7 +1929,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptDemonStageRewardNumReq> FZGetSeptDemonStageRewardNumReqPtr;
     typedef TSharedPtr<idlezt::GetSeptDemonStageRewardNumAck> FZGetSeptDemonStageRewardNumRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptDemonStageRewardNumReqPtr&, const FZGetSeptDemonStageRewardNumRspPtr&)> FZGetSeptDemonStageRewardNumCallback;
-    static void GetSeptDemonStageRewardNumRegister(FZRpcManager* InManager, const FZGetSeptDemonStageRewardNumCallback& InCallback);
+    static void GetSeptDemonStageRewardNumRegister(FMRpcManager* InManager, const FZGetSeptDemonStageRewardNumCallback& InCallback);
     
     /**
      * 请求镇魔深渊待宝库奖励
@@ -1938,7 +1938,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptDemonStageRewardReq> FZGetSeptDemonStageRewardReqPtr;
     typedef TSharedPtr<idlezt::GetSeptDemonStageRewardAck> FZGetSeptDemonStageRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptDemonStageRewardReqPtr&, const FZGetSeptDemonStageRewardRspPtr&)> FZGetSeptDemonStageRewardCallback;
-    static void GetSeptDemonStageRewardRegister(FZRpcManager* InManager, const FZGetSeptDemonStageRewardCallback& InCallback);
+    static void GetSeptDemonStageRewardRegister(FMRpcManager* InManager, const FZGetSeptDemonStageRewardCallback& InCallback);
     
     /**
      * 请求镇魔深渊挑战奖励列表信息
@@ -1947,7 +1947,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptDemonDamageRewardsInfoReq> FZGetSeptDemonDamageRewardsInfoReqPtr;
     typedef TSharedPtr<idlezt::GetSeptDemonDamageRewardsInfoAck> FZGetSeptDemonDamageRewardsInfoRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptDemonDamageRewardsInfoReqPtr&, const FZGetSeptDemonDamageRewardsInfoRspPtr&)> FZGetSeptDemonDamageRewardsInfoCallback;
-    static void GetSeptDemonDamageRewardsInfoRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageRewardsInfoCallback& InCallback);
+    static void GetSeptDemonDamageRewardsInfoRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageRewardsInfoCallback& InCallback);
     
     /**
      * 请求镇魔深渊待挑战奖励
@@ -1956,7 +1956,7 @@ public:
     typedef TSharedPtr<idlezt::GetSeptDemonDamageRewardReq> FZGetSeptDemonDamageRewardReqPtr;
     typedef TSharedPtr<idlezt::GetSeptDemonDamageRewardAck> FZGetSeptDemonDamageRewardRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetSeptDemonDamageRewardReqPtr&, const FZGetSeptDemonDamageRewardRspPtr&)> FZGetSeptDemonDamageRewardCallback;
-    static void GetSeptDemonDamageRewardRegister(FZRpcManager* InManager, const FZGetSeptDemonDamageRewardCallback& InCallback);
+    static void GetSeptDemonDamageRewardRegister(FMRpcManager* InManager, const FZGetSeptDemonDamageRewardCallback& InCallback);
     
     /**
      * 请求仙阁商店数据
@@ -1965,7 +1965,7 @@ public:
     typedef TSharedPtr<idlezt::GetRoleVipShopDataReq> FZGetRoleVipShopDataReqPtr;
     typedef TSharedPtr<idlezt::GetRoleVipShopDataAck> FZGetRoleVipShopDataRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZGetRoleVipShopDataReqPtr&, const FZGetRoleVipShopDataRspPtr&)> FZGetRoleVipShopDataCallback;
-    static void GetRoleVipShopDataRegister(FZRpcManager* InManager, const FZGetRoleVipShopDataCallback& InCallback);
+    static void GetRoleVipShopDataRegister(FMRpcManager* InManager, const FZGetRoleVipShopDataCallback& InCallback);
     
     /**
      * 请求仙阁商店购买
@@ -1974,7 +1974,7 @@ public:
     typedef TSharedPtr<idlezt::VipShopBuyReq> FZVipShopBuyReqPtr;
     typedef TSharedPtr<idlezt::VipShopBuyAck> FZVipShopBuyRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZVipShopBuyReqPtr&, const FZVipShopBuyRspPtr&)> FZVipShopBuyCallback;
-    static void VipShopBuyRegister(FZRpcManager* InManager, const FZVipShopBuyCallback& InCallback);
+    static void VipShopBuyRegister(FMRpcManager* InManager, const FZVipShopBuyCallback& InCallback);
     
 
 };

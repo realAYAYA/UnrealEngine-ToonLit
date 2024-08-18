@@ -1,8 +1,8 @@
 #include "GameRpcStub.h"
 #include "GameRpcInterface.h"
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
-void UZGameRpcStub::Setup(FZRpcManager* InManager, const FZPbConnectionPtr& InConn)
+void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InConn)
 {
     if (Manager)
     {

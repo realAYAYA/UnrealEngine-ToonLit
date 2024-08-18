@@ -1,4 +1,4 @@
-// PB2BP: BP_FILE_NAME=ZPbCommon
+// PB2BP: BP_FILE_NAME=PbCommon
 syntax = "proto3";
 package idlepb;
 

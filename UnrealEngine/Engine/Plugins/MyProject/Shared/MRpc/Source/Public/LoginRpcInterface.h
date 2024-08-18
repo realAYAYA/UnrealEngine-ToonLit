@@ -6,13 +6,13 @@
 #include "login.pb.h"
 
 #include "ZTools.h"
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
 class ZRPC_API FZLoginRpcInterface
 {
 public:
 
-    FZLoginRpcInterface(FZRpcManager* InManager);
+    FZLoginRpcInterface(FMRpcManager* InManager);
     virtual ~FZLoginRpcInterface();
 
     const TCHAR* GetName() const { return TEXT("LoginRpc"); }  
@@ -25,7 +25,7 @@ public:
     typedef TSharedPtr<idlezt::LoginAccountReq> FZLoginAccountReqPtr;
     typedef TSharedPtr<idlezt::LoginAccountAck> FZLoginAccountRspPtr;
     typedef TFunction<void(FZPbMessageSupportBase*, const FZLoginAccountReqPtr&, const FZLoginAccountRspPtr&)> FZLoginAccountCallback;
-    static void LoginAccountRegister(FZRpcManager* InManager, const FZLoginAccountCallback& InCallback);
+    static void LoginAccountRegister(FMRpcManager* InManager, const FZLoginAccountCallback& InCallback);
     
 
 };

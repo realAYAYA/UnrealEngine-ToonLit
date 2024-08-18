@@ -1,8 +1,8 @@
 #include "LoginRpcStub.h"
 #include "LoginRpcInterface.h"
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
-void UZLoginRpcStub::Setup(FZRpcManager* InManager, const FZPbConnectionPtr& InConn)
+void UZLoginRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InConn)
 {
     if (Manager)
     {
