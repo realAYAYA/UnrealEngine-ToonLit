@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "ZProtocolModule.h"
+#include "MProtocolModule.h"
 #include "ZDynamicPbTypeBuilder.h"
 
-struct FZProtocolModule::ImplType
+struct FMProtocolModule::ImplType
 {
 	ImplType()
 	{
@@ -19,13 +19,13 @@ struct FZProtocolModule::ImplType
 
 };
 
-void FZProtocolModule::StartupModule()
+void FMProtocolModule::StartupModule()
 {
 	ImplPtr = new ImplType;
 	RebuildPbTypes();	
 }
 
-void FZProtocolModule::ShutdownModule()
+void FMProtocolModule::ShutdownModule()
 {
 	if (ImplPtr)
 	{
@@ -34,12 +34,12 @@ void FZProtocolModule::ShutdownModule()
 	}
 }
 
-FString FZProtocolModule::GetJsDir()
+FString FMProtocolModule::GetJsDir()
 {
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("JavaScript") / TEXT("protocol"));	
 }
 
-void FZProtocolModule::RebuildPbTypes()
+void FMProtocolModule::RebuildPbTypes()
 {
 	if (ImplPtr)
 	{
@@ -47,9 +47,14 @@ void FZProtocolModule::RebuildPbTypes()
 	}
 }
 
-void FZProtocolModule::ForeachTypes(const TFunction<bool(const FString& Name, UObject* Object)>& Callback)
+void FMProtocolModule::ForeachTypes(const TFunction<bool(const FString& Name, UObject* Object)>& Callback)
 {
 	if (ImplPtr)
 		ImplPtr->DynamicPbTypeBuilder->ForeachTypes(Callback);
 }
 
+#define LOCTEXT_NAMESPACE "FMProtocolModule"
+
+IMPLEMENT_MODULE(FMProtocolModule, MProtocol);
+
+#undef LOCTEXT_NAMESPACE

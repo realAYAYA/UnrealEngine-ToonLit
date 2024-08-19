@@ -33,7 +33,7 @@
 // This file contains the implementation of classes GzipInputStream and
 // GzipOutputStream.
 
-
+#define HAVE_ZLIB 0
 #if HAVE_ZLIB
 #include <google/protobuf/io/gzip_stream.h>
 #include <google/protobuf/port.h>

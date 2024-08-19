@@ -2,13 +2,13 @@
 
 #include "CoreMinimal.h"
 
-class MPROTOCOL_API FZProtocolModule : public IModuleInterface
+class MPROTOCOL_API FMProtocolModule : public IModuleInterface
 {
 public:
 
-	static inline FZProtocolModule &Get()
+	static inline FMProtocolModule &Get()
 	{
-		return FModuleManager::LoadModuleChecked<FZProtocolModule>("ZProtocol");
+		return FModuleManager::LoadModuleChecked<FMProtocolModule>("MProtocol");
 	}
 	
 	virtual void StartupModule() override;
@@ -21,6 +21,7 @@ public:
 	void ForeachTypes(const TFunction<bool(const FString& Name, UObject* Object)>& Callback);
 
 private:
+	
 	struct ImplType;
 	ImplType* ImplPtr = nullptr;
 };

@@ -1,7 +1,7 @@
 #include "ZDynamicPbTypeBuilder.h"
 #include "Engine/UserDefinedEnum.h"
 
-extern UPackage* Z_Construct_UPackage__Script_ZProtocol();
+extern UPackage* Z_Construct_UPackage__Script_MProtocol();
 
 TMap<FString, UObject*> AllDynamicClassMap;
 
@@ -74,7 +74,7 @@ struct FEnumerationAssetBuilder
 
 	void Save()
 	{
-		UPackage* Package = Z_Construct_UPackage__Script_ZProtocol();
+		UPackage* Package = Z_Construct_UPackage__Script_MProtocol();
 		UUserDefinedEnum* Enumeration = LoadObject<UUserDefinedEnum>(Package, *EnumerationName);
 		if (!Enumeration)
 		{
@@ -160,7 +160,7 @@ struct FStructAssetBuilder
 
 	void Save()
 	{
-		UPackage* Package = Z_Construct_UPackage__Script_ZProtocol();
+		UPackage* Package = Z_Construct_UPackage__Script_MProtocol();
 		UScriptStruct* Struct = LoadObject<UScriptStruct>(Package, *StructName);
 		if (!Struct)
 		{
@@ -1103,17 +1103,11 @@ void FZDynamicPbTypeBuilder::Init(const FString& BasePath)
 	AllDynamicClassMap.Empty();
 
 	// FString BasePath = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("JavaScript") / TEXT("protocol"));
-	ProcessJsFile(BasePath / TEXT("game_stats.js"));
 	ProcessJsFile(BasePath / TEXT("game_service.js"));
 	ProcessJsFile(BasePath / TEXT("net.js"));
 	ProcessJsFile(BasePath / TEXT("defines.js"));
 	ProcessJsFile(BasePath / TEXT("common.js"));
-	ProcessJsFile(BasePath / TEXT("relation_common.js"));
-	ProcessJsFile(BasePath / TEXT("world_common.js"));
 	ProcessJsFile(BasePath / TEXT("login.js"));
 	ProcessJsFile(BasePath / TEXT("game.js"));
-	ProcessJsFile(BasePath / TEXT("world.js"));
-	ProcessJsFile(BasePath / TEXT("relation.js"));
-	ProcessJsFile(BasePath / TEXT("ability.js"));
 	ProcessJsFile(BasePath / TEXT("gdd_global.js"));
 }
