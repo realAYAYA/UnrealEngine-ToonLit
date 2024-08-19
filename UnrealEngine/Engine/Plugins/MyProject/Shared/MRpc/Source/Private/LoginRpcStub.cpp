@@ -2,7 +2,7 @@
 #include "LoginRpcInterface.h"
 #include "MRpcManager.h"
 
-void UZLoginRpcStub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
+void UPbLoginRpcStub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
 {
     if (Manager)
     {
@@ -17,7 +17,7 @@ void UZLoginRpcStub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InCo
     }
 }
 
-void UZLoginRpcStub::Cleanup()
+void UPbLoginRpcStub::Cleanup()
 {
     if (Manager)
     {        
@@ -27,7 +27,7 @@ void UZLoginRpcStub::Cleanup()
 }
 
 
-void UZLoginRpcStub::K2_LoginAccount(const FZLoginAccountReq& InParams, const FZOnLoginAccountResult& InCallback)
+void UPbLoginRpcStub::K2_LoginAccount(const FPbLoginAccountReq& InParams, const FPbOnLoginAccountResult& InCallback)
 {
     if (!Manager || !Connection)
         return;
@@ -40,7 +40,7 @@ void UZLoginRpcStub::K2_LoginAccount(const FZLoginAccountReq& InParams, const FZ
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
         {
-            FZLoginAccountAck Rsp;
+            FPbLoginAccountAck Rsp;
             if (InRspMessage)
             {
                 Rsp = *InRspMessage;  // PB -> USTRUCT
@@ -51,12 +51,12 @@ void UZLoginRpcStub::K2_LoginAccount(const FZLoginAccountReq& InParams, const FZ
     });
 }
 
-void UZLoginRpcStub::LoginAccount(const TSharedPtr<idlepb::LoginAccountReq>& InReqMessage, const OnLoginAccountResult& InCallback)
+void UPbLoginRpcStub::LoginAccount(const TSharedPtr<idlepb::LoginAccountReq>& InReqMessage, const FOnLoginAccountResult& InCallback) const
 {   
     if (!Manager || !Connection)
         return;
 
-    static constexpr uint64 RpcId = FZLoginRpcInterface::LoginAccount;
+    static constexpr uint64 RpcId = FPbLoginRpcInterface::LoginAccount;
     Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
         auto RspMessage = MakeShared<idlepb::LoginAccountAck>();               

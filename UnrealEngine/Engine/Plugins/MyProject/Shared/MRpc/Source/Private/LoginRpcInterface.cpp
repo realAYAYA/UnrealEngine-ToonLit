@@ -1,16 +1,16 @@
 #include "LoginRpcInterface.h"
 
-FZLoginRpcInterface::FZLoginRpcInterface(FMRpcManager* InManager)
+FPbLoginRpcInterface::FPbLoginRpcInterface(FMRpcManager* InManager)
 {
 }
 
-FZLoginRpcInterface::~FZLoginRpcInterface()
+FPbLoginRpcInterface::~FPbLoginRpcInterface()
 {
 }
 
-void FZLoginRpcInterface::LoginAccountRegister(FMRpcManager* InManager, const FZLoginAccountCallback& InCallback)
+void FPbLoginRpcInterface::LoginAccountRegister(FMRpcManager* InManager, const FPbLoginAccountCallback& InCallback)
 {
-    static constexpr uint64 RpcId = FZLoginRpcInterface::LoginAccount;
+    static constexpr uint64 RpcId = FPbLoginRpcInterface::LoginAccount;
     InManager->AddMethod(RpcId, [InCallback](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
         const uint64 ReqSerialNum = InMessage->sn();

@@ -11,13 +11,13 @@
 #include "LoginRpcStub.generated.h"
 
 
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FZOnLoginAccountResult, EPbRpcErrorCode, InErrorCode, FZLoginAccountAck, InData);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FPbOnLoginAccountResult, EPbRpcErrorCode, InErrorCode, FPbLoginAccountAck, InData);
 
 
 
 
 UCLASS(BlueprintType, Blueprintable)
-class MRPC_API UZLoginRpcStub : public UObject
+class MRPC_API UPbLoginRpcStub : public UObject
 {
     GENERATED_BODY()
 
@@ -30,10 +30,10 @@ public:
      * 登录帐号
     */
     UFUNCTION(BlueprintCallable, Category="MRpc", DisplayName="LoginAccount")
-    void K2_LoginAccount(const FZLoginAccountReq& InParams, const FZOnLoginAccountResult& InCallback);
+    void K2_LoginAccount(const FPbLoginAccountReq& InParams, const FPbOnLoginAccountResult& InCallback);
     
-    typedef TFunction<void(EPbRpcErrorCode, const TSharedPtr<idlepb::LoginAccountAck>&)> OnLoginAccountResult;
-    void LoginAccount(const TSharedPtr<idlepb::LoginAccountReq>& InReqMessage, const OnLoginAccountResult& InCallback);
+    typedef TFunction<void(EPbRpcErrorCode, const TSharedPtr<idlepb::LoginAccountAck>&)> FOnLoginAccountResult;
+    void LoginAccount(const TSharedPtr<idlepb::LoginAccountReq>& InReqMessage, const FOnLoginAccountResult& InCallback) const;
 
     
     

@@ -3,10 +3,13 @@
 ![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.3/Features/Advertising.png)  
 
 #### 介绍
+
 魔改UE5引擎，基于此实现一套ToonLit流程  
 提升对引擎代码的理解  
 此外包含了其它游戏相关的功能拓展，插件实现  
 
+Remembering: The code that was exchanged with days and nights, years and youth, but is no longer useful  
+缅怀：用日日夜夜用岁月青春换来，却不再有用的代码  
 
 #### Rendering Features 渲染特性
     
@@ -25,7 +28,7 @@
 4.  ToonLit postproces 后处理
 
 #### Other Features 其它特性
-1.  MMO frame, 基于Tcp连接的后端网络框架
+1.  MMO frame, 基于Tcp连接的后端网络框架, details: Engine/Plugins/MyProject
     1. Websocket, current tcp lib, 当前使用的网tcp网络库
     2. protobuf, 使用了google的消息协议
 2.  PuerTs, 接入脚本
@@ -50,11 +53,14 @@
 ## Log
 
 #### Add ThirdParty
-· UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-packages\  
+Python  
+UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-packages\  
 1. jinja2
 2. markupsafe
 3. xlrd
 4. fnv1a
+
+Other lib  
 · UnrealEngine\Engine\Binaries\ThirdParty\Nodejs  
 · UnrealEngine\Engine\Binaries\ThirdParty\Windows\msys  
 

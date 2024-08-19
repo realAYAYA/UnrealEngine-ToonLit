@@ -23,17 +23,17 @@ STUB_HPP_TEMPL = """#pragma once
 #include "{{service_name}}Stub.generated.h"
 
 {% for rpc_entry in rpc_list %}
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FZOn{{rpc_entry['name']}}Result, EPbRpcErrorCode, InErrorCode, FZ{{rpc_entry['p2']}}, InData);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FPbOn{{rpc_entry['name']}}Result, EPbRpcErrorCode, InErrorCode, FPb{{rpc_entry['p2']}}, InData);
 {% endfor %}
 
 {% for notify_entry in notify_list %}
 {%- if notify_entry["type"] == 2 %}
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FZOn{{notify_entry['name']}}Result, FZ{{notify_entry['name']}}, InData);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPbOn{{notify_entry['name']}}Result, FPb{{notify_entry['name']}}, InData);
 {%- endif %}
 {% endfor %}
 
 UCLASS(BlueprintType, Blueprintable)
-class {{dllexport_decl}} UZ{{service_name}}Stub : public UObject
+class {{dllexport_decl}} UPb{{service_name}}Stub : public UObject
 {
     GENERATED_BODY()
 
@@ -50,10 +50,10 @@ public:
     {%- endfor %}
     */
     UFUNCTION(BlueprintCallable, Category="MRpc", DisplayName="{{rpc_entry['name']}}")
-    void K2_{{rpc_entry['name']}}(const FZ{{rpc_entry['p1']}}& InParams, const FZOn{{rpc_entry['name']}}Result& InCallback);
+    void K2_{{rpc_entry['name']}}(const FPb{{rpc_entry['p1']}}& InParams, const FPbOn{{rpc_entry['name']}}Result& InCallback);
     
-    typedef TFunction<void(EPbRpcErrorCode, const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}>&)> On{{rpc_entry['name']}}Result;
-    void {{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}>& InReqMessage, const On{{rpc_entry['name']}}Result& InCallback);
+    typedef TFunction<void(EPbRpcErrorCode, const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}>&)> FOn{{rpc_entry['name']}}Result;
+    void {{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}>& InReqMessage, const FOn{{rpc_entry['name']}}Result& InCallback) const;
     
     {%- endfor %}
 
@@ -65,10 +65,10 @@ public:
     */      
     {%- if notify_entry["type"] == 1 %}
     UFUNCTION(BlueprintCallable, Category="MRpc", DisplayName="Send{{notify_entry['name']}}") 
-    void K2_Send{{notify_entry['name']}}(const FZ{{notify_entry['name']}}& InParams);
+    void K2_Send{{notify_entry['name']}}(const FPb{{notify_entry['name']}}& InParams);
     {%- else %}
     UPROPERTY(BlueprintAssignable, Category="MRpc") 
-    FZOn{{notify_entry['name']}}Result On{{notify_entry['name']}};
+    FPbOn{{notify_entry['name']}}Result On{{notify_entry['name']}};
     {%- endif %}
     {% endfor %}
     
@@ -83,7 +83,7 @@ STUB_CPP_TEMPL = """#include "{{service_name}}Stub.h"
 #include "{{service_name}}Interface.h"
 #include "MRpcManager.h"
 
-void UZ{{service_name}}Stub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
+void UPb{{service_name}}Stub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
 {
     if (Manager)
     {
@@ -101,7 +101,7 @@ void UZ{{service_name}}Stub::Setup(FMRpcManager* InManager, const FPbConnectionP
         {
             if (On{{notify_entry['name']}}.IsBound())
             {
-                FZ{{notify_entry['name']}} Result = *InMessage;
+                FPb{{notify_entry['name']}} Result = *InMessage;
                 On{{notify_entry['name']}}.Broadcast(Result);
             }
         });
@@ -110,7 +110,7 @@ void UZ{{service_name}}Stub::Setup(FMRpcManager* InManager, const FPbConnectionP
     }
 }
 
-void UZ{{service_name}}Stub::Cleanup()
+void UPb{{service_name}}Stub::Cleanup()
 {
     if (Manager)
     {
@@ -125,7 +125,7 @@ void UZ{{service_name}}Stub::Cleanup()
 }
 
 {% for rpc_entry in rpc_list %}
-void UZ{{service_name}}Stub::K2_{{rpc_entry['name']}}(const FZ{{rpc_entry['p1']}}& InParams, const FZOn{{rpc_entry['name']}}Result& InCallback)
+void UPb{{service_name}}Stub::K2_{{rpc_entry['name']}}(const FPb{{rpc_entry['p1']}}& InParams, const FPbOn{{rpc_entry['name']}}Result& InCallback)
 {
     if (!Manager || !Connection)
         return;
@@ -138,7 +138,7 @@ void UZ{{service_name}}Stub::K2_{{rpc_entry['name']}}(const FZ{{rpc_entry['p1']}
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
         {
-            FZ{{rpc_entry['p2']}} Rsp;
+            FPb{{rpc_entry['p2']}} Rsp;
             if (InRspMessage)
             {
                 Rsp = *InRspMessage;  // PB -> USTRUCT
@@ -149,12 +149,12 @@ void UZ{{service_name}}Stub::K2_{{rpc_entry['name']}}(const FZ{{rpc_entry['p1']}
     });
 }
 
-void UZ{{service_name}}Stub::{{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}>& InReqMessage, const On{{rpc_entry['name']}}Result& InCallback)
+void UPb{{service_name}}Stub::{{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}>& InReqMessage, const FOn{{rpc_entry['name']}}Result& InCallback) const
 {   
     if (!Manager || !Connection)
         return;
 
-    static constexpr uint64 RpcId = FZ{{service_name}}Interface::{{rpc_entry['name']}};
+    static constexpr uint64 RpcId = FPb{{service_name}}Interface::{{rpc_entry['name']}};
     Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
         auto RspMessage = MakeShared<{{rpc_space_name}}::{{rpc_entry['p2']}}>();               
@@ -173,7 +173,7 @@ void UZ{{service_name}}Stub::{{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_
 
 {% for notify_entry in notify_list %}
 {%- if notify_entry["type"] == 1 %}
-void UZ{{service_name}}Stub::K2_Send{{notify_entry['name']}}(const FZ{{notify_entry['name']}}& InParams)
+void UPb{{service_name}}Stub::K2_Send{{notify_entry['name']}}(const FPb{{notify_entry['name']}}& InParams)
 {
     if (!Connection)
         return;
@@ -198,13 +198,14 @@ INTERFACE_HPP_TEMPL = """#pragma once
 
 #include "MTools.h"
 #include "MRpcManager.h"
+#include "MyTcpConnection.h"
 
-class {{dllexport_decl}} FZ{{service_name}}Interface
+class {{dllexport_decl}} FPb{{service_name}}Interface
 {
 public:
 
-    explicit FZ{{service_name}}Interface(FMRpcManager* InManager);
-    virtual ~FZ{{service_name}}Interface();
+    explicit FPb{{service_name}}Interface(FMRpcManager* InManager);
+    virtual ~FPb{{service_name}}Interface();
 
     static const TCHAR* GetName() { return TEXT("{{service_name}}"); }  
     
@@ -215,10 +216,10 @@ public:
     {%- endfor %}
     */
     static constexpr uint64 {{rpc_entry['name']}} = 0x{{rpc_entry['id']}}LL; 
-    typedef TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}> FZ{{rpc_entry['name']}}ReqPtr;
-    typedef TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}> FZ{{rpc_entry['name']}}RspPtr;
-    typedef TFunction<void(FPbMessageSupportBase*, const FZ{{rpc_entry['name']}}ReqPtr&, const FZ{{rpc_entry['name']}}RspPtr&)> FZ{{rpc_entry['name']}}Callback;
-    static void {{rpc_entry['name']}}Register(FMRpcManager* InManager, const FZ{{rpc_entry['name']}}Callback& InCallback);
+    typedef TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}> FPb{{rpc_entry['name']}}ReqPtr;
+    typedef TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}> FPb{{rpc_entry['name']}}RspPtr;
+    typedef TFunction<void(FPbMessageSupportBase*, const FPb{{rpc_entry['name']}}ReqPtr&, const FPb{{rpc_entry['name']}}RspPtr&)> FPb{{rpc_entry['name']}}Callback;
+    static void {{rpc_entry['name']}}Register(FMRpcManager* InManager, const FPb{{rpc_entry['name']}}Callback& InCallback);
     {% endfor %}
 
 };
@@ -227,19 +228,19 @@ public:
 
 INTERFACE_CPP_TEMPL = """#include "{{service_name}}Interface.h"
 
-FZ{{service_name}}Interface::FZ{{service_name}}Interface(FMRpcManager* InManager)
+FPb{{service_name}}Interface::FPb{{service_name}}Interface(FMRpcManager* InManager)
 {
 }
 
-FZ{{service_name}}Interface::~FZ{{service_name}}Interface()
+FPb{{service_name}}Interface::~FPb{{service_name}}Interface()
 {
 }
 
 {%- for rpc_entry in rpc_list %}
 
-void FZ{{service_name}}Interface::{{rpc_entry['name']}}Register(FMRpcManager* InManager, const FZ{{rpc_entry['name']}}Callback& InCallback)
+void FPb{{service_name}}Interface::{{rpc_entry['name']}}Register(FMRpcManager* InManager, const FPb{{rpc_entry['name']}}Callback& InCallback)
 {
-    static constexpr uint64 RpcId = FZ{{service_name}}Interface::{{rpc_entry['name']}};
+    static constexpr uint64 RpcId = FPb{{service_name}}Interface::{{rpc_entry['name']}};
     InManager->AddMethod(RpcId, [InCallback](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
         const uint64 ReqSerialNum = InMessage->sn();

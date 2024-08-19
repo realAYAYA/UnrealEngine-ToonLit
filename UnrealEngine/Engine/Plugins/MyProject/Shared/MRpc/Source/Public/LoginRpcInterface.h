@@ -7,13 +7,14 @@
 
 #include "MTools.h"
 #include "MRpcManager.h"
+#include "MyTcpConnection.h"
 
-class MRPC_API FZLoginRpcInterface
+class MRPC_API FPbLoginRpcInterface
 {
 public:
 
-    explicit FZLoginRpcInterface(FMRpcManager* InManager);
-    virtual ~FZLoginRpcInterface();
+    explicit FPbLoginRpcInterface(FMRpcManager* InManager);
+    virtual ~FPbLoginRpcInterface();
 
     static const TCHAR* GetName() { return TEXT("LoginRpc"); }  
     
@@ -22,10 +23,10 @@ public:
      * 登录帐号
     */
     static constexpr uint64 LoginAccount = 0x9939607413dbff1dLL; 
-    typedef TSharedPtr<idlepb::LoginAccountReq> FZLoginAccountReqPtr;
-    typedef TSharedPtr<idlepb::LoginAccountAck> FZLoginAccountRspPtr;
-    typedef TFunction<void(FPbMessageSupportBase*, const FZLoginAccountReqPtr&, const FZLoginAccountRspPtr&)> FZLoginAccountCallback;
-    static void LoginAccountRegister(FMRpcManager* InManager, const FZLoginAccountCallback& InCallback);
+    typedef TSharedPtr<idlepb::LoginAccountReq> FPbLoginAccountReqPtr;
+    typedef TSharedPtr<idlepb::LoginAccountAck> FPbLoginAccountRspPtr;
+    typedef TFunction<void(FPbMessageSupportBase*, const FPbLoginAccountReqPtr&, const FPbLoginAccountRspPtr&)> FPbLoginAccountCallback;
+    static void LoginAccountRegister(FMRpcManager* InManager, const FPbLoginAccountCallback& InCallback);
     
 
 };
