@@ -2,7 +2,7 @@
 #include "GameRpcInterface.h"
 #include "MRpcManager.h"
 
-void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InConn)
+void UZGameRpcStub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
 {
     if (Manager)
     {
@@ -14,7 +14,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
 
     if (Manager)
     {
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyAlchemyRefineResult>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyAlchemyRefineResult>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyAlchemyRefineResult>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyAlchemyRefineResult>& InMessage)
         {
             if (OnNotifyAlchemyRefineResult.IsBound())
             {
@@ -22,7 +22,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyAlchemyRefineResult.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::RefreshItems>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::RefreshItems>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::RefreshItems>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::RefreshItems>& InMessage)
         {
             if (OnRefreshItems.IsBound())
             {
@@ -30,7 +30,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnRefreshItems.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyInventorySpaceNum>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyInventorySpaceNum>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyInventorySpaceNum>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyInventorySpaceNum>& InMessage)
         {
             if (OnNotifyInventorySpaceNum.IsBound())
             {
@@ -38,7 +38,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyInventorySpaceNum.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::RefreshUnlockedEquipmentSlots>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::RefreshUnlockedEquipmentSlots>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::RefreshUnlockedEquipmentSlots>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::RefreshUnlockedEquipmentSlots>& InMessage)
         {
             if (OnRefreshUnlockedEquipmentSlots.IsBound())
             {
@@ -46,7 +46,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnRefreshUnlockedEquipmentSlots.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyUnlockArenaChallengeResult>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyUnlockArenaChallengeResult>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyUnlockArenaChallengeResult>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyUnlockArenaChallengeResult>& InMessage)
         {
             if (OnNotifyUnlockArenaChallengeResult.IsBound())
             {
@@ -54,7 +54,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyUnlockArenaChallengeResult.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::UpdateRoleMail>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::UpdateRoleMail>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::UpdateRoleMail>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::UpdateRoleMail>& InMessage)
         {
             if (OnUpdateRoleMail.IsBound())
             {
@@ -62,7 +62,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnUpdateRoleMail.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyForgeRefineResult>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyForgeRefineResult>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyForgeRefineResult>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyForgeRefineResult>& InMessage)
         {
             if (OnNotifyForgeRefineResult.IsBound())
             {
@@ -70,7 +70,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyForgeRefineResult.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyGiftPackageResult>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyGiftPackageResult>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyGiftPackageResult>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyGiftPackageResult>& InMessage)
         {
             if (OnNotifyGiftPackageResult.IsBound())
             {
@@ -78,7 +78,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyGiftPackageResult.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyUsePillProperty>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyUsePillProperty>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyUsePillProperty>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyUsePillProperty>& InMessage)
         {
             if (OnNotifyUsePillProperty.IsBound())
             {
@@ -86,7 +86,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyUsePillProperty.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyInventoryFullMailItem>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyInventoryFullMailItem>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyInventoryFullMailItem>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyInventoryFullMailItem>& InMessage)
         {
             if (OnNotifyInventoryFullMailItem.IsBound())
             {
@@ -94,7 +94,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyInventoryFullMailItem.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyRoleCollectionData>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyRoleCollectionData>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyRoleCollectionData>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyRoleCollectionData>& InMessage)
         {
             if (OnNotifyRoleCollectionData.IsBound())
             {
@@ -102,7 +102,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyRoleCollectionData.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyCommonCollectionPieceData>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyCommonCollectionPieceData>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyCommonCollectionPieceData>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyCommonCollectionPieceData>& InMessage)
         {
             if (OnNotifyCommonCollectionPieceData.IsBound())
             {
@@ -110,7 +110,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyCommonCollectionPieceData.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyCollectionActivatedSuit>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyCollectionActivatedSuit>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyCollectionActivatedSuit>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyCollectionActivatedSuit>& InMessage)
         {
             if (OnNotifyCollectionActivatedSuit.IsBound())
             {
@@ -118,7 +118,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyCollectionActivatedSuit.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyRoleCollectionHistories>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyRoleCollectionHistories>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyRoleCollectionHistories>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyRoleCollectionHistories>& InMessage)
         {
             if (OnNotifyRoleCollectionHistories.IsBound())
             {
@@ -126,7 +126,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyRoleCollectionHistories.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyCollectionZoneActiveAwards>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyCollectionZoneActiveAwards>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyCollectionZoneActiveAwards>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyCollectionZoneActiveAwards>& InMessage)
         {
             if (OnNotifyCollectionZoneActiveAwards.IsBound())
             {
@@ -134,7 +134,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyCollectionZoneActiveAwards.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyRoleCollectionNextResetEnhanceTicks>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyRoleCollectionNextResetEnhanceTicks>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyRoleCollectionNextResetEnhanceTicks>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyRoleCollectionNextResetEnhanceTicks>& InMessage)
         {
             if (OnNotifyRoleCollectionNextResetEnhanceTicks.IsBound())
             {
@@ -142,7 +142,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyRoleCollectionNextResetEnhanceTicks.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyBossInvasionNpcKilled>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyBossInvasionNpcKilled>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyBossInvasionNpcKilled>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyBossInvasionNpcKilled>& InMessage)
         {
             if (OnNotifyBossInvasionNpcKilled.IsBound())
             {
@@ -150,7 +150,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyBossInvasionNpcKilled.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyChecklist>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyChecklist>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyChecklist>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyChecklist>& InMessage)
         {
             if (OnNotifyChecklist.IsBound())
             {
@@ -158,7 +158,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyChecklist.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifySeptStoneOccupyEnd>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifySeptStoneOccupyEnd>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifySeptStoneOccupyEnd>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifySeptStoneOccupyEnd>& InMessage)
         {
             if (OnNotifySeptStoneOccupyEnd.IsBound())
             {
@@ -166,7 +166,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifySeptStoneOccupyEnd.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyTeleportFailed>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyTeleportFailed>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyTeleportFailed>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyTeleportFailed>& InMessage)
         {
             if (OnNotifyTeleportFailed.IsBound())
             {
@@ -174,7 +174,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyTeleportFailed.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyFuZeng>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyFuZeng>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyFuZeng>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyFuZeng>& InMessage)
         {
             if (OnNotifyFuZeng.IsBound())
             {
@@ -182,7 +182,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyFuZeng.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::UpdateLifeCounter>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::UpdateLifeCounter>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::UpdateLifeCounter>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::UpdateLifeCounter>& InMessage)
         {
             if (OnUpdateLifeCounter.IsBound())
             {
@@ -190,7 +190,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnUpdateLifeCounter.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyQuestFightChallengeOver>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyQuestFightChallengeOver>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyQuestFightChallengeOver>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyQuestFightChallengeOver>& InMessage)
         {
             if (OnNotifyQuestFightChallengeOver.IsBound())
             {
@@ -198,7 +198,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyQuestFightChallengeOver.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::DungeonChallengeOver>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::DungeonChallengeOver>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::DungeonChallengeOver>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::DungeonChallengeOver>& InMessage)
         {
             if (OnDungeonChallengeOver.IsBound())
             {
@@ -206,7 +206,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnDungeonChallengeOver.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifySoloArenaChallengeOver>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifySoloArenaChallengeOver>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifySoloArenaChallengeOver>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifySoloArenaChallengeOver>& InMessage)
         {
             if (OnNotifySoloArenaChallengeOver.IsBound())
             {
@@ -214,7 +214,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifySoloArenaChallengeOver.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::UpdateChat>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::UpdateChat>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::UpdateChat>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::UpdateChat>& InMessage)
         {
             if (OnUpdateChat.IsBound())
             {
@@ -222,7 +222,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnUpdateChat.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyDungeonKillAllChallengeCurWaveNum>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyDungeonKillAllChallengeCurWaveNum>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyDungeonKillAllChallengeCurWaveNum>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyDungeonKillAllChallengeCurWaveNum>& InMessage)
         {
             if (OnNotifyDungeonKillAllChallengeCurWaveNum.IsBound())
             {
@@ -230,7 +230,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyDungeonKillAllChallengeCurWaveNum.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyDungeonKillAllChallengeOver>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyDungeonKillAllChallengeOver>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyDungeonKillAllChallengeOver>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyDungeonKillAllChallengeOver>& InMessage)
         {
             if (OnNotifyDungeonKillAllChallengeOver.IsBound())
             {
@@ -238,7 +238,15 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyDungeonKillAllChallengeOver.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyDungeonSurviveChallengeCurWaveNum>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyDungeonSurviveChallengeCurWaveNum>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyFarmlandMessage>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyFarmlandMessage>& InMessage)
+        {
+            if (OnNotifyFarmlandMessage.IsBound())
+            {
+                FZNotifyFarmlandMessage Result = *InMessage;
+                OnNotifyFarmlandMessage.Broadcast(Result);
+            }
+        });
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyDungeonSurviveChallengeCurWaveNum>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyDungeonSurviveChallengeCurWaveNum>& InMessage)
         {
             if (OnNotifyDungeonSurviveChallengeCurWaveNum.IsBound())
             {
@@ -246,7 +254,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyDungeonSurviveChallengeCurWaveNum.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyDungeonSurviveChallengeOver>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyDungeonSurviveChallengeOver>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyDungeonSurviveChallengeOver>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyDungeonSurviveChallengeOver>& InMessage)
         {
             if (OnNotifyDungeonSurviveChallengeOver.IsBound())
             {
@@ -254,7 +262,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyDungeonSurviveChallengeOver.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyFriendMessage>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyFriendMessage>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyFriendMessage>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyFriendMessage>& InMessage)
         {
             if (OnNotifyFriendMessage.IsBound())
             {
@@ -262,7 +270,7 @@ void UZGameRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InCo
                 OnNotifyFriendMessage.Broadcast(Result);
             }
         });
-        Manager->GetMessageDispatcher().Reg<idlezt::NotifyBiographyMessage>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::NotifyBiographyMessage>& InMessage)
+        Manager->GetMessageDispatcher().Reg<idlepb::NotifyBiographyMessage>([this](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::NotifyBiographyMessage>& InMessage)
         {
             if (OnNotifyBiographyMessage.IsBound())
             {
@@ -277,38 +285,39 @@ void UZGameRpcStub::Cleanup()
 {
     if (Manager)
     {
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyAlchemyRefineResult>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::RefreshItems>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyInventorySpaceNum>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::RefreshUnlockedEquipmentSlots>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyUnlockArenaChallengeResult>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::UpdateRoleMail>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyForgeRefineResult>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyGiftPackageResult>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyUsePillProperty>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyInventoryFullMailItem>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyRoleCollectionData>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyCommonCollectionPieceData>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyCollectionActivatedSuit>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyRoleCollectionHistories>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyCollectionZoneActiveAwards>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyRoleCollectionNextResetEnhanceTicks>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyBossInvasionNpcKilled>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyChecklist>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifySeptStoneOccupyEnd>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyTeleportFailed>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyFuZeng>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::UpdateLifeCounter>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyQuestFightChallengeOver>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::DungeonChallengeOver>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifySoloArenaChallengeOver>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::UpdateChat>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyDungeonKillAllChallengeCurWaveNum>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyDungeonKillAllChallengeOver>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyDungeonSurviveChallengeCurWaveNum>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyDungeonSurviveChallengeOver>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyFriendMessage>();
-        Manager->GetMessageDispatcher().UnReg<idlezt::NotifyBiographyMessage>();        
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyAlchemyRefineResult>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::RefreshItems>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyInventorySpaceNum>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::RefreshUnlockedEquipmentSlots>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyUnlockArenaChallengeResult>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::UpdateRoleMail>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyForgeRefineResult>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyGiftPackageResult>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyUsePillProperty>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyInventoryFullMailItem>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyRoleCollectionData>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyCommonCollectionPieceData>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyCollectionActivatedSuit>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyRoleCollectionHistories>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyCollectionZoneActiveAwards>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyRoleCollectionNextResetEnhanceTicks>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyBossInvasionNpcKilled>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyChecklist>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifySeptStoneOccupyEnd>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyTeleportFailed>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyFuZeng>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::UpdateLifeCounter>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyQuestFightChallengeOver>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::DungeonChallengeOver>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifySoloArenaChallengeOver>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::UpdateChat>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyDungeonKillAllChallengeCurWaveNum>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyDungeonKillAllChallengeOver>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyFarmlandMessage>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyDungeonSurviveChallengeCurWaveNum>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyDungeonSurviveChallengeOver>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyFriendMessage>();
+        Manager->GetMessageDispatcher().UnReg<idlepb::NotifyBiographyMessage>();        
     }
     Manager = nullptr;
     Connection = nullptr;    
@@ -320,10 +329,10 @@ void UZGameRpcStub::K2_LoginGame(const FZLoginGameReq& InParams, const FZOnLogin
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::LoginGameReq>();
+    auto ReqMessage = MakeShared<idlepb::LoginGameReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    LoginGame(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::LoginGameAck>& InRspMessage)
+    LoginGame(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::LoginGameAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -339,20 +348,20 @@ void UZGameRpcStub::K2_LoginGame(const FZLoginGameReq& InParams, const FZOnLogin
     });
 }
 
-void UZGameRpcStub::LoginGame(const TSharedPtr<idlezt::LoginGameReq>& InReqMessage, const OnLoginGameResult& InCallback)
+void UZGameRpcStub::LoginGame(const TSharedPtr<idlepb::LoginGameReq>& InReqMessage, const OnLoginGameResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::LoginGame;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::LoginGameAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::LoginGameAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -365,10 +374,10 @@ void UZGameRpcStub::K2_SetCurrentCultivationDirection(const FZSetCurrentCultivat
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetCurrentCultivationDirectionReq>();
+    auto ReqMessage = MakeShared<idlepb::SetCurrentCultivationDirectionReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetCurrentCultivationDirection(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetCurrentCultivationDirectionAck>& InRspMessage)
+    SetCurrentCultivationDirection(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetCurrentCultivationDirectionAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -384,20 +393,20 @@ void UZGameRpcStub::K2_SetCurrentCultivationDirection(const FZSetCurrentCultivat
     });
 }
 
-void UZGameRpcStub::SetCurrentCultivationDirection(const TSharedPtr<idlezt::SetCurrentCultivationDirectionReq>& InReqMessage, const OnSetCurrentCultivationDirectionResult& InCallback)
+void UZGameRpcStub::SetCurrentCultivationDirection(const TSharedPtr<idlepb::SetCurrentCultivationDirectionReq>& InReqMessage, const OnSetCurrentCultivationDirectionResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetCurrentCultivationDirection;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetCurrentCultivationDirectionAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetCurrentCultivationDirectionAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -410,10 +419,10 @@ void UZGameRpcStub::K2_DoBreakthrough(const FZDoBreakthroughReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DoBreakthroughReq>();
+    auto ReqMessage = MakeShared<idlepb::DoBreakthroughReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DoBreakthrough(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DoBreakthroughAck>& InRspMessage)
+    DoBreakthrough(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DoBreakthroughAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -429,20 +438,20 @@ void UZGameRpcStub::K2_DoBreakthrough(const FZDoBreakthroughReq& InParams, const
     });
 }
 
-void UZGameRpcStub::DoBreakthrough(const TSharedPtr<idlezt::DoBreakthroughReq>& InReqMessage, const OnDoBreakthroughResult& InCallback)
+void UZGameRpcStub::DoBreakthrough(const TSharedPtr<idlepb::DoBreakthroughReq>& InReqMessage, const OnDoBreakthroughResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DoBreakthrough;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DoBreakthroughAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DoBreakthroughAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -455,10 +464,10 @@ void UZGameRpcStub::K2_RequestCommonCultivationData(const FZRequestCommonCultiva
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestCommonCultivationDataReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestCommonCultivationDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestCommonCultivationData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestCommonCultivationDataAck>& InRspMessage)
+    RequestCommonCultivationData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestCommonCultivationDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -474,20 +483,20 @@ void UZGameRpcStub::K2_RequestCommonCultivationData(const FZRequestCommonCultiva
     });
 }
 
-void UZGameRpcStub::RequestCommonCultivationData(const TSharedPtr<idlezt::RequestCommonCultivationDataReq>& InReqMessage, const OnRequestCommonCultivationDataResult& InCallback)
+void UZGameRpcStub::RequestCommonCultivationData(const TSharedPtr<idlepb::RequestCommonCultivationDataReq>& InReqMessage, const OnRequestCommonCultivationDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestCommonCultivationData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestCommonCultivationDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestCommonCultivationDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -500,10 +509,10 @@ void UZGameRpcStub::K2_OneClickMergeBreathing(const FZOneClickMergeBreathingReq&
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OneClickMergeBreathingReq>();
+    auto ReqMessage = MakeShared<idlepb::OneClickMergeBreathingReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OneClickMergeBreathing(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OneClickMergeBreathingAck>& InRspMessage)
+    OneClickMergeBreathing(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OneClickMergeBreathingAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -519,20 +528,20 @@ void UZGameRpcStub::K2_OneClickMergeBreathing(const FZOneClickMergeBreathingReq&
     });
 }
 
-void UZGameRpcStub::OneClickMergeBreathing(const TSharedPtr<idlezt::OneClickMergeBreathingReq>& InReqMessage, const OnOneClickMergeBreathingResult& InCallback)
+void UZGameRpcStub::OneClickMergeBreathing(const TSharedPtr<idlepb::OneClickMergeBreathingReq>& InReqMessage, const OnOneClickMergeBreathingResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickMergeBreathing;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OneClickMergeBreathingAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OneClickMergeBreathingAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -545,10 +554,10 @@ void UZGameRpcStub::K2_ReceiveBreathingExerciseReward(const FZReceiveBreathingEx
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReceiveBreathingExerciseRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::ReceiveBreathingExerciseRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReceiveBreathingExerciseReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReceiveBreathingExerciseRewardAck>& InRspMessage)
+    ReceiveBreathingExerciseReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReceiveBreathingExerciseRewardAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -564,20 +573,20 @@ void UZGameRpcStub::K2_ReceiveBreathingExerciseReward(const FZReceiveBreathingEx
     });
 }
 
-void UZGameRpcStub::ReceiveBreathingExerciseReward(const TSharedPtr<idlezt::ReceiveBreathingExerciseRewardReq>& InReqMessage, const OnReceiveBreathingExerciseRewardResult& InCallback)
+void UZGameRpcStub::ReceiveBreathingExerciseReward(const TSharedPtr<idlepb::ReceiveBreathingExerciseRewardReq>& InReqMessage, const OnReceiveBreathingExerciseRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveBreathingExerciseReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReceiveBreathingExerciseRewardAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReceiveBreathingExerciseRewardAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -590,10 +599,10 @@ void UZGameRpcStub::K2_GetInventoryData(const FZGetInventoryDataReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetInventoryDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetInventoryDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetInventoryData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetInventoryDataAck>& InRspMessage)
+    GetInventoryData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetInventoryDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -609,20 +618,20 @@ void UZGameRpcStub::K2_GetInventoryData(const FZGetInventoryDataReq& InParams, c
     });
 }
 
-void UZGameRpcStub::GetInventoryData(const TSharedPtr<idlezt::GetInventoryDataReq>& InReqMessage, const OnGetInventoryDataResult& InCallback)
+void UZGameRpcStub::GetInventoryData(const TSharedPtr<idlepb::GetInventoryDataReq>& InReqMessage, const OnGetInventoryDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetInventoryData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetInventoryDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetInventoryDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -635,10 +644,10 @@ void UZGameRpcStub::K2_GetQuestData(const FZGetQuestDataReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetQuestDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetQuestDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetQuestData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetQuestDataAck>& InRspMessage)
+    GetQuestData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetQuestDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -654,20 +663,20 @@ void UZGameRpcStub::K2_GetQuestData(const FZGetQuestDataReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::GetQuestData(const TSharedPtr<idlezt::GetQuestDataReq>& InReqMessage, const OnGetQuestDataResult& InCallback)
+void UZGameRpcStub::GetQuestData(const TSharedPtr<idlepb::GetQuestDataReq>& InReqMessage, const OnGetQuestDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetQuestData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetQuestDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetQuestDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -680,10 +689,10 @@ void UZGameRpcStub::K2_CreateCharacter(const FZCreateCharacterReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::CreateCharacterReq>();
+    auto ReqMessage = MakeShared<idlepb::CreateCharacterReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    CreateCharacter(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::CreateCharacterAck>& InRspMessage)
+    CreateCharacter(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::CreateCharacterAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -699,20 +708,20 @@ void UZGameRpcStub::K2_CreateCharacter(const FZCreateCharacterReq& InParams, con
     });
 }
 
-void UZGameRpcStub::CreateCharacter(const TSharedPtr<idlezt::CreateCharacterReq>& InReqMessage, const OnCreateCharacterResult& InCallback)
+void UZGameRpcStub::CreateCharacter(const TSharedPtr<idlepb::CreateCharacterReq>& InReqMessage, const OnCreateCharacterResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::CreateCharacter;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::CreateCharacterAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::CreateCharacterAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -725,10 +734,10 @@ void UZGameRpcStub::K2_UseItem(const FZUseItemReq& InParams, const FZOnUseItemRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UseItemReq>();
+    auto ReqMessage = MakeShared<idlepb::UseItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UseItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UseItemAck>& InRspMessage)
+    UseItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UseItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -744,20 +753,20 @@ void UZGameRpcStub::K2_UseItem(const FZUseItemReq& InParams, const FZOnUseItemRe
     });
 }
 
-void UZGameRpcStub::UseItem(const TSharedPtr<idlezt::UseItemReq>& InReqMessage, const OnUseItemResult& InCallback)
+void UZGameRpcStub::UseItem(const TSharedPtr<idlepb::UseItemReq>& InReqMessage, const OnUseItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UseItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UseItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UseItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -770,10 +779,10 @@ void UZGameRpcStub::K2_UseSelectGift(const FZUseSelectGiftReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UseSelectGiftReq>();
+    auto ReqMessage = MakeShared<idlepb::UseSelectGiftReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UseSelectGift(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UseSelectGiftAck>& InRspMessage)
+    UseSelectGift(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UseSelectGiftAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -789,20 +798,20 @@ void UZGameRpcStub::K2_UseSelectGift(const FZUseSelectGiftReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::UseSelectGift(const TSharedPtr<idlezt::UseSelectGiftReq>& InReqMessage, const OnUseSelectGiftResult& InCallback)
+void UZGameRpcStub::UseSelectGift(const TSharedPtr<idlepb::UseSelectGiftReq>& InReqMessage, const OnUseSelectGiftResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UseSelectGift;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UseSelectGiftAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UseSelectGiftAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -815,10 +824,10 @@ void UZGameRpcStub::K2_SellItem(const FZSellItemReq& InParams, const FZOnSellIte
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SellItemReq>();
+    auto ReqMessage = MakeShared<idlepb::SellItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SellItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SellItemAck>& InRspMessage)
+    SellItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SellItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -834,20 +843,20 @@ void UZGameRpcStub::K2_SellItem(const FZSellItemReq& InParams, const FZOnSellIte
     });
 }
 
-void UZGameRpcStub::SellItem(const TSharedPtr<idlezt::SellItemReq>& InReqMessage, const OnSellItemResult& InCallback)
+void UZGameRpcStub::SellItem(const TSharedPtr<idlepb::SellItemReq>& InReqMessage, const OnSellItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SellItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SellItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SellItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -860,10 +869,10 @@ void UZGameRpcStub::K2_UnlockEquipmentSlot(const FZUnlockEquipmentSlotReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UnlockEquipmentSlotReq>();
+    auto ReqMessage = MakeShared<idlepb::UnlockEquipmentSlotReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UnlockEquipmentSlot(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UnlockEquipmentSlotAck>& InRspMessage)
+    UnlockEquipmentSlot(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UnlockEquipmentSlotAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -879,20 +888,20 @@ void UZGameRpcStub::K2_UnlockEquipmentSlot(const FZUnlockEquipmentSlotReq& InPar
     });
 }
 
-void UZGameRpcStub::UnlockEquipmentSlot(const TSharedPtr<idlezt::UnlockEquipmentSlotReq>& InReqMessage, const OnUnlockEquipmentSlotResult& InCallback)
+void UZGameRpcStub::UnlockEquipmentSlot(const TSharedPtr<idlepb::UnlockEquipmentSlotReq>& InReqMessage, const OnUnlockEquipmentSlotResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UnlockEquipmentSlot;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UnlockEquipmentSlotAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UnlockEquipmentSlotAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -905,10 +914,10 @@ void UZGameRpcStub::K2_AlchemyRefineStart(const FZAlchemyRefineStartReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AlchemyRefineStartReq>();
+    auto ReqMessage = MakeShared<idlepb::AlchemyRefineStartReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AlchemyRefineStart(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AlchemyRefineStartAck>& InRspMessage)
+    AlchemyRefineStart(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AlchemyRefineStartAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -924,20 +933,20 @@ void UZGameRpcStub::K2_AlchemyRefineStart(const FZAlchemyRefineStartReq& InParam
     });
 }
 
-void UZGameRpcStub::AlchemyRefineStart(const TSharedPtr<idlezt::AlchemyRefineStartReq>& InReqMessage, const OnAlchemyRefineStartResult& InCallback)
+void UZGameRpcStub::AlchemyRefineStart(const TSharedPtr<idlepb::AlchemyRefineStartReq>& InReqMessage, const OnAlchemyRefineStartResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AlchemyRefineStart;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AlchemyRefineStartAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AlchemyRefineStartAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -950,10 +959,10 @@ void UZGameRpcStub::K2_AlchemyRefineCancel(const FZAlchemyRefineCancelReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AlchemyRefineCancelReq>();
+    auto ReqMessage = MakeShared<idlepb::AlchemyRefineCancelReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AlchemyRefineCancel(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AlchemyRefineCancelAck>& InRspMessage)
+    AlchemyRefineCancel(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AlchemyRefineCancelAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -969,20 +978,20 @@ void UZGameRpcStub::K2_AlchemyRefineCancel(const FZAlchemyRefineCancelReq& InPar
     });
 }
 
-void UZGameRpcStub::AlchemyRefineCancel(const TSharedPtr<idlezt::AlchemyRefineCancelReq>& InReqMessage, const OnAlchemyRefineCancelResult& InCallback)
+void UZGameRpcStub::AlchemyRefineCancel(const TSharedPtr<idlepb::AlchemyRefineCancelReq>& InReqMessage, const OnAlchemyRefineCancelResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AlchemyRefineCancel;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AlchemyRefineCancelAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AlchemyRefineCancelAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -995,10 +1004,10 @@ void UZGameRpcStub::K2_AlchemyRefineExtract(const FZAlchemyRefineExtractReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AlchemyRefineExtractReq>();
+    auto ReqMessage = MakeShared<idlepb::AlchemyRefineExtractReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AlchemyRefineExtract(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AlchemyRefineExtractAck>& InRspMessage)
+    AlchemyRefineExtract(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AlchemyRefineExtractAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1014,20 +1023,20 @@ void UZGameRpcStub::K2_AlchemyRefineExtract(const FZAlchemyRefineExtractReq& InP
     });
 }
 
-void UZGameRpcStub::AlchemyRefineExtract(const TSharedPtr<idlezt::AlchemyRefineExtractReq>& InReqMessage, const OnAlchemyRefineExtractResult& InCallback)
+void UZGameRpcStub::AlchemyRefineExtract(const TSharedPtr<idlepb::AlchemyRefineExtractReq>& InReqMessage, const OnAlchemyRefineExtractResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AlchemyRefineExtract;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AlchemyRefineExtractAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AlchemyRefineExtractAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1040,10 +1049,10 @@ void UZGameRpcStub::K2_GetRoleShopData(const FZGetRoleShopDataReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleShopDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleShopDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleShopData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleShopDataAck>& InRspMessage)
+    GetRoleShopData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleShopDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1059,20 +1068,20 @@ void UZGameRpcStub::K2_GetRoleShopData(const FZGetRoleShopDataReq& InParams, con
     });
 }
 
-void UZGameRpcStub::GetRoleShopData(const TSharedPtr<idlezt::GetRoleShopDataReq>& InReqMessage, const OnGetRoleShopDataResult& InCallback)
+void UZGameRpcStub::GetRoleShopData(const TSharedPtr<idlepb::GetRoleShopDataReq>& InReqMessage, const OnGetRoleShopDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleShopData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleShopDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleShopDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1085,10 +1094,10 @@ void UZGameRpcStub::K2_RefreshShop(const FZRefreshShopReq& InParams, const FZOnR
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RefreshShopReq>();
+    auto ReqMessage = MakeShared<idlepb::RefreshShopReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RefreshShop(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RefreshShopAck>& InRspMessage)
+    RefreshShop(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RefreshShopAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1104,20 +1113,20 @@ void UZGameRpcStub::K2_RefreshShop(const FZRefreshShopReq& InParams, const FZOnR
     });
 }
 
-void UZGameRpcStub::RefreshShop(const TSharedPtr<idlezt::RefreshShopReq>& InReqMessage, const OnRefreshShopResult& InCallback)
+void UZGameRpcStub::RefreshShop(const TSharedPtr<idlepb::RefreshShopReq>& InReqMessage, const OnRefreshShopResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshShop;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RefreshShopAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RefreshShopAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1130,10 +1139,10 @@ void UZGameRpcStub::K2_BuyShopItem(const FZBuyShopItemReq& InParams, const FZOnB
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::BuyShopItemReq>();
+    auto ReqMessage = MakeShared<idlepb::BuyShopItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    BuyShopItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::BuyShopItemAck>& InRspMessage)
+    BuyShopItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::BuyShopItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1149,20 +1158,20 @@ void UZGameRpcStub::K2_BuyShopItem(const FZBuyShopItemReq& InParams, const FZOnB
     });
 }
 
-void UZGameRpcStub::BuyShopItem(const TSharedPtr<idlezt::BuyShopItemReq>& InReqMessage, const OnBuyShopItemResult& InCallback)
+void UZGameRpcStub::BuyShopItem(const TSharedPtr<idlepb::BuyShopItemReq>& InReqMessage, const OnBuyShopItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::BuyShopItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::BuyShopItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::BuyShopItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1175,10 +1184,10 @@ void UZGameRpcStub::K2_GetRoleDeluxeShopData(const FZGetRoleDeluxeShopDataReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleDeluxeShopDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleDeluxeShopDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleDeluxeShopData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleDeluxeShopDataAck>& InRspMessage)
+    GetRoleDeluxeShopData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleDeluxeShopDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1194,20 +1203,20 @@ void UZGameRpcStub::K2_GetRoleDeluxeShopData(const FZGetRoleDeluxeShopDataReq& I
     });
 }
 
-void UZGameRpcStub::GetRoleDeluxeShopData(const TSharedPtr<idlezt::GetRoleDeluxeShopDataReq>& InReqMessage, const OnGetRoleDeluxeShopDataResult& InCallback)
+void UZGameRpcStub::GetRoleDeluxeShopData(const TSharedPtr<idlepb::GetRoleDeluxeShopDataReq>& InReqMessage, const OnGetRoleDeluxeShopDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleDeluxeShopData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleDeluxeShopDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleDeluxeShopDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1220,10 +1229,10 @@ void UZGameRpcStub::K2_RefreshDeluxeShop(const FZRefreshDeluxeShopReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RefreshDeluxeShopReq>();
+    auto ReqMessage = MakeShared<idlepb::RefreshDeluxeShopReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RefreshDeluxeShop(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RefreshDeluxeShopAck>& InRspMessage)
+    RefreshDeluxeShop(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RefreshDeluxeShopAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1239,20 +1248,20 @@ void UZGameRpcStub::K2_RefreshDeluxeShop(const FZRefreshDeluxeShopReq& InParams,
     });
 }
 
-void UZGameRpcStub::RefreshDeluxeShop(const TSharedPtr<idlezt::RefreshDeluxeShopReq>& InReqMessage, const OnRefreshDeluxeShopResult& InCallback)
+void UZGameRpcStub::RefreshDeluxeShop(const TSharedPtr<idlepb::RefreshDeluxeShopReq>& InReqMessage, const OnRefreshDeluxeShopResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshDeluxeShop;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RefreshDeluxeShopAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RefreshDeluxeShopAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1265,10 +1274,10 @@ void UZGameRpcStub::K2_BuyDeluxeShopItem(const FZBuyDeluxeShopItemReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::BuyDeluxeShopItemReq>();
+    auto ReqMessage = MakeShared<idlepb::BuyDeluxeShopItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    BuyDeluxeShopItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::BuyDeluxeShopItemAck>& InRspMessage)
+    BuyDeluxeShopItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::BuyDeluxeShopItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1284,20 +1293,20 @@ void UZGameRpcStub::K2_BuyDeluxeShopItem(const FZBuyDeluxeShopItemReq& InParams,
     });
 }
 
-void UZGameRpcStub::BuyDeluxeShopItem(const TSharedPtr<idlezt::BuyDeluxeShopItemReq>& InReqMessage, const OnBuyDeluxeShopItemResult& InCallback)
+void UZGameRpcStub::BuyDeluxeShopItem(const TSharedPtr<idlepb::BuyDeluxeShopItemReq>& InReqMessage, const OnBuyDeluxeShopItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::BuyDeluxeShopItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::BuyDeluxeShopItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::BuyDeluxeShopItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1310,10 +1319,10 @@ void UZGameRpcStub::K2_GetTemporaryPackageData(const FZGetTemporaryPackageDataRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetTemporaryPackageDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetTemporaryPackageDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetTemporaryPackageData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetTemporaryPackageDataAck>& InRspMessage)
+    GetTemporaryPackageData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetTemporaryPackageDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1329,20 +1338,20 @@ void UZGameRpcStub::K2_GetTemporaryPackageData(const FZGetTemporaryPackageDataRe
     });
 }
 
-void UZGameRpcStub::GetTemporaryPackageData(const TSharedPtr<idlezt::GetTemporaryPackageDataReq>& InReqMessage, const OnGetTemporaryPackageDataResult& InCallback)
+void UZGameRpcStub::GetTemporaryPackageData(const TSharedPtr<idlepb::GetTemporaryPackageDataReq>& InReqMessage, const OnGetTemporaryPackageDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetTemporaryPackageData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetTemporaryPackageDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetTemporaryPackageDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1355,10 +1364,10 @@ void UZGameRpcStub::K2_ExtractTemporaryPackageItems(const FZExtractTemporaryPack
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ExtractTemporaryPackageItemsReq>();
+    auto ReqMessage = MakeShared<idlepb::ExtractTemporaryPackageItemsReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ExtractTemporaryPackageItems(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ExtractTemporaryPackageItemsAck>& InRspMessage)
+    ExtractTemporaryPackageItems(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ExtractTemporaryPackageItemsAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1374,20 +1383,20 @@ void UZGameRpcStub::K2_ExtractTemporaryPackageItems(const FZExtractTemporaryPack
     });
 }
 
-void UZGameRpcStub::ExtractTemporaryPackageItems(const TSharedPtr<idlezt::ExtractTemporaryPackageItemsReq>& InReqMessage, const OnExtractTemporaryPackageItemsResult& InCallback)
+void UZGameRpcStub::ExtractTemporaryPackageItems(const TSharedPtr<idlepb::ExtractTemporaryPackageItemsReq>& InReqMessage, const OnExtractTemporaryPackageItemsResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ExtractTemporaryPackageItems;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ExtractTemporaryPackageItemsAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ExtractTemporaryPackageItemsAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1400,10 +1409,10 @@ void UZGameRpcStub::K2_SpeedupRelive(const FZSpeedupReliveReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SpeedupReliveReq>();
+    auto ReqMessage = MakeShared<idlepb::SpeedupReliveReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SpeedupRelive(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SpeedupReliveAck>& InRspMessage)
+    SpeedupRelive(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SpeedupReliveAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1419,20 +1428,20 @@ void UZGameRpcStub::K2_SpeedupRelive(const FZSpeedupReliveReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::SpeedupRelive(const TSharedPtr<idlezt::SpeedupReliveReq>& InReqMessage, const OnSpeedupReliveResult& InCallback)
+void UZGameRpcStub::SpeedupRelive(const TSharedPtr<idlepb::SpeedupReliveReq>& InReqMessage, const OnSpeedupReliveResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SpeedupRelive;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SpeedupReliveAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SpeedupReliveAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1445,10 +1454,10 @@ void UZGameRpcStub::K2_GetMapInfo(const FZGetMapInfoReq& InParams, const FZOnGet
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetMapInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetMapInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetMapInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetMapInfoAck>& InRspMessage)
+    GetMapInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetMapInfoAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1464,20 +1473,20 @@ void UZGameRpcStub::K2_GetMapInfo(const FZGetMapInfoReq& InParams, const FZOnGet
     });
 }
 
-void UZGameRpcStub::GetMapInfo(const TSharedPtr<idlezt::GetMapInfoReq>& InReqMessage, const OnGetMapInfoResult& InCallback)
+void UZGameRpcStub::GetMapInfo(const TSharedPtr<idlepb::GetMapInfoReq>& InReqMessage, const OnGetMapInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMapInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetMapInfoAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetMapInfoAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1490,10 +1499,10 @@ void UZGameRpcStub::K2_UnlockArena(const FZUnlockArenaReq& InParams, const FZOnU
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UnlockArenaReq>();
+    auto ReqMessage = MakeShared<idlepb::UnlockArenaReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UnlockArena(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UnlockArenaAck>& InRspMessage)
+    UnlockArena(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UnlockArenaAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1509,20 +1518,20 @@ void UZGameRpcStub::K2_UnlockArena(const FZUnlockArenaReq& InParams, const FZOnU
     });
 }
 
-void UZGameRpcStub::UnlockArena(const TSharedPtr<idlezt::UnlockArenaReq>& InReqMessage, const OnUnlockArenaResult& InCallback)
+void UZGameRpcStub::UnlockArena(const TSharedPtr<idlepb::UnlockArenaReq>& InReqMessage, const OnUnlockArenaResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UnlockArena;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UnlockArenaAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UnlockArenaAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1535,10 +1544,10 @@ void UZGameRpcStub::K2_QuestOp(const FZQuestOpReq& InParams, const FZOnQuestOpRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::QuestOpReq>();
+    auto ReqMessage = MakeShared<idlepb::QuestOpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    QuestOp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::QuestOpAck>& InRspMessage)
+    QuestOp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::QuestOpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1554,20 +1563,20 @@ void UZGameRpcStub::K2_QuestOp(const FZQuestOpReq& InParams, const FZOnQuestOpRe
     });
 }
 
-void UZGameRpcStub::QuestOp(const TSharedPtr<idlezt::QuestOpReq>& InReqMessage, const OnQuestOpResult& InCallback)
+void UZGameRpcStub::QuestOp(const TSharedPtr<idlepb::QuestOpReq>& InReqMessage, const OnQuestOpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::QuestOp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::QuestOpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::QuestOpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1580,10 +1589,10 @@ void UZGameRpcStub::K2_EquipmentPutOn(const FZEquipmentPutOnReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::EquipmentPutOnReq>();
+    auto ReqMessage = MakeShared<idlepb::EquipmentPutOnReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    EquipmentPutOn(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::EquipmentPutOnAck>& InRspMessage)
+    EquipmentPutOn(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::EquipmentPutOnAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1599,20 +1608,20 @@ void UZGameRpcStub::K2_EquipmentPutOn(const FZEquipmentPutOnReq& InParams, const
     });
 }
 
-void UZGameRpcStub::EquipmentPutOn(const TSharedPtr<idlezt::EquipmentPutOnReq>& InReqMessage, const OnEquipmentPutOnResult& InCallback)
+void UZGameRpcStub::EquipmentPutOn(const TSharedPtr<idlepb::EquipmentPutOnReq>& InReqMessage, const OnEquipmentPutOnResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::EquipmentPutOn;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::EquipmentPutOnAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::EquipmentPutOnAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1625,10 +1634,10 @@ void UZGameRpcStub::K2_EquipmentTakeOff(const FZEquipmentTakeOffReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::EquipmentTakeOffReq>();
+    auto ReqMessage = MakeShared<idlepb::EquipmentTakeOffReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    EquipmentTakeOff(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::EquipmentTakeOffAck>& InRspMessage)
+    EquipmentTakeOff(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::EquipmentTakeOffAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1644,20 +1653,20 @@ void UZGameRpcStub::K2_EquipmentTakeOff(const FZEquipmentTakeOffReq& InParams, c
     });
 }
 
-void UZGameRpcStub::EquipmentTakeOff(const TSharedPtr<idlezt::EquipmentTakeOffReq>& InReqMessage, const OnEquipmentTakeOffResult& InCallback)
+void UZGameRpcStub::EquipmentTakeOff(const TSharedPtr<idlepb::EquipmentTakeOffReq>& InReqMessage, const OnEquipmentTakeOffResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::EquipmentTakeOff;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::EquipmentTakeOffAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::EquipmentTakeOffAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1670,10 +1679,10 @@ void UZGameRpcStub::K2_GetLeaderboardPreview(const FZGetLeaderboardPreviewReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetLeaderboardPreviewReq>();
+    auto ReqMessage = MakeShared<idlepb::GetLeaderboardPreviewReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetLeaderboardPreview(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetLeaderboardPreviewAck>& InRspMessage)
+    GetLeaderboardPreview(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetLeaderboardPreviewAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1689,20 +1698,20 @@ void UZGameRpcStub::K2_GetLeaderboardPreview(const FZGetLeaderboardPreviewReq& I
     });
 }
 
-void UZGameRpcStub::GetLeaderboardPreview(const TSharedPtr<idlezt::GetLeaderboardPreviewReq>& InReqMessage, const OnGetLeaderboardPreviewResult& InCallback)
+void UZGameRpcStub::GetLeaderboardPreview(const TSharedPtr<idlepb::GetLeaderboardPreviewReq>& InReqMessage, const OnGetLeaderboardPreviewResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetLeaderboardPreview;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetLeaderboardPreviewAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetLeaderboardPreviewAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1715,10 +1724,10 @@ void UZGameRpcStub::K2_GetLeaderboardData(const FZGetLeaderboardDataReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetLeaderboardDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetLeaderboardDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetLeaderboardData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetLeaderboardDataAck>& InRspMessage)
+    GetLeaderboardData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetLeaderboardDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1734,20 +1743,20 @@ void UZGameRpcStub::K2_GetLeaderboardData(const FZGetLeaderboardDataReq& InParam
     });
 }
 
-void UZGameRpcStub::GetLeaderboardData(const TSharedPtr<idlezt::GetLeaderboardDataReq>& InReqMessage, const OnGetLeaderboardDataResult& InCallback)
+void UZGameRpcStub::GetLeaderboardData(const TSharedPtr<idlepb::GetLeaderboardDataReq>& InReqMessage, const OnGetLeaderboardDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetLeaderboardData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetLeaderboardDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetLeaderboardDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1760,10 +1769,10 @@ void UZGameRpcStub::K2_GetRoleLeaderboardData(const FZGetRoleLeaderboardDataReq&
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleLeaderboardDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleLeaderboardDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleLeaderboardData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleLeaderboardDataAck>& InRspMessage)
+    GetRoleLeaderboardData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleLeaderboardDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1779,20 +1788,20 @@ void UZGameRpcStub::K2_GetRoleLeaderboardData(const FZGetRoleLeaderboardDataReq&
     });
 }
 
-void UZGameRpcStub::GetRoleLeaderboardData(const TSharedPtr<idlezt::GetRoleLeaderboardDataReq>& InReqMessage, const OnGetRoleLeaderboardDataResult& InCallback)
+void UZGameRpcStub::GetRoleLeaderboardData(const TSharedPtr<idlepb::GetRoleLeaderboardDataReq>& InReqMessage, const OnGetRoleLeaderboardDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleLeaderboardData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleLeaderboardDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleLeaderboardDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1805,10 +1814,10 @@ void UZGameRpcStub::K2_LeaderboardClickLike(const FZLeaderboardClickLikeReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::LeaderboardClickLikeReq>();
+    auto ReqMessage = MakeShared<idlepb::LeaderboardClickLikeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    LeaderboardClickLike(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::LeaderboardClickLikeAck>& InRspMessage)
+    LeaderboardClickLike(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::LeaderboardClickLikeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1824,20 +1833,20 @@ void UZGameRpcStub::K2_LeaderboardClickLike(const FZLeaderboardClickLikeReq& InP
     });
 }
 
-void UZGameRpcStub::LeaderboardClickLike(const TSharedPtr<idlezt::LeaderboardClickLikeReq>& InReqMessage, const OnLeaderboardClickLikeResult& InCallback)
+void UZGameRpcStub::LeaderboardClickLike(const TSharedPtr<idlepb::LeaderboardClickLikeReq>& InReqMessage, const OnLeaderboardClickLikeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::LeaderboardClickLike;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::LeaderboardClickLikeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::LeaderboardClickLikeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1850,10 +1859,10 @@ void UZGameRpcStub::K2_LeaderboardUpdateMessage(const FZLeaderboardUpdateMessage
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::LeaderboardUpdateMessageReq>();
+    auto ReqMessage = MakeShared<idlepb::LeaderboardUpdateMessageReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    LeaderboardUpdateMessage(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::LeaderboardUpdateMessageAck>& InRspMessage)
+    LeaderboardUpdateMessage(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::LeaderboardUpdateMessageAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1869,20 +1878,20 @@ void UZGameRpcStub::K2_LeaderboardUpdateMessage(const FZLeaderboardUpdateMessage
     });
 }
 
-void UZGameRpcStub::LeaderboardUpdateMessage(const TSharedPtr<idlezt::LeaderboardUpdateMessageReq>& InReqMessage, const OnLeaderboardUpdateMessageResult& InCallback)
+void UZGameRpcStub::LeaderboardUpdateMessage(const TSharedPtr<idlepb::LeaderboardUpdateMessageReq>& InReqMessage, const OnLeaderboardUpdateMessageResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::LeaderboardUpdateMessage;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::LeaderboardUpdateMessageAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::LeaderboardUpdateMessageAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1895,10 +1904,10 @@ void UZGameRpcStub::K2_GetFuZeReward(const FZGetFuZeRewardReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetFuZeRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::GetFuZeRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetFuZeReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetFuZeRewardAck>& InRspMessage)
+    GetFuZeReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetFuZeRewardAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1914,20 +1923,20 @@ void UZGameRpcStub::K2_GetFuZeReward(const FZGetFuZeRewardReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::GetFuZeReward(const TSharedPtr<idlezt::GetFuZeRewardReq>& InReqMessage, const OnGetFuZeRewardResult& InCallback)
+void UZGameRpcStub::GetFuZeReward(const TSharedPtr<idlepb::GetFuZeRewardReq>& InReqMessage, const OnGetFuZeRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetFuZeReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetFuZeRewardAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetFuZeRewardAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1940,10 +1949,10 @@ void UZGameRpcStub::K2_GetRoleMailData(const FZGetRoleMailDataReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleMailDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleMailDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleMailData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleMailDataAck>& InRspMessage)
+    GetRoleMailData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleMailDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -1959,20 +1968,20 @@ void UZGameRpcStub::K2_GetRoleMailData(const FZGetRoleMailDataReq& InParams, con
     });
 }
 
-void UZGameRpcStub::GetRoleMailData(const TSharedPtr<idlezt::GetRoleMailDataReq>& InReqMessage, const OnGetRoleMailDataResult& InCallback)
+void UZGameRpcStub::GetRoleMailData(const TSharedPtr<idlepb::GetRoleMailDataReq>& InReqMessage, const OnGetRoleMailDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleMailData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleMailDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleMailDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -1985,10 +1994,10 @@ void UZGameRpcStub::K2_ReadMail(const FZReadMailReq& InParams, const FZOnReadMai
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReadMailReq>();
+    auto ReqMessage = MakeShared<idlepb::ReadMailReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReadMail(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReadMailAck>& InRspMessage)
+    ReadMail(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReadMailAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2004,20 +2013,20 @@ void UZGameRpcStub::K2_ReadMail(const FZReadMailReq& InParams, const FZOnReadMai
     });
 }
 
-void UZGameRpcStub::ReadMail(const TSharedPtr<idlezt::ReadMailReq>& InReqMessage, const OnReadMailResult& InCallback)
+void UZGameRpcStub::ReadMail(const TSharedPtr<idlepb::ReadMailReq>& InReqMessage, const OnReadMailResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReadMail;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReadMailAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReadMailAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2030,10 +2039,10 @@ void UZGameRpcStub::K2_GetMailAttachment(const FZGetMailAttachmentReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetMailAttachmentReq>();
+    auto ReqMessage = MakeShared<idlepb::GetMailAttachmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetMailAttachment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetMailAttachmentAck>& InRspMessage)
+    GetMailAttachment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetMailAttachmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2049,20 +2058,20 @@ void UZGameRpcStub::K2_GetMailAttachment(const FZGetMailAttachmentReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetMailAttachment(const TSharedPtr<idlezt::GetMailAttachmentReq>& InReqMessage, const OnGetMailAttachmentResult& InCallback)
+void UZGameRpcStub::GetMailAttachment(const TSharedPtr<idlepb::GetMailAttachmentReq>& InReqMessage, const OnGetMailAttachmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMailAttachment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetMailAttachmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetMailAttachmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2075,10 +2084,10 @@ void UZGameRpcStub::K2_DeleteMail(const FZDeleteMailReq& InParams, const FZOnDel
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DeleteMailReq>();
+    auto ReqMessage = MakeShared<idlepb::DeleteMailReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DeleteMail(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DeleteMailAck>& InRspMessage)
+    DeleteMail(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DeleteMailAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2094,20 +2103,20 @@ void UZGameRpcStub::K2_DeleteMail(const FZDeleteMailReq& InParams, const FZOnDel
     });
 }
 
-void UZGameRpcStub::DeleteMail(const TSharedPtr<idlezt::DeleteMailReq>& InReqMessage, const OnDeleteMailResult& InCallback)
+void UZGameRpcStub::DeleteMail(const TSharedPtr<idlepb::DeleteMailReq>& InReqMessage, const OnDeleteMailResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DeleteMail;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DeleteMailAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DeleteMailAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2120,10 +2129,10 @@ void UZGameRpcStub::K2_OneClickGetMailAttachment(const FZOneClickGetMailAttachme
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OneClickGetMailAttachmentReq>();
+    auto ReqMessage = MakeShared<idlepb::OneClickGetMailAttachmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OneClickGetMailAttachment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OneClickGetMailAttachmentAck>& InRspMessage)
+    OneClickGetMailAttachment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OneClickGetMailAttachmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2139,20 +2148,20 @@ void UZGameRpcStub::K2_OneClickGetMailAttachment(const FZOneClickGetMailAttachme
     });
 }
 
-void UZGameRpcStub::OneClickGetMailAttachment(const TSharedPtr<idlezt::OneClickGetMailAttachmentReq>& InReqMessage, const OnOneClickGetMailAttachmentResult& InCallback)
+void UZGameRpcStub::OneClickGetMailAttachment(const TSharedPtr<idlepb::OneClickGetMailAttachmentReq>& InReqMessage, const OnOneClickGetMailAttachmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickGetMailAttachment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OneClickGetMailAttachmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OneClickGetMailAttachmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2165,10 +2174,10 @@ void UZGameRpcStub::K2_OneClickReadMail(const FZOneClickReadMailReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OneClickReadMailReq>();
+    auto ReqMessage = MakeShared<idlepb::OneClickReadMailReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OneClickReadMail(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OneClickReadMailAck>& InRspMessage)
+    OneClickReadMail(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OneClickReadMailAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2184,20 +2193,20 @@ void UZGameRpcStub::K2_OneClickReadMail(const FZOneClickReadMailReq& InParams, c
     });
 }
 
-void UZGameRpcStub::OneClickReadMail(const TSharedPtr<idlezt::OneClickReadMailReq>& InReqMessage, const OnOneClickReadMailResult& InCallback)
+void UZGameRpcStub::OneClickReadMail(const TSharedPtr<idlepb::OneClickReadMailReq>& InReqMessage, const OnOneClickReadMailResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickReadMail;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OneClickReadMailAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OneClickReadMailAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2210,10 +2219,10 @@ void UZGameRpcStub::K2_OneClickDeleteMail(const FZOneClickDeleteMailReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OneClickDeleteMailReq>();
+    auto ReqMessage = MakeShared<idlepb::OneClickDeleteMailReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OneClickDeleteMail(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OneClickDeleteMailAck>& InRspMessage)
+    OneClickDeleteMail(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OneClickDeleteMailAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2229,20 +2238,20 @@ void UZGameRpcStub::K2_OneClickDeleteMail(const FZOneClickDeleteMailReq& InParam
     });
 }
 
-void UZGameRpcStub::OneClickDeleteMail(const TSharedPtr<idlezt::OneClickDeleteMailReq>& InReqMessage, const OnOneClickDeleteMailResult& InCallback)
+void UZGameRpcStub::OneClickDeleteMail(const TSharedPtr<idlepb::OneClickDeleteMailReq>& InReqMessage, const OnOneClickDeleteMailResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickDeleteMail;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OneClickDeleteMailAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OneClickDeleteMailAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2255,10 +2264,10 @@ void UZGameRpcStub::K2_UnlockFunctionModule(const FZUnlockFunctionModuleReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UnlockFunctionModuleReq>();
+    auto ReqMessage = MakeShared<idlepb::UnlockFunctionModuleReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UnlockFunctionModule(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UnlockFunctionModuleAck>& InRspMessage)
+    UnlockFunctionModule(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UnlockFunctionModuleAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2274,20 +2283,20 @@ void UZGameRpcStub::K2_UnlockFunctionModule(const FZUnlockFunctionModuleReq& InP
     });
 }
 
-void UZGameRpcStub::UnlockFunctionModule(const TSharedPtr<idlezt::UnlockFunctionModuleReq>& InReqMessage, const OnUnlockFunctionModuleResult& InCallback)
+void UZGameRpcStub::UnlockFunctionModule(const TSharedPtr<idlepb::UnlockFunctionModuleReq>& InReqMessage, const OnUnlockFunctionModuleResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UnlockFunctionModule;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UnlockFunctionModuleAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UnlockFunctionModuleAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2300,10 +2309,10 @@ void UZGameRpcStub::K2_GetChatRecord(const FZGetChatRecordReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetChatRecordReq>();
+    auto ReqMessage = MakeShared<idlepb::GetChatRecordReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetChatRecord(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetChatRecordAck>& InRspMessage)
+    GetChatRecord(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetChatRecordAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2319,20 +2328,20 @@ void UZGameRpcStub::K2_GetChatRecord(const FZGetChatRecordReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::GetChatRecord(const TSharedPtr<idlezt::GetChatRecordReq>& InReqMessage, const OnGetChatRecordResult& InCallback)
+void UZGameRpcStub::GetChatRecord(const TSharedPtr<idlepb::GetChatRecordReq>& InReqMessage, const OnGetChatRecordResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetChatRecord;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetChatRecordAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetChatRecordAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2345,10 +2354,10 @@ void UZGameRpcStub::K2_DeletePrivateChatRecord(const FZDeletePrivateChatRecordRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DeletePrivateChatRecordReq>();
+    auto ReqMessage = MakeShared<idlepb::DeletePrivateChatRecordReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DeletePrivateChatRecord(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DeletePrivateChatRecordAck>& InRspMessage)
+    DeletePrivateChatRecord(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DeletePrivateChatRecordAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2364,20 +2373,20 @@ void UZGameRpcStub::K2_DeletePrivateChatRecord(const FZDeletePrivateChatRecordRe
     });
 }
 
-void UZGameRpcStub::DeletePrivateChatRecord(const TSharedPtr<idlezt::DeletePrivateChatRecordReq>& InReqMessage, const OnDeletePrivateChatRecordResult& InCallback)
+void UZGameRpcStub::DeletePrivateChatRecord(const TSharedPtr<idlepb::DeletePrivateChatRecordReq>& InReqMessage, const OnDeletePrivateChatRecordResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DeletePrivateChatRecord;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DeletePrivateChatRecordAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DeletePrivateChatRecordAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2390,10 +2399,10 @@ void UZGameRpcStub::K2_SendChatMessage(const FZSendChatMessageReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SendChatMessageReq>();
+    auto ReqMessage = MakeShared<idlepb::SendChatMessageReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SendChatMessage(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SendChatMessageAck>& InRspMessage)
+    SendChatMessage(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SendChatMessageAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2409,20 +2418,20 @@ void UZGameRpcStub::K2_SendChatMessage(const FZSendChatMessageReq& InParams, con
     });
 }
 
-void UZGameRpcStub::SendChatMessage(const TSharedPtr<idlezt::SendChatMessageReq>& InReqMessage, const OnSendChatMessageResult& InCallback)
+void UZGameRpcStub::SendChatMessage(const TSharedPtr<idlepb::SendChatMessageReq>& InReqMessage, const OnSendChatMessageResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SendChatMessage;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SendChatMessageAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SendChatMessageAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2435,10 +2444,10 @@ void UZGameRpcStub::K2_ClearChatUnreadNum(const FZClearChatUnreadNumReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ClearChatUnreadNumReq>();
+    auto ReqMessage = MakeShared<idlepb::ClearChatUnreadNumReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ClearChatUnreadNum(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ClearChatUnreadNumAck>& InRspMessage)
+    ClearChatUnreadNum(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ClearChatUnreadNumAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2454,20 +2463,20 @@ void UZGameRpcStub::K2_ClearChatUnreadNum(const FZClearChatUnreadNumReq& InParam
     });
 }
 
-void UZGameRpcStub::ClearChatUnreadNum(const TSharedPtr<idlezt::ClearChatUnreadNumReq>& InReqMessage, const OnClearChatUnreadNumResult& InCallback)
+void UZGameRpcStub::ClearChatUnreadNum(const TSharedPtr<idlepb::ClearChatUnreadNumReq>& InReqMessage, const OnClearChatUnreadNumResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ClearChatUnreadNum;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ClearChatUnreadNumAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ClearChatUnreadNumAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2480,10 +2489,10 @@ void UZGameRpcStub::K2_ForgeRefineStart(const FZForgeRefineStartReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ForgeRefineStartReq>();
+    auto ReqMessage = MakeShared<idlepb::ForgeRefineStartReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ForgeRefineStart(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ForgeRefineStartAck>& InRspMessage)
+    ForgeRefineStart(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ForgeRefineStartAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2499,20 +2508,20 @@ void UZGameRpcStub::K2_ForgeRefineStart(const FZForgeRefineStartReq& InParams, c
     });
 }
 
-void UZGameRpcStub::ForgeRefineStart(const TSharedPtr<idlezt::ForgeRefineStartReq>& InReqMessage, const OnForgeRefineStartResult& InCallback)
+void UZGameRpcStub::ForgeRefineStart(const TSharedPtr<idlepb::ForgeRefineStartReq>& InReqMessage, const OnForgeRefineStartResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeRefineStart;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ForgeRefineStartAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ForgeRefineStartAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2525,10 +2534,10 @@ void UZGameRpcStub::K2_ForgeRefineCancel(const FZForgeRefineCancelReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ForgeRefineCancelReq>();
+    auto ReqMessage = MakeShared<idlepb::ForgeRefineCancelReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ForgeRefineCancel(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ForgeRefineCancelAck>& InRspMessage)
+    ForgeRefineCancel(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ForgeRefineCancelAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2544,20 +2553,20 @@ void UZGameRpcStub::K2_ForgeRefineCancel(const FZForgeRefineCancelReq& InParams,
     });
 }
 
-void UZGameRpcStub::ForgeRefineCancel(const TSharedPtr<idlezt::ForgeRefineCancelReq>& InReqMessage, const OnForgeRefineCancelResult& InCallback)
+void UZGameRpcStub::ForgeRefineCancel(const TSharedPtr<idlepb::ForgeRefineCancelReq>& InReqMessage, const OnForgeRefineCancelResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeRefineCancel;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ForgeRefineCancelAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ForgeRefineCancelAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2570,10 +2579,10 @@ void UZGameRpcStub::K2_ForgeRefineExtract(const FZForgeRefineExtractReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ForgeRefineExtractReq>();
+    auto ReqMessage = MakeShared<idlepb::ForgeRefineExtractReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ForgeRefineExtract(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ForgeRefineExtractAck>& InRspMessage)
+    ForgeRefineExtract(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ForgeRefineExtractAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2589,20 +2598,20 @@ void UZGameRpcStub::K2_ForgeRefineExtract(const FZForgeRefineExtractReq& InParam
     });
 }
 
-void UZGameRpcStub::ForgeRefineExtract(const TSharedPtr<idlezt::ForgeRefineExtractReq>& InReqMessage, const OnForgeRefineExtractResult& InCallback)
+void UZGameRpcStub::ForgeRefineExtract(const TSharedPtr<idlepb::ForgeRefineExtractReq>& InReqMessage, const OnForgeRefineExtractResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeRefineExtract;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ForgeRefineExtractAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ForgeRefineExtractAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2615,10 +2624,10 @@ void UZGameRpcStub::K2_GetForgeLostEquipmentData(const FZGetForgeLostEquipmentDa
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetForgeLostEquipmentDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetForgeLostEquipmentDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetForgeLostEquipmentData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetForgeLostEquipmentDataAck>& InRspMessage)
+    GetForgeLostEquipmentData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetForgeLostEquipmentDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2634,20 +2643,20 @@ void UZGameRpcStub::K2_GetForgeLostEquipmentData(const FZGetForgeLostEquipmentDa
     });
 }
 
-void UZGameRpcStub::GetForgeLostEquipmentData(const TSharedPtr<idlezt::GetForgeLostEquipmentDataReq>& InReqMessage, const OnGetForgeLostEquipmentDataResult& InCallback)
+void UZGameRpcStub::GetForgeLostEquipmentData(const TSharedPtr<idlepb::GetForgeLostEquipmentDataReq>& InReqMessage, const OnGetForgeLostEquipmentDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetForgeLostEquipmentData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetForgeLostEquipmentDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetForgeLostEquipmentDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2660,10 +2669,10 @@ void UZGameRpcStub::K2_ForgeDestroy(const FZForgeDestroyReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ForgeDestroyReq>();
+    auto ReqMessage = MakeShared<idlepb::ForgeDestroyReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ForgeDestroy(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ForgeDestroyAck>& InRspMessage)
+    ForgeDestroy(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ForgeDestroyAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2679,20 +2688,20 @@ void UZGameRpcStub::K2_ForgeDestroy(const FZForgeDestroyReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::ForgeDestroy(const TSharedPtr<idlezt::ForgeDestroyReq>& InReqMessage, const OnForgeDestroyResult& InCallback)
+void UZGameRpcStub::ForgeDestroy(const TSharedPtr<idlepb::ForgeDestroyReq>& InReqMessage, const OnForgeDestroyResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeDestroy;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ForgeDestroyAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ForgeDestroyAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2705,10 +2714,10 @@ void UZGameRpcStub::K2_ForgeFindBack(const FZForgeFindBackReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ForgeFindBackReq>();
+    auto ReqMessage = MakeShared<idlepb::ForgeFindBackReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ForgeFindBack(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ForgeFindBackAck>& InRspMessage)
+    ForgeFindBack(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ForgeFindBackAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2724,20 +2733,20 @@ void UZGameRpcStub::K2_ForgeFindBack(const FZForgeFindBackReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::ForgeFindBack(const TSharedPtr<idlezt::ForgeFindBackReq>& InReqMessage, const OnForgeFindBackResult& InCallback)
+void UZGameRpcStub::ForgeFindBack(const TSharedPtr<idlepb::ForgeFindBackReq>& InReqMessage, const OnForgeFindBackResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ForgeFindBack;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ForgeFindBackAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ForgeFindBackAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2750,10 +2759,10 @@ void UZGameRpcStub::K2_RequestPillElixirData(const FZRequestPillElixirDataReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestPillElixirDataReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestPillElixirDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestPillElixirData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestPillElixirDataAck>& InRspMessage)
+    RequestPillElixirData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestPillElixirDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2769,20 +2778,20 @@ void UZGameRpcStub::K2_RequestPillElixirData(const FZRequestPillElixirDataReq& I
     });
 }
 
-void UZGameRpcStub::RequestPillElixirData(const TSharedPtr<idlezt::RequestPillElixirDataReq>& InReqMessage, const OnRequestPillElixirDataResult& InCallback)
+void UZGameRpcStub::RequestPillElixirData(const TSharedPtr<idlepb::RequestPillElixirDataReq>& InReqMessage, const OnRequestPillElixirDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestPillElixirData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestPillElixirDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestPillElixirDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2795,10 +2804,10 @@ void UZGameRpcStub::K2_GetOnePillElixirData(const FZGetOnePillElixirDataReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetOnePillElixirDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetOnePillElixirDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetOnePillElixirData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetOnePillElixirDataAck>& InRspMessage)
+    GetOnePillElixirData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetOnePillElixirDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2814,20 +2823,20 @@ void UZGameRpcStub::K2_GetOnePillElixirData(const FZGetOnePillElixirDataReq& InP
     });
 }
 
-void UZGameRpcStub::GetOnePillElixirData(const TSharedPtr<idlezt::GetOnePillElixirDataReq>& InReqMessage, const OnGetOnePillElixirDataResult& InCallback)
+void UZGameRpcStub::GetOnePillElixirData(const TSharedPtr<idlepb::GetOnePillElixirDataReq>& InReqMessage, const OnGetOnePillElixirDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetOnePillElixirData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetOnePillElixirDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetOnePillElixirDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2840,10 +2849,10 @@ void UZGameRpcStub::K2_RequestModifyPillElixirFilter(const FZRequestModifyPillEl
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestModifyPillElixirFilterReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestModifyPillElixirFilterReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestModifyPillElixirFilter(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestModifyPillElixirFilterAck>& InRspMessage)
+    RequestModifyPillElixirFilter(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestModifyPillElixirFilterAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2859,20 +2868,20 @@ void UZGameRpcStub::K2_RequestModifyPillElixirFilter(const FZRequestModifyPillEl
     });
 }
 
-void UZGameRpcStub::RequestModifyPillElixirFilter(const TSharedPtr<idlezt::RequestModifyPillElixirFilterReq>& InReqMessage, const OnRequestModifyPillElixirFilterResult& InCallback)
+void UZGameRpcStub::RequestModifyPillElixirFilter(const TSharedPtr<idlepb::RequestModifyPillElixirFilterReq>& InReqMessage, const OnRequestModifyPillElixirFilterResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestModifyPillElixirFilter;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestModifyPillElixirFilterAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestModifyPillElixirFilterAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2885,10 +2894,10 @@ void UZGameRpcStub::K2_UsePillElixir(const FZUsePillElixirReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UsePillElixirReq>();
+    auto ReqMessage = MakeShared<idlepb::UsePillElixirReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UsePillElixir(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UsePillElixirAck>& InRspMessage)
+    UsePillElixir(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UsePillElixirAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2904,20 +2913,20 @@ void UZGameRpcStub::K2_UsePillElixir(const FZUsePillElixirReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::UsePillElixir(const TSharedPtr<idlezt::UsePillElixirReq>& InReqMessage, const OnUsePillElixirResult& InCallback)
+void UZGameRpcStub::UsePillElixir(const TSharedPtr<idlepb::UsePillElixirReq>& InReqMessage, const OnUsePillElixirResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UsePillElixir;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UsePillElixirAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UsePillElixirAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2930,10 +2939,10 @@ void UZGameRpcStub::K2_OneClickUsePillElixir(const FZOneClickUsePillElixirReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OneClickUsePillElixirReq>();
+    auto ReqMessage = MakeShared<idlepb::OneClickUsePillElixirReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OneClickUsePillElixir(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OneClickUsePillElixirAck>& InRspMessage)
+    OneClickUsePillElixir(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OneClickUsePillElixirAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2949,20 +2958,20 @@ void UZGameRpcStub::K2_OneClickUsePillElixir(const FZOneClickUsePillElixirReq& I
     });
 }
 
-void UZGameRpcStub::OneClickUsePillElixir(const TSharedPtr<idlezt::OneClickUsePillElixirReq>& InReqMessage, const OnOneClickUsePillElixirResult& InCallback)
+void UZGameRpcStub::OneClickUsePillElixir(const TSharedPtr<idlepb::OneClickUsePillElixirReq>& InReqMessage, const OnOneClickUsePillElixirResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickUsePillElixir;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OneClickUsePillElixirAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OneClickUsePillElixirAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -2975,10 +2984,10 @@ void UZGameRpcStub::K2_TradePillElixir(const FZTradePillElixirReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::TradePillElixirReq>();
+    auto ReqMessage = MakeShared<idlepb::TradePillElixirReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    TradePillElixir(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::TradePillElixirAck>& InRspMessage)
+    TradePillElixir(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::TradePillElixirAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -2994,20 +3003,20 @@ void UZGameRpcStub::K2_TradePillElixir(const FZTradePillElixirReq& InParams, con
     });
 }
 
-void UZGameRpcStub::TradePillElixir(const TSharedPtr<idlezt::TradePillElixirReq>& InReqMessage, const OnTradePillElixirResult& InCallback)
+void UZGameRpcStub::TradePillElixir(const TSharedPtr<idlepb::TradePillElixirReq>& InReqMessage, const OnTradePillElixirResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::TradePillElixir;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::TradePillElixirAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::TradePillElixirAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3020,10 +3029,10 @@ void UZGameRpcStub::K2_ReinforceEquipment(const FZReinforceEquipmentReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReinforceEquipmentReq>();
+    auto ReqMessage = MakeShared<idlepb::ReinforceEquipmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReinforceEquipment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReinforceEquipmentAck>& InRspMessage)
+    ReinforceEquipment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReinforceEquipmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3039,20 +3048,20 @@ void UZGameRpcStub::K2_ReinforceEquipment(const FZReinforceEquipmentReq& InParam
     });
 }
 
-void UZGameRpcStub::ReinforceEquipment(const TSharedPtr<idlezt::ReinforceEquipmentReq>& InReqMessage, const OnReinforceEquipmentResult& InCallback)
+void UZGameRpcStub::ReinforceEquipment(const TSharedPtr<idlepb::ReinforceEquipmentReq>& InReqMessage, const OnReinforceEquipmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReinforceEquipment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReinforceEquipmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReinforceEquipmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3065,10 +3074,10 @@ void UZGameRpcStub::K2_RefineEquipment(const FZRefineEquipmentReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RefineEquipmentReq>();
+    auto ReqMessage = MakeShared<idlepb::RefineEquipmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RefineEquipment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RefineEquipmentAck>& InRspMessage)
+    RefineEquipment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RefineEquipmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3084,20 +3093,20 @@ void UZGameRpcStub::K2_RefineEquipment(const FZRefineEquipmentReq& InParams, con
     });
 }
 
-void UZGameRpcStub::RefineEquipment(const TSharedPtr<idlezt::RefineEquipmentReq>& InReqMessage, const OnRefineEquipmentResult& InCallback)
+void UZGameRpcStub::RefineEquipment(const TSharedPtr<idlepb::RefineEquipmentReq>& InReqMessage, const OnRefineEquipmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RefineEquipment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RefineEquipmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RefineEquipmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3110,10 +3119,10 @@ void UZGameRpcStub::K2_QiWenEquipment(const FZQiWenEquipmentReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::QiWenEquipmentReq>();
+    auto ReqMessage = MakeShared<idlepb::QiWenEquipmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    QiWenEquipment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::QiWenEquipmentAck>& InRspMessage)
+    QiWenEquipment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::QiWenEquipmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3129,20 +3138,20 @@ void UZGameRpcStub::K2_QiWenEquipment(const FZQiWenEquipmentReq& InParams, const
     });
 }
 
-void UZGameRpcStub::QiWenEquipment(const TSharedPtr<idlezt::QiWenEquipmentReq>& InReqMessage, const OnQiWenEquipmentResult& InCallback)
+void UZGameRpcStub::QiWenEquipment(const TSharedPtr<idlepb::QiWenEquipmentReq>& InReqMessage, const OnQiWenEquipmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::QiWenEquipment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::QiWenEquipmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::QiWenEquipmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3155,10 +3164,10 @@ void UZGameRpcStub::K2_ResetEquipment(const FZResetEquipmentReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ResetEquipmentReq>();
+    auto ReqMessage = MakeShared<idlepb::ResetEquipmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ResetEquipment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ResetEquipmentAck>& InRspMessage)
+    ResetEquipment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ResetEquipmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3174,20 +3183,20 @@ void UZGameRpcStub::K2_ResetEquipment(const FZResetEquipmentReq& InParams, const
     });
 }
 
-void UZGameRpcStub::ResetEquipment(const TSharedPtr<idlezt::ResetEquipmentReq>& InReqMessage, const OnResetEquipmentResult& InCallback)
+void UZGameRpcStub::ResetEquipment(const TSharedPtr<idlepb::ResetEquipmentReq>& InReqMessage, const OnResetEquipmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ResetEquipment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ResetEquipmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ResetEquipmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3200,10 +3209,10 @@ void UZGameRpcStub::K2_InheritEquipment(const FZInheritEquipmentReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::InheritEquipmentReq>();
+    auto ReqMessage = MakeShared<idlepb::InheritEquipmentReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    InheritEquipment(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::InheritEquipmentAck>& InRspMessage)
+    InheritEquipment(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::InheritEquipmentAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3219,20 +3228,20 @@ void UZGameRpcStub::K2_InheritEquipment(const FZInheritEquipmentReq& InParams, c
     });
 }
 
-void UZGameRpcStub::InheritEquipment(const TSharedPtr<idlezt::InheritEquipmentReq>& InReqMessage, const OnInheritEquipmentResult& InCallback)
+void UZGameRpcStub::InheritEquipment(const TSharedPtr<idlepb::InheritEquipmentReq>& InReqMessage, const OnInheritEquipmentResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::InheritEquipment;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::InheritEquipmentAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::InheritEquipmentAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3245,10 +3254,10 @@ void UZGameRpcStub::K2_LockItem(const FZLockItemReq& InParams, const FZOnLockIte
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::LockItemReq>();
+    auto ReqMessage = MakeShared<idlepb::LockItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    LockItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::LockItemAck>& InRspMessage)
+    LockItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::LockItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3264,20 +3273,20 @@ void UZGameRpcStub::K2_LockItem(const FZLockItemReq& InParams, const FZOnLockIte
     });
 }
 
-void UZGameRpcStub::LockItem(const TSharedPtr<idlezt::LockItemReq>& InReqMessage, const OnLockItemResult& InCallback)
+void UZGameRpcStub::LockItem(const TSharedPtr<idlepb::LockItemReq>& InReqMessage, const OnLockItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::LockItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::LockItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::LockItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3290,10 +3299,10 @@ void UZGameRpcStub::K2_SoloArenaChallenge(const FZSoloArenaChallengeReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SoloArenaChallengeReq>();
+    auto ReqMessage = MakeShared<idlepb::SoloArenaChallengeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SoloArenaChallenge(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SoloArenaChallengeAck>& InRspMessage)
+    SoloArenaChallenge(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SoloArenaChallengeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3309,20 +3318,20 @@ void UZGameRpcStub::K2_SoloArenaChallenge(const FZSoloArenaChallengeReq& InParam
     });
 }
 
-void UZGameRpcStub::SoloArenaChallenge(const TSharedPtr<idlezt::SoloArenaChallengeReq>& InReqMessage, const OnSoloArenaChallengeResult& InCallback)
+void UZGameRpcStub::SoloArenaChallenge(const TSharedPtr<idlepb::SoloArenaChallengeReq>& InReqMessage, const OnSoloArenaChallengeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SoloArenaChallenge;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SoloArenaChallengeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SoloArenaChallengeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3335,10 +3344,10 @@ void UZGameRpcStub::K2_SoloArenaQuickEnd(const FZSoloArenaQuickEndReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SoloArenaQuickEndReq>();
+    auto ReqMessage = MakeShared<idlepb::SoloArenaQuickEndReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SoloArenaQuickEnd(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SoloArenaQuickEndAck>& InRspMessage)
+    SoloArenaQuickEnd(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SoloArenaQuickEndAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3354,20 +3363,20 @@ void UZGameRpcStub::K2_SoloArenaQuickEnd(const FZSoloArenaQuickEndReq& InParams,
     });
 }
 
-void UZGameRpcStub::SoloArenaQuickEnd(const TSharedPtr<idlezt::SoloArenaQuickEndReq>& InReqMessage, const OnSoloArenaQuickEndResult& InCallback)
+void UZGameRpcStub::SoloArenaQuickEnd(const TSharedPtr<idlepb::SoloArenaQuickEndReq>& InReqMessage, const OnSoloArenaQuickEndResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SoloArenaQuickEnd;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SoloArenaQuickEndAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SoloArenaQuickEndAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3380,10 +3389,10 @@ void UZGameRpcStub::K2_GetSoloArenaHistoryList(const FZGetSoloArenaHistoryListRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSoloArenaHistoryListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSoloArenaHistoryListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSoloArenaHistoryList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSoloArenaHistoryListAck>& InRspMessage)
+    GetSoloArenaHistoryList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSoloArenaHistoryListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3399,20 +3408,20 @@ void UZGameRpcStub::K2_GetSoloArenaHistoryList(const FZGetSoloArenaHistoryListRe
     });
 }
 
-void UZGameRpcStub::GetSoloArenaHistoryList(const TSharedPtr<idlezt::GetSoloArenaHistoryListReq>& InReqMessage, const OnGetSoloArenaHistoryListResult& InCallback)
+void UZGameRpcStub::GetSoloArenaHistoryList(const TSharedPtr<idlepb::GetSoloArenaHistoryListReq>& InReqMessage, const OnGetSoloArenaHistoryListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSoloArenaHistoryList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSoloArenaHistoryListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSoloArenaHistoryListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3425,10 +3434,10 @@ void UZGameRpcStub::K2_MonsterTowerChallenge(const FZMonsterTowerChallengeReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::MonsterTowerChallengeReq>();
+    auto ReqMessage = MakeShared<idlepb::MonsterTowerChallengeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    MonsterTowerChallenge(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::MonsterTowerChallengeAck>& InRspMessage)
+    MonsterTowerChallenge(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::MonsterTowerChallengeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3444,20 +3453,20 @@ void UZGameRpcStub::K2_MonsterTowerChallenge(const FZMonsterTowerChallengeReq& I
     });
 }
 
-void UZGameRpcStub::MonsterTowerChallenge(const TSharedPtr<idlezt::MonsterTowerChallengeReq>& InReqMessage, const OnMonsterTowerChallengeResult& InCallback)
+void UZGameRpcStub::MonsterTowerChallenge(const TSharedPtr<idlepb::MonsterTowerChallengeReq>& InReqMessage, const OnMonsterTowerChallengeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerChallenge;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::MonsterTowerChallengeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::MonsterTowerChallengeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3470,10 +3479,10 @@ void UZGameRpcStub::K2_MonsterTowerDrawIdleAward(const FZMonsterTowerDrawIdleAwa
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::MonsterTowerDrawIdleAwardReq>();
+    auto ReqMessage = MakeShared<idlepb::MonsterTowerDrawIdleAwardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    MonsterTowerDrawIdleAward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::MonsterTowerDrawIdleAwardAck>& InRspMessage)
+    MonsterTowerDrawIdleAward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::MonsterTowerDrawIdleAwardAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3489,20 +3498,20 @@ void UZGameRpcStub::K2_MonsterTowerDrawIdleAward(const FZMonsterTowerDrawIdleAwa
     });
 }
 
-void UZGameRpcStub::MonsterTowerDrawIdleAward(const TSharedPtr<idlezt::MonsterTowerDrawIdleAwardReq>& InReqMessage, const OnMonsterTowerDrawIdleAwardResult& InCallback)
+void UZGameRpcStub::MonsterTowerDrawIdleAward(const TSharedPtr<idlepb::MonsterTowerDrawIdleAwardReq>& InReqMessage, const OnMonsterTowerDrawIdleAwardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerDrawIdleAward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::MonsterTowerDrawIdleAwardAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::MonsterTowerDrawIdleAwardAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3515,10 +3524,10 @@ void UZGameRpcStub::K2_MonsterTowerClosedDoorTraining(const FZMonsterTowerClosed
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::MonsterTowerClosedDoorTrainingReq>();
+    auto ReqMessage = MakeShared<idlepb::MonsterTowerClosedDoorTrainingReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    MonsterTowerClosedDoorTraining(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::MonsterTowerClosedDoorTrainingAck>& InRspMessage)
+    MonsterTowerClosedDoorTraining(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::MonsterTowerClosedDoorTrainingAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3534,20 +3543,20 @@ void UZGameRpcStub::K2_MonsterTowerClosedDoorTraining(const FZMonsterTowerClosed
     });
 }
 
-void UZGameRpcStub::MonsterTowerClosedDoorTraining(const TSharedPtr<idlezt::MonsterTowerClosedDoorTrainingReq>& InReqMessage, const OnMonsterTowerClosedDoorTrainingResult& InCallback)
+void UZGameRpcStub::MonsterTowerClosedDoorTraining(const TSharedPtr<idlepb::MonsterTowerClosedDoorTrainingReq>& InReqMessage, const OnMonsterTowerClosedDoorTrainingResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerClosedDoorTraining;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::MonsterTowerClosedDoorTrainingAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::MonsterTowerClosedDoorTrainingAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3560,10 +3569,10 @@ void UZGameRpcStub::K2_MonsterTowerQuickEnd(const FZMonsterTowerQuickEndReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::MonsterTowerQuickEndReq>();
+    auto ReqMessage = MakeShared<idlepb::MonsterTowerQuickEndReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    MonsterTowerQuickEnd(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::MonsterTowerQuickEndAck>& InRspMessage)
+    MonsterTowerQuickEnd(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::MonsterTowerQuickEndAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3579,20 +3588,20 @@ void UZGameRpcStub::K2_MonsterTowerQuickEnd(const FZMonsterTowerQuickEndReq& InP
     });
 }
 
-void UZGameRpcStub::MonsterTowerQuickEnd(const TSharedPtr<idlezt::MonsterTowerQuickEndReq>& InReqMessage, const OnMonsterTowerQuickEndResult& InCallback)
+void UZGameRpcStub::MonsterTowerQuickEnd(const TSharedPtr<idlepb::MonsterTowerQuickEndReq>& InReqMessage, const OnMonsterTowerQuickEndResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::MonsterTowerQuickEnd;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::MonsterTowerQuickEndAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::MonsterTowerQuickEndAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3605,10 +3614,10 @@ void UZGameRpcStub::K2_GetMonsterTowerChallengeList(const FZGetMonsterTowerChall
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetMonsterTowerChallengeListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetMonsterTowerChallengeListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetMonsterTowerChallengeList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetMonsterTowerChallengeListAck>& InRspMessage)
+    GetMonsterTowerChallengeList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetMonsterTowerChallengeListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3624,20 +3633,20 @@ void UZGameRpcStub::K2_GetMonsterTowerChallengeList(const FZGetMonsterTowerChall
     });
 }
 
-void UZGameRpcStub::GetMonsterTowerChallengeList(const TSharedPtr<idlezt::GetMonsterTowerChallengeListReq>& InReqMessage, const OnGetMonsterTowerChallengeListResult& InCallback)
+void UZGameRpcStub::GetMonsterTowerChallengeList(const TSharedPtr<idlepb::GetMonsterTowerChallengeListReq>& InReqMessage, const OnGetMonsterTowerChallengeListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMonsterTowerChallengeList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetMonsterTowerChallengeListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetMonsterTowerChallengeListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3650,10 +3659,10 @@ void UZGameRpcStub::K2_GetMonsterTowerChallengeReward(const FZGetMonsterTowerCha
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetMonsterTowerChallengeRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::GetMonsterTowerChallengeRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetMonsterTowerChallengeReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetMonsterTowerChallengeRewardAck>& InRspMessage)
+    GetMonsterTowerChallengeReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetMonsterTowerChallengeRewardAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3669,20 +3678,20 @@ void UZGameRpcStub::K2_GetMonsterTowerChallengeReward(const FZGetMonsterTowerCha
     });
 }
 
-void UZGameRpcStub::GetMonsterTowerChallengeReward(const TSharedPtr<idlezt::GetMonsterTowerChallengeRewardReq>& InReqMessage, const OnGetMonsterTowerChallengeRewardResult& InCallback)
+void UZGameRpcStub::GetMonsterTowerChallengeReward(const TSharedPtr<idlepb::GetMonsterTowerChallengeRewardReq>& InReqMessage, const OnGetMonsterTowerChallengeRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetMonsterTowerChallengeReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetMonsterTowerChallengeRewardAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetMonsterTowerChallengeRewardAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3695,10 +3704,10 @@ void UZGameRpcStub::K2_SetWorldTimeDilation(const FZSetWorldTimeDilationReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetWorldTimeDilationReq>();
+    auto ReqMessage = MakeShared<idlepb::SetWorldTimeDilationReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetWorldTimeDilation(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetWorldTimeDilationAck>& InRspMessage)
+    SetWorldTimeDilation(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetWorldTimeDilationAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3714,20 +3723,20 @@ void UZGameRpcStub::K2_SetWorldTimeDilation(const FZSetWorldTimeDilationReq& InP
     });
 }
 
-void UZGameRpcStub::SetWorldTimeDilation(const TSharedPtr<idlezt::SetWorldTimeDilationReq>& InReqMessage, const OnSetWorldTimeDilationResult& InCallback)
+void UZGameRpcStub::SetWorldTimeDilation(const TSharedPtr<idlepb::SetWorldTimeDilationReq>& InReqMessage, const OnSetWorldTimeDilationResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetWorldTimeDilation;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetWorldTimeDilationAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetWorldTimeDilationAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3740,10 +3749,10 @@ void UZGameRpcStub::K2_SetFightMode(const FZSetFightModeReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetFightModeReq>();
+    auto ReqMessage = MakeShared<idlepb::SetFightModeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetFightMode(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetFightModeAck>& InRspMessage)
+    SetFightMode(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetFightModeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3759,20 +3768,20 @@ void UZGameRpcStub::K2_SetFightMode(const FZSetFightModeReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::SetFightMode(const TSharedPtr<idlezt::SetFightModeReq>& InReqMessage, const OnSetFightModeResult& InCallback)
+void UZGameRpcStub::SetFightMode(const TSharedPtr<idlepb::SetFightModeReq>& InReqMessage, const OnSetFightModeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetFightMode;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetFightModeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetFightModeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3785,10 +3794,10 @@ void UZGameRpcStub::K2_UpgradeQiCollector(const FZUpgradeQiCollectorReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UpgradeQiCollectorReq>();
+    auto ReqMessage = MakeShared<idlepb::UpgradeQiCollectorReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UpgradeQiCollector(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UpgradeQiCollectorAck>& InRspMessage)
+    UpgradeQiCollector(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UpgradeQiCollectorAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3804,20 +3813,20 @@ void UZGameRpcStub::K2_UpgradeQiCollector(const FZUpgradeQiCollectorReq& InParam
     });
 }
 
-void UZGameRpcStub::UpgradeQiCollector(const TSharedPtr<idlezt::UpgradeQiCollectorReq>& InReqMessage, const OnUpgradeQiCollectorResult& InCallback)
+void UZGameRpcStub::UpgradeQiCollector(const TSharedPtr<idlepb::UpgradeQiCollectorReq>& InReqMessage, const OnUpgradeQiCollectorResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UpgradeQiCollector;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UpgradeQiCollectorAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UpgradeQiCollectorAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3830,10 +3839,10 @@ void UZGameRpcStub::K2_GetRoleAllStats(const FZGetRoleAllStatsReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleAllStatsReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleAllStatsReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleAllStats(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleAllStatsAck>& InRspMessage)
+    GetRoleAllStats(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleAllStatsAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3849,20 +3858,20 @@ void UZGameRpcStub::K2_GetRoleAllStats(const FZGetRoleAllStatsReq& InParams, con
     });
 }
 
-void UZGameRpcStub::GetRoleAllStats(const TSharedPtr<idlezt::GetRoleAllStatsReq>& InReqMessage, const OnGetRoleAllStatsResult& InCallback)
+void UZGameRpcStub::GetRoleAllStats(const TSharedPtr<idlepb::GetRoleAllStatsReq>& InReqMessage, const OnGetRoleAllStatsResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleAllStats;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleAllStatsAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleAllStatsAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3875,10 +3884,10 @@ void UZGameRpcStub::K2_GetShanhetuData(const FZGetShanhetuDataReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetShanhetuDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetShanhetuDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetShanhetuData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetShanhetuDataAck>& InRspMessage)
+    GetShanhetuData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetShanhetuDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3894,20 +3903,20 @@ void UZGameRpcStub::K2_GetShanhetuData(const FZGetShanhetuDataReq& InParams, con
     });
 }
 
-void UZGameRpcStub::GetShanhetuData(const TSharedPtr<idlezt::GetShanhetuDataReq>& InReqMessage, const OnGetShanhetuDataResult& InCallback)
+void UZGameRpcStub::GetShanhetuData(const TSharedPtr<idlepb::GetShanhetuDataReq>& InReqMessage, const OnGetShanhetuDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShanhetuData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetShanhetuDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetShanhetuDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3920,10 +3929,10 @@ void UZGameRpcStub::K2_SetShanhetuUseConfig(const FZSetShanhetuUseConfigReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetShanhetuUseConfigReq>();
+    auto ReqMessage = MakeShared<idlepb::SetShanhetuUseConfigReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetShanhetuUseConfig(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetShanhetuUseConfigAck>& InRspMessage)
+    SetShanhetuUseConfig(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetShanhetuUseConfigAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3939,20 +3948,20 @@ void UZGameRpcStub::K2_SetShanhetuUseConfig(const FZSetShanhetuUseConfigReq& InP
     });
 }
 
-void UZGameRpcStub::SetShanhetuUseConfig(const TSharedPtr<idlezt::SetShanhetuUseConfigReq>& InReqMessage, const OnSetShanhetuUseConfigResult& InCallback)
+void UZGameRpcStub::SetShanhetuUseConfig(const TSharedPtr<idlepb::SetShanhetuUseConfigReq>& InReqMessage, const OnSetShanhetuUseConfigResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetShanhetuUseConfig;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetShanhetuUseConfigAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetShanhetuUseConfigAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -3965,10 +3974,10 @@ void UZGameRpcStub::K2_UseShanhetu(const FZUseShanhetuReq& InParams, const FZOnU
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UseShanhetuReq>();
+    auto ReqMessage = MakeShared<idlepb::UseShanhetuReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UseShanhetu(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UseShanhetuAck>& InRspMessage)
+    UseShanhetu(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UseShanhetuAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -3984,20 +3993,20 @@ void UZGameRpcStub::K2_UseShanhetu(const FZUseShanhetuReq& InParams, const FZOnU
     });
 }
 
-void UZGameRpcStub::UseShanhetu(const TSharedPtr<idlezt::UseShanhetuReq>& InReqMessage, const OnUseShanhetuResult& InCallback)
+void UZGameRpcStub::UseShanhetu(const TSharedPtr<idlepb::UseShanhetuReq>& InReqMessage, const OnUseShanhetuResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UseShanhetu;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UseShanhetuAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UseShanhetuAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4010,10 +4019,10 @@ void UZGameRpcStub::K2_StepShanhetu(const FZStepShanhetuReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::StepShanhetuReq>();
+    auto ReqMessage = MakeShared<idlepb::StepShanhetuReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    StepShanhetu(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::StepShanhetuAck>& InRspMessage)
+    StepShanhetu(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::StepShanhetuAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4029,20 +4038,20 @@ void UZGameRpcStub::K2_StepShanhetu(const FZStepShanhetuReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::StepShanhetu(const TSharedPtr<idlezt::StepShanhetuReq>& InReqMessage, const OnStepShanhetuResult& InCallback)
+void UZGameRpcStub::StepShanhetu(const TSharedPtr<idlepb::StepShanhetuReq>& InReqMessage, const OnStepShanhetuResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::StepShanhetu;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::StepShanhetuAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::StepShanhetuAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4055,10 +4064,10 @@ void UZGameRpcStub::K2_GetShanhetuUseRecord(const FZGetShanhetuUseRecordReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetShanhetuUseRecordReq>();
+    auto ReqMessage = MakeShared<idlepb::GetShanhetuUseRecordReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetShanhetuUseRecord(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetShanhetuUseRecordAck>& InRspMessage)
+    GetShanhetuUseRecord(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetShanhetuUseRecordAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4074,20 +4083,20 @@ void UZGameRpcStub::K2_GetShanhetuUseRecord(const FZGetShanhetuUseRecordReq& InP
     });
 }
 
-void UZGameRpcStub::GetShanhetuUseRecord(const TSharedPtr<idlezt::GetShanhetuUseRecordReq>& InReqMessage, const OnGetShanhetuUseRecordResult& InCallback)
+void UZGameRpcStub::GetShanhetuUseRecord(const TSharedPtr<idlepb::GetShanhetuUseRecordReq>& InReqMessage, const OnGetShanhetuUseRecordResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShanhetuUseRecord;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetShanhetuUseRecordAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetShanhetuUseRecordAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4100,10 +4109,10 @@ void UZGameRpcStub::K2_SetAttackLockType(const FZSetAttackLockTypeReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetAttackLockTypeReq>();
+    auto ReqMessage = MakeShared<idlepb::SetAttackLockTypeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetAttackLockType(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetAttackLockTypeAck>& InRspMessage)
+    SetAttackLockType(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetAttackLockTypeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4119,20 +4128,20 @@ void UZGameRpcStub::K2_SetAttackLockType(const FZSetAttackLockTypeReq& InParams,
     });
 }
 
-void UZGameRpcStub::SetAttackLockType(const TSharedPtr<idlezt::SetAttackLockTypeReq>& InReqMessage, const OnSetAttackLockTypeResult& InCallback)
+void UZGameRpcStub::SetAttackLockType(const TSharedPtr<idlepb::SetAttackLockTypeReq>& InReqMessage, const OnSetAttackLockTypeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetAttackLockType;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetAttackLockTypeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetAttackLockTypeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4145,10 +4154,10 @@ void UZGameRpcStub::K2_SetAttackUnlockType(const FZSetAttackUnlockTypeReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetAttackUnlockTypeReq>();
+    auto ReqMessage = MakeShared<idlepb::SetAttackUnlockTypeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetAttackUnlockType(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetAttackUnlockTypeAck>& InRspMessage)
+    SetAttackUnlockType(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetAttackUnlockTypeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4164,20 +4173,20 @@ void UZGameRpcStub::K2_SetAttackUnlockType(const FZSetAttackUnlockTypeReq& InPar
     });
 }
 
-void UZGameRpcStub::SetAttackUnlockType(const TSharedPtr<idlezt::SetAttackUnlockTypeReq>& InReqMessage, const OnSetAttackUnlockTypeResult& InCallback)
+void UZGameRpcStub::SetAttackUnlockType(const TSharedPtr<idlepb::SetAttackUnlockTypeReq>& InReqMessage, const OnSetAttackUnlockTypeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetAttackUnlockType;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetAttackUnlockTypeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetAttackUnlockTypeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4190,10 +4199,10 @@ void UZGameRpcStub::K2_SetShowUnlockButton(const FZSetShowUnlockButtonReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetShowUnlockButtonReq>();
+    auto ReqMessage = MakeShared<idlepb::SetShowUnlockButtonReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetShowUnlockButton(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetShowUnlockButtonAck>& InRspMessage)
+    SetShowUnlockButton(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetShowUnlockButtonAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4209,20 +4218,20 @@ void UZGameRpcStub::K2_SetShowUnlockButton(const FZSetShowUnlockButtonReq& InPar
     });
 }
 
-void UZGameRpcStub::SetShowUnlockButton(const TSharedPtr<idlezt::SetShowUnlockButtonReq>& InReqMessage, const OnSetShowUnlockButtonResult& InCallback)
+void UZGameRpcStub::SetShowUnlockButton(const TSharedPtr<idlepb::SetShowUnlockButtonReq>& InReqMessage, const OnSetShowUnlockButtonResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetShowUnlockButton;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetShowUnlockButtonAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetShowUnlockButtonAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4235,10 +4244,10 @@ void UZGameRpcStub::K2_GetUserVar(const FZGetUserVarReq& InParams, const FZOnGet
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetUserVarReq>();
+    auto ReqMessage = MakeShared<idlepb::GetUserVarReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetUserVar(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetUserVarRsp>& InRspMessage)
+    GetUserVar(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetUserVarRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4254,20 +4263,20 @@ void UZGameRpcStub::K2_GetUserVar(const FZGetUserVarReq& InParams, const FZOnGet
     });
 }
 
-void UZGameRpcStub::GetUserVar(const TSharedPtr<idlezt::GetUserVarReq>& InReqMessage, const OnGetUserVarResult& InCallback)
+void UZGameRpcStub::GetUserVar(const TSharedPtr<idlepb::GetUserVarReq>& InReqMessage, const OnGetUserVarResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetUserVar;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetUserVarRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetUserVarRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4280,10 +4289,10 @@ void UZGameRpcStub::K2_GetUserVars(const FZGetUserVarsReq& InParams, const FZOnG
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetUserVarsReq>();
+    auto ReqMessage = MakeShared<idlepb::GetUserVarsReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetUserVars(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetUserVarsRsp>& InRspMessage)
+    GetUserVars(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetUserVarsRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4299,20 +4308,20 @@ void UZGameRpcStub::K2_GetUserVars(const FZGetUserVarsReq& InParams, const FZOnG
     });
 }
 
-void UZGameRpcStub::GetUserVars(const TSharedPtr<idlezt::GetUserVarsReq>& InReqMessage, const OnGetUserVarsResult& InCallback)
+void UZGameRpcStub::GetUserVars(const TSharedPtr<idlepb::GetUserVarsReq>& InReqMessage, const OnGetUserVarsResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetUserVars;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetUserVarsRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetUserVarsRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4325,10 +4334,10 @@ void UZGameRpcStub::K2_GetBossInvasionArenaSummary(const FZGetBossInvasionArenaS
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetBossInvasionArenaSummaryReq>();
+    auto ReqMessage = MakeShared<idlepb::GetBossInvasionArenaSummaryReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetBossInvasionArenaSummary(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetBossInvasionArenaSummaryRsp>& InRspMessage)
+    GetBossInvasionArenaSummary(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetBossInvasionArenaSummaryRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4344,20 +4353,20 @@ void UZGameRpcStub::K2_GetBossInvasionArenaSummary(const FZGetBossInvasionArenaS
     });
 }
 
-void UZGameRpcStub::GetBossInvasionArenaSummary(const TSharedPtr<idlezt::GetBossInvasionArenaSummaryReq>& InReqMessage, const OnGetBossInvasionArenaSummaryResult& InCallback)
+void UZGameRpcStub::GetBossInvasionArenaSummary(const TSharedPtr<idlepb::GetBossInvasionArenaSummaryReq>& InReqMessage, const OnGetBossInvasionArenaSummaryResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBossInvasionArenaSummary;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetBossInvasionArenaSummaryRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetBossInvasionArenaSummaryRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4370,10 +4379,10 @@ void UZGameRpcStub::K2_GetBossInvasionArenaTopList(const FZGetBossInvasionArenaT
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetBossInvasionArenaTopListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetBossInvasionArenaTopListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetBossInvasionArenaTopList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetBossInvasionArenaTopListRsp>& InRspMessage)
+    GetBossInvasionArenaTopList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetBossInvasionArenaTopListRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4389,20 +4398,20 @@ void UZGameRpcStub::K2_GetBossInvasionArenaTopList(const FZGetBossInvasionArenaT
     });
 }
 
-void UZGameRpcStub::GetBossInvasionArenaTopList(const TSharedPtr<idlezt::GetBossInvasionArenaTopListReq>& InReqMessage, const OnGetBossInvasionArenaTopListResult& InCallback)
+void UZGameRpcStub::GetBossInvasionArenaTopList(const TSharedPtr<idlepb::GetBossInvasionArenaTopListReq>& InReqMessage, const OnGetBossInvasionArenaTopListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBossInvasionArenaTopList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetBossInvasionArenaTopListRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetBossInvasionArenaTopListRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4415,10 +4424,10 @@ void UZGameRpcStub::K2_GetBossInvasionInfo(const FZGetBossInvasionInfoReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetBossInvasionInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetBossInvasionInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetBossInvasionInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetBossInvasionInfoRsp>& InRspMessage)
+    GetBossInvasionInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetBossInvasionInfoRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4434,20 +4443,20 @@ void UZGameRpcStub::K2_GetBossInvasionInfo(const FZGetBossInvasionInfoReq& InPar
     });
 }
 
-void UZGameRpcStub::GetBossInvasionInfo(const TSharedPtr<idlezt::GetBossInvasionInfoReq>& InReqMessage, const OnGetBossInvasionInfoResult& InCallback)
+void UZGameRpcStub::GetBossInvasionInfo(const TSharedPtr<idlepb::GetBossInvasionInfoReq>& InReqMessage, const OnGetBossInvasionInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBossInvasionInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetBossInvasionInfoRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetBossInvasionInfoRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4460,10 +4469,10 @@ void UZGameRpcStub::K2_DrawBossInvasionKillReward(const FZDrawBossInvasionKillRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DrawBossInvasionKillRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::DrawBossInvasionKillRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DrawBossInvasionKillReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DrawBossInvasionKillRewardRsp>& InRspMessage)
+    DrawBossInvasionKillReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DrawBossInvasionKillRewardRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4479,20 +4488,20 @@ void UZGameRpcStub::K2_DrawBossInvasionKillReward(const FZDrawBossInvasionKillRe
     });
 }
 
-void UZGameRpcStub::DrawBossInvasionKillReward(const TSharedPtr<idlezt::DrawBossInvasionKillRewardReq>& InReqMessage, const OnDrawBossInvasionKillRewardResult& InCallback)
+void UZGameRpcStub::DrawBossInvasionKillReward(const TSharedPtr<idlepb::DrawBossInvasionKillRewardReq>& InReqMessage, const OnDrawBossInvasionKillRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DrawBossInvasionKillReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DrawBossInvasionKillRewardRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DrawBossInvasionKillRewardRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4505,10 +4514,10 @@ void UZGameRpcStub::K2_DrawBossInvasionDamageReward(const FZDrawBossInvasionDama
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DrawBossInvasionDamageRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::DrawBossInvasionDamageRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DrawBossInvasionDamageReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DrawBossInvasionDamageRewardRsp>& InRspMessage)
+    DrawBossInvasionDamageReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DrawBossInvasionDamageRewardRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4524,20 +4533,20 @@ void UZGameRpcStub::K2_DrawBossInvasionDamageReward(const FZDrawBossInvasionDama
     });
 }
 
-void UZGameRpcStub::DrawBossInvasionDamageReward(const TSharedPtr<idlezt::DrawBossInvasionDamageRewardReq>& InReqMessage, const OnDrawBossInvasionDamageRewardResult& InCallback)
+void UZGameRpcStub::DrawBossInvasionDamageReward(const TSharedPtr<idlepb::DrawBossInvasionDamageRewardReq>& InReqMessage, const OnDrawBossInvasionDamageRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DrawBossInvasionDamageReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DrawBossInvasionDamageRewardRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DrawBossInvasionDamageRewardRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4550,10 +4559,10 @@ void UZGameRpcStub::K2_BossInvasionTeleport(const FZBossInvasionTeleportReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::BossInvasionTeleportReq>();
+    auto ReqMessage = MakeShared<idlepb::BossInvasionTeleportReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    BossInvasionTeleport(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::BossInvasionTeleportRsp>& InRspMessage)
+    BossInvasionTeleport(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::BossInvasionTeleportRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4569,20 +4578,20 @@ void UZGameRpcStub::K2_BossInvasionTeleport(const FZBossInvasionTeleportReq& InP
     });
 }
 
-void UZGameRpcStub::BossInvasionTeleport(const TSharedPtr<idlezt::BossInvasionTeleportReq>& InReqMessage, const OnBossInvasionTeleportResult& InCallback)
+void UZGameRpcStub::BossInvasionTeleport(const TSharedPtr<idlepb::BossInvasionTeleportReq>& InReqMessage, const OnBossInvasionTeleportResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::BossInvasionTeleport;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::BossInvasionTeleportRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::BossInvasionTeleportRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4595,10 +4604,10 @@ void UZGameRpcStub::K2_ShareSelfItem(const FZShareSelfItemReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ShareSelfItemReq>();
+    auto ReqMessage = MakeShared<idlepb::ShareSelfItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ShareSelfItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ShareSelfItemRsp>& InRspMessage)
+    ShareSelfItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ShareSelfItemRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4614,20 +4623,20 @@ void UZGameRpcStub::K2_ShareSelfItem(const FZShareSelfItemReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::ShareSelfItem(const TSharedPtr<idlezt::ShareSelfItemReq>& InReqMessage, const OnShareSelfItemResult& InCallback)
+void UZGameRpcStub::ShareSelfItem(const TSharedPtr<idlepb::ShareSelfItemReq>& InReqMessage, const OnShareSelfItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ShareSelfItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ShareSelfItemRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ShareSelfItemRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4640,10 +4649,10 @@ void UZGameRpcStub::K2_ShareSelfItems(const FZShareSelfItemsReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ShareSelfItemsReq>();
+    auto ReqMessage = MakeShared<idlepb::ShareSelfItemsReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ShareSelfItems(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ShareSelfItemsRsp>& InRspMessage)
+    ShareSelfItems(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ShareSelfItemsRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4659,20 +4668,20 @@ void UZGameRpcStub::K2_ShareSelfItems(const FZShareSelfItemsReq& InParams, const
     });
 }
 
-void UZGameRpcStub::ShareSelfItems(const TSharedPtr<idlezt::ShareSelfItemsReq>& InReqMessage, const OnShareSelfItemsResult& InCallback)
+void UZGameRpcStub::ShareSelfItems(const TSharedPtr<idlepb::ShareSelfItemsReq>& InReqMessage, const OnShareSelfItemsResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ShareSelfItems;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ShareSelfItemsRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ShareSelfItemsRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4685,10 +4694,10 @@ void UZGameRpcStub::K2_GetShareItemData(const FZGetShareItemDataReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetShareItemDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetShareItemDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetShareItemData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetShareItemDataRsp>& InRspMessage)
+    GetShareItemData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetShareItemDataRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4704,20 +4713,20 @@ void UZGameRpcStub::K2_GetShareItemData(const FZGetShareItemDataReq& InParams, c
     });
 }
 
-void UZGameRpcStub::GetShareItemData(const TSharedPtr<idlezt::GetShareItemDataReq>& InReqMessage, const OnGetShareItemDataResult& InCallback)
+void UZGameRpcStub::GetShareItemData(const TSharedPtr<idlepb::GetShareItemDataReq>& InReqMessage, const OnGetShareItemDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShareItemData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetShareItemDataRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetShareItemDataRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4730,10 +4739,10 @@ void UZGameRpcStub::K2_GetRoleCollectionData(const FZGetRoleCollectionDataReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleCollectionDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleCollectionDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleCollectionData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleCollectionDataRsp>& InRspMessage)
+    GetRoleCollectionData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleCollectionDataRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4749,20 +4758,20 @@ void UZGameRpcStub::K2_GetRoleCollectionData(const FZGetRoleCollectionDataReq& I
     });
 }
 
-void UZGameRpcStub::GetRoleCollectionData(const TSharedPtr<idlezt::GetRoleCollectionDataReq>& InReqMessage, const OnGetRoleCollectionDataResult& InCallback)
+void UZGameRpcStub::GetRoleCollectionData(const TSharedPtr<idlepb::GetRoleCollectionDataReq>& InReqMessage, const OnGetRoleCollectionDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleCollectionData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleCollectionDataRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleCollectionDataRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4775,10 +4784,10 @@ void UZGameRpcStub::K2_RoleCollectionOp(const FZRoleCollectionOpReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RoleCollectionOpReq>();
+    auto ReqMessage = MakeShared<idlepb::RoleCollectionOpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RoleCollectionOp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RoleCollectionOpAck>& InRspMessage)
+    RoleCollectionOp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RoleCollectionOpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4794,20 +4803,20 @@ void UZGameRpcStub::K2_RoleCollectionOp(const FZRoleCollectionOpReq& InParams, c
     });
 }
 
-void UZGameRpcStub::RoleCollectionOp(const TSharedPtr<idlezt::RoleCollectionOpReq>& InReqMessage, const OnRoleCollectionOpResult& InCallback)
+void UZGameRpcStub::RoleCollectionOp(const TSharedPtr<idlepb::RoleCollectionOpReq>& InReqMessage, const OnRoleCollectionOpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RoleCollectionOp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RoleCollectionOpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RoleCollectionOpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4820,10 +4829,10 @@ void UZGameRpcStub::K2_ShareSelfRoleCollection(const FZShareSelfRoleCollectionRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ShareSelfRoleCollectionReq>();
+    auto ReqMessage = MakeShared<idlepb::ShareSelfRoleCollectionReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ShareSelfRoleCollection(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ShareSelfRoleCollectionRsp>& InRspMessage)
+    ShareSelfRoleCollection(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ShareSelfRoleCollectionRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4839,20 +4848,20 @@ void UZGameRpcStub::K2_ShareSelfRoleCollection(const FZShareSelfRoleCollectionRe
     });
 }
 
-void UZGameRpcStub::ShareSelfRoleCollection(const TSharedPtr<idlezt::ShareSelfRoleCollectionReq>& InReqMessage, const OnShareSelfRoleCollectionResult& InCallback)
+void UZGameRpcStub::ShareSelfRoleCollection(const TSharedPtr<idlepb::ShareSelfRoleCollectionReq>& InReqMessage, const OnShareSelfRoleCollectionResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ShareSelfRoleCollection;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ShareSelfRoleCollectionRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ShareSelfRoleCollectionRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4865,10 +4874,10 @@ void UZGameRpcStub::K2_GetShareRoleCollectionData(const FZGetShareRoleCollection
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetShareRoleCollectionDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetShareRoleCollectionDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetShareRoleCollectionData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetShareRoleCollectionDataRsp>& InRspMessage)
+    GetShareRoleCollectionData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetShareRoleCollectionDataRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4884,20 +4893,20 @@ void UZGameRpcStub::K2_GetShareRoleCollectionData(const FZGetShareRoleCollection
     });
 }
 
-void UZGameRpcStub::GetShareRoleCollectionData(const TSharedPtr<idlezt::GetShareRoleCollectionDataReq>& InReqMessage, const OnGetShareRoleCollectionDataResult& InCallback)
+void UZGameRpcStub::GetShareRoleCollectionData(const TSharedPtr<idlepb::GetShareRoleCollectionDataReq>& InReqMessage, const OnGetShareRoleCollectionDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetShareRoleCollectionData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetShareRoleCollectionDataRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetShareRoleCollectionDataRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4910,10 +4919,10 @@ void UZGameRpcStub::K2_GetChecklistData(const FZGetChecklistDataReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetChecklistDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetChecklistDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetChecklistData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetChecklistDataAck>& InRspMessage)
+    GetChecklistData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetChecklistDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4929,20 +4938,20 @@ void UZGameRpcStub::K2_GetChecklistData(const FZGetChecklistDataReq& InParams, c
     });
 }
 
-void UZGameRpcStub::GetChecklistData(const TSharedPtr<idlezt::GetChecklistDataReq>& InReqMessage, const OnGetChecklistDataResult& InCallback)
+void UZGameRpcStub::GetChecklistData(const TSharedPtr<idlepb::GetChecklistDataReq>& InReqMessage, const OnGetChecklistDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetChecklistData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetChecklistDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetChecklistDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -4955,10 +4964,10 @@ void UZGameRpcStub::K2_ChecklistOp(const FZChecklistOpReq& InParams, const FZOnC
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ChecklistOpReq>();
+    auto ReqMessage = MakeShared<idlepb::ChecklistOpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ChecklistOp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ChecklistOpAck>& InRspMessage)
+    ChecklistOp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ChecklistOpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -4974,20 +4983,20 @@ void UZGameRpcStub::K2_ChecklistOp(const FZChecklistOpReq& InParams, const FZOnC
     });
 }
 
-void UZGameRpcStub::ChecklistOp(const TSharedPtr<idlezt::ChecklistOpReq>& InReqMessage, const OnChecklistOpResult& InCallback)
+void UZGameRpcStub::ChecklistOp(const TSharedPtr<idlepb::ChecklistOpReq>& InReqMessage, const OnChecklistOpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ChecklistOp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ChecklistOpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ChecklistOpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5000,10 +5009,10 @@ void UZGameRpcStub::K2_UpdateChecklist(const FZUpdateChecklistReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UpdateChecklistReq>();
+    auto ReqMessage = MakeShared<idlepb::UpdateChecklistReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UpdateChecklist(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UpdateChecklistAck>& InRspMessage)
+    UpdateChecklist(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UpdateChecklistAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5019,20 +5028,20 @@ void UZGameRpcStub::K2_UpdateChecklist(const FZUpdateChecklistReq& InParams, con
     });
 }
 
-void UZGameRpcStub::UpdateChecklist(const TSharedPtr<idlezt::UpdateChecklistReq>& InReqMessage, const OnUpdateChecklistResult& InCallback)
+void UZGameRpcStub::UpdateChecklist(const TSharedPtr<idlepb::UpdateChecklistReq>& InReqMessage, const OnUpdateChecklistResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UpdateChecklist;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UpdateChecklistAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UpdateChecklistAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5045,10 +5054,10 @@ void UZGameRpcStub::K2_GetSwordPkInfo(const FZGetSwordPkInfoReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSwordPkInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSwordPkInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSwordPkInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSwordPkInfoRsp>& InRspMessage)
+    GetSwordPkInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSwordPkInfoRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5064,20 +5073,20 @@ void UZGameRpcStub::K2_GetSwordPkInfo(const FZGetSwordPkInfoReq& InParams, const
     });
 }
 
-void UZGameRpcStub::GetSwordPkInfo(const TSharedPtr<idlezt::GetSwordPkInfoReq>& InReqMessage, const OnGetSwordPkInfoResult& InCallback)
+void UZGameRpcStub::GetSwordPkInfo(const TSharedPtr<idlepb::GetSwordPkInfoReq>& InReqMessage, const OnGetSwordPkInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSwordPkInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSwordPkInfoRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSwordPkInfoRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5090,10 +5099,10 @@ void UZGameRpcStub::K2_SwordPkSignup(const FZSwordPkSignupReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SwordPkSignupReq>();
+    auto ReqMessage = MakeShared<idlepb::SwordPkSignupReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SwordPkSignup(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SwordPkSignupRsp>& InRspMessage)
+    SwordPkSignup(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SwordPkSignupRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5109,20 +5118,20 @@ void UZGameRpcStub::K2_SwordPkSignup(const FZSwordPkSignupReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::SwordPkSignup(const TSharedPtr<idlezt::SwordPkSignupReq>& InReqMessage, const OnSwordPkSignupResult& InCallback)
+void UZGameRpcStub::SwordPkSignup(const TSharedPtr<idlepb::SwordPkSignupReq>& InReqMessage, const OnSwordPkSignupResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkSignup;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SwordPkSignupRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SwordPkSignupRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5135,10 +5144,10 @@ void UZGameRpcStub::K2_SwordPkMatching(const FZSwordPkMatchingReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SwordPkMatchingReq>();
+    auto ReqMessage = MakeShared<idlepb::SwordPkMatchingReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SwordPkMatching(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SwordPkMatchingRsp>& InRspMessage)
+    SwordPkMatching(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SwordPkMatchingRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5154,20 +5163,20 @@ void UZGameRpcStub::K2_SwordPkMatching(const FZSwordPkMatchingReq& InParams, con
     });
 }
 
-void UZGameRpcStub::SwordPkMatching(const TSharedPtr<idlezt::SwordPkMatchingReq>& InReqMessage, const OnSwordPkMatchingResult& InCallback)
+void UZGameRpcStub::SwordPkMatching(const TSharedPtr<idlepb::SwordPkMatchingReq>& InReqMessage, const OnSwordPkMatchingResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkMatching;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SwordPkMatchingRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SwordPkMatchingRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5180,10 +5189,10 @@ void UZGameRpcStub::K2_SwordPkChallenge(const FZSwordPkChallengeReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SwordPkChallengeReq>();
+    auto ReqMessage = MakeShared<idlepb::SwordPkChallengeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SwordPkChallenge(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SwordPkChallengeRsp>& InRspMessage)
+    SwordPkChallenge(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SwordPkChallengeRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5199,20 +5208,20 @@ void UZGameRpcStub::K2_SwordPkChallenge(const FZSwordPkChallengeReq& InParams, c
     });
 }
 
-void UZGameRpcStub::SwordPkChallenge(const TSharedPtr<idlezt::SwordPkChallengeReq>& InReqMessage, const OnSwordPkChallengeResult& InCallback)
+void UZGameRpcStub::SwordPkChallenge(const TSharedPtr<idlepb::SwordPkChallengeReq>& InReqMessage, const OnSwordPkChallengeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkChallenge;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SwordPkChallengeRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SwordPkChallengeRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5225,10 +5234,10 @@ void UZGameRpcStub::K2_SwordPkRevenge(const FZSwordPkRevengeReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SwordPkRevengeReq>();
+    auto ReqMessage = MakeShared<idlepb::SwordPkRevengeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SwordPkRevenge(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SwordPkRevengeRsp>& InRspMessage)
+    SwordPkRevenge(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SwordPkRevengeRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5244,20 +5253,20 @@ void UZGameRpcStub::K2_SwordPkRevenge(const FZSwordPkRevengeReq& InParams, const
     });
 }
 
-void UZGameRpcStub::SwordPkRevenge(const TSharedPtr<idlezt::SwordPkRevengeReq>& InReqMessage, const OnSwordPkRevengeResult& InCallback)
+void UZGameRpcStub::SwordPkRevenge(const TSharedPtr<idlepb::SwordPkRevengeReq>& InReqMessage, const OnSwordPkRevengeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkRevenge;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SwordPkRevengeRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SwordPkRevengeRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5270,10 +5279,10 @@ void UZGameRpcStub::K2_GetSwordPkTopList(const FZGetSwordPkTopListReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSwordPkTopListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSwordPkTopListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSwordPkTopList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSwordPkTopListRsp>& InRspMessage)
+    GetSwordPkTopList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSwordPkTopListRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5289,20 +5298,20 @@ void UZGameRpcStub::K2_GetSwordPkTopList(const FZGetSwordPkTopListReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetSwordPkTopList(const TSharedPtr<idlezt::GetSwordPkTopListReq>& InReqMessage, const OnGetSwordPkTopListResult& InCallback)
+void UZGameRpcStub::GetSwordPkTopList(const TSharedPtr<idlepb::GetSwordPkTopListReq>& InReqMessage, const OnGetSwordPkTopListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSwordPkTopList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSwordPkTopListRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSwordPkTopListRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5315,10 +5324,10 @@ void UZGameRpcStub::K2_SwordPkExchangeHeroCard(const FZSwordPkExchangeHeroCardRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SwordPkExchangeHeroCardReq>();
+    auto ReqMessage = MakeShared<idlepb::SwordPkExchangeHeroCardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SwordPkExchangeHeroCard(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SwordPkExchangeHeroCardRsp>& InRspMessage)
+    SwordPkExchangeHeroCard(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SwordPkExchangeHeroCardRsp>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5334,20 +5343,20 @@ void UZGameRpcStub::K2_SwordPkExchangeHeroCard(const FZSwordPkExchangeHeroCardRe
     });
 }
 
-void UZGameRpcStub::SwordPkExchangeHeroCard(const TSharedPtr<idlezt::SwordPkExchangeHeroCardReq>& InReqMessage, const OnSwordPkExchangeHeroCardResult& InCallback)
+void UZGameRpcStub::SwordPkExchangeHeroCard(const TSharedPtr<idlepb::SwordPkExchangeHeroCardReq>& InReqMessage, const OnSwordPkExchangeHeroCardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SwordPkExchangeHeroCard;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SwordPkExchangeHeroCardRsp>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SwordPkExchangeHeroCardRsp>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5360,10 +5369,10 @@ void UZGameRpcStub::K2_GetCommonItemExchangeData(const FZGetCommonItemExchangeDa
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetCommonItemExchangeDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetCommonItemExchangeDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetCommonItemExchangeData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetCommonItemExchangeDataAck>& InRspMessage)
+    GetCommonItemExchangeData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetCommonItemExchangeDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5379,20 +5388,20 @@ void UZGameRpcStub::K2_GetCommonItemExchangeData(const FZGetCommonItemExchangeDa
     });
 }
 
-void UZGameRpcStub::GetCommonItemExchangeData(const TSharedPtr<idlezt::GetCommonItemExchangeDataReq>& InReqMessage, const OnGetCommonItemExchangeDataResult& InCallback)
+void UZGameRpcStub::GetCommonItemExchangeData(const TSharedPtr<idlepb::GetCommonItemExchangeDataReq>& InReqMessage, const OnGetCommonItemExchangeDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetCommonItemExchangeData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetCommonItemExchangeDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetCommonItemExchangeDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5405,10 +5414,10 @@ void UZGameRpcStub::K2_ExchangeCommonItem(const FZExchangeCommonItemReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ExchangeCommonItemReq>();
+    auto ReqMessage = MakeShared<idlepb::ExchangeCommonItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ExchangeCommonItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ExchangeCommonItemAck>& InRspMessage)
+    ExchangeCommonItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ExchangeCommonItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5424,20 +5433,20 @@ void UZGameRpcStub::K2_ExchangeCommonItem(const FZExchangeCommonItemReq& InParam
     });
 }
 
-void UZGameRpcStub::ExchangeCommonItem(const TSharedPtr<idlezt::ExchangeCommonItemReq>& InReqMessage, const OnExchangeCommonItemResult& InCallback)
+void UZGameRpcStub::ExchangeCommonItem(const TSharedPtr<idlepb::ExchangeCommonItemReq>& InReqMessage, const OnExchangeCommonItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ExchangeCommonItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ExchangeCommonItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ExchangeCommonItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5450,10 +5459,10 @@ void UZGameRpcStub::K2_SynthesisCommonItem(const FZSynthesisCommonItemReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SynthesisCommonItemReq>();
+    auto ReqMessage = MakeShared<idlepb::SynthesisCommonItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SynthesisCommonItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SynthesisCommonItemAck>& InRspMessage)
+    SynthesisCommonItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SynthesisCommonItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5469,20 +5478,20 @@ void UZGameRpcStub::K2_SynthesisCommonItem(const FZSynthesisCommonItemReq& InPar
     });
 }
 
-void UZGameRpcStub::SynthesisCommonItem(const TSharedPtr<idlezt::SynthesisCommonItemReq>& InReqMessage, const OnSynthesisCommonItemResult& InCallback)
+void UZGameRpcStub::SynthesisCommonItem(const TSharedPtr<idlepb::SynthesisCommonItemReq>& InReqMessage, const OnSynthesisCommonItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SynthesisCommonItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SynthesisCommonItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SynthesisCommonItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5495,10 +5504,10 @@ void UZGameRpcStub::K2_GetCandidatesSeptList(const FZGetCandidatesSeptListReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetCandidatesSeptListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetCandidatesSeptListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetCandidatesSeptList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetCandidatesSeptListAck>& InRspMessage)
+    GetCandidatesSeptList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetCandidatesSeptListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5514,20 +5523,20 @@ void UZGameRpcStub::K2_GetCandidatesSeptList(const FZGetCandidatesSeptListReq& I
     });
 }
 
-void UZGameRpcStub::GetCandidatesSeptList(const TSharedPtr<idlezt::GetCandidatesSeptListReq>& InReqMessage, const OnGetCandidatesSeptListResult& InCallback)
+void UZGameRpcStub::GetCandidatesSeptList(const TSharedPtr<idlepb::GetCandidatesSeptListReq>& InReqMessage, const OnGetCandidatesSeptListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetCandidatesSeptList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetCandidatesSeptListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetCandidatesSeptListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5540,10 +5549,10 @@ void UZGameRpcStub::K2_SearchSept(const FZSearchSeptReq& InParams, const FZOnSea
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SearchSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::SearchSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SearchSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SearchSeptAck>& InRspMessage)
+    SearchSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SearchSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5559,20 +5568,20 @@ void UZGameRpcStub::K2_SearchSept(const FZSearchSeptReq& InParams, const FZOnSea
     });
 }
 
-void UZGameRpcStub::SearchSept(const TSharedPtr<idlezt::SearchSeptReq>& InReqMessage, const OnSearchSeptResult& InCallback)
+void UZGameRpcStub::SearchSept(const TSharedPtr<idlepb::SearchSeptReq>& InReqMessage, const OnSearchSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SearchSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SearchSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SearchSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5585,10 +5594,10 @@ void UZGameRpcStub::K2_GetSeptBaseInfo(const FZGetSeptBaseInfoReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptBaseInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptBaseInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptBaseInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptBaseInfoAck>& InRspMessage)
+    GetSeptBaseInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptBaseInfoAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5604,20 +5613,20 @@ void UZGameRpcStub::K2_GetSeptBaseInfo(const FZGetSeptBaseInfoReq& InParams, con
     });
 }
 
-void UZGameRpcStub::GetSeptBaseInfo(const TSharedPtr<idlezt::GetSeptBaseInfoReq>& InReqMessage, const OnGetSeptBaseInfoResult& InCallback)
+void UZGameRpcStub::GetSeptBaseInfo(const TSharedPtr<idlepb::GetSeptBaseInfoReq>& InReqMessage, const OnGetSeptBaseInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptBaseInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptBaseInfoAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptBaseInfoAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5630,10 +5639,10 @@ void UZGameRpcStub::K2_GetSeptMemberList(const FZGetSeptMemberListReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptMemberListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptMemberListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptMemberList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptMemberListAck>& InRspMessage)
+    GetSeptMemberList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptMemberListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5649,20 +5658,20 @@ void UZGameRpcStub::K2_GetSeptMemberList(const FZGetSeptMemberListReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetSeptMemberList(const TSharedPtr<idlezt::GetSeptMemberListReq>& InReqMessage, const OnGetSeptMemberListResult& InCallback)
+void UZGameRpcStub::GetSeptMemberList(const TSharedPtr<idlepb::GetSeptMemberListReq>& InReqMessage, const OnGetSeptMemberListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptMemberList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptMemberListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptMemberListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5675,10 +5684,10 @@ void UZGameRpcStub::K2_CreateSept(const FZCreateSeptReq& InParams, const FZOnCre
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::CreateSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::CreateSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    CreateSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::CreateSeptAck>& InRspMessage)
+    CreateSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::CreateSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5694,20 +5703,20 @@ void UZGameRpcStub::K2_CreateSept(const FZCreateSeptReq& InParams, const FZOnCre
     });
 }
 
-void UZGameRpcStub::CreateSept(const TSharedPtr<idlezt::CreateSeptReq>& InReqMessage, const OnCreateSeptResult& InCallback)
+void UZGameRpcStub::CreateSept(const TSharedPtr<idlepb::CreateSeptReq>& InReqMessage, const OnCreateSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::CreateSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::CreateSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::CreateSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5720,10 +5729,10 @@ void UZGameRpcStub::K2_DismissSept(const FZDismissSeptReq& InParams, const FZOnD
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DismissSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::DismissSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DismissSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DismissSeptAck>& InRspMessage)
+    DismissSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DismissSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5739,20 +5748,20 @@ void UZGameRpcStub::K2_DismissSept(const FZDismissSeptReq& InParams, const FZOnD
     });
 }
 
-void UZGameRpcStub::DismissSept(const TSharedPtr<idlezt::DismissSeptReq>& InReqMessage, const OnDismissSeptResult& InCallback)
+void UZGameRpcStub::DismissSept(const TSharedPtr<idlepb::DismissSeptReq>& InReqMessage, const OnDismissSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DismissSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DismissSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DismissSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5765,10 +5774,10 @@ void UZGameRpcStub::K2_ExitSept(const FZExitSeptReq& InParams, const FZOnExitSep
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ExitSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::ExitSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ExitSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ExitSeptAck>& InRspMessage)
+    ExitSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ExitSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5784,20 +5793,20 @@ void UZGameRpcStub::K2_ExitSept(const FZExitSeptReq& InParams, const FZOnExitSep
     });
 }
 
-void UZGameRpcStub::ExitSept(const TSharedPtr<idlezt::ExitSeptReq>& InReqMessage, const OnExitSeptResult& InCallback)
+void UZGameRpcStub::ExitSept(const TSharedPtr<idlepb::ExitSeptReq>& InReqMessage, const OnExitSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ExitSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ExitSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ExitSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5810,10 +5819,10 @@ void UZGameRpcStub::K2_ApplyJoinSept(const FZApplyJoinSeptReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ApplyJoinSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::ApplyJoinSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ApplyJoinSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ApplyJoinSeptAck>& InRspMessage)
+    ApplyJoinSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ApplyJoinSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5829,20 +5838,20 @@ void UZGameRpcStub::K2_ApplyJoinSept(const FZApplyJoinSeptReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::ApplyJoinSept(const TSharedPtr<idlezt::ApplyJoinSeptReq>& InReqMessage, const OnApplyJoinSeptResult& InCallback)
+void UZGameRpcStub::ApplyJoinSept(const TSharedPtr<idlepb::ApplyJoinSeptReq>& InReqMessage, const OnApplyJoinSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ApplyJoinSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ApplyJoinSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ApplyJoinSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5855,10 +5864,10 @@ void UZGameRpcStub::K2_ApproveApplySept(const FZApproveApplySeptReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ApproveApplySeptReq>();
+    auto ReqMessage = MakeShared<idlepb::ApproveApplySeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ApproveApplySept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ApproveApplySeptAck>& InRspMessage)
+    ApproveApplySept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ApproveApplySeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5874,20 +5883,20 @@ void UZGameRpcStub::K2_ApproveApplySept(const FZApproveApplySeptReq& InParams, c
     });
 }
 
-void UZGameRpcStub::ApproveApplySept(const TSharedPtr<idlezt::ApproveApplySeptReq>& InReqMessage, const OnApproveApplySeptResult& InCallback)
+void UZGameRpcStub::ApproveApplySept(const TSharedPtr<idlepb::ApproveApplySeptReq>& InReqMessage, const OnApproveApplySeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ApproveApplySept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ApproveApplySeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ApproveApplySeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5900,10 +5909,10 @@ void UZGameRpcStub::K2_GetApplyJoinSeptList(const FZGetApplyJoinSeptListReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetApplyJoinSeptListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetApplyJoinSeptListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetApplyJoinSeptList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetApplyJoinSeptListAck>& InRspMessage)
+    GetApplyJoinSeptList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetApplyJoinSeptListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5919,20 +5928,20 @@ void UZGameRpcStub::K2_GetApplyJoinSeptList(const FZGetApplyJoinSeptListReq& InP
     });
 }
 
-void UZGameRpcStub::GetApplyJoinSeptList(const TSharedPtr<idlezt::GetApplyJoinSeptListReq>& InReqMessage, const OnGetApplyJoinSeptListResult& InCallback)
+void UZGameRpcStub::GetApplyJoinSeptList(const TSharedPtr<idlepb::GetApplyJoinSeptListReq>& InReqMessage, const OnGetApplyJoinSeptListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetApplyJoinSeptList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetApplyJoinSeptListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetApplyJoinSeptListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5945,10 +5954,10 @@ void UZGameRpcStub::K2_RespondInviteSept(const FZRespondInviteSeptReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RespondInviteSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::RespondInviteSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RespondInviteSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RespondInviteSeptAck>& InRspMessage)
+    RespondInviteSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RespondInviteSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -5964,20 +5973,20 @@ void UZGameRpcStub::K2_RespondInviteSept(const FZRespondInviteSeptReq& InParams,
     });
 }
 
-void UZGameRpcStub::RespondInviteSept(const TSharedPtr<idlezt::RespondInviteSeptReq>& InReqMessage, const OnRespondInviteSeptResult& InCallback)
+void UZGameRpcStub::RespondInviteSept(const TSharedPtr<idlepb::RespondInviteSeptReq>& InReqMessage, const OnRespondInviteSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RespondInviteSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RespondInviteSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RespondInviteSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -5990,10 +5999,10 @@ void UZGameRpcStub::K2_GetInviteMeJoinSeptList(const FZGetInviteMeJoinSeptListRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetInviteMeJoinSeptListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetInviteMeJoinSeptListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetInviteMeJoinSeptList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetInviteMeJoinSeptListAck>& InRspMessage)
+    GetInviteMeJoinSeptList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetInviteMeJoinSeptListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6009,20 +6018,20 @@ void UZGameRpcStub::K2_GetInviteMeJoinSeptList(const FZGetInviteMeJoinSeptListRe
     });
 }
 
-void UZGameRpcStub::GetInviteMeJoinSeptList(const TSharedPtr<idlezt::GetInviteMeJoinSeptListReq>& InReqMessage, const OnGetInviteMeJoinSeptListResult& InCallback)
+void UZGameRpcStub::GetInviteMeJoinSeptList(const TSharedPtr<idlepb::GetInviteMeJoinSeptListReq>& InReqMessage, const OnGetInviteMeJoinSeptListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetInviteMeJoinSeptList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetInviteMeJoinSeptListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetInviteMeJoinSeptListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6035,10 +6044,10 @@ void UZGameRpcStub::K2_GetCandidatesInviteRoleList(const FZGetCandidatesInviteRo
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetCandidatesInviteRoleListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetCandidatesInviteRoleListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetCandidatesInviteRoleList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetCandidatesInviteRoleListAck>& InRspMessage)
+    GetCandidatesInviteRoleList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetCandidatesInviteRoleListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6054,20 +6063,20 @@ void UZGameRpcStub::K2_GetCandidatesInviteRoleList(const FZGetCandidatesInviteRo
     });
 }
 
-void UZGameRpcStub::GetCandidatesInviteRoleList(const TSharedPtr<idlezt::GetCandidatesInviteRoleListReq>& InReqMessage, const OnGetCandidatesInviteRoleListResult& InCallback)
+void UZGameRpcStub::GetCandidatesInviteRoleList(const TSharedPtr<idlepb::GetCandidatesInviteRoleListReq>& InReqMessage, const OnGetCandidatesInviteRoleListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetCandidatesInviteRoleList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetCandidatesInviteRoleListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetCandidatesInviteRoleListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6080,10 +6089,10 @@ void UZGameRpcStub::K2_InviteJoinSept(const FZInviteJoinSeptReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::InviteJoinSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::InviteJoinSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    InviteJoinSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::InviteJoinSeptAck>& InRspMessage)
+    InviteJoinSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::InviteJoinSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6099,20 +6108,20 @@ void UZGameRpcStub::K2_InviteJoinSept(const FZInviteJoinSeptReq& InParams, const
     });
 }
 
-void UZGameRpcStub::InviteJoinSept(const TSharedPtr<idlezt::InviteJoinSeptReq>& InReqMessage, const OnInviteJoinSeptResult& InCallback)
+void UZGameRpcStub::InviteJoinSept(const TSharedPtr<idlepb::InviteJoinSeptReq>& InReqMessage, const OnInviteJoinSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::InviteJoinSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::InviteJoinSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::InviteJoinSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6125,10 +6134,10 @@ void UZGameRpcStub::K2_SetSeptSettings(const FZSetSeptSettingsReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetSeptSettingsReq>();
+    auto ReqMessage = MakeShared<idlepb::SetSeptSettingsReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetSeptSettings(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetSeptSettingsAck>& InRspMessage)
+    SetSeptSettings(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetSeptSettingsAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6144,20 +6153,20 @@ void UZGameRpcStub::K2_SetSeptSettings(const FZSetSeptSettingsReq& InParams, con
     });
 }
 
-void UZGameRpcStub::SetSeptSettings(const TSharedPtr<idlezt::SetSeptSettingsReq>& InReqMessage, const OnSetSeptSettingsResult& InCallback)
+void UZGameRpcStub::SetSeptSettings(const TSharedPtr<idlepb::SetSeptSettingsReq>& InReqMessage, const OnSetSeptSettingsResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetSeptSettings;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetSeptSettingsAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetSeptSettingsAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6170,10 +6179,10 @@ void UZGameRpcStub::K2_SetSeptAnnounce(const FZSetSeptAnnounceReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::SetSeptAnnounceReq>();
+    auto ReqMessage = MakeShared<idlepb::SetSeptAnnounceReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    SetSeptAnnounce(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::SetSeptAnnounceAck>& InRspMessage)
+    SetSeptAnnounce(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::SetSeptAnnounceAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6189,20 +6198,20 @@ void UZGameRpcStub::K2_SetSeptAnnounce(const FZSetSeptAnnounceReq& InParams, con
     });
 }
 
-void UZGameRpcStub::SetSeptAnnounce(const TSharedPtr<idlezt::SetSeptAnnounceReq>& InReqMessage, const OnSetSeptAnnounceResult& InCallback)
+void UZGameRpcStub::SetSeptAnnounce(const TSharedPtr<idlepb::SetSeptAnnounceReq>& InReqMessage, const OnSetSeptAnnounceResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::SetSeptAnnounce;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::SetSeptAnnounceAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::SetSeptAnnounceAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6215,10 +6224,10 @@ void UZGameRpcStub::K2_ChangeSeptName(const FZChangeSeptNameReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ChangeSeptNameReq>();
+    auto ReqMessage = MakeShared<idlepb::ChangeSeptNameReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ChangeSeptName(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ChangeSeptNameAck>& InRspMessage)
+    ChangeSeptName(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ChangeSeptNameAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6234,20 +6243,20 @@ void UZGameRpcStub::K2_ChangeSeptName(const FZChangeSeptNameReq& InParams, const
     });
 }
 
-void UZGameRpcStub::ChangeSeptName(const TSharedPtr<idlezt::ChangeSeptNameReq>& InReqMessage, const OnChangeSeptNameResult& InCallback)
+void UZGameRpcStub::ChangeSeptName(const TSharedPtr<idlepb::ChangeSeptNameReq>& InReqMessage, const OnChangeSeptNameResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ChangeSeptName;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ChangeSeptNameAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ChangeSeptNameAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6260,10 +6269,10 @@ void UZGameRpcStub::K2_GetSeptLog(const FZGetSeptLogReq& InParams, const FZOnGet
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptLogReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptLogReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptLog(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptLogAck>& InRspMessage)
+    GetSeptLog(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptLogAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6279,20 +6288,20 @@ void UZGameRpcStub::K2_GetSeptLog(const FZGetSeptLogReq& InParams, const FZOnGet
     });
 }
 
-void UZGameRpcStub::GetSeptLog(const TSharedPtr<idlezt::GetSeptLogReq>& InReqMessage, const OnGetSeptLogResult& InCallback)
+void UZGameRpcStub::GetSeptLog(const TSharedPtr<idlepb::GetSeptLogReq>& InReqMessage, const OnGetSeptLogResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptLog;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptLogAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptLogAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6305,10 +6314,10 @@ void UZGameRpcStub::K2_ConstructSept(const FZConstructSeptReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ConstructSeptReq>();
+    auto ReqMessage = MakeShared<idlepb::ConstructSeptReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ConstructSept(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ConstructSeptAck>& InRspMessage)
+    ConstructSept(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ConstructSeptAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6324,20 +6333,20 @@ void UZGameRpcStub::K2_ConstructSept(const FZConstructSeptReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::ConstructSept(const TSharedPtr<idlezt::ConstructSeptReq>& InReqMessage, const OnConstructSeptResult& InCallback)
+void UZGameRpcStub::ConstructSept(const TSharedPtr<idlepb::ConstructSeptReq>& InReqMessage, const OnConstructSeptResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ConstructSept;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ConstructSeptAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ConstructSeptAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6350,10 +6359,10 @@ void UZGameRpcStub::K2_GetConstructSeptLog(const FZGetConstructSeptLogReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetConstructSeptLogReq>();
+    auto ReqMessage = MakeShared<idlepb::GetConstructSeptLogReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetConstructSeptLog(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetConstructSeptLogAck>& InRspMessage)
+    GetConstructSeptLog(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetConstructSeptLogAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6369,20 +6378,20 @@ void UZGameRpcStub::K2_GetConstructSeptLog(const FZGetConstructSeptLogReq& InPar
     });
 }
 
-void UZGameRpcStub::GetConstructSeptLog(const TSharedPtr<idlezt::GetConstructSeptLogReq>& InReqMessage, const OnGetConstructSeptLogResult& InCallback)
+void UZGameRpcStub::GetConstructSeptLog(const TSharedPtr<idlepb::GetConstructSeptLogReq>& InReqMessage, const OnGetConstructSeptLogResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetConstructSeptLog;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetConstructSeptLogAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetConstructSeptLogAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6395,10 +6404,10 @@ void UZGameRpcStub::K2_GetSeptInvitedRoleDailyNum(const FZGetSeptInvitedRoleDail
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptInvitedRoleDailyNumReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptInvitedRoleDailyNumReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptInvitedRoleDailyNum(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptInvitedRoleDailyNumAck>& InRspMessage)
+    GetSeptInvitedRoleDailyNum(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptInvitedRoleDailyNumAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6414,20 +6423,20 @@ void UZGameRpcStub::K2_GetSeptInvitedRoleDailyNum(const FZGetSeptInvitedRoleDail
     });
 }
 
-void UZGameRpcStub::GetSeptInvitedRoleDailyNum(const TSharedPtr<idlezt::GetSeptInvitedRoleDailyNumReq>& InReqMessage, const OnGetSeptInvitedRoleDailyNumResult& InCallback)
+void UZGameRpcStub::GetSeptInvitedRoleDailyNum(const TSharedPtr<idlepb::GetSeptInvitedRoleDailyNumReq>& InReqMessage, const OnGetSeptInvitedRoleDailyNumResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptInvitedRoleDailyNum;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptInvitedRoleDailyNumAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptInvitedRoleDailyNumAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6440,10 +6449,10 @@ void UZGameRpcStub::K2_AppointSeptPosition(const FZAppointSeptPositionReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AppointSeptPositionReq>();
+    auto ReqMessage = MakeShared<idlepb::AppointSeptPositionReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AppointSeptPosition(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AppointSeptPositionAck>& InRspMessage)
+    AppointSeptPosition(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AppointSeptPositionAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6459,20 +6468,20 @@ void UZGameRpcStub::K2_AppointSeptPosition(const FZAppointSeptPositionReq& InPar
     });
 }
 
-void UZGameRpcStub::AppointSeptPosition(const TSharedPtr<idlezt::AppointSeptPositionReq>& InReqMessage, const OnAppointSeptPositionResult& InCallback)
+void UZGameRpcStub::AppointSeptPosition(const TSharedPtr<idlepb::AppointSeptPositionReq>& InReqMessage, const OnAppointSeptPositionResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AppointSeptPosition;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AppointSeptPositionAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AppointSeptPositionAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6485,10 +6494,10 @@ void UZGameRpcStub::K2_ResignSeptChairman(const FZResignSeptChairmanReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ResignSeptChairmanReq>();
+    auto ReqMessage = MakeShared<idlepb::ResignSeptChairmanReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ResignSeptChairman(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ResignSeptChairmanAck>& InRspMessage)
+    ResignSeptChairman(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ResignSeptChairmanAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6504,20 +6513,20 @@ void UZGameRpcStub::K2_ResignSeptChairman(const FZResignSeptChairmanReq& InParam
     });
 }
 
-void UZGameRpcStub::ResignSeptChairman(const TSharedPtr<idlezt::ResignSeptChairmanReq>& InReqMessage, const OnResignSeptChairmanResult& InCallback)
+void UZGameRpcStub::ResignSeptChairman(const TSharedPtr<idlepb::ResignSeptChairmanReq>& InReqMessage, const OnResignSeptChairmanResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ResignSeptChairman;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ResignSeptChairmanAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ResignSeptChairmanAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6530,10 +6539,10 @@ void UZGameRpcStub::K2_KickOutSeptMember(const FZKickOutSeptMemberReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::KickOutSeptMemberReq>();
+    auto ReqMessage = MakeShared<idlepb::KickOutSeptMemberReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    KickOutSeptMember(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::KickOutSeptMemberAck>& InRspMessage)
+    KickOutSeptMember(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::KickOutSeptMemberAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6549,20 +6558,20 @@ void UZGameRpcStub::K2_KickOutSeptMember(const FZKickOutSeptMemberReq& InParams,
     });
 }
 
-void UZGameRpcStub::KickOutSeptMember(const TSharedPtr<idlezt::KickOutSeptMemberReq>& InReqMessage, const OnKickOutSeptMemberResult& InCallback)
+void UZGameRpcStub::KickOutSeptMember(const TSharedPtr<idlepb::KickOutSeptMemberReq>& InReqMessage, const OnKickOutSeptMemberResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::KickOutSeptMember;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::KickOutSeptMemberAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::KickOutSeptMemberAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6575,10 +6584,10 @@ void UZGameRpcStub::K2_GetRoleSeptShopData(const FZGetRoleSeptShopDataReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleSeptShopDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleSeptShopDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleSeptShopData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleSeptShopDataAck>& InRspMessage)
+    GetRoleSeptShopData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleSeptShopDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6594,20 +6603,20 @@ void UZGameRpcStub::K2_GetRoleSeptShopData(const FZGetRoleSeptShopDataReq& InPar
     });
 }
 
-void UZGameRpcStub::GetRoleSeptShopData(const TSharedPtr<idlezt::GetRoleSeptShopDataReq>& InReqMessage, const OnGetRoleSeptShopDataResult& InCallback)
+void UZGameRpcStub::GetRoleSeptShopData(const TSharedPtr<idlepb::GetRoleSeptShopDataReq>& InReqMessage, const OnGetRoleSeptShopDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleSeptShopData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleSeptShopDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleSeptShopDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6620,10 +6629,10 @@ void UZGameRpcStub::K2_BuySeptShopItem(const FZBuySeptShopItemReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::BuySeptShopItemReq>();
+    auto ReqMessage = MakeShared<idlepb::BuySeptShopItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    BuySeptShopItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::BuySeptShopItemAck>& InRspMessage)
+    BuySeptShopItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::BuySeptShopItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6639,20 +6648,20 @@ void UZGameRpcStub::K2_BuySeptShopItem(const FZBuySeptShopItemReq& InParams, con
     });
 }
 
-void UZGameRpcStub::BuySeptShopItem(const TSharedPtr<idlezt::BuySeptShopItemReq>& InReqMessage, const OnBuySeptShopItemResult& InCallback)
+void UZGameRpcStub::BuySeptShopItem(const TSharedPtr<idlepb::BuySeptShopItemReq>& InReqMessage, const OnBuySeptShopItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::BuySeptShopItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::BuySeptShopItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::BuySeptShopItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6665,10 +6674,10 @@ void UZGameRpcStub::K2_GetRoleSeptQuestData(const FZGetRoleSeptQuestDataReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleSeptQuestDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleSeptQuestDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleSeptQuestData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleSeptQuestDataAck>& InRspMessage)
+    GetRoleSeptQuestData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleSeptQuestDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6684,20 +6693,20 @@ void UZGameRpcStub::K2_GetRoleSeptQuestData(const FZGetRoleSeptQuestDataReq& InP
     });
 }
 
-void UZGameRpcStub::GetRoleSeptQuestData(const TSharedPtr<idlezt::GetRoleSeptQuestDataReq>& InReqMessage, const OnGetRoleSeptQuestDataResult& InCallback)
+void UZGameRpcStub::GetRoleSeptQuestData(const TSharedPtr<idlepb::GetRoleSeptQuestDataReq>& InReqMessage, const OnGetRoleSeptQuestDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleSeptQuestData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleSeptQuestDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleSeptQuestDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6710,10 +6719,10 @@ void UZGameRpcStub::K2_ReqRoleSeptQuestOp(const FZReqRoleSeptQuestOpReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReqRoleSeptQuestOpReq>();
+    auto ReqMessage = MakeShared<idlepb::ReqRoleSeptQuestOpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReqRoleSeptQuestOp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReqRoleSeptQuestOpAck>& InRspMessage)
+    ReqRoleSeptQuestOp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReqRoleSeptQuestOpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6729,20 +6738,20 @@ void UZGameRpcStub::K2_ReqRoleSeptQuestOp(const FZReqRoleSeptQuestOpReq& InParam
     });
 }
 
-void UZGameRpcStub::ReqRoleSeptQuestOp(const TSharedPtr<idlezt::ReqRoleSeptQuestOpReq>& InReqMessage, const OnReqRoleSeptQuestOpResult& InCallback)
+void UZGameRpcStub::ReqRoleSeptQuestOp(const TSharedPtr<idlepb::ReqRoleSeptQuestOpReq>& InReqMessage, const OnReqRoleSeptQuestOpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReqRoleSeptQuestOp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReqRoleSeptQuestOpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReqRoleSeptQuestOpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6755,10 +6764,10 @@ void UZGameRpcStub::K2_RefreshSeptQuest(const FZRefreshSeptQuestReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RefreshSeptQuestReq>();
+    auto ReqMessage = MakeShared<idlepb::RefreshSeptQuestReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RefreshSeptQuest(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RefreshSeptQuestAck>& InRspMessage)
+    RefreshSeptQuest(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RefreshSeptQuestAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6774,20 +6783,20 @@ void UZGameRpcStub::K2_RefreshSeptQuest(const FZRefreshSeptQuestReq& InParams, c
     });
 }
 
-void UZGameRpcStub::RefreshSeptQuest(const TSharedPtr<idlezt::RefreshSeptQuestReq>& InReqMessage, const OnRefreshSeptQuestResult& InCallback)
+void UZGameRpcStub::RefreshSeptQuest(const TSharedPtr<idlepb::RefreshSeptQuestReq>& InReqMessage, const OnRefreshSeptQuestResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshSeptQuest;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RefreshSeptQuestAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RefreshSeptQuestAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6800,10 +6809,10 @@ void UZGameRpcStub::K2_ReqSeptQuestRankUp(const FZReqSeptQuestRankUpReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReqSeptQuestRankUpReq>();
+    auto ReqMessage = MakeShared<idlepb::ReqSeptQuestRankUpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReqSeptQuestRankUp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReqSeptQuestRankUpAck>& InRspMessage)
+    ReqSeptQuestRankUp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReqSeptQuestRankUpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6819,20 +6828,20 @@ void UZGameRpcStub::K2_ReqSeptQuestRankUp(const FZReqSeptQuestRankUpReq& InParam
     });
 }
 
-void UZGameRpcStub::ReqSeptQuestRankUp(const TSharedPtr<idlezt::ReqSeptQuestRankUpReq>& InReqMessage, const OnReqSeptQuestRankUpResult& InCallback)
+void UZGameRpcStub::ReqSeptQuestRankUp(const TSharedPtr<idlepb::ReqSeptQuestRankUpReq>& InReqMessage, const OnReqSeptQuestRankUpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReqSeptQuestRankUp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReqSeptQuestRankUpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReqSeptQuestRankUpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6845,10 +6854,10 @@ void UZGameRpcStub::K2_BeginOccupySeptStone(const FZBeginOccupySeptStoneReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::BeginOccupySeptStoneReq>();
+    auto ReqMessage = MakeShared<idlepb::BeginOccupySeptStoneReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    BeginOccupySeptStone(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::BeginOccupySeptStoneAck>& InRspMessage)
+    BeginOccupySeptStone(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::BeginOccupySeptStoneAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6864,20 +6873,20 @@ void UZGameRpcStub::K2_BeginOccupySeptStone(const FZBeginOccupySeptStoneReq& InP
     });
 }
 
-void UZGameRpcStub::BeginOccupySeptStone(const TSharedPtr<idlezt::BeginOccupySeptStoneReq>& InReqMessage, const OnBeginOccupySeptStoneResult& InCallback)
+void UZGameRpcStub::BeginOccupySeptStone(const TSharedPtr<idlepb::BeginOccupySeptStoneReq>& InReqMessage, const OnBeginOccupySeptStoneResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::BeginOccupySeptStone;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::BeginOccupySeptStoneAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::BeginOccupySeptStoneAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6890,10 +6899,10 @@ void UZGameRpcStub::K2_EndOccupySeptStone(const FZEndOccupySeptStoneReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::EndOccupySeptStoneReq>();
+    auto ReqMessage = MakeShared<idlepb::EndOccupySeptStoneReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    EndOccupySeptStone(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::EndOccupySeptStoneAck>& InRspMessage)
+    EndOccupySeptStone(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::EndOccupySeptStoneAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6909,20 +6918,20 @@ void UZGameRpcStub::K2_EndOccupySeptStone(const FZEndOccupySeptStoneReq& InParam
     });
 }
 
-void UZGameRpcStub::EndOccupySeptStone(const TSharedPtr<idlezt::EndOccupySeptStoneReq>& InReqMessage, const OnEndOccupySeptStoneResult& InCallback)
+void UZGameRpcStub::EndOccupySeptStone(const TSharedPtr<idlepb::EndOccupySeptStoneReq>& InReqMessage, const OnEndOccupySeptStoneResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::EndOccupySeptStone;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::EndOccupySeptStoneAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::EndOccupySeptStoneAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6935,10 +6944,10 @@ void UZGameRpcStub::K2_OccupySeptLand(const FZOccupySeptLandReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OccupySeptLandReq>();
+    auto ReqMessage = MakeShared<idlepb::OccupySeptLandReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OccupySeptLand(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OccupySeptLandAck>& InRspMessage)
+    OccupySeptLand(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OccupySeptLandAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6954,20 +6963,20 @@ void UZGameRpcStub::K2_OccupySeptLand(const FZOccupySeptLandReq& InParams, const
     });
 }
 
-void UZGameRpcStub::OccupySeptLand(const TSharedPtr<idlezt::OccupySeptLandReq>& InReqMessage, const OnOccupySeptLandResult& InCallback)
+void UZGameRpcStub::OccupySeptLand(const TSharedPtr<idlepb::OccupySeptLandReq>& InReqMessage, const OnOccupySeptLandResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OccupySeptLand;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OccupySeptLandAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OccupySeptLandAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -6980,10 +6989,10 @@ void UZGameRpcStub::K2_GetGongFaData(const FZGetGongFaDataReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetGongFaDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetGongFaDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetGongFaData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetGongFaDataAck>& InRspMessage)
+    GetGongFaData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetGongFaDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -6999,20 +7008,20 @@ void UZGameRpcStub::K2_GetGongFaData(const FZGetGongFaDataReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::GetGongFaData(const TSharedPtr<idlezt::GetGongFaDataReq>& InReqMessage, const OnGetGongFaDataResult& InCallback)
+void UZGameRpcStub::GetGongFaData(const TSharedPtr<idlepb::GetGongFaDataReq>& InReqMessage, const OnGetGongFaDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetGongFaData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetGongFaDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetGongFaDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7025,10 +7034,10 @@ void UZGameRpcStub::K2_GongFaOp(const FZGongFaOpReq& InParams, const FZOnGongFaO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GongFaOpReq>();
+    auto ReqMessage = MakeShared<idlepb::GongFaOpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GongFaOp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GongFaOpAck>& InRspMessage)
+    GongFaOp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GongFaOpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7044,20 +7053,20 @@ void UZGameRpcStub::K2_GongFaOp(const FZGongFaOpReq& InParams, const FZOnGongFaO
     });
 }
 
-void UZGameRpcStub::GongFaOp(const TSharedPtr<idlezt::GongFaOpReq>& InReqMessage, const OnGongFaOpResult& InCallback)
+void UZGameRpcStub::GongFaOp(const TSharedPtr<idlepb::GongFaOpReq>& InReqMessage, const OnGongFaOpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GongFaOp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GongFaOpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GongFaOpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7070,10 +7079,10 @@ void UZGameRpcStub::K2_ActivateGongFaMaxEffect(const FZActivateGongFaMaxEffectRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ActivateGongFaMaxEffectReq>();
+    auto ReqMessage = MakeShared<idlepb::ActivateGongFaMaxEffectReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ActivateGongFaMaxEffect(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ActivateGongFaMaxEffectAck>& InRspMessage)
+    ActivateGongFaMaxEffect(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ActivateGongFaMaxEffectAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7089,20 +7098,20 @@ void UZGameRpcStub::K2_ActivateGongFaMaxEffect(const FZActivateGongFaMaxEffectRe
     });
 }
 
-void UZGameRpcStub::ActivateGongFaMaxEffect(const TSharedPtr<idlezt::ActivateGongFaMaxEffectReq>& InReqMessage, const OnActivateGongFaMaxEffectResult& InCallback)
+void UZGameRpcStub::ActivateGongFaMaxEffect(const TSharedPtr<idlepb::ActivateGongFaMaxEffectReq>& InReqMessage, const OnActivateGongFaMaxEffectResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ActivateGongFaMaxEffect;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ActivateGongFaMaxEffectAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ActivateGongFaMaxEffectAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7115,10 +7124,10 @@ void UZGameRpcStub::K2_GetSeptLandDamageTopList(const FZGetSeptLandDamageTopList
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptLandDamageTopListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptLandDamageTopListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptLandDamageTopList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptLandDamageTopListAck>& InRspMessage)
+    GetSeptLandDamageTopList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptLandDamageTopListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7134,20 +7143,20 @@ void UZGameRpcStub::K2_GetSeptLandDamageTopList(const FZGetSeptLandDamageTopList
     });
 }
 
-void UZGameRpcStub::GetSeptLandDamageTopList(const TSharedPtr<idlezt::GetSeptLandDamageTopListReq>& InReqMessage, const OnGetSeptLandDamageTopListResult& InCallback)
+void UZGameRpcStub::GetSeptLandDamageTopList(const TSharedPtr<idlepb::GetSeptLandDamageTopListReq>& InReqMessage, const OnGetSeptLandDamageTopListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptLandDamageTopList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptLandDamageTopListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptLandDamageTopListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7160,10 +7169,10 @@ void UZGameRpcStub::K2_ReceiveFuZengRewards(const FZReceiveFuZengRewardsReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReceiveFuZengRewardsReq>();
+    auto ReqMessage = MakeShared<idlepb::ReceiveFuZengRewardsReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReceiveFuZengRewards(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReceiveFuZengRewardsAck>& InRspMessage)
+    ReceiveFuZengRewards(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReceiveFuZengRewardsAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7179,20 +7188,20 @@ void UZGameRpcStub::K2_ReceiveFuZengRewards(const FZReceiveFuZengRewardsReq& InP
     });
 }
 
-void UZGameRpcStub::ReceiveFuZengRewards(const TSharedPtr<idlezt::ReceiveFuZengRewardsReq>& InReqMessage, const OnReceiveFuZengRewardsResult& InCallback)
+void UZGameRpcStub::ReceiveFuZengRewards(const TSharedPtr<idlepb::ReceiveFuZengRewardsReq>& InReqMessage, const OnReceiveFuZengRewardsResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveFuZengRewards;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReceiveFuZengRewardsAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReceiveFuZengRewardsAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7205,10 +7214,10 @@ void UZGameRpcStub::K2_GetRoleFuZengData(const FZGetRoleFuZengDataReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleFuZengDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleFuZengDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleFuZengData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleFuZengDataAck>& InRspMessage)
+    GetRoleFuZengData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleFuZengDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7224,20 +7233,20 @@ void UZGameRpcStub::K2_GetRoleFuZengData(const FZGetRoleFuZengDataReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetRoleFuZengData(const TSharedPtr<idlezt::GetRoleFuZengDataReq>& InReqMessage, const OnGetRoleFuZengDataResult& InCallback)
+void UZGameRpcStub::GetRoleFuZengData(const TSharedPtr<idlepb::GetRoleFuZengDataReq>& InReqMessage, const OnGetRoleFuZengDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleFuZengData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleFuZengDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleFuZengDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7250,10 +7259,10 @@ void UZGameRpcStub::K2_GetRoleTreasuryData(const FZGetRoleTreasuryDataReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleTreasuryDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleTreasuryDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleTreasuryData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleTreasuryDataAck>& InRspMessage)
+    GetRoleTreasuryData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleTreasuryDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7269,20 +7278,20 @@ void UZGameRpcStub::K2_GetRoleTreasuryData(const FZGetRoleTreasuryDataReq& InPar
     });
 }
 
-void UZGameRpcStub::GetRoleTreasuryData(const TSharedPtr<idlezt::GetRoleTreasuryDataReq>& InReqMessage, const OnGetRoleTreasuryDataResult& InCallback)
+void UZGameRpcStub::GetRoleTreasuryData(const TSharedPtr<idlepb::GetRoleTreasuryDataReq>& InReqMessage, const OnGetRoleTreasuryDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleTreasuryData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleTreasuryDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleTreasuryDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7295,10 +7304,10 @@ void UZGameRpcStub::K2_OpenTreasuryChest(const FZOpenTreasuryChestReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OpenTreasuryChestReq>();
+    auto ReqMessage = MakeShared<idlepb::OpenTreasuryChestReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OpenTreasuryChest(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OpenTreasuryChestAck>& InRspMessage)
+    OpenTreasuryChest(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OpenTreasuryChestAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7314,20 +7323,20 @@ void UZGameRpcStub::K2_OpenTreasuryChest(const FZOpenTreasuryChestReq& InParams,
     });
 }
 
-void UZGameRpcStub::OpenTreasuryChest(const TSharedPtr<idlezt::OpenTreasuryChestReq>& InReqMessage, const OnOpenTreasuryChestResult& InCallback)
+void UZGameRpcStub::OpenTreasuryChest(const TSharedPtr<idlepb::OpenTreasuryChestReq>& InReqMessage, const OnOpenTreasuryChestResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OpenTreasuryChest;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OpenTreasuryChestAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OpenTreasuryChestAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7340,10 +7349,10 @@ void UZGameRpcStub::K2_OneClickOpenTreasuryChest(const FZOneClickOpenTreasuryChe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OneClickOpenTreasuryChestReq>();
+    auto ReqMessage = MakeShared<idlepb::OneClickOpenTreasuryChestReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OneClickOpenTreasuryChest(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OneClickOpenTreasuryChestAck>& InRspMessage)
+    OneClickOpenTreasuryChest(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OneClickOpenTreasuryChestAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7359,20 +7368,20 @@ void UZGameRpcStub::K2_OneClickOpenTreasuryChest(const FZOneClickOpenTreasuryChe
     });
 }
 
-void UZGameRpcStub::OneClickOpenTreasuryChest(const TSharedPtr<idlezt::OneClickOpenTreasuryChestReq>& InReqMessage, const OnOneClickOpenTreasuryChestResult& InCallback)
+void UZGameRpcStub::OneClickOpenTreasuryChest(const TSharedPtr<idlepb::OneClickOpenTreasuryChestReq>& InReqMessage, const OnOneClickOpenTreasuryChestResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OneClickOpenTreasuryChest;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OneClickOpenTreasuryChestAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OneClickOpenTreasuryChestAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7385,10 +7394,10 @@ void UZGameRpcStub::K2_OpenTreasuryGacha(const FZOpenTreasuryGachaReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::OpenTreasuryGachaReq>();
+    auto ReqMessage = MakeShared<idlepb::OpenTreasuryGachaReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    OpenTreasuryGacha(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::OpenTreasuryGachaAck>& InRspMessage)
+    OpenTreasuryGacha(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::OpenTreasuryGachaAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7404,20 +7413,20 @@ void UZGameRpcStub::K2_OpenTreasuryGacha(const FZOpenTreasuryGachaReq& InParams,
     });
 }
 
-void UZGameRpcStub::OpenTreasuryGacha(const TSharedPtr<idlezt::OpenTreasuryGachaReq>& InReqMessage, const OnOpenTreasuryGachaResult& InCallback)
+void UZGameRpcStub::OpenTreasuryGacha(const TSharedPtr<idlepb::OpenTreasuryGachaReq>& InReqMessage, const OnOpenTreasuryGachaResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::OpenTreasuryGacha;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::OpenTreasuryGachaAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::OpenTreasuryGachaAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7430,10 +7439,10 @@ void UZGameRpcStub::K2_RefreshTreasuryShop(const FZRefreshTreasuryShopReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RefreshTreasuryShopReq>();
+    auto ReqMessage = MakeShared<idlepb::RefreshTreasuryShopReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RefreshTreasuryShop(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RefreshTreasuryShopAck>& InRspMessage)
+    RefreshTreasuryShop(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RefreshTreasuryShopAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7449,20 +7458,20 @@ void UZGameRpcStub::K2_RefreshTreasuryShop(const FZRefreshTreasuryShopReq& InPar
     });
 }
 
-void UZGameRpcStub::RefreshTreasuryShop(const TSharedPtr<idlezt::RefreshTreasuryShopReq>& InReqMessage, const OnRefreshTreasuryShopResult& InCallback)
+void UZGameRpcStub::RefreshTreasuryShop(const TSharedPtr<idlepb::RefreshTreasuryShopReq>& InReqMessage, const OnRefreshTreasuryShopResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RefreshTreasuryShop;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RefreshTreasuryShopAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RefreshTreasuryShopAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7475,10 +7484,10 @@ void UZGameRpcStub::K2_TreasuryShopBuy(const FZTreasuryShopBuyReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::TreasuryShopBuyReq>();
+    auto ReqMessage = MakeShared<idlepb::TreasuryShopBuyReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    TreasuryShopBuy(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::TreasuryShopBuyAck>& InRspMessage)
+    TreasuryShopBuy(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::TreasuryShopBuyAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7494,20 +7503,20 @@ void UZGameRpcStub::K2_TreasuryShopBuy(const FZTreasuryShopBuyReq& InParams, con
     });
 }
 
-void UZGameRpcStub::TreasuryShopBuy(const TSharedPtr<idlezt::TreasuryShopBuyReq>& InReqMessage, const OnTreasuryShopBuyResult& InCallback)
+void UZGameRpcStub::TreasuryShopBuy(const TSharedPtr<idlepb::TreasuryShopBuyReq>& InReqMessage, const OnTreasuryShopBuyResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::TreasuryShopBuy;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::TreasuryShopBuyAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::TreasuryShopBuyAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7520,10 +7529,10 @@ void UZGameRpcStub::K2_GetLifeCounterData(const FZGetLifeCounterDataReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetLifeCounterDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetLifeCounterDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetLifeCounterData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetLifeCounterDataAck>& InRspMessage)
+    GetLifeCounterData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetLifeCounterDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7539,20 +7548,20 @@ void UZGameRpcStub::K2_GetLifeCounterData(const FZGetLifeCounterDataReq& InParam
     });
 }
 
-void UZGameRpcStub::GetLifeCounterData(const TSharedPtr<idlezt::GetLifeCounterDataReq>& InReqMessage, const OnGetLifeCounterDataResult& InCallback)
+void UZGameRpcStub::GetLifeCounterData(const TSharedPtr<idlepb::GetLifeCounterDataReq>& InReqMessage, const OnGetLifeCounterDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetLifeCounterData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetLifeCounterDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetLifeCounterDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7565,10 +7574,10 @@ void UZGameRpcStub::K2_DoQuestFight(const FZDoQuestFightReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DoQuestFightReq>();
+    auto ReqMessage = MakeShared<idlepb::DoQuestFightReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DoQuestFight(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DoQuestFightAck>& InRspMessage)
+    DoQuestFight(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DoQuestFightAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7584,20 +7593,20 @@ void UZGameRpcStub::K2_DoQuestFight(const FZDoQuestFightReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::DoQuestFight(const TSharedPtr<idlezt::DoQuestFightReq>& InReqMessage, const OnDoQuestFightResult& InCallback)
+void UZGameRpcStub::DoQuestFight(const TSharedPtr<idlepb::DoQuestFightReq>& InReqMessage, const OnDoQuestFightResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DoQuestFight;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DoQuestFightAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DoQuestFightAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7610,10 +7619,10 @@ void UZGameRpcStub::K2_QuestFightQuickEnd(const FZQuestFightQuickEndReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::QuestFightQuickEndReq>();
+    auto ReqMessage = MakeShared<idlepb::QuestFightQuickEndReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    QuestFightQuickEnd(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::QuestFightQuickEndAck>& InRspMessage)
+    QuestFightQuickEnd(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::QuestFightQuickEndAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7629,20 +7638,20 @@ void UZGameRpcStub::K2_QuestFightQuickEnd(const FZQuestFightQuickEndReq& InParam
     });
 }
 
-void UZGameRpcStub::QuestFightQuickEnd(const TSharedPtr<idlezt::QuestFightQuickEndReq>& InReqMessage, const OnQuestFightQuickEndResult& InCallback)
+void UZGameRpcStub::QuestFightQuickEnd(const TSharedPtr<idlepb::QuestFightQuickEndReq>& InReqMessage, const OnQuestFightQuickEndResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::QuestFightQuickEnd;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::QuestFightQuickEndAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::QuestFightQuickEndAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7655,10 +7664,10 @@ void UZGameRpcStub::K2_GetAppearanceData(const FZGetAppearanceDataReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetAppearanceDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetAppearanceDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetAppearanceData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetAppearanceDataAck>& InRspMessage)
+    GetAppearanceData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetAppearanceDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7674,20 +7683,20 @@ void UZGameRpcStub::K2_GetAppearanceData(const FZGetAppearanceDataReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetAppearanceData(const TSharedPtr<idlezt::GetAppearanceDataReq>& InReqMessage, const OnGetAppearanceDataResult& InCallback)
+void UZGameRpcStub::GetAppearanceData(const TSharedPtr<idlepb::GetAppearanceDataReq>& InReqMessage, const OnGetAppearanceDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetAppearanceData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetAppearanceDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetAppearanceDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7700,10 +7709,10 @@ void UZGameRpcStub::K2_AppearanceAdd(const FZAppearanceAddReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AppearanceAddReq>();
+    auto ReqMessage = MakeShared<idlepb::AppearanceAddReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AppearanceAdd(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AppearanceAddAck>& InRspMessage)
+    AppearanceAdd(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AppearanceAddAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7719,20 +7728,20 @@ void UZGameRpcStub::K2_AppearanceAdd(const FZAppearanceAddReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::AppearanceAdd(const TSharedPtr<idlezt::AppearanceAddReq>& InReqMessage, const OnAppearanceAddResult& InCallback)
+void UZGameRpcStub::AppearanceAdd(const TSharedPtr<idlepb::AppearanceAddReq>& InReqMessage, const OnAppearanceAddResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceAdd;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AppearanceAddAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AppearanceAddAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7745,10 +7754,10 @@ void UZGameRpcStub::K2_AppearanceActive(const FZAppearanceActiveReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AppearanceActiveReq>();
+    auto ReqMessage = MakeShared<idlepb::AppearanceActiveReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AppearanceActive(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AppearanceActiveAck>& InRspMessage)
+    AppearanceActive(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AppearanceActiveAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7764,20 +7773,20 @@ void UZGameRpcStub::K2_AppearanceActive(const FZAppearanceActiveReq& InParams, c
     });
 }
 
-void UZGameRpcStub::AppearanceActive(const TSharedPtr<idlezt::AppearanceActiveReq>& InReqMessage, const OnAppearanceActiveResult& InCallback)
+void UZGameRpcStub::AppearanceActive(const TSharedPtr<idlepb::AppearanceActiveReq>& InReqMessage, const OnAppearanceActiveResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceActive;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AppearanceActiveAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AppearanceActiveAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7790,10 +7799,10 @@ void UZGameRpcStub::K2_AppearanceWear(const FZAppearanceWearReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AppearanceWearReq>();
+    auto ReqMessage = MakeShared<idlepb::AppearanceWearReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AppearanceWear(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AppearanceWearAck>& InRspMessage)
+    AppearanceWear(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AppearanceWearAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7809,20 +7818,20 @@ void UZGameRpcStub::K2_AppearanceWear(const FZAppearanceWearReq& InParams, const
     });
 }
 
-void UZGameRpcStub::AppearanceWear(const TSharedPtr<idlezt::AppearanceWearReq>& InReqMessage, const OnAppearanceWearResult& InCallback)
+void UZGameRpcStub::AppearanceWear(const TSharedPtr<idlepb::AppearanceWearReq>& InReqMessage, const OnAppearanceWearResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceWear;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AppearanceWearAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AppearanceWearAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7835,10 +7844,10 @@ void UZGameRpcStub::K2_AppearanceBuy(const FZAppearanceBuyReq& InParams, const F
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AppearanceBuyReq>();
+    auto ReqMessage = MakeShared<idlepb::AppearanceBuyReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AppearanceBuy(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AppearanceBuyAck>& InRspMessage)
+    AppearanceBuy(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AppearanceBuyAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7854,20 +7863,20 @@ void UZGameRpcStub::K2_AppearanceBuy(const FZAppearanceBuyReq& InParams, const F
     });
 }
 
-void UZGameRpcStub::AppearanceBuy(const TSharedPtr<idlezt::AppearanceBuyReq>& InReqMessage, const OnAppearanceBuyResult& InCallback)
+void UZGameRpcStub::AppearanceBuy(const TSharedPtr<idlepb::AppearanceBuyReq>& InReqMessage, const OnAppearanceBuyResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceBuy;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AppearanceBuyAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AppearanceBuyAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7880,10 +7889,10 @@ void UZGameRpcStub::K2_AppearanceChangeSkType(const FZAppearanceChangeSkTypeReq&
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AppearanceChangeSkTypeReq>();
+    auto ReqMessage = MakeShared<idlepb::AppearanceChangeSkTypeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AppearanceChangeSkType(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AppearanceChangeSkTypeAck>& InRspMessage)
+    AppearanceChangeSkType(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AppearanceChangeSkTypeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7899,20 +7908,20 @@ void UZGameRpcStub::K2_AppearanceChangeSkType(const FZAppearanceChangeSkTypeReq&
     });
 }
 
-void UZGameRpcStub::AppearanceChangeSkType(const TSharedPtr<idlezt::AppearanceChangeSkTypeReq>& InReqMessage, const OnAppearanceChangeSkTypeResult& InCallback)
+void UZGameRpcStub::AppearanceChangeSkType(const TSharedPtr<idlepb::AppearanceChangeSkTypeReq>& InReqMessage, const OnAppearanceChangeSkTypeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AppearanceChangeSkType;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AppearanceChangeSkTypeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AppearanceChangeSkTypeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7925,10 +7934,10 @@ void UZGameRpcStub::K2_GetBattleHistoryInfo(const FZGetBattleHistoryInfoReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetBattleHistoryInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetBattleHistoryInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetBattleHistoryInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetBattleHistoryInfoAck>& InRspMessage)
+    GetBattleHistoryInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetBattleHistoryInfoAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7944,20 +7953,20 @@ void UZGameRpcStub::K2_GetBattleHistoryInfo(const FZGetBattleHistoryInfoReq& InP
     });
 }
 
-void UZGameRpcStub::GetBattleHistoryInfo(const TSharedPtr<idlezt::GetBattleHistoryInfoReq>& InReqMessage, const OnGetBattleHistoryInfoResult& InCallback)
+void UZGameRpcStub::GetBattleHistoryInfo(const TSharedPtr<idlepb::GetBattleHistoryInfoReq>& InReqMessage, const OnGetBattleHistoryInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBattleHistoryInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetBattleHistoryInfoAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetBattleHistoryInfoAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -7970,10 +7979,10 @@ void UZGameRpcStub::K2_GetArenaCheckListData(const FZGetArenaCheckListDataReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetArenaCheckListDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetArenaCheckListDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetArenaCheckListData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetArenaCheckListDataAck>& InRspMessage)
+    GetArenaCheckListData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetArenaCheckListDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -7989,20 +7998,20 @@ void UZGameRpcStub::K2_GetArenaCheckListData(const FZGetArenaCheckListDataReq& I
     });
 }
 
-void UZGameRpcStub::GetArenaCheckListData(const TSharedPtr<idlezt::GetArenaCheckListDataReq>& InReqMessage, const OnGetArenaCheckListDataResult& InCallback)
+void UZGameRpcStub::GetArenaCheckListData(const TSharedPtr<idlepb::GetArenaCheckListDataReq>& InReqMessage, const OnGetArenaCheckListDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetArenaCheckListData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetArenaCheckListDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetArenaCheckListDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8015,10 +8024,10 @@ void UZGameRpcStub::K2_ArenaCheckListSubmit(const FZArenaCheckListSubmitReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ArenaCheckListSubmitReq>();
+    auto ReqMessage = MakeShared<idlepb::ArenaCheckListSubmitReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ArenaCheckListSubmit(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ArenaCheckListSubmitAck>& InRspMessage)
+    ArenaCheckListSubmit(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ArenaCheckListSubmitAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8034,20 +8043,20 @@ void UZGameRpcStub::K2_ArenaCheckListSubmit(const FZArenaCheckListSubmitReq& InP
     });
 }
 
-void UZGameRpcStub::ArenaCheckListSubmit(const TSharedPtr<idlezt::ArenaCheckListSubmitReq>& InReqMessage, const OnArenaCheckListSubmitResult& InCallback)
+void UZGameRpcStub::ArenaCheckListSubmit(const TSharedPtr<idlepb::ArenaCheckListSubmitReq>& InReqMessage, const OnArenaCheckListSubmitResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ArenaCheckListSubmit;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ArenaCheckListSubmitAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ArenaCheckListSubmitAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8060,10 +8069,10 @@ void UZGameRpcStub::K2_ArenaCheckListRewardSubmit(const FZArenaCheckListRewardSu
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ArenaCheckListRewardSubmitReq>();
+    auto ReqMessage = MakeShared<idlepb::ArenaCheckListRewardSubmitReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ArenaCheckListRewardSubmit(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ArenaCheckListRewardSubmitAck>& InRspMessage)
+    ArenaCheckListRewardSubmit(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ArenaCheckListRewardSubmitAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8079,20 +8088,20 @@ void UZGameRpcStub::K2_ArenaCheckListRewardSubmit(const FZArenaCheckListRewardSu
     });
 }
 
-void UZGameRpcStub::ArenaCheckListRewardSubmit(const TSharedPtr<idlezt::ArenaCheckListRewardSubmitReq>& InReqMessage, const OnArenaCheckListRewardSubmitResult& InCallback)
+void UZGameRpcStub::ArenaCheckListRewardSubmit(const TSharedPtr<idlepb::ArenaCheckListRewardSubmitReq>& InReqMessage, const OnArenaCheckListRewardSubmitResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ArenaCheckListRewardSubmit;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ArenaCheckListRewardSubmitAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ArenaCheckListRewardSubmitAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8105,10 +8114,10 @@ void UZGameRpcStub::K2_DungeonKillAllChallenge(const FZDungeonKillAllChallengeRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DungeonKillAllChallengeReq>();
+    auto ReqMessage = MakeShared<idlepb::DungeonKillAllChallengeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DungeonKillAllChallenge(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DungeonKillAllChallengeAck>& InRspMessage)
+    DungeonKillAllChallenge(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DungeonKillAllChallengeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8124,20 +8133,20 @@ void UZGameRpcStub::K2_DungeonKillAllChallenge(const FZDungeonKillAllChallengeRe
     });
 }
 
-void UZGameRpcStub::DungeonKillAllChallenge(const TSharedPtr<idlezt::DungeonKillAllChallengeReq>& InReqMessage, const OnDungeonKillAllChallengeResult& InCallback)
+void UZGameRpcStub::DungeonKillAllChallenge(const TSharedPtr<idlepb::DungeonKillAllChallengeReq>& InReqMessage, const OnDungeonKillAllChallengeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonKillAllChallenge;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DungeonKillAllChallengeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DungeonKillAllChallengeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8150,10 +8159,10 @@ void UZGameRpcStub::K2_DungeonKillAllQuickEnd(const FZDungeonKillAllQuickEndReq&
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DungeonKillAllQuickEndReq>();
+    auto ReqMessage = MakeShared<idlepb::DungeonKillAllQuickEndReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DungeonKillAllQuickEnd(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DungeonKillAllQuickEndAck>& InRspMessage)
+    DungeonKillAllQuickEnd(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DungeonKillAllQuickEndAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8169,20 +8178,20 @@ void UZGameRpcStub::K2_DungeonKillAllQuickEnd(const FZDungeonKillAllQuickEndReq&
     });
 }
 
-void UZGameRpcStub::DungeonKillAllQuickEnd(const TSharedPtr<idlezt::DungeonKillAllQuickEndReq>& InReqMessage, const OnDungeonKillAllQuickEndResult& InCallback)
+void UZGameRpcStub::DungeonKillAllQuickEnd(const TSharedPtr<idlepb::DungeonKillAllQuickEndReq>& InReqMessage, const OnDungeonKillAllQuickEndResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonKillAllQuickEnd;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DungeonKillAllQuickEndAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DungeonKillAllQuickEndAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8195,10 +8204,10 @@ void UZGameRpcStub::K2_DungeonKillAllData(const FZDungeonKillAllDataReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DungeonKillAllDataReq>();
+    auto ReqMessage = MakeShared<idlepb::DungeonKillAllDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DungeonKillAllData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DungeonKillAllDataAck>& InRspMessage)
+    DungeonKillAllData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DungeonKillAllDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8214,20 +8223,20 @@ void UZGameRpcStub::K2_DungeonKillAllData(const FZDungeonKillAllDataReq& InParam
     });
 }
 
-void UZGameRpcStub::DungeonKillAllData(const TSharedPtr<idlezt::DungeonKillAllDataReq>& InReqMessage, const OnDungeonKillAllDataResult& InCallback)
+void UZGameRpcStub::DungeonKillAllData(const TSharedPtr<idlepb::DungeonKillAllDataReq>& InReqMessage, const OnDungeonKillAllDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonKillAllData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DungeonKillAllDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DungeonKillAllDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8240,10 +8249,10 @@ void UZGameRpcStub::K2_GetFarmlandData(const FZGetFarmlandDataReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetFarmlandDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetFarmlandDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetFarmlandData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetFarmlandDataAck>& InRspMessage)
+    GetFarmlandData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetFarmlandDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8259,20 +8268,20 @@ void UZGameRpcStub::K2_GetFarmlandData(const FZGetFarmlandDataReq& InParams, con
     });
 }
 
-void UZGameRpcStub::GetFarmlandData(const TSharedPtr<idlezt::GetFarmlandDataReq>& InReqMessage, const OnGetFarmlandDataResult& InCallback)
+void UZGameRpcStub::GetFarmlandData(const TSharedPtr<idlepb::GetFarmlandDataReq>& InReqMessage, const OnGetFarmlandDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetFarmlandData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetFarmlandDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetFarmlandDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8285,10 +8294,10 @@ void UZGameRpcStub::K2_FarmlandUnlockBlock(const FZFarmlandUnlockBlockReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmlandUnlockBlockReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmlandUnlockBlockReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmlandUnlockBlock(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmlandUnlockBlockAck>& InRspMessage)
+    FarmlandUnlockBlock(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmlandUnlockBlockAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8304,20 +8313,20 @@ void UZGameRpcStub::K2_FarmlandUnlockBlock(const FZFarmlandUnlockBlockReq& InPar
     });
 }
 
-void UZGameRpcStub::FarmlandUnlockBlock(const TSharedPtr<idlezt::FarmlandUnlockBlockReq>& InReqMessage, const OnFarmlandUnlockBlockResult& InCallback)
+void UZGameRpcStub::FarmlandUnlockBlock(const TSharedPtr<idlepb::FarmlandUnlockBlockReq>& InReqMessage, const OnFarmlandUnlockBlockResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandUnlockBlock;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmlandUnlockBlockAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmlandUnlockBlockAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8330,10 +8339,10 @@ void UZGameRpcStub::K2_FarmlandPlantSeed(const FZFarmlandPlantSeedReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmlandPlantSeedReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmlandPlantSeedReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmlandPlantSeed(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmlandPlantSeedAck>& InRspMessage)
+    FarmlandPlantSeed(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmlandPlantSeedAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8349,20 +8358,20 @@ void UZGameRpcStub::K2_FarmlandPlantSeed(const FZFarmlandPlantSeedReq& InParams,
     });
 }
 
-void UZGameRpcStub::FarmlandPlantSeed(const TSharedPtr<idlezt::FarmlandPlantSeedReq>& InReqMessage, const OnFarmlandPlantSeedResult& InCallback)
+void UZGameRpcStub::FarmlandPlantSeed(const TSharedPtr<idlepb::FarmlandPlantSeedReq>& InReqMessage, const OnFarmlandPlantSeedResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandPlantSeed;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmlandPlantSeedAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmlandPlantSeedAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8375,10 +8384,10 @@ void UZGameRpcStub::K2_FarmlandWatering(const FZFarmlandWateringReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmlandWateringReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmlandWateringReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmlandWatering(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmlandWateringAck>& InRspMessage)
+    FarmlandWatering(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmlandWateringAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8394,20 +8403,20 @@ void UZGameRpcStub::K2_FarmlandWatering(const FZFarmlandWateringReq& InParams, c
     });
 }
 
-void UZGameRpcStub::FarmlandWatering(const TSharedPtr<idlezt::FarmlandWateringReq>& InReqMessage, const OnFarmlandWateringResult& InCallback)
+void UZGameRpcStub::FarmlandWatering(const TSharedPtr<idlepb::FarmlandWateringReq>& InReqMessage, const OnFarmlandWateringResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandWatering;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmlandWateringAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmlandWateringAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8420,10 +8429,10 @@ void UZGameRpcStub::K2_FarmlandRipening(const FZFarmlandRipeningReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmlandRipeningReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmlandRipeningReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmlandRipening(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmlandRipeningAck>& InRspMessage)
+    FarmlandRipening(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmlandRipeningAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8439,20 +8448,20 @@ void UZGameRpcStub::K2_FarmlandRipening(const FZFarmlandRipeningReq& InParams, c
     });
 }
 
-void UZGameRpcStub::FarmlandRipening(const TSharedPtr<idlezt::FarmlandRipeningReq>& InReqMessage, const OnFarmlandRipeningResult& InCallback)
+void UZGameRpcStub::FarmlandRipening(const TSharedPtr<idlepb::FarmlandRipeningReq>& InReqMessage, const OnFarmlandRipeningResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandRipening;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmlandRipeningAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmlandRipeningAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8465,10 +8474,10 @@ void UZGameRpcStub::K2_FarmlandHarvest(const FZFarmlandHarvestReq& InParams, con
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmlandHarvestReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmlandHarvestReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmlandHarvest(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmlandHarvestAck>& InRspMessage)
+    FarmlandHarvest(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmlandHarvestAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8484,20 +8493,20 @@ void UZGameRpcStub::K2_FarmlandHarvest(const FZFarmlandHarvestReq& InParams, con
     });
 }
 
-void UZGameRpcStub::FarmlandHarvest(const TSharedPtr<idlezt::FarmlandHarvestReq>& InReqMessage, const OnFarmlandHarvestResult& InCallback)
+void UZGameRpcStub::FarmlandHarvest(const TSharedPtr<idlepb::FarmlandHarvestReq>& InReqMessage, const OnFarmlandHarvestResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandHarvest;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmlandHarvestAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmlandHarvestAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8510,10 +8519,10 @@ void UZGameRpcStub::K2_FarmerRankUp(const FZFarmerRankUpReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmerRankUpReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmerRankUpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmerRankUp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmerRankUpAck>& InRspMessage)
+    FarmerRankUp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmerRankUpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8529,20 +8538,20 @@ void UZGameRpcStub::K2_FarmerRankUp(const FZFarmerRankUpReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::FarmerRankUp(const TSharedPtr<idlezt::FarmerRankUpReq>& InReqMessage, const OnFarmerRankUpResult& InCallback)
+void UZGameRpcStub::FarmerRankUp(const TSharedPtr<idlepb::FarmerRankUpReq>& InReqMessage, const OnFarmerRankUpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmerRankUp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmerRankUpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmerRankUpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8555,10 +8564,10 @@ void UZGameRpcStub::K2_FarmlandSetManagement(const FZFarmlandSetManagementReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FarmlandSetManagementReq>();
+    auto ReqMessage = MakeShared<idlepb::FarmlandSetManagementReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FarmlandSetManagement(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FarmlandSetManagementAck>& InRspMessage)
+    FarmlandSetManagement(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FarmlandSetManagementAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8574,20 +8583,20 @@ void UZGameRpcStub::K2_FarmlandSetManagement(const FZFarmlandSetManagementReq& I
     });
 }
 
-void UZGameRpcStub::FarmlandSetManagement(const TSharedPtr<idlezt::FarmlandSetManagementReq>& InReqMessage, const OnFarmlandSetManagementResult& InCallback)
+void UZGameRpcStub::FarmlandSetManagement(const TSharedPtr<idlepb::FarmlandSetManagementReq>& InReqMessage, const OnFarmlandSetManagementResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FarmlandSetManagement;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FarmlandSetManagementAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FarmlandSetManagementAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8600,10 +8609,10 @@ void UZGameRpcStub::K2_UpdateFarmlandState(const FZUpdateFarmlandStateReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::UpdateFarmlandStateReq>();
+    auto ReqMessage = MakeShared<idlepb::UpdateFarmlandStateReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    UpdateFarmlandState(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::UpdateFarmlandStateAck>& InRspMessage)
+    UpdateFarmlandState(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::UpdateFarmlandStateAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8619,20 +8628,20 @@ void UZGameRpcStub::K2_UpdateFarmlandState(const FZUpdateFarmlandStateReq& InPar
     });
 }
 
-void UZGameRpcStub::UpdateFarmlandState(const TSharedPtr<idlezt::UpdateFarmlandStateReq>& InReqMessage, const OnUpdateFarmlandStateResult& InCallback)
+void UZGameRpcStub::UpdateFarmlandState(const TSharedPtr<idlepb::UpdateFarmlandStateReq>& InReqMessage, const OnUpdateFarmlandStateResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::UpdateFarmlandState;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::UpdateFarmlandStateAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::UpdateFarmlandStateAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8645,10 +8654,10 @@ void UZGameRpcStub::K2_DungeonSurviveChallenge(const FZDungeonSurviveChallengeRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DungeonSurviveChallengeReq>();
+    auto ReqMessage = MakeShared<idlepb::DungeonSurviveChallengeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DungeonSurviveChallenge(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DungeonSurviveChallengeAck>& InRspMessage)
+    DungeonSurviveChallenge(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DungeonSurviveChallengeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8664,20 +8673,20 @@ void UZGameRpcStub::K2_DungeonSurviveChallenge(const FZDungeonSurviveChallengeRe
     });
 }
 
-void UZGameRpcStub::DungeonSurviveChallenge(const TSharedPtr<idlezt::DungeonSurviveChallengeReq>& InReqMessage, const OnDungeonSurviveChallengeResult& InCallback)
+void UZGameRpcStub::DungeonSurviveChallenge(const TSharedPtr<idlepb::DungeonSurviveChallengeReq>& InReqMessage, const OnDungeonSurviveChallengeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonSurviveChallenge;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DungeonSurviveChallengeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DungeonSurviveChallengeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8690,10 +8699,10 @@ void UZGameRpcStub::K2_DungeonSurviveQuickEnd(const FZDungeonSurviveQuickEndReq&
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DungeonSurviveQuickEndReq>();
+    auto ReqMessage = MakeShared<idlepb::DungeonSurviveQuickEndReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DungeonSurviveQuickEnd(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DungeonSurviveQuickEndAck>& InRspMessage)
+    DungeonSurviveQuickEnd(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DungeonSurviveQuickEndAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8709,20 +8718,20 @@ void UZGameRpcStub::K2_DungeonSurviveQuickEnd(const FZDungeonSurviveQuickEndReq&
     });
 }
 
-void UZGameRpcStub::DungeonSurviveQuickEnd(const TSharedPtr<idlezt::DungeonSurviveQuickEndReq>& InReqMessage, const OnDungeonSurviveQuickEndResult& InCallback)
+void UZGameRpcStub::DungeonSurviveQuickEnd(const TSharedPtr<idlepb::DungeonSurviveQuickEndReq>& InReqMessage, const OnDungeonSurviveQuickEndResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonSurviveQuickEnd;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DungeonSurviveQuickEndAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DungeonSurviveQuickEndAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8735,10 +8744,10 @@ void UZGameRpcStub::K2_DungeonSurviveData(const FZDungeonSurviveDataReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DungeonSurviveDataReq>();
+    auto ReqMessage = MakeShared<idlepb::DungeonSurviveDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DungeonSurviveData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DungeonSurviveDataAck>& InRspMessage)
+    DungeonSurviveData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DungeonSurviveDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8754,20 +8763,20 @@ void UZGameRpcStub::K2_DungeonSurviveData(const FZDungeonSurviveDataReq& InParam
     });
 }
 
-void UZGameRpcStub::DungeonSurviveData(const TSharedPtr<idlezt::DungeonSurviveDataReq>& InReqMessage, const OnDungeonSurviveDataResult& InCallback)
+void UZGameRpcStub::DungeonSurviveData(const TSharedPtr<idlepb::DungeonSurviveDataReq>& InReqMessage, const OnDungeonSurviveDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DungeonSurviveData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DungeonSurviveDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DungeonSurviveDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8780,10 +8789,10 @@ void UZGameRpcStub::K2_GetRevertAllSkillCoolDown(const FZGetRevertAllSkillCoolDo
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRevertAllSkillCoolDownReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRevertAllSkillCoolDownReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRevertAllSkillCoolDown(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRevertAllSkillCoolDownAck>& InRspMessage)
+    GetRevertAllSkillCoolDown(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRevertAllSkillCoolDownAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8799,20 +8808,20 @@ void UZGameRpcStub::K2_GetRevertAllSkillCoolDown(const FZGetRevertAllSkillCoolDo
     });
 }
 
-void UZGameRpcStub::GetRevertAllSkillCoolDown(const TSharedPtr<idlezt::GetRevertAllSkillCoolDownReq>& InReqMessage, const OnGetRevertAllSkillCoolDownResult& InCallback)
+void UZGameRpcStub::GetRevertAllSkillCoolDown(const TSharedPtr<idlepb::GetRevertAllSkillCoolDownReq>& InReqMessage, const OnGetRevertAllSkillCoolDownResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRevertAllSkillCoolDown;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRevertAllSkillCoolDownAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRevertAllSkillCoolDownAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8825,10 +8834,10 @@ void UZGameRpcStub::K2_GetRoleFriendData(const FZGetRoleFriendDataReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleFriendDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleFriendDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleFriendData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleFriendDataAck>& InRspMessage)
+    GetRoleFriendData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleFriendDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8844,20 +8853,20 @@ void UZGameRpcStub::K2_GetRoleFriendData(const FZGetRoleFriendDataReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetRoleFriendData(const TSharedPtr<idlezt::GetRoleFriendDataReq>& InReqMessage, const OnGetRoleFriendDataResult& InCallback)
+void UZGameRpcStub::GetRoleFriendData(const TSharedPtr<idlepb::GetRoleFriendDataReq>& InReqMessage, const OnGetRoleFriendDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleFriendData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleFriendDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleFriendDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8870,10 +8879,10 @@ void UZGameRpcStub::K2_FriendOp(const FZFriendOpReq& InParams, const FZOnFriendO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FriendOpReq>();
+    auto ReqMessage = MakeShared<idlepb::FriendOpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FriendOp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FriendOpAck>& InRspMessage)
+    FriendOp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FriendOpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8889,20 +8898,20 @@ void UZGameRpcStub::K2_FriendOp(const FZFriendOpReq& InParams, const FZOnFriendO
     });
 }
 
-void UZGameRpcStub::FriendOp(const TSharedPtr<idlezt::FriendOpReq>& InReqMessage, const OnFriendOpResult& InCallback)
+void UZGameRpcStub::FriendOp(const TSharedPtr<idlepb::FriendOpReq>& InReqMessage, const OnFriendOpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FriendOp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FriendOpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FriendOpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8915,10 +8924,10 @@ void UZGameRpcStub::K2_ReplyFriendRequest(const FZReplyFriendRequestReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReplyFriendRequestReq>();
+    auto ReqMessage = MakeShared<idlepb::ReplyFriendRequestReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReplyFriendRequest(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReplyFriendRequestAck>& InRspMessage)
+    ReplyFriendRequest(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReplyFriendRequestAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8934,20 +8943,20 @@ void UZGameRpcStub::K2_ReplyFriendRequest(const FZReplyFriendRequestReq& InParam
     });
 }
 
-void UZGameRpcStub::ReplyFriendRequest(const TSharedPtr<idlezt::ReplyFriendRequestReq>& InReqMessage, const OnReplyFriendRequestResult& InCallback)
+void UZGameRpcStub::ReplyFriendRequest(const TSharedPtr<idlepb::ReplyFriendRequestReq>& InReqMessage, const OnReplyFriendRequestResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReplyFriendRequest;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReplyFriendRequestAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReplyFriendRequestAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -8960,10 +8969,10 @@ void UZGameRpcStub::K2_FriendSearchRoleInfo(const FZFriendSearchRoleInfoReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::FriendSearchRoleInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::FriendSearchRoleInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    FriendSearchRoleInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::FriendSearchRoleInfoAck>& InRspMessage)
+    FriendSearchRoleInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::FriendSearchRoleInfoAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -8979,20 +8988,20 @@ void UZGameRpcStub::K2_FriendSearchRoleInfo(const FZFriendSearchRoleInfoReq& InP
     });
 }
 
-void UZGameRpcStub::FriendSearchRoleInfo(const TSharedPtr<idlezt::FriendSearchRoleInfoReq>& InReqMessage, const OnFriendSearchRoleInfoResult& InCallback)
+void UZGameRpcStub::FriendSearchRoleInfo(const TSharedPtr<idlepb::FriendSearchRoleInfoReq>& InReqMessage, const OnFriendSearchRoleInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::FriendSearchRoleInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::FriendSearchRoleInfoAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::FriendSearchRoleInfoAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9005,10 +9014,10 @@ void UZGameRpcStub::K2_GetRoleInfoCache(const FZGetRoleInfoCacheReq& InParams, c
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleInfoCacheReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleInfoCacheReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleInfoCache(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleInfoCacheAck>& InRspMessage)
+    GetRoleInfoCache(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleInfoCacheAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9024,20 +9033,20 @@ void UZGameRpcStub::K2_GetRoleInfoCache(const FZGetRoleInfoCacheReq& InParams, c
     });
 }
 
-void UZGameRpcStub::GetRoleInfoCache(const TSharedPtr<idlezt::GetRoleInfoCacheReq>& InReqMessage, const OnGetRoleInfoCacheResult& InCallback)
+void UZGameRpcStub::GetRoleInfoCache(const TSharedPtr<idlepb::GetRoleInfoCacheReq>& InReqMessage, const OnGetRoleInfoCacheResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleInfoCache;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleInfoCacheAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleInfoCacheAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9050,10 +9059,10 @@ void UZGameRpcStub::K2_GetRoleInfo(const FZGetRoleInfoReq& InParams, const FZOnG
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleInfoAck>& InRspMessage)
+    GetRoleInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleInfoAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9069,20 +9078,20 @@ void UZGameRpcStub::K2_GetRoleInfo(const FZGetRoleInfoReq& InParams, const FZOnG
     });
 }
 
-void UZGameRpcStub::GetRoleInfo(const TSharedPtr<idlezt::GetRoleInfoReq>& InReqMessage, const OnGetRoleInfoResult& InCallback)
+void UZGameRpcStub::GetRoleInfo(const TSharedPtr<idlepb::GetRoleInfoReq>& InReqMessage, const OnGetRoleInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleInfoAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleInfoAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9095,10 +9104,10 @@ void UZGameRpcStub::K2_GetRoleAvatarData(const FZGetRoleAvatarDataReq& InParams,
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleAvatarDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleAvatarDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleAvatarData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleAvatarDataAck>& InRspMessage)
+    GetRoleAvatarData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleAvatarDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9114,20 +9123,20 @@ void UZGameRpcStub::K2_GetRoleAvatarData(const FZGetRoleAvatarDataReq& InParams,
     });
 }
 
-void UZGameRpcStub::GetRoleAvatarData(const TSharedPtr<idlezt::GetRoleAvatarDataReq>& InReqMessage, const OnGetRoleAvatarDataResult& InCallback)
+void UZGameRpcStub::GetRoleAvatarData(const TSharedPtr<idlepb::GetRoleAvatarDataReq>& InReqMessage, const OnGetRoleAvatarDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleAvatarData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleAvatarDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleAvatarDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9140,10 +9149,10 @@ void UZGameRpcStub::K2_DispatchAvatar(const FZDispatchAvatarReq& InParams, const
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::DispatchAvatarReq>();
+    auto ReqMessage = MakeShared<idlepb::DispatchAvatarReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    DispatchAvatar(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::DispatchAvatarAck>& InRspMessage)
+    DispatchAvatar(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::DispatchAvatarAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9159,20 +9168,20 @@ void UZGameRpcStub::K2_DispatchAvatar(const FZDispatchAvatarReq& InParams, const
     });
 }
 
-void UZGameRpcStub::DispatchAvatar(const TSharedPtr<idlezt::DispatchAvatarReq>& InReqMessage, const OnDispatchAvatarResult& InCallback)
+void UZGameRpcStub::DispatchAvatar(const TSharedPtr<idlepb::DispatchAvatarReq>& InReqMessage, const OnDispatchAvatarResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::DispatchAvatar;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::DispatchAvatarAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::DispatchAvatarAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9185,10 +9194,10 @@ void UZGameRpcStub::K2_AvatarRankUp(const FZAvatarRankUpReq& InParams, const FZO
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AvatarRankUpReq>();
+    auto ReqMessage = MakeShared<idlepb::AvatarRankUpReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AvatarRankUp(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AvatarRankUpAck>& InRspMessage)
+    AvatarRankUp(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AvatarRankUpAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9204,20 +9213,20 @@ void UZGameRpcStub::K2_AvatarRankUp(const FZAvatarRankUpReq& InParams, const FZO
     });
 }
 
-void UZGameRpcStub::AvatarRankUp(const TSharedPtr<idlezt::AvatarRankUpReq>& InReqMessage, const OnAvatarRankUpResult& InCallback)
+void UZGameRpcStub::AvatarRankUp(const TSharedPtr<idlepb::AvatarRankUpReq>& InReqMessage, const OnAvatarRankUpResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AvatarRankUp;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AvatarRankUpAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AvatarRankUpAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9230,10 +9239,10 @@ void UZGameRpcStub::K2_ReceiveAvatarTempPackage(const FZReceiveAvatarTempPackage
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReceiveAvatarTempPackageReq>();
+    auto ReqMessage = MakeShared<idlepb::ReceiveAvatarTempPackageReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReceiveAvatarTempPackage(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReceiveAvatarTempPackageAck>& InRspMessage)
+    ReceiveAvatarTempPackage(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReceiveAvatarTempPackageAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9249,20 +9258,20 @@ void UZGameRpcStub::K2_ReceiveAvatarTempPackage(const FZReceiveAvatarTempPackage
     });
 }
 
-void UZGameRpcStub::ReceiveAvatarTempPackage(const TSharedPtr<idlezt::ReceiveAvatarTempPackageReq>& InReqMessage, const OnReceiveAvatarTempPackageResult& InCallback)
+void UZGameRpcStub::ReceiveAvatarTempPackage(const TSharedPtr<idlepb::ReceiveAvatarTempPackageReq>& InReqMessage, const OnReceiveAvatarTempPackageResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveAvatarTempPackage;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReceiveAvatarTempPackageAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReceiveAvatarTempPackageAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9275,10 +9284,10 @@ void UZGameRpcStub::K2_GetArenaExplorationStatisticalData(const FZGetArenaExplor
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetArenaExplorationStatisticalDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetArenaExplorationStatisticalDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetArenaExplorationStatisticalData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetArenaExplorationStatisticalDataAck>& InRspMessage)
+    GetArenaExplorationStatisticalData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetArenaExplorationStatisticalDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9294,20 +9303,20 @@ void UZGameRpcStub::K2_GetArenaExplorationStatisticalData(const FZGetArenaExplor
     });
 }
 
-void UZGameRpcStub::GetArenaExplorationStatisticalData(const TSharedPtr<idlezt::GetArenaExplorationStatisticalDataReq>& InReqMessage, const OnGetArenaExplorationStatisticalDataResult& InCallback)
+void UZGameRpcStub::GetArenaExplorationStatisticalData(const TSharedPtr<idlepb::GetArenaExplorationStatisticalDataReq>& InReqMessage, const OnGetArenaExplorationStatisticalDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetArenaExplorationStatisticalData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetArenaExplorationStatisticalDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetArenaExplorationStatisticalDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9320,10 +9329,10 @@ void UZGameRpcStub::K2_GetRoleBiographyData(const FZGetRoleBiographyDataReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleBiographyDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleBiographyDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleBiographyData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleBiographyDataAck>& InRspMessage)
+    GetRoleBiographyData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleBiographyDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9339,20 +9348,20 @@ void UZGameRpcStub::K2_GetRoleBiographyData(const FZGetRoleBiographyDataReq& InP
     });
 }
 
-void UZGameRpcStub::GetRoleBiographyData(const TSharedPtr<idlezt::GetRoleBiographyDataReq>& InReqMessage, const OnGetRoleBiographyDataResult& InCallback)
+void UZGameRpcStub::GetRoleBiographyData(const TSharedPtr<idlepb::GetRoleBiographyDataReq>& InReqMessage, const OnGetRoleBiographyDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleBiographyData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleBiographyDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleBiographyDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9365,10 +9374,10 @@ void UZGameRpcStub::K2_ReceiveBiographyItem(const FZReceiveBiographyItemReq& InP
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReceiveBiographyItemReq>();
+    auto ReqMessage = MakeShared<idlepb::ReceiveBiographyItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReceiveBiographyItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReceiveBiographyItemAck>& InRspMessage)
+    ReceiveBiographyItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReceiveBiographyItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9384,20 +9393,20 @@ void UZGameRpcStub::K2_ReceiveBiographyItem(const FZReceiveBiographyItemReq& InP
     });
 }
 
-void UZGameRpcStub::ReceiveBiographyItem(const TSharedPtr<idlezt::ReceiveBiographyItemReq>& InReqMessage, const OnReceiveBiographyItemResult& InCallback)
+void UZGameRpcStub::ReceiveBiographyItem(const TSharedPtr<idlepb::ReceiveBiographyItemReq>& InReqMessage, const OnReceiveBiographyItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveBiographyItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReceiveBiographyItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReceiveBiographyItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9410,10 +9419,10 @@ void UZGameRpcStub::K2_GetBiographyEventData(const FZGetBiographyEventDataReq& I
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetBiographyEventDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetBiographyEventDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetBiographyEventData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetBiographyEventDataAck>& InRspMessage)
+    GetBiographyEventData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetBiographyEventDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9429,20 +9438,20 @@ void UZGameRpcStub::K2_GetBiographyEventData(const FZGetBiographyEventDataReq& I
     });
 }
 
-void UZGameRpcStub::GetBiographyEventData(const TSharedPtr<idlezt::GetBiographyEventDataReq>& InReqMessage, const OnGetBiographyEventDataResult& InCallback)
+void UZGameRpcStub::GetBiographyEventData(const TSharedPtr<idlepb::GetBiographyEventDataReq>& InReqMessage, const OnGetBiographyEventDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetBiographyEventData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetBiographyEventDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetBiographyEventDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9455,10 +9464,10 @@ void UZGameRpcStub::K2_ReceiveBiographyEventItem(const FZReceiveBiographyEventIt
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::ReceiveBiographyEventItemReq>();
+    auto ReqMessage = MakeShared<idlepb::ReceiveBiographyEventItemReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    ReceiveBiographyEventItem(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ReceiveBiographyEventItemAck>& InRspMessage)
+    ReceiveBiographyEventItem(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::ReceiveBiographyEventItemAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9474,20 +9483,20 @@ void UZGameRpcStub::K2_ReceiveBiographyEventItem(const FZReceiveBiographyEventIt
     });
 }
 
-void UZGameRpcStub::ReceiveBiographyEventItem(const TSharedPtr<idlezt::ReceiveBiographyEventItemReq>& InReqMessage, const OnReceiveBiographyEventItemResult& InCallback)
+void UZGameRpcStub::ReceiveBiographyEventItem(const TSharedPtr<idlepb::ReceiveBiographyEventItemReq>& InReqMessage, const OnReceiveBiographyEventItemResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::ReceiveBiographyEventItem;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::ReceiveBiographyEventItemAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::ReceiveBiographyEventItemAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9500,10 +9509,10 @@ void UZGameRpcStub::K2_AddBiographyRoleLog(const FZAddBiographyRoleLogReq& InPar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::AddBiographyRoleLogReq>();
+    auto ReqMessage = MakeShared<idlepb::AddBiographyRoleLogReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    AddBiographyRoleLog(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::AddBiographyRoleLogAck>& InRspMessage)
+    AddBiographyRoleLog(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::AddBiographyRoleLogAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9519,20 +9528,20 @@ void UZGameRpcStub::K2_AddBiographyRoleLog(const FZAddBiographyRoleLogReq& InPar
     });
 }
 
-void UZGameRpcStub::AddBiographyRoleLog(const TSharedPtr<idlezt::AddBiographyRoleLogReq>& InReqMessage, const OnAddBiographyRoleLogResult& InCallback)
+void UZGameRpcStub::AddBiographyRoleLog(const TSharedPtr<idlepb::AddBiographyRoleLogReq>& InReqMessage, const OnAddBiographyRoleLogResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::AddBiographyRoleLog;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::AddBiographyRoleLogAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::AddBiographyRoleLogAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9545,10 +9554,10 @@ void UZGameRpcStub::K2_RequestEnterSeptDemonWorld(const FZRequestEnterSeptDemonW
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestEnterSeptDemonWorldReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestEnterSeptDemonWorldReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestEnterSeptDemonWorld(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestEnterSeptDemonWorldAck>& InRspMessage)
+    RequestEnterSeptDemonWorld(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestEnterSeptDemonWorldAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9564,20 +9573,20 @@ void UZGameRpcStub::K2_RequestEnterSeptDemonWorld(const FZRequestEnterSeptDemonW
     });
 }
 
-void UZGameRpcStub::RequestEnterSeptDemonWorld(const TSharedPtr<idlezt::RequestEnterSeptDemonWorldReq>& InReqMessage, const OnRequestEnterSeptDemonWorldResult& InCallback)
+void UZGameRpcStub::RequestEnterSeptDemonWorld(const TSharedPtr<idlepb::RequestEnterSeptDemonWorldReq>& InReqMessage, const OnRequestEnterSeptDemonWorldResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestEnterSeptDemonWorld;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestEnterSeptDemonWorldAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestEnterSeptDemonWorldAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9590,10 +9599,10 @@ void UZGameRpcStub::K2_RequestLeaveSeptDemonWorld(const FZRequestLeaveSeptDemonW
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestLeaveSeptDemonWorldReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestLeaveSeptDemonWorldReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestLeaveSeptDemonWorld(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestLeaveSeptDemonWorldAck>& InRspMessage)
+    RequestLeaveSeptDemonWorld(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestLeaveSeptDemonWorldAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9609,20 +9618,20 @@ void UZGameRpcStub::K2_RequestLeaveSeptDemonWorld(const FZRequestLeaveSeptDemonW
     });
 }
 
-void UZGameRpcStub::RequestLeaveSeptDemonWorld(const TSharedPtr<idlezt::RequestLeaveSeptDemonWorldReq>& InReqMessage, const OnRequestLeaveSeptDemonWorldResult& InCallback)
+void UZGameRpcStub::RequestLeaveSeptDemonWorld(const TSharedPtr<idlepb::RequestLeaveSeptDemonWorldReq>& InReqMessage, const OnRequestLeaveSeptDemonWorldResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestLeaveSeptDemonWorld;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestLeaveSeptDemonWorldAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestLeaveSeptDemonWorldAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9635,10 +9644,10 @@ void UZGameRpcStub::K2_RequestSeptDemonWorldData(const FZRequestSeptDemonWorldDa
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestSeptDemonWorldDataReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestSeptDemonWorldDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestSeptDemonWorldData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestSeptDemonWorldDataAck>& InRspMessage)
+    RequestSeptDemonWorldData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestSeptDemonWorldDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9654,20 +9663,20 @@ void UZGameRpcStub::K2_RequestSeptDemonWorldData(const FZRequestSeptDemonWorldDa
     });
 }
 
-void UZGameRpcStub::RequestSeptDemonWorldData(const TSharedPtr<idlezt::RequestSeptDemonWorldDataReq>& InReqMessage, const OnRequestSeptDemonWorldDataResult& InCallback)
+void UZGameRpcStub::RequestSeptDemonWorldData(const TSharedPtr<idlepb::RequestSeptDemonWorldDataReq>& InReqMessage, const OnRequestSeptDemonWorldDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestSeptDemonWorldData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestSeptDemonWorldDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestSeptDemonWorldDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9680,10 +9689,10 @@ void UZGameRpcStub::K2_RequestInSeptDemonWorldEndTime(const FZRequestInSeptDemon
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::RequestInSeptDemonWorldEndTimeReq>();
+    auto ReqMessage = MakeShared<idlepb::RequestInSeptDemonWorldEndTimeReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    RequestInSeptDemonWorldEndTime(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::RequestInSeptDemonWorldEndTimeAck>& InRspMessage)
+    RequestInSeptDemonWorldEndTime(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::RequestInSeptDemonWorldEndTimeAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9699,20 +9708,20 @@ void UZGameRpcStub::K2_RequestInSeptDemonWorldEndTime(const FZRequestInSeptDemon
     });
 }
 
-void UZGameRpcStub::RequestInSeptDemonWorldEndTime(const TSharedPtr<idlezt::RequestInSeptDemonWorldEndTimeReq>& InReqMessage, const OnRequestInSeptDemonWorldEndTimeResult& InCallback)
+void UZGameRpcStub::RequestInSeptDemonWorldEndTime(const TSharedPtr<idlepb::RequestInSeptDemonWorldEndTimeReq>& InReqMessage, const OnRequestInSeptDemonWorldEndTimeResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::RequestInSeptDemonWorldEndTime;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::RequestInSeptDemonWorldEndTimeAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::RequestInSeptDemonWorldEndTimeAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9725,10 +9734,10 @@ void UZGameRpcStub::K2_GetSeptDemonDamageTopList(const FZGetSeptDemonDamageTopLi
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptDemonDamageTopListReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptDemonDamageTopListReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptDemonDamageTopList(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptDemonDamageTopListAck>& InRspMessage)
+    GetSeptDemonDamageTopList(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptDemonDamageTopListAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9744,20 +9753,20 @@ void UZGameRpcStub::K2_GetSeptDemonDamageTopList(const FZGetSeptDemonDamageTopLi
     });
 }
 
-void UZGameRpcStub::GetSeptDemonDamageTopList(const TSharedPtr<idlezt::GetSeptDemonDamageTopListReq>& InReqMessage, const OnGetSeptDemonDamageTopListResult& InCallback)
+void UZGameRpcStub::GetSeptDemonDamageTopList(const TSharedPtr<idlepb::GetSeptDemonDamageTopListReq>& InReqMessage, const OnGetSeptDemonDamageTopListResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageTopList;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptDemonDamageTopListAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptDemonDamageTopListAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9770,10 +9779,10 @@ void UZGameRpcStub::K2_GetSeptDemonDamageSelfSummary(const FZGetSeptDemonDamageS
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptDemonDamageSelfSummaryReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptDemonDamageSelfSummaryReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptDemonDamageSelfSummary(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptDemonDamageSelfSummaryAck>& InRspMessage)
+    GetSeptDemonDamageSelfSummary(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptDemonDamageSelfSummaryAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9789,20 +9798,20 @@ void UZGameRpcStub::K2_GetSeptDemonDamageSelfSummary(const FZGetSeptDemonDamageS
     });
 }
 
-void UZGameRpcStub::GetSeptDemonDamageSelfSummary(const TSharedPtr<idlezt::GetSeptDemonDamageSelfSummaryReq>& InReqMessage, const OnGetSeptDemonDamageSelfSummaryResult& InCallback)
+void UZGameRpcStub::GetSeptDemonDamageSelfSummary(const TSharedPtr<idlepb::GetSeptDemonDamageSelfSummaryReq>& InReqMessage, const OnGetSeptDemonDamageSelfSummaryResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageSelfSummary;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptDemonDamageSelfSummaryAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptDemonDamageSelfSummaryAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9815,10 +9824,10 @@ void UZGameRpcStub::K2_GetSeptDemonStageRewardNum(const FZGetSeptDemonStageRewar
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptDemonStageRewardNumReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptDemonStageRewardNumReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptDemonStageRewardNum(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptDemonStageRewardNumAck>& InRspMessage)
+    GetSeptDemonStageRewardNum(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptDemonStageRewardNumAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9834,20 +9843,20 @@ void UZGameRpcStub::K2_GetSeptDemonStageRewardNum(const FZGetSeptDemonStageRewar
     });
 }
 
-void UZGameRpcStub::GetSeptDemonStageRewardNum(const TSharedPtr<idlezt::GetSeptDemonStageRewardNumReq>& InReqMessage, const OnGetSeptDemonStageRewardNumResult& InCallback)
+void UZGameRpcStub::GetSeptDemonStageRewardNum(const TSharedPtr<idlepb::GetSeptDemonStageRewardNumReq>& InReqMessage, const OnGetSeptDemonStageRewardNumResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonStageRewardNum;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptDemonStageRewardNumAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptDemonStageRewardNumAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9860,10 +9869,10 @@ void UZGameRpcStub::K2_GetSeptDemonStageReward(const FZGetSeptDemonStageRewardRe
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptDemonStageRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptDemonStageRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptDemonStageReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptDemonStageRewardAck>& InRspMessage)
+    GetSeptDemonStageReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptDemonStageRewardAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9879,20 +9888,20 @@ void UZGameRpcStub::K2_GetSeptDemonStageReward(const FZGetSeptDemonStageRewardRe
     });
 }
 
-void UZGameRpcStub::GetSeptDemonStageReward(const TSharedPtr<idlezt::GetSeptDemonStageRewardReq>& InReqMessage, const OnGetSeptDemonStageRewardResult& InCallback)
+void UZGameRpcStub::GetSeptDemonStageReward(const TSharedPtr<idlepb::GetSeptDemonStageRewardReq>& InReqMessage, const OnGetSeptDemonStageRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonStageReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptDemonStageRewardAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptDemonStageRewardAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9905,10 +9914,10 @@ void UZGameRpcStub::K2_GetSeptDemonDamageRewardsInfo(const FZGetSeptDemonDamageR
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptDemonDamageRewardsInfoReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptDemonDamageRewardsInfoReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptDemonDamageRewardsInfo(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptDemonDamageRewardsInfoAck>& InRspMessage)
+    GetSeptDemonDamageRewardsInfo(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptDemonDamageRewardsInfoAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9924,20 +9933,20 @@ void UZGameRpcStub::K2_GetSeptDemonDamageRewardsInfo(const FZGetSeptDemonDamageR
     });
 }
 
-void UZGameRpcStub::GetSeptDemonDamageRewardsInfo(const TSharedPtr<idlezt::GetSeptDemonDamageRewardsInfoReq>& InReqMessage, const OnGetSeptDemonDamageRewardsInfoResult& InCallback)
+void UZGameRpcStub::GetSeptDemonDamageRewardsInfo(const TSharedPtr<idlepb::GetSeptDemonDamageRewardsInfoReq>& InReqMessage, const OnGetSeptDemonDamageRewardsInfoResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageRewardsInfo;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptDemonDamageRewardsInfoAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptDemonDamageRewardsInfoAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9950,10 +9959,10 @@ void UZGameRpcStub::K2_GetSeptDemonDamageReward(const FZGetSeptDemonDamageReward
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetSeptDemonDamageRewardReq>();
+    auto ReqMessage = MakeShared<idlepb::GetSeptDemonDamageRewardReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetSeptDemonDamageReward(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetSeptDemonDamageRewardAck>& InRspMessage)
+    GetSeptDemonDamageReward(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetSeptDemonDamageRewardAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -9969,20 +9978,20 @@ void UZGameRpcStub::K2_GetSeptDemonDamageReward(const FZGetSeptDemonDamageReward
     });
 }
 
-void UZGameRpcStub::GetSeptDemonDamageReward(const TSharedPtr<idlezt::GetSeptDemonDamageRewardReq>& InReqMessage, const OnGetSeptDemonDamageRewardResult& InCallback)
+void UZGameRpcStub::GetSeptDemonDamageReward(const TSharedPtr<idlepb::GetSeptDemonDamageRewardReq>& InReqMessage, const OnGetSeptDemonDamageRewardResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetSeptDemonDamageReward;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetSeptDemonDamageRewardAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetSeptDemonDamageRewardAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -9995,10 +10004,10 @@ void UZGameRpcStub::K2_GetRoleVipShopData(const FZGetRoleVipShopDataReq& InParam
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::GetRoleVipShopDataReq>();
+    auto ReqMessage = MakeShared<idlepb::GetRoleVipShopDataReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    GetRoleVipShopData(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::GetRoleVipShopDataAck>& InRspMessage)
+    GetRoleVipShopData(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::GetRoleVipShopDataAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -10014,20 +10023,20 @@ void UZGameRpcStub::K2_GetRoleVipShopData(const FZGetRoleVipShopDataReq& InParam
     });
 }
 
-void UZGameRpcStub::GetRoleVipShopData(const TSharedPtr<idlezt::GetRoleVipShopDataReq>& InReqMessage, const OnGetRoleVipShopDataResult& InCallback)
+void UZGameRpcStub::GetRoleVipShopData(const TSharedPtr<idlepb::GetRoleVipShopDataReq>& InReqMessage, const OnGetRoleVipShopDataResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::GetRoleVipShopData;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::GetRoleVipShopDataAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::GetRoleVipShopDataAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -10040,10 +10049,10 @@ void UZGameRpcStub::K2_VipShopBuy(const FZVipShopBuyReq& InParams, const FZOnVip
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::VipShopBuyReq>();
+    auto ReqMessage = MakeShared<idlepb::VipShopBuyReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    VipShopBuy(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::VipShopBuyAck>& InRspMessage)
+    VipShopBuy(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::VipShopBuyAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -10059,25 +10068,26 @@ void UZGameRpcStub::K2_VipShopBuy(const FZVipShopBuyReq& InParams, const FZOnVip
     });
 }
 
-void UZGameRpcStub::VipShopBuy(const TSharedPtr<idlezt::VipShopBuyReq>& InReqMessage, const OnVipShopBuyResult& InCallback)
+void UZGameRpcStub::VipShopBuy(const TSharedPtr<idlepb::VipShopBuyReq>& InReqMessage, const OnVipShopBuyResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZGameRpcInterface::VipShopBuy;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::VipShopBuyAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::VipShopBuyAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
     });
 }
+
 
 
 

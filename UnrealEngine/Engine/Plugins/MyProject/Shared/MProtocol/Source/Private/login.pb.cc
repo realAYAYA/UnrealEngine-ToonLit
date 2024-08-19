@@ -20,7 +20,7 @@ PROTOBUF_PRAGMA_INIT_SEG
 namespace _pb = ::PROTOBUF_NAMESPACE_ID;
 namespace _pbi = _pb::internal;
 
-namespace idlezt {
+namespace idlepb {
 PROTOBUF_CONSTEXPR LoginAccountReq::LoginAccountReq(
     ::_pbi::ConstantInitialized): _impl_{
     /*decltype(_impl_.account_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
@@ -46,39 +46,39 @@ struct LoginAccountAckDefaultTypeInternal {
   };
 };
 PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 LoginAccountAckDefaultTypeInternal _LoginAccountAck_default_instance_;
-}  // namespace idlezt
+}  // namespace idlepb
 static ::_pb::Metadata file_level_metadata_login_2eproto[2];
 static constexpr ::_pb::EnumDescriptor const** file_level_enum_descriptors_login_2eproto = nullptr;
 static constexpr ::_pb::ServiceDescriptor const** file_level_service_descriptors_login_2eproto = nullptr;
 
 const uint32_t TableStruct_login_2eproto::offsets[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
   ~0u,  // no _has_bits_
-  PROTOBUF_FIELD_OFFSET(::idlezt::LoginAccountReq, _internal_metadata_),
+  PROTOBUF_FIELD_OFFSET(::idlepb::LoginAccountReq, _internal_metadata_),
   ~0u,  // no _extensions_
   ~0u,  // no _oneof_case_
   ~0u,  // no _weak_field_map_
   ~0u,  // no _inlined_string_donated_
-  PROTOBUF_FIELD_OFFSET(::idlezt::LoginAccountReq, _impl_.account_),
-  PROTOBUF_FIELD_OFFSET(::idlezt::LoginAccountReq, _impl_.client_version_),
+  PROTOBUF_FIELD_OFFSET(::idlepb::LoginAccountReq, _impl_.account_),
+  PROTOBUF_FIELD_OFFSET(::idlepb::LoginAccountReq, _impl_.client_version_),
   ~0u,  // no _has_bits_
-  PROTOBUF_FIELD_OFFSET(::idlezt::LoginAccountAck, _internal_metadata_),
+  PROTOBUF_FIELD_OFFSET(::idlepb::LoginAccountAck, _internal_metadata_),
   ~0u,  // no _extensions_
   ~0u,  // no _oneof_case_
   ~0u,  // no _weak_field_map_
   ~0u,  // no _inlined_string_donated_
 };
 static const ::_pbi::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
-  { 0, -1, -1, sizeof(::idlezt::LoginAccountReq)},
-  { 8, -1, -1, sizeof(::idlezt::LoginAccountAck)},
+  { 0, -1, -1, sizeof(::idlepb::LoginAccountReq)},
+  { 8, -1, -1, sizeof(::idlepb::LoginAccountAck)},
 };
 
 static const ::_pb::Message* const file_default_instances[] = {
-  &::idlezt::_LoginAccountReq_default_instance_._instance,
-  &::idlezt::_LoginAccountAck_default_instance_._instance,
+  &::idlepb::_LoginAccountReq_default_instance_._instance,
+  &::idlepb::_LoginAccountAck_default_instance_._instance,
 };
 
 const char descriptor_table_protodef_login_2eproto[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) =
-  "\n\013login.proto\022\006idlezt\032\rdefines.proto\032\014co"
+  "\n\013login.proto\022\006idlepb\032\rdefines.proto\032\014co"
   "mmon.proto\":\n\017LoginAccountReq\022\017\n\007account"
   "\030\001 \001(\t\022\026\n\016client_version\030\002 \001(\t\"\021\n\017LoginA"
   "ccountAckb\006proto3"
@@ -102,7 +102,7 @@ PROTOBUF_ATTRIBUTE_WEAK const ::_pbi::DescriptorTable* descriptor_table_login_2e
 
 // Force running AddDescriptors() at dynamic initialization time.
 PROTOBUF_ATTRIBUTE_INIT_PRIORITY2 static ::_pbi::AddDescriptorsRunner dynamic_init_dummy_login_2eproto(&descriptor_table_login_2eproto);
-namespace idlezt {
+namespace idlepb {
 
 // ===================================================================
 
@@ -114,7 +114,7 @@ LoginAccountReq::LoginAccountReq(::PROTOBUF_NAMESPACE_ID::Arena* arena,
                          bool is_message_owned)
   : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
   SharedCtor(arena, is_message_owned);
-  // @@protoc_insertion_point(arena_constructor:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(arena_constructor:idlepb.LoginAccountReq)
 }
 LoginAccountReq::LoginAccountReq(const LoginAccountReq& from)
   : ::PROTOBUF_NAMESPACE_ID::Message() {
@@ -141,7 +141,7 @@ LoginAccountReq::LoginAccountReq(const LoginAccountReq& from)
     _this->_impl_.client_version_.Set(from._internal_client_version(), 
       _this->GetArenaForAllocation());
   }
-  // @@protoc_insertion_point(copy_constructor:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(copy_constructor:idlepb.LoginAccountReq)
 }
 
 inline void LoginAccountReq::SharedCtor(
@@ -164,7 +164,7 @@ inline void LoginAccountReq::SharedCtor(
 }
 
 LoginAccountReq::~LoginAccountReq() {
-  // @@protoc_insertion_point(destructor:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(destructor:idlepb.LoginAccountReq)
   if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
   (void)arena;
     return;
@@ -183,7 +183,7 @@ void LoginAccountReq::SetCachedSize(int size) const {
 }
 
 void LoginAccountReq::Clear() {
-// @@protoc_insertion_point(message_clear_start:idlezt.LoginAccountReq)
+// @@protoc_insertion_point(message_clear_start:idlepb.LoginAccountReq)
   uint32_t cached_has_bits = 0;
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
@@ -205,7 +205,7 @@ const char* LoginAccountReq::_InternalParse(const char* ptr, ::_pbi::ParseContex
           auto str = _internal_mutable_account();
           ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
           CHK_(ptr);
-          CHK_(::_pbi::VerifyUTF8(str, "idlezt.LoginAccountReq.account"));
+          CHK_(::_pbi::VerifyUTF8(str, "idlepb.LoginAccountReq.account"));
         } else
           goto handle_unusual;
         continue;
@@ -215,7 +215,7 @@ const char* LoginAccountReq::_InternalParse(const char* ptr, ::_pbi::ParseContex
           auto str = _internal_mutable_client_version();
           ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
           CHK_(ptr);
-          CHK_(::_pbi::VerifyUTF8(str, "idlezt.LoginAccountReq.client_version"));
+          CHK_(::_pbi::VerifyUTF8(str, "idlepb.LoginAccountReq.client_version"));
         } else
           goto handle_unusual;
         continue;
@@ -244,7 +244,7 @@ failure:
 
 uint8_t* LoginAccountReq::_InternalSerialize(
     uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
-  // @@protoc_insertion_point(serialize_to_array_start:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(serialize_to_array_start:idlepb.LoginAccountReq)
   uint32_t cached_has_bits = 0;
   (void) cached_has_bits;
 
@@ -253,7 +253,7 @@ uint8_t* LoginAccountReq::_InternalSerialize(
     ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
       this->_internal_account().data(), static_cast<int>(this->_internal_account().length()),
       ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
-      "idlezt.LoginAccountReq.account");
+      "idlepb.LoginAccountReq.account");
     target = stream->WriteStringMaybeAliased(
         1, this->_internal_account(), target);
   }
@@ -263,7 +263,7 @@ uint8_t* LoginAccountReq::_InternalSerialize(
     ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
       this->_internal_client_version().data(), static_cast<int>(this->_internal_client_version().length()),
       ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
-      "idlezt.LoginAccountReq.client_version");
+      "idlepb.LoginAccountReq.client_version");
     target = stream->WriteStringMaybeAliased(
         2, this->_internal_client_version(), target);
   }
@@ -272,12 +272,12 @@ uint8_t* LoginAccountReq::_InternalSerialize(
     target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
         _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
   }
-  // @@protoc_insertion_point(serialize_to_array_end:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(serialize_to_array_end:idlepb.LoginAccountReq)
   return target;
 }
 
 size_t LoginAccountReq::ByteSizeLong() const {
-// @@protoc_insertion_point(message_byte_size_start:idlezt.LoginAccountReq)
+// @@protoc_insertion_point(message_byte_size_start:idlepb.LoginAccountReq)
   size_t total_size = 0;
 
   uint32_t cached_has_bits = 0;
@@ -311,7 +311,7 @@ const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*LoginAccountReq::GetClassData(
 void LoginAccountReq::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
   auto* const _this = static_cast<LoginAccountReq*>(&to_msg);
   auto& from = static_cast<const LoginAccountReq&>(from_msg);
-  // @@protoc_insertion_point(class_specific_merge_from_start:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(class_specific_merge_from_start:idlepb.LoginAccountReq)
   GOOGLE_DCHECK_NE(&from, _this);
   uint32_t cached_has_bits = 0;
   (void) cached_has_bits;
@@ -326,7 +326,7 @@ void LoginAccountReq::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const 
 }
 
 void LoginAccountReq::CopyFrom(const LoginAccountReq& from) {
-// @@protoc_insertion_point(class_specific_copy_from_start:idlezt.LoginAccountReq)
+// @@protoc_insertion_point(class_specific_copy_from_start:idlepb.LoginAccountReq)
   if (&from == this) return;
   Clear();
   MergeFrom(from);
@@ -366,13 +366,13 @@ class LoginAccountAck::_Internal {
 LoginAccountAck::LoginAccountAck(::PROTOBUF_NAMESPACE_ID::Arena* arena,
                          bool is_message_owned)
   : ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase(arena, is_message_owned) {
-  // @@protoc_insertion_point(arena_constructor:idlezt.LoginAccountAck)
+  // @@protoc_insertion_point(arena_constructor:idlepb.LoginAccountAck)
 }
 LoginAccountAck::LoginAccountAck(const LoginAccountAck& from)
   : ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase() {
   LoginAccountAck* const _this = this; (void)_this;
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
-  // @@protoc_insertion_point(copy_constructor:idlezt.LoginAccountAck)
+  // @@protoc_insertion_point(copy_constructor:idlepb.LoginAccountAck)
 }
 
 
@@ -398,15 +398,15 @@ const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*LoginAccountAck::GetClassData(
 }
 
 // @@protoc_insertion_point(namespace_scope)
-}  // namespace idlezt
+}  // namespace idlepb
 PROTOBUF_NAMESPACE_OPEN
-template<> PROTOBUF_NOINLINE ::idlezt::LoginAccountReq*
-Arena::CreateMaybeMessage< ::idlezt::LoginAccountReq >(Arena* arena) {
-  return Arena::CreateMessageInternal< ::idlezt::LoginAccountReq >(arena);
+template<> PROTOBUF_NOINLINE ::idlepb::LoginAccountReq*
+Arena::CreateMaybeMessage< ::idlepb::LoginAccountReq >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::idlepb::LoginAccountReq >(arena);
 }
-template<> PROTOBUF_NOINLINE ::idlezt::LoginAccountAck*
-Arena::CreateMaybeMessage< ::idlezt::LoginAccountAck >(Arena* arena) {
-  return Arena::CreateMessageInternal< ::idlezt::LoginAccountAck >(arena);
+template<> PROTOBUF_NOINLINE ::idlepb::LoginAccountAck*
+Arena::CreateMaybeMessage< ::idlepb::LoginAccountAck >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::idlepb::LoginAccountAck >(arena);
 }
 PROTOBUF_NAMESPACE_CLOSE
 

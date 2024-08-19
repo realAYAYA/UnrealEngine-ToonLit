@@ -5,9 +5,9 @@
 #include "PbLogin.generated.h"
 
 
-namespace idlezt {
+namespace idlepb {
 class LoginAccountReq;
-}  // namespace idlezt
+}  // namespace idlepb
 
 /**
  * 登录帐号
@@ -27,19 +27,19 @@ struct MPROTOCOL_API FPbLoginAccountReq
 
 
     FPbLoginAccountReq();
-    FPbLoginAccountReq(const idlezt::LoginAccountReq& Right);
-    void FromPb(const idlezt::LoginAccountReq& Right);
-    void ToPb(idlezt::LoginAccountReq* Out) const;
+    FPbLoginAccountReq(const idlepb::LoginAccountReq& Right);
+    void FromPb(const idlepb::LoginAccountReq& Right);
+    void ToPb(idlepb::LoginAccountReq* Out) const;
     void Reset();
-    void operator=(const idlezt::LoginAccountReq& Right);
+    void operator=(const idlepb::LoginAccountReq& Right);
     bool operator==(const FPbLoginAccountReq& Right) const;
     bool operator!=(const FPbLoginAccountReq& Right) const;
      
 };
 
-namespace idlezt {
+namespace idlepb {
 class LoginAccountAck;
-}  // namespace idlezt
+}  // namespace idlepb
 
 /**
 */
@@ -50,11 +50,11 @@ struct MPROTOCOL_API FPbLoginAccountAck
 
 
     FPbLoginAccountAck();
-    FPbLoginAccountAck(const idlezt::LoginAccountAck& Right);
-    void FromPb(const idlezt::LoginAccountAck& Right);
-    void ToPb(idlezt::LoginAccountAck* Out) const;
+    FPbLoginAccountAck(const idlepb::LoginAccountAck& Right);
+    void FromPb(const idlepb::LoginAccountAck& Right);
+    void ToPb(idlepb::LoginAccountAck* Out) const;
     void Reset();
-    void operator=(const idlezt::LoginAccountAck& Right);
+    void operator=(const idlepb::LoginAccountAck& Right);
     bool operator==(const FPbLoginAccountAck& Right) const;
     bool operator!=(const FPbLoginAccountAck& Right) const;
      

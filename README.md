@@ -1,24 +1,35 @@
-# ToonLit render pipeline based on UnrealEngine5
+# ToonLit rendering pipeline based on UnrealEngine5
 
 #### 介绍
 魔改UE5引擎，基于此实现一套ToonLit流程  
-效果不重要，重要的是借此提升对引擎代码的理解  
+提升对引擎代码的理解  
+此外包含了其它游戏相关的功能拓展，插件实现  
 
 
-#### 特性
- 
-1.  添加自定义Outline Pass，基于Backface绘制
-    1.  描边控制，在材质球中添加自定义参数，用于在Renderer模块中过滤
-    2.  顶点色控制描边颜色和权重
-    3.  平滑法线，引擎中生成平滑法线，存储在SkeletonMesh资产中的UV1中
-2.  基于算子的后处理描边
-    1.  Sobel
-    2.  Normal | Depth | TextureID
-3.  新加ShadingModel，实现ToonLit
-    1.  为ToonLit的ShadingModel作额外的间接光照处理（天光，Lumen）
-    2.  延迟着色下的Toon Diffuse的Ramp控制
-4.  角色眼睛渲染，头发渲染（Kajiya-Kay），衣服coat
-5.  ToonLit后处理
+#### Rendering Features 渲染特性
+    
+1.  ToonLit ShadingModel 着色模型
+    1.  GI, 为ToonLit的ShadingModel作额外的间接光照处理（天光，Lumen）
+    2.  Toon diffuse(Ramp controling) in deferred rendering
+2.  Outline 描边控制
+    Extend custom material paramters，filted in rendering  
+    Color and Weight control, stored in model's VertexColor  
+    smoothed normal, generated in engine editor，stored in SkeletonMesh's uv1 slot  
+    1.  Custom Pass, Backface
+    2.  Post process based
+        1.  Sobel
+        2.  Data: Normal | Depth | TextureID
+3.  Character eyes rendering，hair rendering（based on Kajiya-Kay）, coat rendering 角色各种部位渲染
+4.  ToonLit postproces 后处理
+
+#### Other Features 其它特性
+1.  MMO frame, 基于Tcp连接的后端网络框架
+    1. Websocket, current tcp lib, 当前使用的网tcp网络库
+    2. protobuf, 使用了google的消息协议
+2.  PuerTs, 接入脚本
+3.  Excel support
+4.  GAS
+
 
 #### 使用说明
 
@@ -34,26 +45,16 @@
 4.  新建 Pull Request
 
 
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  
-3.  
-4.  
-5.  
-6.  
-
-
 ## Log
 
-#### Add ThirdParty Python
-UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-packages\
+#### Add ThirdParty
+· UnrealEngine\Engine\Binaries\ThirdParty\Python3\Linux | Mac | Win64\lib\site-packages\  
 1. jinja2
 2. markupsafe
 3. xlrd
-
-4. UnrealEngine\Engine\Binaries\ThirdParty\Nodejs
-5. UnrealEngine\Engine\Binaries\ThirdParty\Windows\msys
+4. fnv1a
+· UnrealEngine\Engine\Binaries\ThirdParty\Nodejs  
+· UnrealEngine\Engine\Binaries\ThirdParty\Windows\msys  
 
 
 #### Add Custom Variables in Material  

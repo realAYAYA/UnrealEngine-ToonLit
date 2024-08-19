@@ -2,7 +2,7 @@
 #include "LoginRpcInterface.h"
 #include "MRpcManager.h"
 
-void UZLoginRpcStub::Setup(FMRpcManager* InManager, const FZPbConnectionPtr& InConn)
+void UZLoginRpcStub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
 {
     if (Manager)
     {
@@ -32,10 +32,10 @@ void UZLoginRpcStub::K2_LoginAccount(const FZLoginAccountReq& InParams, const FZ
     if (!Manager || !Connection)
         return;
         
-    auto ReqMessage = MakeShared<idlezt::LoginAccountReq>();
+    auto ReqMessage = MakeShared<idlepb::LoginAccountReq>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    LoginAccount(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::LoginAccountAck>& InRspMessage)
+    LoginAccount(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::LoginAccountAck>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -51,20 +51,20 @@ void UZLoginRpcStub::K2_LoginAccount(const FZLoginAccountReq& InParams, const FZ
     });
 }
 
-void UZLoginRpcStub::LoginAccount(const TSharedPtr<idlezt::LoginAccountReq>& InReqMessage, const OnLoginAccountResult& InCallback)
+void UZLoginRpcStub::LoginAccount(const TSharedPtr<idlepb::LoginAccountReq>& InReqMessage, const OnLoginAccountResult& InCallback)
 {   
     if (!Manager || !Connection)
         return;
 
     static constexpr uint64 RpcId = FZLoginRpcInterface::LoginAccount;
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
-        auto RspMessage = MakeShared<idlezt::LoginAccountAck>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        auto RspMessage = MakeShared<idlepb::LoginAccountAck>();               
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);

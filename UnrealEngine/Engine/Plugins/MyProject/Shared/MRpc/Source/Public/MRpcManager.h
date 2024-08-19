@@ -2,53 +2,50 @@
 
 #include "common.pb.h"
 #include "PbCommon.h"
-
-#include "MyTcpConnection.h"
 #include "PbDispatcher.h"
 
 class MRPC_API FMRpcManager
 {
+	
 public:
-	typedef TFunction<void(FZPbMessageSupportBase*, const TSharedPtr<idlezt::ZRpcMessage>&)> FMethodCallback;
-	typedef TFunction<void(EZRpcErrorCode, const TSharedPtr<idlezt::ZRpcMessage>&)> FResponseCallback;
+	
+	typedef TFunction<void(FPbMessageSupportBase*, const TSharedPtr<idlepb::PbRpcMessage>&)> FMethodCallback;
+	typedef TFunction<void(EPbRpcErrorCode, const TSharedPtr<idlepb::PbRpcMessage>&)> FResponseCallback;
 
 	FMRpcManager();
 
-	void TryInit(FZPbDispatcher& InDispatcher);
+	void TryInit(FPbDispatcher& InDispatcher);
 	
-	uint64 CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, const FPbMessagePtr& InMessage, const FResponseCallback& Callback);
-	uint64 CallRpc(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength, const FResponseCallback& Callback);	
+	uint64 CallRpc(FPbMessageSupportBase* InConn, uint64 InRpcId, const FPbMessagePtr& InMessage, const FResponseCallback& Callback);
+	uint64 CallRpc(FPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength, const FResponseCallback& Callback);	
 	
-	static void SendResponse(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InReqSerialNum, const FPbMessagePtr& InMessage, idlezt::RpcErrorCode ErrorCode);
+	static void SendResponse(FPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InReqSerialNum, const FPbMessagePtr& InMessage, idlepb::RpcErrorCode ErrorCode);
 
 	void AddMethod(uint64 InRpcId, const FMethodCallback& InCallback);
-
-	// void OnMessage(FZPbMessageSupportBase* InConn,  uint64 InCode, const FZDataBufferPtr& InData);
-	// void OnMessage(FZPbMessageSupportBase* InConn,  uint64 InCode, const char* InDataPtr, int32 InDataLen);
 	
-	FZPbDispatcher& GetMessageDispatcher();
+	FPbDispatcher& GetMessageDispatcher();
 	
 private:
 
-	uint64 SendRequest(FZPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength);
+	uint64 SendRequest(FPbMessageSupportBase* InConn, uint64 InRpcId, uint64 InBodyTypeId, const char* InBodyDataPtr, int32 InBodyDataLength);
 	
-	void OnRpcMessage(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage);
-	void OnNotify(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage);
-	void OnRequest(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage);
-	void OnResponse(FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage);
+	void OnRpcMessage(FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage);
+	void OnNotify(FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage);
+	void OnRequest(FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage);
+	void OnResponse(FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage);
 
-	FZPbDispatcher MessageDispatcher;
+	FPbDispatcher MessageDispatcher;
 	
 	uint64 NextSn = 1;
 
-	struct RequestPendingData
+	struct FRequestPendingData
 	{
 		uint64 SerialNum = 0;
 		FResponseCallback Callback;
 		int64 ExpireTimestamp = 0;
 	};
 	
-	TMap<uint64, RequestPendingData> AllRequestPending;
+	TMap<uint64, FRequestPendingData> AllRequestPending;
 	
 	TMap<uint64, FMethodCallback> AllMethods;
 };

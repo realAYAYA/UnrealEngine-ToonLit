@@ -23,7 +23,7 @@ STUB_HPP_TEMPL = """#pragma once
 #include "{{service_name}}Stub.generated.h"
 
 {% for rpc_entry in rpc_list %}
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FZOn{{rpc_entry['name']}}Result, EZRpcErrorCode, InErrorCode, FZ{{rpc_entry['p2']}}, InData);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FZOn{{rpc_entry['name']}}Result, EPbRpcErrorCode, InErrorCode, FZ{{rpc_entry['p2']}}, InData);
 {% endfor %}
 
 {% for notify_entry in notify_list %}
@@ -39,7 +39,7 @@ class {{dllexport_decl}} UZ{{service_name}}Stub : public UObject
 
 public:
 
-    void Setup(FZRpcManager* InManager, const FZPbConnectionPtr& InConn);
+    void Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn);
     void Cleanup();
 
     {%- for rpc_entry in rpc_list %}    
@@ -49,10 +49,10 @@ public:
      * {{comment}}
     {%- endfor %}
     */
-    UFUNCTION(BlueprintCallable, Category="IdleZ", DisplayName="{{rpc_entry['name']}}")
+    UFUNCTION(BlueprintCallable, Category="MRpc", DisplayName="{{rpc_entry['name']}}")
     void K2_{{rpc_entry['name']}}(const FZ{{rpc_entry['p1']}}& InParams, const FZOn{{rpc_entry['name']}}Result& InCallback);
     
-    typedef TFunction<void(EZRpcErrorCode, const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}>&)> On{{rpc_entry['name']}}Result;
+    typedef TFunction<void(EPbRpcErrorCode, const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}>&)> On{{rpc_entry['name']}}Result;
     void {{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}>& InReqMessage, const On{{rpc_entry['name']}}Result& InCallback);
     
     {%- endfor %}
@@ -64,26 +64,26 @@ public:
     {%- endfor %}
     */      
     {%- if notify_entry["type"] == 1 %}
-    UFUNCTION(BlueprintCallable, Category="IdleZ", DisplayName="Send{{notify_entry['name']}}") 
+    UFUNCTION(BlueprintCallable, Category="MRpc", DisplayName="Send{{notify_entry['name']}}") 
     void K2_Send{{notify_entry['name']}}(const FZ{{notify_entry['name']}}& InParams);
     {%- else %}
-    UPROPERTY(BlueprintAssignable, Category="IdleZ") 
+    UPROPERTY(BlueprintAssignable, Category="MRpc") 
     FZOn{{notify_entry['name']}}Result On{{notify_entry['name']}};
     {%- endif %}
     {% endfor %}
     
 private:
-    FZRpcManager* Manager = nullptr;
-    FZPbConnectionPtr Connection;
+    FMRpcManager* Manager = nullptr;
+    FPbConnectionPtr Connection;
 };
 
 """
 
 STUB_CPP_TEMPL = """#include "{{service_name}}Stub.h"
 #include "{{service_name}}Interface.h"
-#include "ZRpcManager.h"
+#include "MRpcManager.h"
 
-void UZ{{service_name}}Stub::Setup(FZRpcManager* InManager, const FZPbConnectionPtr& InConn)
+void UZ{{service_name}}Stub::Setup(FMRpcManager* InManager, const FPbConnectionPtr& InConn)
 {
     if (Manager)
     {
@@ -97,7 +97,7 @@ void UZ{{service_name}}Stub::Setup(FZRpcManager* InManager, const FZPbConnection
     {    
         {%- for notify_entry in notify_list %}        
         {%- if notify_entry["type"] == 2 %}
-        Manager->GetMessageDispatcher().Reg<{{rpc_space_name}}::{{notify_entry['name']}}>([this](FZPbMessageSupportBase* InConn, const TSharedPtr<{{rpc_space_name}}::{{notify_entry['name']}}>& InMessage)
+        Manager->GetMessageDispatcher().Reg<{{rpc_space_name}}::{{notify_entry['name']}}>([this](FPbMessageSupportBase* InConn, const TSharedPtr<{{rpc_space_name}}::{{notify_entry['name']}}>& InMessage)
         {
             if (On{{notify_entry['name']}}.IsBound())
             {
@@ -133,7 +133,7 @@ void UZ{{service_name}}Stub::K2_{{rpc_entry['name']}}(const FZ{{rpc_entry['p1']}
     auto ReqMessage = MakeShared<{{rpc_space_name}}::{{rpc_entry['p1']}}>();
     InParams.ToPb(&ReqMessage.Get());  // USTRUCT -> PB
     
-    {{rpc_entry['name']}}(ReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}>& InRspMessage)
+    {{rpc_entry['name']}}(ReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}>& InRspMessage)
     {        
         const UObject* Owner = InCallback.GetUObject();
         if (IsValid(Owner))
@@ -155,14 +155,14 @@ void UZ{{service_name}}Stub::{{rpc_entry['name']}}(const TSharedPtr<{{rpc_space_
         return;
 
     static constexpr uint64 RpcId = FZ{{service_name}}Interface::{{rpc_entry['name']}};
-    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EZRpcErrorCode ErrorCode, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    Manager->CallRpc(Connection.Get(), RpcId, InReqMessage, [InCallback](EPbRpcErrorCode ErrorCode, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
         auto RspMessage = MakeShared<{{rpc_space_name}}::{{rpc_entry['p2']}}>();               
-        if (ErrorCode == EZRpcErrorCode::RpcErrorCode_Ok)
+        if (ErrorCode == EPbRpcErrorCode::RpcErrorCode_Ok)
         {
             if (!RspMessage->ParseFromString(InMessage->body_data()))
             {
-                ErrorCode = EZRpcErrorCode::RpcErrorCode_RspDataError;
+                ErrorCode = EPbRpcErrorCode::RpcErrorCode_RspDataError;
             }
         }
         InCallback(ErrorCode, RspMessage);
@@ -196,17 +196,17 @@ INTERFACE_HPP_TEMPL = """#pragma once
 #include "{{inc}}"
 {%- endfor %}
 
-#include "ZTools.h"
-#include "ZRpcManager.h"
+#include "MTools.h"
+#include "MRpcManager.h"
 
 class {{dllexport_decl}} FZ{{service_name}}Interface
 {
 public:
 
-    FZ{{service_name}}Interface(FZRpcManager* InManager);
+    explicit FZ{{service_name}}Interface(FMRpcManager* InManager);
     virtual ~FZ{{service_name}}Interface();
 
-    const TCHAR* GetName() const { return TEXT("{{service_name}}"); }  
+    static const TCHAR* GetName() { return TEXT("{{service_name}}"); }  
     
     {% for rpc_entry in rpc_list %}
     /**
@@ -217,8 +217,8 @@ public:
     static constexpr uint64 {{rpc_entry['name']}} = 0x{{rpc_entry['id']}}LL; 
     typedef TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p1']}}> FZ{{rpc_entry['name']}}ReqPtr;
     typedef TSharedPtr<{{rpc_space_name}}::{{rpc_entry['p2']}}> FZ{{rpc_entry['name']}}RspPtr;
-    typedef TFunction<void(FZPbMessageSupportBase*, const FZ{{rpc_entry['name']}}ReqPtr&, const FZ{{rpc_entry['name']}}RspPtr&)> FZ{{rpc_entry['name']}}Callback;
-    static void {{rpc_entry['name']}}Register(FZRpcManager* InManager, const FZ{{rpc_entry['name']}}Callback& InCallback);
+    typedef TFunction<void(FPbMessageSupportBase*, const FZ{{rpc_entry['name']}}ReqPtr&, const FZ{{rpc_entry['name']}}RspPtr&)> FZ{{rpc_entry['name']}}Callback;
+    static void {{rpc_entry['name']}}Register(FMRpcManager* InManager, const FZ{{rpc_entry['name']}}Callback& InCallback);
     {% endfor %}
 
 };
@@ -227,7 +227,7 @@ public:
 
 INTERFACE_CPP_TEMPL = """#include "{{service_name}}Interface.h"
 
-FZ{{service_name}}Interface::FZ{{service_name}}Interface(FZRpcManager* InManager)
+FZ{{service_name}}Interface::FZ{{service_name}}Interface(FMRpcManager* InManager)
 {
 }
 
@@ -237,13 +237,13 @@ FZ{{service_name}}Interface::~FZ{{service_name}}Interface()
 
 {%- for rpc_entry in rpc_list %}
 
-void FZ{{service_name}}Interface::{{rpc_entry['name']}}Register(FZRpcManager* InManager, const FZ{{rpc_entry['name']}}Callback& InCallback)
+void FZ{{service_name}}Interface::{{rpc_entry['name']}}Register(FMRpcManager* InManager, const FZ{{rpc_entry['name']}}Callback& InCallback)
 {
     static constexpr uint64 RpcId = FZ{{service_name}}Interface::{{rpc_entry['name']}};
-    InManager->AddMethod(RpcId, [InCallback](FZPbMessageSupportBase* InConn, const TSharedPtr<idlezt::ZRpcMessage>& InMessage)
+    InManager->AddMethod(RpcId, [InCallback](FPbMessageSupportBase* InConn, const TSharedPtr<idlepb::PbRpcMessage>& InMessage)
     {
         const uint64 ReqSerialNum = InMessage->sn();
-        auto ErrorCode = idlezt::RpcErrorCode_Unimplemented;
+        auto ErrorCode = idlepb::RpcErrorCode_Unimplemented;
         auto ReqMessage = MakeShared<{{rpc_space_name}}::{{rpc_entry['p1']}}>();
         auto RspMessage = MakeShared<{{rpc_space_name}}::{{rpc_entry['p2']}}>();
         if (ReqMessage->ParseFromString(InMessage->body_data()))
@@ -251,14 +251,14 @@ void FZ{{service_name}}Interface::{{rpc_entry['name']}}Register(FZRpcManager* In
             if (InCallback)
             {
                 InCallback(InConn, ReqMessage, RspMessage);
-                ErrorCode = idlezt::RpcErrorCode_Ok;
+                ErrorCode = idlepb::RpcErrorCode_Ok;
             }
         }
         else
         {
-            ErrorCode = idlezt::RpcErrorCode_ReqDataError;
+            ErrorCode = idlepb::RpcErrorCode_ReqDataError;
         }
-        FZRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
+        FMRpcManager::SendResponse(InConn, RpcId, ReqSerialNum, RspMessage, ErrorCode);
     });    
 }
 {%- endfor %}

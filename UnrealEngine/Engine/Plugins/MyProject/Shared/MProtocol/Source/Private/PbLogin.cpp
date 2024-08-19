@@ -8,18 +8,18 @@ FPbLoginAccountReq::FPbLoginAccountReq()
     Reset();        
 }
 
-FPbLoginAccountReq::FPbLoginAccountReq(const idlezt::LoginAccountReq& Right)
+FPbLoginAccountReq::FPbLoginAccountReq(const idlepb::LoginAccountReq& Right)
 {
     this->FromPb(Right);
 }
 
-void FPbLoginAccountReq::FromPb(const idlezt::LoginAccountReq& Right)
+void FPbLoginAccountReq::FromPb(const idlepb::LoginAccountReq& Right)
 {
     account = UTF8_TO_TCHAR(Right.account().c_str());
     client_version = UTF8_TO_TCHAR(Right.client_version().c_str());
 }
 
-void FPbLoginAccountReq::ToPb(idlezt::LoginAccountReq* Out) const
+void FPbLoginAccountReq::ToPb(idlepb::LoginAccountReq* Out) const
 {
     Out->set_account(TCHAR_TO_UTF8(*account));
     Out->set_client_version(TCHAR_TO_UTF8(*client_version));    
@@ -31,7 +31,7 @@ void FPbLoginAccountReq::Reset()
     client_version = FString();    
 }
 
-void FPbLoginAccountReq::operator=(const idlezt::LoginAccountReq& Right)
+void FPbLoginAccountReq::operator=(const idlepb::LoginAccountReq& Right)
 {
     this->FromPb(Right);
 }
@@ -55,16 +55,16 @@ FPbLoginAccountAck::FPbLoginAccountAck()
     Reset();        
 }
 
-FPbLoginAccountAck::FPbLoginAccountAck(const idlezt::LoginAccountAck& Right)
+FPbLoginAccountAck::FPbLoginAccountAck(const idlepb::LoginAccountAck& Right)
 {
     this->FromPb(Right);
 }
 
-void FPbLoginAccountAck::FromPb(const idlezt::LoginAccountAck& Right)
+void FPbLoginAccountAck::FromPb(const idlepb::LoginAccountAck& Right)
 {
 }
 
-void FPbLoginAccountAck::ToPb(idlezt::LoginAccountAck* Out) const
+void FPbLoginAccountAck::ToPb(idlepb::LoginAccountAck* Out) const
 {    
 }
 
@@ -72,7 +72,7 @@ void FPbLoginAccountAck::Reset()
 {    
 }
 
-void FPbLoginAccountAck::operator=(const idlezt::LoginAccountAck& Right)
+void FPbLoginAccountAck::operator=(const idlepb::LoginAccountAck& Right)
 {
     this->FromPb(Right);
 }

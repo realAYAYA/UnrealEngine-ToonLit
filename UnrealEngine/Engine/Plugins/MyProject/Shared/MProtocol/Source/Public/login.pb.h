@@ -47,24 +47,24 @@ struct MPROTOCOL_API TableStruct_login_2eproto {
   static const uint32_t offsets[];
 };
 MPROTOCOL_API extern const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable descriptor_table_login_2eproto;
-namespace idlezt {
+namespace idlepb {
 class LoginAccountAck;
 struct LoginAccountAckDefaultTypeInternal;
 MPROTOCOL_API extern LoginAccountAckDefaultTypeInternal _LoginAccountAck_default_instance_;
 class LoginAccountReq;
 struct LoginAccountReqDefaultTypeInternal;
 MPROTOCOL_API extern LoginAccountReqDefaultTypeInternal _LoginAccountReq_default_instance_;
-}  // namespace idlezt
+}  // namespace idlepb
 PROTOBUF_NAMESPACE_OPEN
-template<> MPROTOCOL_API ::idlezt::LoginAccountAck* Arena::CreateMaybeMessage<::idlezt::LoginAccountAck>(Arena*);
-template<> MPROTOCOL_API ::idlezt::LoginAccountReq* Arena::CreateMaybeMessage<::idlezt::LoginAccountReq>(Arena*);
+template<> MPROTOCOL_API ::idlepb::LoginAccountAck* Arena::CreateMaybeMessage<::idlepb::LoginAccountAck>(Arena*);
+template<> MPROTOCOL_API ::idlepb::LoginAccountReq* Arena::CreateMaybeMessage<::idlepb::LoginAccountReq>(Arena*);
 PROTOBUF_NAMESPACE_CLOSE
-namespace idlezt {
+namespace idlepb {
 
 // ===================================================================
 
 class MPROTOCOL_API LoginAccountReq final :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:idlezt.LoginAccountReq) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:idlepb.LoginAccountReq) */ {
  public:
   inline LoginAccountReq() : LoginAccountReq(nullptr) {}
   ~LoginAccountReq() override;
@@ -167,7 +167,7 @@ class MPROTOCOL_API LoginAccountReq final :
   private:
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "idlezt.LoginAccountReq";
+    return "idlepb.LoginAccountReq";
   }
   protected:
   explicit LoginAccountReq(::PROTOBUF_NAMESPACE_ID::Arena* arena,
@@ -215,7 +215,7 @@ class MPROTOCOL_API LoginAccountReq final :
   std::string* _internal_mutable_client_version();
   public:
 
-  // @@protoc_insertion_point(class_scope:idlezt.LoginAccountReq)
+  // @@protoc_insertion_point(class_scope:idlepb.LoginAccountReq)
  private:
   class _Internal;
 
@@ -233,7 +233,7 @@ class MPROTOCOL_API LoginAccountReq final :
 // -------------------------------------------------------------------
 
 class MPROTOCOL_API LoginAccountAck final :
-    public ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase /* @@protoc_insertion_point(class_definition:idlezt.LoginAccountAck) */ {
+    public ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase /* @@protoc_insertion_point(class_definition:idlepb.LoginAccountAck) */ {
  public:
   inline LoginAccountAck() : LoginAccountAck(nullptr) {}
   explicit PROTOBUF_CONSTEXPR LoginAccountAck(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
@@ -321,7 +321,7 @@ class MPROTOCOL_API LoginAccountAck final :
   private:
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "idlezt.LoginAccountAck";
+    return "idlepb.LoginAccountAck";
   }
   protected:
   explicit LoginAccountAck(::PROTOBUF_NAMESPACE_ID::Arena* arena,
@@ -337,7 +337,7 @@ class MPROTOCOL_API LoginAccountAck final :
 
   // accessors -------------------------------------------------------
 
-  // @@protoc_insertion_point(class_scope:idlezt.LoginAccountAck)
+  // @@protoc_insertion_point(class_scope:idlepb.LoginAccountAck)
  private:
   class _Internal;
 
@@ -364,7 +364,7 @@ inline void LoginAccountReq::clear_account() {
   _impl_.account_.ClearToEmpty();
 }
 inline const std::string& LoginAccountReq::account() const {
-  // @@protoc_insertion_point(field_get:idlezt.LoginAccountReq.account)
+  // @@protoc_insertion_point(field_get:idlepb.LoginAccountReq.account)
   return _internal_account();
 }
 template <typename ArgT0, typename... ArgT>
@@ -372,11 +372,11 @@ inline PROTOBUF_ALWAYS_INLINE
 void LoginAccountReq::set_account(ArgT0&& arg0, ArgT... args) {
  
  _impl_.account_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
-  // @@protoc_insertion_point(field_set:idlezt.LoginAccountReq.account)
+  // @@protoc_insertion_point(field_set:idlepb.LoginAccountReq.account)
 }
 inline std::string* LoginAccountReq::mutable_account() {
   std::string* _s = _internal_mutable_account();
-  // @@protoc_insertion_point(field_mutable:idlezt.LoginAccountReq.account)
+  // @@protoc_insertion_point(field_mutable:idlepb.LoginAccountReq.account)
   return _s;
 }
 inline const std::string& LoginAccountReq::_internal_account() const {
@@ -391,7 +391,7 @@ inline std::string* LoginAccountReq::_internal_mutable_account() {
   return _impl_.account_.Mutable(GetArenaForAllocation());
 }
 inline std::string* LoginAccountReq::release_account() {
-  // @@protoc_insertion_point(field_release:idlezt.LoginAccountReq.account)
+  // @@protoc_insertion_point(field_release:idlepb.LoginAccountReq.account)
   return _impl_.account_.Release();
 }
 inline void LoginAccountReq::set_allocated_account(std::string* account) {
@@ -406,7 +406,7 @@ inline void LoginAccountReq::set_allocated_account(std::string* account) {
     _impl_.account_.Set("", GetArenaForAllocation());
   }
 #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
-  // @@protoc_insertion_point(field_set_allocated:idlezt.LoginAccountReq.account)
+  // @@protoc_insertion_point(field_set_allocated:idlepb.LoginAccountReq.account)
 }
 
 // string client_version = 2;
@@ -414,7 +414,7 @@ inline void LoginAccountReq::clear_client_version() {
   _impl_.client_version_.ClearToEmpty();
 }
 inline const std::string& LoginAccountReq::client_version() const {
-  // @@protoc_insertion_point(field_get:idlezt.LoginAccountReq.client_version)
+  // @@protoc_insertion_point(field_get:idlepb.LoginAccountReq.client_version)
   return _internal_client_version();
 }
 template <typename ArgT0, typename... ArgT>
@@ -422,11 +422,11 @@ inline PROTOBUF_ALWAYS_INLINE
 void LoginAccountReq::set_client_version(ArgT0&& arg0, ArgT... args) {
  
  _impl_.client_version_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
-  // @@protoc_insertion_point(field_set:idlezt.LoginAccountReq.client_version)
+  // @@protoc_insertion_point(field_set:idlepb.LoginAccountReq.client_version)
 }
 inline std::string* LoginAccountReq::mutable_client_version() {
   std::string* _s = _internal_mutable_client_version();
-  // @@protoc_insertion_point(field_mutable:idlezt.LoginAccountReq.client_version)
+  // @@protoc_insertion_point(field_mutable:idlepb.LoginAccountReq.client_version)
   return _s;
 }
 inline const std::string& LoginAccountReq::_internal_client_version() const {
@@ -441,7 +441,7 @@ inline std::string* LoginAccountReq::_internal_mutable_client_version() {
   return _impl_.client_version_.Mutable(GetArenaForAllocation());
 }
 inline std::string* LoginAccountReq::release_client_version() {
-  // @@protoc_insertion_point(field_release:idlezt.LoginAccountReq.client_version)
+  // @@protoc_insertion_point(field_release:idlepb.LoginAccountReq.client_version)
   return _impl_.client_version_.Release();
 }
 inline void LoginAccountReq::set_allocated_client_version(std::string* client_version) {
@@ -456,7 +456,7 @@ inline void LoginAccountReq::set_allocated_client_version(std::string* client_ve
     _impl_.client_version_.Set("", GetArenaForAllocation());
   }
 #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
-  // @@protoc_insertion_point(field_set_allocated:idlezt.LoginAccountReq.client_version)
+  // @@protoc_insertion_point(field_set_allocated:idlepb.LoginAccountReq.client_version)
 }
 
 // -------------------------------------------------------------------
@@ -471,7 +471,7 @@ inline void LoginAccountReq::set_allocated_client_version(std::string* client_ve
 
 // @@protoc_insertion_point(namespace_scope)
 
-}  // namespace idlezt
+}  // namespace idlepb
 
 // @@protoc_insertion_point(global_scope)
 

@@ -1,30 +1,30 @@
 #pragma once
 
-#include "ZPbCommon.h"
-#include "ZPbLogin.h"
+#include "PbCommon.h"
+#include "PbLogin.h"
 #include "common.pb.h"
 #include "login.pb.h"
 
-#include "ZTools.h"
+#include "MTools.h"
 #include "MRpcManager.h"
 
-class ZRPC_API FZLoginRpcInterface
+class MRPC_API FZLoginRpcInterface
 {
 public:
 
-    FZLoginRpcInterface(FMRpcManager* InManager);
+    explicit FZLoginRpcInterface(FMRpcManager* InManager);
     virtual ~FZLoginRpcInterface();
 
-    const TCHAR* GetName() const { return TEXT("LoginRpc"); }  
+    static const TCHAR* GetName() { return TEXT("LoginRpc"); }  
     
     
     /**
      * 登录帐号
     */
     static constexpr uint64 LoginAccount = 0x9939607413dbff1dLL; 
-    typedef TSharedPtr<idlezt::LoginAccountReq> FZLoginAccountReqPtr;
-    typedef TSharedPtr<idlezt::LoginAccountAck> FZLoginAccountRspPtr;
-    typedef TFunction<void(FZPbMessageSupportBase*, const FZLoginAccountReqPtr&, const FZLoginAccountRspPtr&)> FZLoginAccountCallback;
+    typedef TSharedPtr<idlepb::LoginAccountReq> FZLoginAccountReqPtr;
+    typedef TSharedPtr<idlepb::LoginAccountAck> FZLoginAccountRspPtr;
+    typedef TFunction<void(FPbMessageSupportBase*, const FZLoginAccountReqPtr&, const FZLoginAccountRspPtr&)> FZLoginAccountCallback;
     static void LoginAccountRegister(FMRpcManager* InManager, const FZLoginAccountCallback& InCallback);
     
 
