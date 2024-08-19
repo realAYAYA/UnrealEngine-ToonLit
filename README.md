@@ -1,6 +1,6 @@
 # ToonLit rendering pipeline based on UnrealEngine5
 
-![images](https://gitee.com/AYAYA2/LearnGI/raw/master/paper/VoxelizeDebug%20(2).png)  
+![images](https://github.com/realAYAYA/UnrealEngine-ToonLit/blob/5.3/Features/Advertising.png)  
 
 #### 介绍
 魔改UE5引擎，基于此实现一套ToonLit流程  
