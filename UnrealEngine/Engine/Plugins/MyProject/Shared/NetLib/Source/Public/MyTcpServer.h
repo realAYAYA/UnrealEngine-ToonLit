@@ -10,7 +10,7 @@ class NETLIB_API FMyTcpServer
 public:
 	
 	FMyTcpServer();
-	virtual ~FMyTcpServer() = default;
+	virtual ~FMyTcpServer();
 
 	bool Start(const int32 ServerPort = 0);
 	void Stop();

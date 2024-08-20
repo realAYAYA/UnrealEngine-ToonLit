@@ -40,7 +40,11 @@ public class MGameServices : ModuleRules
 				"Engine",
 				// ... add private dependencies that you statically link with here ...	
 				
-				"ZRedisClient", "MRpc",
+				"ZRedisClient", 
+				"MRpc", 
+				"MProtocol",
+				"ZProtoBuf",
+				"MCommon"
 			}
 			);
 		

@@ -28,8 +28,20 @@
 			"Enabled":true
 		},
 		{
+			"Name":"MProtocol",
+			"Enabled":true
+		},
+		{
+			"Name":"MCommon",
+			"Enabled":true
+		},
+		{
 			"Name":"NetLib",
 			"Enabled":true
 		},
+		{
+			"Name":"ZProtobuf",
+			"Enabled":true
+		}
 	]
 }

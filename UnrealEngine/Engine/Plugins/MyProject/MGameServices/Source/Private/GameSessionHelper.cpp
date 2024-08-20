@@ -1,6 +1,7 @@
 ﻿#include "GameSessionHelper.h"
-
 #include "Misc/LazySingleton.h"
+
+// ---------------------------------------------------------------------------------------
 
 FRpcServerHandleInitializers& FRpcServerHandleInitializers::Get()
 {
@@ -9,28 +10,22 @@ FRpcServerHandleInitializers& FRpcServerHandleInitializers::Get()
 
 void FRpcServerHandleInitializers::TearDown()
 {
-	
 }
 
-void FRpcServerHandleInitializers::Register(
-	const char* InRpcInterfaceName,
-	const TFunction<void(UMGameSession*, void* InRpcInterface)>& Func)
+void FRpcServerHandleInitializers::Register(const char* InRpcInterfaceName, const TFunction<void(FMGameSession*, void* InRpcInterface)>& Func)
 {
-	TArray<TFunction<void(UMGameSession*, void*)>>* ContPtr = Handles.Find(InRpcInterfaceName);
+	auto ContPtr = Handles.Find(InRpcInterfaceName);
 	if (!ContPtr)
 	{
 		ContPtr = &Handles.Emplace(InRpcInterfaceName);
 	}
-    
+
 	ContPtr->Emplace(Func);
 }
 
-void FRpcServerHandleInitializers::Bind(
-	UMGameSession* InGameSession,
-	const FString& InRpcInterfaceName,
-	void* InRpcInterfacePtr)
+void FRpcServerHandleInitializers::Bind(FMGameSession* InGameSession, const FString& InRpcInterfaceName, void* InRpcInterfacePtr)
 {
-	TArray<TFunction<void(UMGameSession*, void*)>>* ContPtr = Handles.Find(InRpcInterfaceName);
+	const auto ContPtr = Handles.Find(InRpcInterfaceName);
 	if (!ContPtr)
 		return;
 	

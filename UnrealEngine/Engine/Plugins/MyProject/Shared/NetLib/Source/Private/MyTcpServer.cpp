@@ -17,6 +17,12 @@ FMyTcpServer::FMyTcpServer()
 {
 	ListenPort = 0;
 	NextConnId = 1;
+
+	ServerImpl = MakeUnique<FTcpServerImpl>();
+}
+
+FMyTcpServer::~FMyTcpServer()
+{
 }
 
 bool FMyTcpServer::Start(const int32 ServerPort)

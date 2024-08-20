@@ -10,6 +10,8 @@ IMPLEMENT_MODULE(FMGameServicesModule, MGameServices);
 
 #undef LOCTEXT_NAMESPACE
 
+FMGameServicesModule* GGameServicesModule = nullptr;
+
 FMGameServicesModule::FMGameServicesModule()
 {
 	GGameServicesModule = this;

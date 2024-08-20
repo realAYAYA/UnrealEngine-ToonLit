@@ -184,12 +184,12 @@ private:
 	{ \
 		PREPROCESSOR_JOIN(FPbRpc_,PREPROCESSOR_JOIN(RpcInterfaceName,RpcMethodName))() \
 		{ \
-			PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(RpcMethodName,Register)(&SessionType::GetRpcManager(), [this](FPbMessageSupportBase* InSession, const PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcMethodName,ReqPtr))& InReqPtr, const PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcMethodName,RspPtr))& InRspPtr) {\
+			PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(RpcMethodName,Register)(&SessionType::GetRpcManager(), [this](FPbMessageSupportBase* InSession, const PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcMethodName,ReqPtr))& InReqPtr, const PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcMethodName,RspPtr))& InRspPtr) {\
 				SessionType* Session = static_cast<SessionType*>(InSession); \
 				this->Handle(Session, InReqPtr, InRspPtr); \
 			});\
 		} \
-		void Handle(SessionType*, const PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcMethodName,ReqPtr))& ReqPtr, const PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcMethodName,RspPtr))& RspPtr); \
+		void Handle(SessionType*, const PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcMethodName,ReqPtr))& ReqPtr, const PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcMethodName,RspPtr))& RspPtr); \
 	};	\
 	static PREPROCESSOR_JOIN(FPbRpc_,PREPROCESSOR_JOIN(RpcInterfaceName,RpcMethodName)) PREPROCESSOR_JOIN(_PbRpcVar_,PREPROCESSOR_JOIN(RpcInterfaceName,RpcMethodName)); \
-	void PREPROCESSOR_JOIN(FPbRpc_,PREPROCESSOR_JOIN(RpcInterfaceName,RpcMethodName))::Handle(SessionType* GameSessionVar, const PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcMethodName,ReqPtr))& ReqVar, const PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(F,PREPROCESSOR_JOIN(RpcMethodName,RspPtr))& RspVar)
+	void PREPROCESSOR_JOIN(FPbRpc_,PREPROCESSOR_JOIN(RpcInterfaceName,RpcMethodName))::Handle(SessionType* GameSessionVar, const PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcMethodName,ReqPtr))& ReqVar, const PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcInterfaceName,Interface))::PREPROCESSOR_JOIN(FPb,PREPROCESSOR_JOIN(RpcMethodName,RspPtr))& RspVar)

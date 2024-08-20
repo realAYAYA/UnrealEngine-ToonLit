@@ -1,7 +1,6 @@
 #pragma once
 
 #include "GameRpcInterface.h"
-#include "MGameSession.generated.h"
 
 class UMWorld;
 class UMPlayer;

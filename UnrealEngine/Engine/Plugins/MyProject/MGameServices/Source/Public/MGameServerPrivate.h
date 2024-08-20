@@ -16,7 +16,7 @@ class MGAMESERVICES_API FMGameServicesModule : public IModuleInterface
 public:
 
 	FMGameServicesModule();
-	~FMGameServicesModule();
+	virtual ~FMGameServicesModule() override;
 
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;

@@ -11,9 +11,9 @@
 #endif
 #define M_MODULAR_NAME Login
 
-M_GAME_RPC_HANDLE(GameRpc, LoginGame, InSession, Req, Ack)
+M_PB_RPC_HANDLE(GameRpc, LoginGame, InSession, Req, Ack)
 {
-	{
+	/*{
 		// Todo 检查版本
 		//Req.ClientVersion;
 	}
@@ -92,7 +92,7 @@ M_GAME_RPC_HANDLE(GameRpc, LoginGame, InSession, Req, Ack)
 		Ack.Ret = ELoginGameRetCode::Ok;
 		Ack.PlayerID = Player->GetPlayerID();
 		Player->Fill(Ack.RolePreviewData);// 准备预览数据
-	}
+	}*/
 }
 
 /*// 登出账号
