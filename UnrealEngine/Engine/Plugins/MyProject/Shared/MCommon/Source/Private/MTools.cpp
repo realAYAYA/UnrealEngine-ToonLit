@@ -40,3 +40,7 @@ FString FMyTools::GetProjectVersion()
 }
 #endif
 
+void FMyTools::ToString(const FString& In, std::string* Out)
+{
+	*Out = TCHAR_TO_UTF8(*In);
+}

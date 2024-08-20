@@ -71,6 +71,7 @@ public:
 	void SetPackageCallback(const FPackageCallback& InCallback);
 	void SetConnectedCallback(const FConnectedCallback& InCallback);
 	void SetDisconnectedCallback(const FDisconnectedCallback& InCallback);
+	void SetErrorCallback(const FErrorCallback& InCallback);
 	void SetTimerCallback(const FTimerCallback& InCallback);
 
 private:

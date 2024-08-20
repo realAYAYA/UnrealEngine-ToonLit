@@ -12,7 +12,8 @@ public:
 
 	static FString GetProjectVersion();// 获取项目版本号
 
-	
+	static void ToString(const FString& In, std::string* Out);
+
 	static int64 GeneratePbMessageTypeId(const ::google::protobuf::Message* Pb)
 	{
 		const std::string& PbName = Pb->GetDescriptor()->full_name();

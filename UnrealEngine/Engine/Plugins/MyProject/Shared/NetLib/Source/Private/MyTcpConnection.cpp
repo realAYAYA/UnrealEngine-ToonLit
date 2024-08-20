@@ -151,6 +151,11 @@ void FPbConnection::SetDisconnectedCallback(const FDisconnectedCallback& InCallb
 	DisconnectedCallback = InCallback;
 }
 
+void FPbConnection::SetErrorCallback(const FErrorCallback& InCallback)
+{
+	ErrorCallback = InCallback;
+}
+
 void FPbConnection::SetTimerCallback(const FTimerCallback& InCallback)
 {
 	TimerCallback = InCallback;

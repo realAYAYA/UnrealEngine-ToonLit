@@ -3,7 +3,6 @@
 #include "IWebSocketNetworkingModule.h"
 #include "IWebSocketServer.h"
 #include "MyNetFwd.h"
-#include "MyTcpConnection.h"
 
 // ========================================================================= //
 
@@ -20,19 +19,19 @@ FMyTcpServer::FMyTcpServer()
 	NextConnId = 1;
 }
 
-void FMyTcpServer::Start(const int32 ServerPort)
+bool FMyTcpServer::Start(const int32 ServerPort)
 {
 	ListenPort = ServerPort == 0 ? ListenPort : ServerPort;
 	if (ListenPort <= 0)
 	{
 		UE_LOG(LogNetLib, Error, TEXT("%s: [TcpServer] start failed, 端口未初始化."), *FString(__FUNCTION__));
-		return;
+		return false;
 	}
 	
 	if (IsRunning())
 	{
 		UE_LOG(LogNetLib, Error, TEXT("%s: [TcpServer] start failed, 已经在运行."), *FString(__FUNCTION__));
-		return;
+		return false;
 	}
 
 	// 回调: 产生连接时
@@ -52,10 +51,11 @@ void FMyTcpServer::Start(const int32 ServerPort)
 	{
 		UE_LOG(LogNetLib, Error, TEXT("%s: [TcpServer] start failed, 创建服务器实例失败, Port=%d."), *FString(__FUNCTION__), ListenPort);
 		ServerImpl->WebSocketServer.Reset();
-		return;
+		return false;
 	}
 
 	UE_LOG(LogNetLib, Display, TEXT("%s: [TcpServer] start succssed."), *FString(__FUNCTION__));
+	return true;
 }
 
 void FMyTcpServer::Stop()
@@ -88,18 +88,28 @@ FTcpConnectionPtr FPbTcpServer::NewConnection()
 
 	Ptr->SetPackageCallback([this](FPbConnectionPtr InConn, uint64 InCode, FMyDataBufferPtr InMessage)
 	{
-		
+		if (PackageCallback)
+			PackageCallback(InConn, InCode, InMessage);
 	});
 
 	Ptr->SetConnectedCallback([this](FPbConnectionPtr InConn)
 	{
-		
+		if (ConnectedCallback)
+			ConnectedCallback(InConn);
 	});
 
 	Ptr->SetDisconnectedCallback([this](FPbConnectionPtr InConn)
 	{
+		if (DisconnectedCallback)
+			DisconnectedCallback(InConn);
 		
 		RemoveConnection(InConn);
+	});
+
+	Ptr->SetErrorCallback([this](FPbConnectionPtr InConn)
+	{
+		if (ErrorCallback)
+			ErrorCallback(InConn);
 	});
 	
 	return Ptr;
