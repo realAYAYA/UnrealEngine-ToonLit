@@ -45,7 +45,7 @@ bool FMyTcpServer::Start(const int32 ServerPort)
 	CallBack.BindLambda([this](INetworkingWebSocket* InWebSocket)->void
 	{
 		auto TcpPtr = NewConnection();
-		const auto SocketPtr = MakeShared<FMySocketServer>(TcpPtr->GetId());
+		const auto SocketPtr = MakeShared<FMySocketServerSide>(TcpPtr->GetId());
 		SocketPtr->Init(InWebSocket);
 		TcpPtr->Init(SocketPtr);
 		TcpPtr->Start();

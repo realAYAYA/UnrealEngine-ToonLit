@@ -1,5 +1,26 @@
 #include "MTools.h"
 
+#define LOCTEXT_NAMESPACE "FMCommon"
+
+class FMCommonModule : public IModuleInterface
+{
+public:
+
+	/** IModuleInterface implementation */
+	virtual void StartupModule() override
+	{
+	}
+	
+	virtual void ShutdownModule() override
+	{
+	}
+};
+
+#undef LOCTEXT_NAMESPACE
+	
+IMPLEMENT_MODULE(FMCommonModule, MCommon)
+
+
 FDateTime FMyTools::Now()
 {
 	return FDateTime::UtcNow();

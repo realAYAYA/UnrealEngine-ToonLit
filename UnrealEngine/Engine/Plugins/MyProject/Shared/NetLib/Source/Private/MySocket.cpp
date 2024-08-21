@@ -42,18 +42,18 @@ void FMySocket::HandleError()
 
 // ========================================================================= //
 
-void FMySocketServer::Init(INetworkingWebSocket* Socket)
+void FMySocketServerSide::Init(INetworkingWebSocket* Socket)
 {
 	auto Ptr = TSharedPtr<INetworkingWebSocket>(Socket);
 	WebSocket = MoveTemp(Ptr);
 }
 
-bool FMySocketServer::IsOpen() const
+bool FMySocketServerSide::IsOpen() const
 {
 	return WebSocket.IsValid();
 }
 
-void FMySocketServer::Start()
+void FMySocketServerSide::Start()
 {
 	TWeakPtr<FMySocket, ESPMode::ThreadSafe> Self = AsShared();
 	
@@ -99,12 +99,12 @@ void FMySocketServer::Start()
 	}
 }
 
-void FMySocketServer::Shutdown()
+void FMySocketServerSide::Shutdown()
 {
 	
 }
 
-void FMySocketServer::Send(const FMyDataBufferPtr& Buffer)
+void FMySocketServerSide::Send(const FMyDataBufferPtr& Buffer)
 {
 	WebSocket->Send(reinterpret_cast<uint8*>(const_cast<char*>(Buffer->Peek())), Buffer->ReadableBytes() * sizeof(char));
 
@@ -114,14 +114,7 @@ void FMySocketServer::Send(const FMyDataBufferPtr& Buffer)
 
 // ========================================================================= //
 
-
-void FMySocketClient::Init(const FString& ServerURL, const FString& ServerProtocol)
-{
-	Url = ServerURL;
-	Protocol = ServerProtocol;
-}
-
-void FMySocketClient::Start()
+void FMySocketClientSide::Start()
 {
 	WebSocket = FWebSocketsModule::Get().CreateWebSocket(Url, Protocol);
 	TWeakPtr<FMySocket, ESPMode::ThreadSafe> Self = AsShared();
@@ -160,12 +153,12 @@ void FMySocketClient::Start()
 	WebSocket->Connect();
 }
 
-void FMySocketClient::Shutdown()
+void FMySocketClientSide::Shutdown()
 {
 	WebSocket->Close();
 }
 
-bool FMySocketClient::IsOpen() const
+bool FMySocketClientSide::IsOpen() const
 {
 	if (WebSocket)
 		return WebSocket->IsConnected();
@@ -173,6 +166,6 @@ bool FMySocketClient::IsOpen() const
 	return false;
 }
 
-void FMySocketClient::Send(const FMyDataBufferPtr& Buffer)
+void FMySocketClientSide::Send(const FMyDataBufferPtr& Buffer)
 {
 }

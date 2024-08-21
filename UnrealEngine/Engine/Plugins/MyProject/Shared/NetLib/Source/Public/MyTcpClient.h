@@ -5,18 +5,21 @@ class NETLIB_API FMyTcpClient
 {
 	
 public:
-
-	void Init(const FString& ServerURL, const FString& ServerProtocol);
 	
-	void Connect();
+	virtual ~FMyTcpClient() = default;
+
+	bool Connect(const FString& ServerURL, const FString& ServerProtocol);
 	void Shutdown();
 	bool IsConnected() const;
-	void Tick(float DeltaTime);
 
 protected:
 
-	FString Url;
-	FString Protocol;
+	virtual void Tick(float DeltaTime);
+	
+	virtual void OnMessage(uint64 InPbTypeId, const FMyDataBufferPtr& InPackage) = 0;
+	virtual void OnConnected() = 0;
+	virtual void OnDisconnected() = 0;
+	virtual void OnError() = 0;
 	
 	FTcpConnectionPtr Connection;
 };

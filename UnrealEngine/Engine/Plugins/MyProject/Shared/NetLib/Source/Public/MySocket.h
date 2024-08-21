@@ -63,18 +63,18 @@ protected:
 
 
 // 服务器专用Tcp连接类
-class FMySocketServer : public FMySocket
+class FMySocketServerSide : public FMySocket
 {
 	
 public:
 
-	FMySocketServer(const uint64 InId): FMySocket(InId) {}
-	virtual ~FMySocketServer() override {}
+	FMySocketServerSide(const uint64 InId): FMySocket(InId) {}
+	virtual ~FMySocketServerSide() override {}
 
 	void Init(INetworkingWebSocket* Socket);
 
-	FMySocketServer(const FMySocketServer&) = delete;
-	FMySocketServer& operator=(const FMySocketServer&) = delete;
+	FMySocketServerSide(const FMySocketServerSide&) = delete;
+	FMySocketServerSide& operator=(const FMySocketServerSide&) = delete;
 	
 	virtual bool IsOpen() const override;
 
@@ -89,12 +89,13 @@ private:
 };
 
 // 客户端专用Tcp连接类
-class FMySocketClient : public FMySocket
+class NETLIB_API FMySocketClientSide : public FMySocket
 {
 	
 public:
 
-	void Init(const FString& ServerURL, const FString& ServerProtocol);
+	FString Url;
+	FString Protocol;
 	
 	virtual bool IsOpen() const override;
 
@@ -105,8 +106,5 @@ public:
 
 private:
 	
-	FString Url;
-	FString Protocol;
-
 	TSharedPtr<IWebSocket> WebSocket;
 };

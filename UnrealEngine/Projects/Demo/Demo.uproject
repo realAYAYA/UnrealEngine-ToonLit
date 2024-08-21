@@ -1,13 +1,16 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "{525EFCCA-4C45-0315-FE12-6391C602D877}",
+	"EngineAssociation": "{4C2AF5A0-488B-D50D-D581-C0B833A01E7D}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
 		{
 			"Name": "Demo",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine"
+			]
 		}
 	],
 	"Plugins": [
@@ -17,6 +20,26 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "GameTables",
+			"Enabled": true
+		},
+		{
+			"Name": "NetLib",
+			"Enabled": true
+		},
+		{
+			"Name": "MRpc",
+			"Enabled": true
+		},
+		{
+			"Name": "MProtocol",
+			"Enabled": true
+		},
+		{
+			"Name": "MCommon",
+			"Enabled": true
 		}
 	]
 }
