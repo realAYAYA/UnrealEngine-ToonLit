@@ -50,12 +50,16 @@ namespace idlepb {
 class CommonGlobalConfig;
 struct CommonGlobalConfigDefaultTypeInternal;
 MPROTOCOL_API extern CommonGlobalConfigDefaultTypeInternal _CommonGlobalConfig_default_instance_;
+class GameClientConfig;
+struct GameClientConfigDefaultTypeInternal;
+MPROTOCOL_API extern GameClientConfigDefaultTypeInternal _GameClientConfig_default_instance_;
 class GameServicesConfig;
 struct GameServicesConfigDefaultTypeInternal;
 MPROTOCOL_API extern GameServicesConfigDefaultTypeInternal _GameServicesConfig_default_instance_;
 }  // namespace idlepb
 PROTOBUF_NAMESPACE_OPEN
 template<> MPROTOCOL_API ::idlepb::CommonGlobalConfig* Arena::CreateMaybeMessage<::idlepb::CommonGlobalConfig>(Arena*);
+template<> MPROTOCOL_API ::idlepb::GameClientConfig* Arena::CreateMaybeMessage<::idlepb::GameClientConfig>(Arena*);
 template<> MPROTOCOL_API ::idlepb::GameServicesConfig* Arena::CreateMaybeMessage<::idlepb::GameServicesConfig>(Arena*);
 PROTOBUF_NAMESPACE_CLOSE
 namespace idlepb {
@@ -415,6 +419,170 @@ class MPROTOCOL_API GameServicesConfig final :
   union { Impl_ _impl_; };
   friend struct ::TableStruct_gdd_5fglobal_2eproto;
 };
+// -------------------------------------------------------------------
+
+class MPROTOCOL_API GameClientConfig final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:idlepb.GameClientConfig) */ {
+ public:
+  inline GameClientConfig() : GameClientConfig(nullptr) {}
+  ~GameClientConfig() override;
+  explicit PROTOBUF_CONSTEXPR GameClientConfig(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  GameClientConfig(const GameClientConfig& from);
+  GameClientConfig(GameClientConfig&& from) noexcept
+    : GameClientConfig() {
+    *this = ::std::move(from);
+  }
+
+  inline GameClientConfig& operator=(const GameClientConfig& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline GameClientConfig& operator=(GameClientConfig&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const GameClientConfig& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const GameClientConfig* internal_default_instance() {
+    return reinterpret_cast<const GameClientConfig*>(
+               &_GameClientConfig_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    2;
+
+  friend void swap(GameClientConfig& a, GameClientConfig& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(GameClientConfig* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(GameClientConfig* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  GameClientConfig* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<GameClientConfig>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const GameClientConfig& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const GameClientConfig& from) {
+    GameClientConfig::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(GameClientConfig* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "idlepb.GameClientConfig";
+  }
+  protected:
+  explicit GameClientConfig(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kServerIpFieldNumber = 1,
+    kServerPortFieldNumber = 2,
+  };
+  // string server_ip = 1;
+  void clear_server_ip();
+  const std::string& server_ip() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_server_ip(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_server_ip();
+  PROTOBUF_NODISCARD std::string* release_server_ip();
+  void set_allocated_server_ip(std::string* server_ip);
+  private:
+  const std::string& _internal_server_ip() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_server_ip(const std::string& value);
+  std::string* _internal_mutable_server_ip();
+  public:
+
+  // int32 server_port = 2;
+  void clear_server_port();
+  int32_t server_port() const;
+  void set_server_port(int32_t value);
+  private:
+  int32_t _internal_server_port() const;
+  void _internal_set_server_port(int32_t value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:idlepb.GameClientConfig)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr server_ip_;
+    int32_t server_port_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_gdd_5fglobal_2eproto;
+};
 // ===================================================================
 
 
@@ -640,9 +808,85 @@ inline void GameServicesConfig::set_allocated_redis_password(std::string* redis_
   // @@protoc_insertion_point(field_set_allocated:idlepb.GameServicesConfig.redis_password)
 }
 
+// -------------------------------------------------------------------
+
+// GameClientConfig
+
+// string server_ip = 1;
+inline void GameClientConfig::clear_server_ip() {
+  _impl_.server_ip_.ClearToEmpty();
+}
+inline const std::string& GameClientConfig::server_ip() const {
+  // @@protoc_insertion_point(field_get:idlepb.GameClientConfig.server_ip)
+  return _internal_server_ip();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void GameClientConfig::set_server_ip(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.server_ip_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:idlepb.GameClientConfig.server_ip)
+}
+inline std::string* GameClientConfig::mutable_server_ip() {
+  std::string* _s = _internal_mutable_server_ip();
+  // @@protoc_insertion_point(field_mutable:idlepb.GameClientConfig.server_ip)
+  return _s;
+}
+inline const std::string& GameClientConfig::_internal_server_ip() const {
+  return _impl_.server_ip_.Get();
+}
+inline void GameClientConfig::_internal_set_server_ip(const std::string& value) {
+  
+  _impl_.server_ip_.Set(value, GetArenaForAllocation());
+}
+inline std::string* GameClientConfig::_internal_mutable_server_ip() {
+  
+  return _impl_.server_ip_.Mutable(GetArenaForAllocation());
+}
+inline std::string* GameClientConfig::release_server_ip() {
+  // @@protoc_insertion_point(field_release:idlepb.GameClientConfig.server_ip)
+  return _impl_.server_ip_.Release();
+}
+inline void GameClientConfig::set_allocated_server_ip(std::string* server_ip) {
+  if (server_ip != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.server_ip_.SetAllocated(server_ip, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.server_ip_.IsDefault()) {
+    _impl_.server_ip_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:idlepb.GameClientConfig.server_ip)
+}
+
+// int32 server_port = 2;
+inline void GameClientConfig::clear_server_port() {
+  _impl_.server_port_ = 0;
+}
+inline int32_t GameClientConfig::_internal_server_port() const {
+  return _impl_.server_port_;
+}
+inline int32_t GameClientConfig::server_port() const {
+  // @@protoc_insertion_point(field_get:idlepb.GameClientConfig.server_port)
+  return _internal_server_port();
+}
+inline void GameClientConfig::_internal_set_server_port(int32_t value) {
+  
+  _impl_.server_port_ = value;
+}
+inline void GameClientConfig::set_server_port(int32_t value) {
+  _internal_set_server_port(value);
+  // @@protoc_insertion_point(field_set:idlepb.GameClientConfig.server_port)
+}
+
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
+// -------------------------------------------------------------------
+
 // -------------------------------------------------------------------
 
 

@@ -41,3 +41,12 @@ message LoginGameAck {
 	PlayerData player_data = 2;
 	bool is_relogin = 3;  // 是否为重连 (即服务器上玩家对象已经存在)
 }
+
+
+// 进入
+message EnterLevelReq {
+	
+}
+message EnterLevelAck {
+	bool ok = 1;
+}

@@ -7,7 +7,7 @@ FMPlayerManager::~FMPlayerManager()
 
 void FMPlayerManager::Init()
 {
-	AllEntities.Empty(2048);
+	//AllEntities.Empty(2048);
 }
 
 void FMPlayerManager::Shutdown()
@@ -38,22 +38,22 @@ void FMPlayerManager::Tick(float DeltaTime)
 	}
 }
 
-FMPlayer* FMPlayerManager::GetByPlayerID(const uint64 Id)
+FMPlayer* FMPlayerManager::GetByPlayerId(const uint64 Id)
 {
 	if (const auto Ret = IndexEntities.Find(Id))
-		return *Ret;
+		return Ret->Get();
 	
 	return nullptr;
 }
 
 FMPlayer* FMPlayerManager::CreatePlayer(const uint64 InPlayerId, const FString& InAccount)
 {
-	if (GetByPlayerID(InPlayerId))
+	if (GetByPlayerId(InPlayerId))
 	{
 		return nullptr;
 	}
 
-	FMPlayer* Player = nullptr;
+	auto Player = MakeShared<FMPlayer>();
 	if (!Player->Init(InPlayerId, InAccount))
 	{
 		return nullptr;
@@ -62,7 +62,7 @@ FMPlayer* FMPlayerManager::CreatePlayer(const uint64 InPlayerId, const FString& 
 	if (!AddPlayer(Player))
 		return nullptr;
 	
-	return Player;
+	return &Player.Get();
 }
 
 void FMPlayerManager::DeletePlayer(FMPlayer* InPlayer)
@@ -77,11 +77,11 @@ void FMPlayerManager::DeletePlayer(FMPlayer* InPlayer)
 	
 	const uint64 ID = InPlayer->GetPlayerID();
 	const auto Ret = IndexEntities.Find(ID);
-	if (Ret && *Ret == InPlayer)
+	if (Ret && Ret->Get() == InPlayer)
 	{
 		*Ret = nullptr;		
 
-		for (int32 i = 0; i < AllEntities.Num(); ++i)
+		/*for (int32 i = 0; i < AllEntities.Num(); ++i)
 		{
 			if (AllEntities[i] == InPlayer)
 			{
@@ -90,13 +90,13 @@ void FMPlayerManager::DeletePlayer(FMPlayer* InPlayer)
 			}
 		}
 
-		Junks.Emplace(InPlayer);
+		Junks.Emplace(InPlayer);*/
 	}
 }
 
 void FMPlayerManager::DeletePlayerById(const uint64 InPlayerId)
 {
-	auto* Player = GetByPlayerID(InPlayerId);
+	auto* Player = GetByPlayerId(InPlayerId);
 	if (!Player)
 		return;
 	
@@ -105,11 +105,11 @@ void FMPlayerManager::DeletePlayerById(const uint64 InPlayerId)
 
 void FMPlayerManager::Foreach(const TFunction<bool(FMPlayer*)>& InFunc)
 {
-	for (const auto& Player : AllEntities)
+	for (const auto& Player : IndexEntities)
 	{
-		if (Player)
+		if (Player.Value.Get())
 		{
-			if (!InFunc(Player))
+			if (!InFunc(Player.Value.Get()))
 				return;
 		}
 	}
@@ -124,7 +124,7 @@ void FMPlayerManager::SendToAll(const FPbMessagePtr& InMessage)
 	});
 }
 
-bool FMPlayerManager::AddPlayer(FMPlayer* InPlayer)
+bool FMPlayerManager::AddPlayer(TSharedPtr<FMPlayer> InPlayer)
 {
 	const int64 ID = InPlayer->GetPlayerID();
 
@@ -140,7 +140,7 @@ bool FMPlayerManager::AddPlayer(FMPlayer* InPlayer)
 	
 	{
 		// 试着查询一个空位置
-		int32 EmptyIdx = INDEX_NONE;
+		/*int32 EmptyIdx = INDEX_NONE;
 		for (int32 i = 0; i < AllEntities.Num(); ++i)
 		{
 			const FMPlayer* Ptr = AllEntities[i];
@@ -156,7 +156,7 @@ bool FMPlayerManager::AddPlayer(FMPlayer* InPlayer)
 			EmptyIdx = AllEntities.AddUninitialized();
 		}
 		
-		AllEntities[EmptyIdx] = InPlayer;
+		AllEntities[EmptyIdx] = InPlayer;*/
 	}
 
 	return true;
@@ -164,11 +164,11 @@ bool FMPlayerManager::AddPlayer(FMPlayer* InPlayer)
 
 void FMPlayerManager::ProcessJunk()
 {
-	for (FMPlayer* Player : Junks)
+	/*for (FMPlayer* Player : Junks)
 	{
 		IndexEntities.Remove(Player->GetPlayerID());
 		// Todo 销毁内存
 	}
 	
-	Junks.Empty();
+	Junks.Empty();*/
 }

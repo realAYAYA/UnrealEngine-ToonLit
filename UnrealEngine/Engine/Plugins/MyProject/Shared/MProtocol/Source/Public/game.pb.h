@@ -23,6 +23,7 @@
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/arena.h>
 #include <google/protobuf/arenastring.h>
+#include <google/protobuf/generated_message_bases.h>
 #include <google/protobuf/generated_message_util.h>
 #include <google/protobuf/metadata_lite.h>
 #include <google/protobuf/generated_message_reflection.h>
@@ -51,6 +52,12 @@ namespace idlepb {
 class DoGmCommand;
 struct DoGmCommandDefaultTypeInternal;
 MPROTOCOL_API extern DoGmCommandDefaultTypeInternal _DoGmCommand_default_instance_;
+class EnterLevelAck;
+struct EnterLevelAckDefaultTypeInternal;
+MPROTOCOL_API extern EnterLevelAckDefaultTypeInternal _EnterLevelAck_default_instance_;
+class EnterLevelReq;
+struct EnterLevelReqDefaultTypeInternal;
+MPROTOCOL_API extern EnterLevelReqDefaultTypeInternal _EnterLevelReq_default_instance_;
 class LoginGameAck;
 struct LoginGameAckDefaultTypeInternal;
 MPROTOCOL_API extern LoginGameAckDefaultTypeInternal _LoginGameAck_default_instance_;
@@ -69,6 +76,8 @@ MPROTOCOL_API extern ReportErrorDefaultTypeInternal _ReportError_default_instanc
 }  // namespace idlepb
 PROTOBUF_NAMESPACE_OPEN
 template<> MPROTOCOL_API ::idlepb::DoGmCommand* Arena::CreateMaybeMessage<::idlepb::DoGmCommand>(Arena*);
+template<> MPROTOCOL_API ::idlepb::EnterLevelAck* Arena::CreateMaybeMessage<::idlepb::EnterLevelAck>(Arena*);
+template<> MPROTOCOL_API ::idlepb::EnterLevelReq* Arena::CreateMaybeMessage<::idlepb::EnterLevelReq>(Arena*);
 template<> MPROTOCOL_API ::idlepb::LoginGameAck* Arena::CreateMaybeMessage<::idlepb::LoginGameAck>(Arena*);
 template<> MPROTOCOL_API ::idlepb::LoginGameReq* Arena::CreateMaybeMessage<::idlepb::LoginGameReq>(Arena*);
 template<> MPROTOCOL_API ::idlepb::Ping* Arena::CreateMaybeMessage<::idlepb::Ping>(Arena*);
@@ -1067,6 +1076,272 @@ class MPROTOCOL_API LoginGameAck final :
   union { Impl_ _impl_; };
   friend struct ::TableStruct_game_2eproto;
 };
+// -------------------------------------------------------------------
+
+class MPROTOCOL_API EnterLevelReq final :
+    public ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase /* @@protoc_insertion_point(class_definition:idlepb.EnterLevelReq) */ {
+ public:
+  inline EnterLevelReq() : EnterLevelReq(nullptr) {}
+  explicit PROTOBUF_CONSTEXPR EnterLevelReq(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  EnterLevelReq(const EnterLevelReq& from);
+  EnterLevelReq(EnterLevelReq&& from) noexcept
+    : EnterLevelReq() {
+    *this = ::std::move(from);
+  }
+
+  inline EnterLevelReq& operator=(const EnterLevelReq& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline EnterLevelReq& operator=(EnterLevelReq&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const EnterLevelReq& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const EnterLevelReq* internal_default_instance() {
+    return reinterpret_cast<const EnterLevelReq*>(
+               &_EnterLevelReq_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    6;
+
+  friend void swap(EnterLevelReq& a, EnterLevelReq& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(EnterLevelReq* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(EnterLevelReq* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  EnterLevelReq* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<EnterLevelReq>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyFrom;
+  inline void CopyFrom(const EnterLevelReq& from) {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyImpl(*this, from);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeFrom;
+  void MergeFrom(const EnterLevelReq& from) {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeImpl(*this, from);
+  }
+  public:
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "idlepb.EnterLevelReq";
+  }
+  protected:
+  explicit EnterLevelReq(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  // @@protoc_insertion_point(class_scope:idlepb.EnterLevelReq)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+  };
+  friend struct ::TableStruct_game_2eproto;
+};
+// -------------------------------------------------------------------
+
+class MPROTOCOL_API EnterLevelAck final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:idlepb.EnterLevelAck) */ {
+ public:
+  inline EnterLevelAck() : EnterLevelAck(nullptr) {}
+  ~EnterLevelAck() override;
+  explicit PROTOBUF_CONSTEXPR EnterLevelAck(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  EnterLevelAck(const EnterLevelAck& from);
+  EnterLevelAck(EnterLevelAck&& from) noexcept
+    : EnterLevelAck() {
+    *this = ::std::move(from);
+  }
+
+  inline EnterLevelAck& operator=(const EnterLevelAck& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline EnterLevelAck& operator=(EnterLevelAck&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const EnterLevelAck& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const EnterLevelAck* internal_default_instance() {
+    return reinterpret_cast<const EnterLevelAck*>(
+               &_EnterLevelAck_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    7;
+
+  friend void swap(EnterLevelAck& a, EnterLevelAck& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(EnterLevelAck* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(EnterLevelAck* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  EnterLevelAck* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<EnterLevelAck>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const EnterLevelAck& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const EnterLevelAck& from) {
+    EnterLevelAck::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(EnterLevelAck* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "idlepb.EnterLevelAck";
+  }
+  protected:
+  explicit EnterLevelAck(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kOkFieldNumber = 1,
+  };
+  // bool ok = 1;
+  void clear_ok();
+  bool ok() const;
+  void set_ok(bool value);
+  private:
+  bool _internal_ok() const;
+  void _internal_set_ok(bool value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:idlepb.EnterLevelAck)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    bool ok_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_game_2eproto;
+};
 // ===================================================================
 
 
@@ -1483,9 +1758,41 @@ inline void LoginGameAck::set_is_relogin(bool value) {
   // @@protoc_insertion_point(field_set:idlepb.LoginGameAck.is_relogin)
 }
 
+// -------------------------------------------------------------------
+
+// EnterLevelReq
+
+// -------------------------------------------------------------------
+
+// EnterLevelAck
+
+// bool ok = 1;
+inline void EnterLevelAck::clear_ok() {
+  _impl_.ok_ = false;
+}
+inline bool EnterLevelAck::_internal_ok() const {
+  return _impl_.ok_;
+}
+inline bool EnterLevelAck::ok() const {
+  // @@protoc_insertion_point(field_get:idlepb.EnterLevelAck.ok)
+  return _internal_ok();
+}
+inline void EnterLevelAck::_internal_set_ok(bool value) {
+  
+  _impl_.ok_ = value;
+}
+inline void EnterLevelAck::set_ok(bool value) {
+  _internal_set_ok(value);
+  // @@protoc_insertion_point(field_set:idlepb.EnterLevelAck.ok)
+}
+
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------

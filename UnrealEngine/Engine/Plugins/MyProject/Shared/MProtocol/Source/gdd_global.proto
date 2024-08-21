@@ -20,4 +20,10 @@ message GameServicesConfig {
 	string redis_password = 5;
 }
 
+
+message GameClientConfig {
+	string server_ip = 1;
+	int32 server_port = 2;
+}
+
 // ============================================================================

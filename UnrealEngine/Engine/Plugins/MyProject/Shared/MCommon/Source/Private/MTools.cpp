@@ -44,3 +44,26 @@ void FMyTools::ToString(const FString& In, std::string* Out)
 {
 	*Out = TCHAR_TO_UTF8(*In);
 }
+
+void FMyTools::ToFString(const std::string& In, FString* Out)
+{
+	*Out = UTF8_TO_TCHAR(In.c_str());
+}
+
+bool FMyTools::IsPureAlphabetString(const FString& InStr)
+{
+	for (int32 Idx = 0; Idx < InStr.Len(); ++Idx)
+	{
+		const TCHAR C = InStr[Idx];
+		if (C >= TEXT('A') && C <= TEXT('Z'))
+			continue;
+		if (C >= TEXT('a') && C <= TEXT('z'))
+			continue;
+		if (C >= TEXT('0') && C <= TEXT('9'))
+			continue;
+		if (C == TEXT('_')) 
+			continue;
+		return false;
+	}
+	return true;
+}

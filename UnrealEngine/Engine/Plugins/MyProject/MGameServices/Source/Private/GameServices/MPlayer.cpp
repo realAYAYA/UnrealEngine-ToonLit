@@ -108,3 +108,8 @@ void FMPlayer::MarkNeedSave(bool bImmediately)
 {
 }
 
+bool FMPlayer::IsRecycle() const
+{
+	return false;
+}
+

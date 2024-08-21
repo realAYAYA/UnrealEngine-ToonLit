@@ -213,3 +213,54 @@ struct MPROTOCOL_API FPbLoginGameAck
     bool operator!=(const FPbLoginGameAck& Right) const;
      
 };
+
+namespace idlepb {
+class EnterLevelReq;
+}  // namespace idlepb
+
+/**
+ * 进入
+*/
+USTRUCT(BlueprintType)
+struct MPROTOCOL_API FPbEnterLevelReq
+{
+    GENERATED_BODY();
+
+
+    FPbEnterLevelReq();
+    FPbEnterLevelReq(const idlepb::EnterLevelReq& Right);
+    void FromPb(const idlepb::EnterLevelReq& Right);
+    void ToPb(idlepb::EnterLevelReq* Out) const;
+    void Reset();
+    void operator=(const idlepb::EnterLevelReq& Right);
+    bool operator==(const FPbEnterLevelReq& Right) const;
+    bool operator!=(const FPbEnterLevelReq& Right) const;
+     
+};
+
+namespace idlepb {
+class EnterLevelAck;
+}  // namespace idlepb
+
+/**
+*/
+USTRUCT(BlueprintType)
+struct MPROTOCOL_API FPbEnterLevelAck
+{
+    GENERATED_BODY();
+
+    /**  */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MProtocol")
+    bool ok;
+
+
+    FPbEnterLevelAck();
+    FPbEnterLevelAck(const idlepb::EnterLevelAck& Right);
+    void FromPb(const idlepb::EnterLevelAck& Right);
+    void ToPb(idlepb::EnterLevelAck* Out) const;
+    void Reset();
+    void operator=(const idlepb::EnterLevelAck& Right);
+    bool operator==(const FPbEnterLevelAck& Right) const;
+    bool operator!=(const FPbEnterLevelAck& Right) const;
+     
+};

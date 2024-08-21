@@ -36,7 +36,7 @@ public:
 	FString Account;
 	uint64 UserId = 0;
 	
-	TSharedPtr<FMPlayer> Player;
+	FMPlayer* Player;
 };
 
 typedef TSharedPtr<FMGameSession> FMGameSessionPtr;

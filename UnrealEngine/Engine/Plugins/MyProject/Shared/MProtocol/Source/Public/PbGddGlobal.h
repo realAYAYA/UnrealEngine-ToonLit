@@ -74,3 +74,34 @@ struct MPROTOCOL_API FPbGameServicesConfig
     bool operator!=(const FPbGameServicesConfig& Right) const;
      
 };
+
+namespace idlepb {
+class GameClientConfig;
+}  // namespace idlepb
+
+/**
+*/
+USTRUCT(BlueprintType)
+struct MPROTOCOL_API FPbGameClientConfig
+{
+    GENERATED_BODY();
+
+    /**  */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MProtocol")
+    FString server_ip;
+
+    /**  */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="MProtocol")
+    int32 server_port;
+
+
+    FPbGameClientConfig();
+    FPbGameClientConfig(const idlepb::GameClientConfig& Right);
+    void FromPb(const idlepb::GameClientConfig& Right);
+    void ToPb(idlepb::GameClientConfig* Out) const;
+    void Reset();
+    void operator=(const idlepb::GameClientConfig& Right);
+    bool operator==(const FPbGameClientConfig& Right) const;
+    bool operator!=(const FPbGameClientConfig& Right) const;
+     
+};

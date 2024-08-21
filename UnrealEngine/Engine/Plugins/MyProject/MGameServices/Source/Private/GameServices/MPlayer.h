@@ -37,6 +37,8 @@ public:
 	void Save();
 
 	void MarkNeedSave(bool bImmediately = false);
+
+	bool IsRecycle() const;
 	
 private:
 	

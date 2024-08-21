@@ -11,88 +11,127 @@
 #endif
 #define M_MODULAR_NAME Login
 
+M_PB_MESSAGE_HANDLE(idlepb::Ping, InSession, InMessage)
+{
+}
+
+M_PB_MESSAGE_HANDLE(idlepb::Pong, InSession, InMessage)
+{
+	
+}
+
 M_PB_RPC_HANDLE(GameRpc, LoginGame, InSession, Req, Ack)
 {
-	/*{
-		// Todo 检查版本
-		//Req.ClientVersion;
-	}
-	
-	UMPlayer* Player = InSession->Player;
+	Ack->set_ret(idlepb::LoginGameRetCode_Unknown);
 
-	Ack.Ret = ELoginGameRetCode::UnKnow;
-	
-	// 重复请求登录，如果是新Session，下文还会进行顶号判定
+	FString NewAccount;
+	FMyTools::ToFString(Req->account(), &NewAccount);
+	FString ClientVersion;
+	FMyTools::ToFString(Req->client_version(), &ClientVersion);
+
+	const uint64 ConnId = InSession->ConnId;
+	FString& ConnAccount = InSession->Account;
+	uint64& PlayerId = InSession->UserId;
+
+	FMPlayer*& Player = InSession->Player;
 	if (Player)
 	{
+		// Todo 重复登录处理
+		Ack->set_ret(idlepb::LoginGameRetCode_DuplicateLogin);
 		return;
 	}
 
-	const int32 AccountLen = Req.Account.Len();  
-	if (AccountLen < 1 || AccountLen > 20)
+	// 检查账号
 	{
-		UE_LOG(LogMGameServer, Warning, TEXT("LoginGame失败, 用户名 %s 长度非法"), *Req.Account);
-		return;
-	}
-
-	uint64 PlayerID = 0;
-	if (!IsPureAlphabetString(Req.Account))
-	{
-		UE_LOG(LogMGameServer, Warning, TEXT("LoginGame失败, 用户名 %s 含有非法字符"), *Req.Account);
-		return;
-	}
-
-	if (!FRedisOp::GetAccountInfo(Req.Account, &PlayerID))
-	{
-		UE_LOG(LogMGameServer, Warning, TEXT("LoginGame失败, 获取ID失败 Account = %s"), *Req.Account)
-		return;
-	}
-
-	// 无此玩家，进入建新号流程
-	if (PlayerID == 0)
-	{
-		PlayerID = GenerateUID(Req.Account);
-		if (!FRedisOp::SetAccountInfo(Req.Account, PlayerID))
+		const int32 AccountLen = NewAccount.Len();  
+		if (AccountLen < 3 || AccountLen > 20)
 		{
-			UE_LOG(LogMGameServer, Display, TEXT("OnCreateCharacter 错误,报错ID失败 Account=%s UserId=%llu"), *Req.Account, PlayerID);
+			UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败,账号长度非法 ConnId=%llu Account=%s"), ConnId, *NewAccount);
+			Ack->set_ret(idlepb::LoginGameRetCode_AccountInvalid);
 			return;
 		}
+		if (!FMyTools::IsPureAlphabetString(NewAccount))
+		{
+			UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败,账号有非法字符 ConnId=%llu Account=%s"), ConnId, *NewAccount);
+			Ack->set_ret(idlepb::LoginGameRetCode_AccountInvalid);
+			return;
+		}
+
+		// Todo 密码错误
 	}
 
-	Player = UMPlayerManager::Get()->GetByPlayerID(PlayerID);
+	// Todo 版本检查
+	{
+		
+	}
+
+	ConnAccount = NewAccount;  // 更新 Session 上记录的帐号
+
+	uint64 TempPlayerId = 0;
+	if (!FRedisOp::GetAccountInfo(ConnAccount, &TempPlayerId))
+	{
+		UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败,获取ID失败 ConnId=%llu Account=%s"), ConnId, *ConnAccount);
+		return;
+	}
+	if (TempPlayerId == 0)
+	{
+		TempPlayerId = FFnv::MemFnv64(Req->account().c_str(), Req->account().size());
+	}
+
+	PlayerId = TempPlayerId;
+
+	Player = FMPlayerManager::Get()->GetByPlayerId(PlayerId);
 	if (Player)
 	{
-		if (Player->GetSession())
+		// 服务器角色还未销毁
+		if (Player->IsRecycle())
 		{
-			UE_LOG(LogMGameServer, Warning, TEXT("LoginGame失败, ConnID = %s Account = %s PlayerID = %llu 角色已经在线"), *InSession->ID.ToString(), *Req.Account, PlayerID);
-
-			Ack.Ret = ELoginGameRetCode::DuplicateLogin;// Todo 当前不允许顶号
+			UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败,错误的Role实例 ConnId=%llu Account=%s PlayerId=%llu"), ConnId, *ConnAccount, PlayerId);
+			Ack->set_ret(idlepb::LoginGameRetCode_Unknown);
 			Player = nullptr;
 			return;
 		}
+		
+		if (Player->GetSession())
+		{
+			UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败,玩家已在线 ConnId=%llu Account=%s PlayerId=%llu"), ConnId, *ConnAccount, PlayerId);
+			Ack->set_ret(idlepb::LoginGameRetCode_DuplicateLogin);
+			Player = nullptr;
+			return;
+		}
+
+		Player->Online(InSession);
+		Ack->set_is_relogin(true);
 	}
 	else
 	{
-		Player = UMPlayerManager::Get()->CreatePlayer(PlayerID, Req.Account);
+		Player = FMPlayerManager::Get()->CreatePlayer(PlayerId, ConnAccount);
 		if (Player)
 		{
 			if (!Player->Load())
 			{
-				UMPlayerManager::Get()->DeletePlayer(Player);
-				Player = nullptr;
-				UE_LOG(LogMGameServer, Warning, TEXT("LoginGame失败, ConnID = %s Account = %s PlayerID = %llu 读档错误"), *InSession->ID.ToString(), *Req.Account, PlayerID);
+				UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败,读档错误 ConnId=%llu Account=%s PlayerId=%llu"), ConnId, *ConnAccount, PlayerId);
 			}
+
+			Player->Online(InSession);
 		}
 	}
 
-	if (Player)
+	if (!Player)
 	{
-		Player->Online(InSession);
-		
-		Ack.Ret = ELoginGameRetCode::Ok;
-		Ack.PlayerID = Player->GetPlayerID();
-		Player->Fill(Ack.RolePreviewData);// 准备预览数据
-	}*/
+		UE_LOG(LogMGameServices, Warning, TEXT("OnLoginGameReq 失败, Player创建失败 ConnId=%llu Account=%s PlayerId=%llu"), ConnId, *ConnAccount, PlayerId);
+		Ack->set_ret(idlepb::LoginGameRetCode_Unknown);
+	}
+	else
+	{
+		//Role->FillRoleData(Rsp->mutable_role_data());  // 玩家主数据
+		Ack->set_ret(idlepb::LoginGameRetCode_Ok);
+	}
+}
+
+M_PB_RPC_HANDLE(GameRpc, EnterLevel, InSession, Req, Ack)
+{
+	
 }
 
 /*// 登出账号

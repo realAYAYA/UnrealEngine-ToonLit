@@ -106,3 +106,50 @@ bool FPbGameServicesConfig::operator!=(const FPbGameServicesConfig& Right) const
 {
     return !operator==(Right);
 }
+
+FPbGameClientConfig::FPbGameClientConfig()
+{
+    Reset();        
+}
+
+FPbGameClientConfig::FPbGameClientConfig(const idlepb::GameClientConfig& Right)
+{
+    this->FromPb(Right);
+}
+
+void FPbGameClientConfig::FromPb(const idlepb::GameClientConfig& Right)
+{
+    server_ip = UTF8_TO_TCHAR(Right.server_ip().c_str());
+    server_port = Right.server_port();
+}
+
+void FPbGameClientConfig::ToPb(idlepb::GameClientConfig* Out) const
+{
+    Out->set_server_ip(TCHAR_TO_UTF8(*server_ip));
+    Out->set_server_port(server_port);    
+}
+
+void FPbGameClientConfig::Reset()
+{
+    server_ip = FString();
+    server_port = int32();    
+}
+
+void FPbGameClientConfig::operator=(const idlepb::GameClientConfig& Right)
+{
+    this->FromPb(Right);
+}
+
+bool FPbGameClientConfig::operator==(const FPbGameClientConfig& Right) const
+{
+    if (this->server_ip != Right.server_ip)
+        return false;
+    if (this->server_port != Right.server_port)
+        return false;
+    return true;
+}
+
+bool FPbGameClientConfig::operator!=(const FPbGameClientConfig& Right) const
+{
+    return !operator==(Right);
+}

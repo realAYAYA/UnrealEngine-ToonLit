@@ -28,5 +28,14 @@ public:
     typedef TFunction<void(FPbMessageSupportBase*, const FPbLoginGameReqPtr&, const FPbLoginGameRspPtr&)> FPbLoginGameCallback;
     static void LoginGameRegister(FMRpcManager* InManager, const FPbLoginGameCallback& InCallback);
     
+    /**
+     * 进入关卡
+    */
+    static constexpr uint64 EnterLevel = 0x3871c2e6f4dbfe95LL; 
+    typedef TSharedPtr<idlepb::EnterLevelReq> FPbEnterLevelReqPtr;
+    typedef TSharedPtr<idlepb::EnterLevelAck> FPbEnterLevelRspPtr;
+    typedef TFunction<void(FPbMessageSupportBase*, const FPbEnterLevelReqPtr&, const FPbEnterLevelRspPtr&)> FPbEnterLevelCallback;
+    static void EnterLevelRegister(FMRpcManager* InManager, const FPbEnterLevelCallback& InCallback);
+    
 
 };

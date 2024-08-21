@@ -12,13 +12,19 @@ public:
 	
 	virtual ~FMPlayerManager();
 
+	static FMPlayerManager* Get()
+	{
+		static FMPlayerManager Single;
+		return &Single;
+	}
+
 	void Init();
 	void Shutdown();
 	void Cleanup();
 
 	void Tick(float DeltaTime);
 
-	FMPlayer* GetByPlayerID(const uint64 Id);
+	FMPlayer* GetByPlayerId(const uint64 Id);
 
 	FMPlayer* CreatePlayer(const uint64 InPlayerId, const FString& InAccount);
 	void DeletePlayer(FMPlayer* InPlayer);
@@ -30,15 +36,11 @@ public:
 
 private:
 
-	bool AddPlayer(FMPlayer* InPlayer);
+	bool AddPlayer(TSharedPtr<FMPlayer> InPlayer);
 	
 	void ProcessJunk();
-
-	TArray<FMPlayer*> AllEntities;
-
-	TMap<uint64, FMPlayer*> IndexEntities;
-
-	TArray<FMPlayer*> Junks;  // 负责持有待删除的指针
+	
+	TMap<uint64, TSharedPtr<FMPlayer>> IndexEntities;
 
 	FDateTime LastProcessTime;
 };

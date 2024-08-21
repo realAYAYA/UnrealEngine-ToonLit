@@ -13,6 +13,8 @@ public:
 	static FString GetProjectVersion();// 获取项目版本号
 
 	static void ToString(const FString& In, std::string* Out);
+	static void ToFString(const std::string& In, FString* Out);
+	static bool IsPureAlphabetString(const FString& InStr);// 字符串是否只由字母、数字和下划线组成
 
 	static int64 GeneratePbMessageTypeId(const ::google::protobuf::Message* Pb)
 	{

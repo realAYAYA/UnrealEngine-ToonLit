@@ -2,9 +2,12 @@
 
 #include "MGameServerPrivate.h"
 
+#include "GameTables.h"
+#include "GameTablesModule.h"
+
 DEFINE_LOG_CATEGORY(LogMGameServices);
 
-#define LOCTEXT_NAMESPACE "FZGameServiceModule"
+#define LOCTEXT_NAMESPACE "FMGameServicesModule"
 
 IMPLEMENT_MODULE(FMGameServicesModule, MGameServices);
 
@@ -47,8 +50,8 @@ void FMGameServicesModule::Start()
 		TickDelegateHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FMGameServicesModule::Tick), 0.030);
 	}
 
-	FString ListenIp;//FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.ListenIp;
-	int32 ListenPort = 0;//FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.ListenPort;
+	//FString ListenIp = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.listen_ip;
+	const int32 ListenPort = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.port;
 
 	NetServer = MakeShared<FPbTcpServer>();
 	NetServer->SetPackageCallback([this](const FPbConnectionPtr& Conn, uint64 Code, const FMyDataBufferPtr& Message)
@@ -84,9 +87,9 @@ void FMGameServicesModule::Start()
 		return;
 	}
 
-	FString RedisIp;//= FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.RedisIp;
-	int32 RedisPort = 0;// = FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.RedisPort;
-	FString RedisPassword;// = FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.RedisPassword;
+	const FString RedisIp = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.redis_ip;
+	const int32 RedisPort = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.redis_port;
+	const FString RedisPassword = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.redis_password;
 	RedisClient = MakeUnique<FRedisClient>();
 	Ret = RedisClient->ConnectToRedis(RedisIp, RedisPort, RedisPassword);
 	if (!Ret)
@@ -148,9 +151,9 @@ bool FMGameServicesModule::Tick(float)
 		{
 			if (!RedisClient->ExecCommand("PING"))
 			{
-				FString RedisIp;// = FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.RedisIp;
-				int32 RedisPort = 0;// = FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.RedisPort;
-				FString RedisPassword;// = FZGameTablesModule::Get().GetGameTables()->GameServiceConfig.RedisPassword;
+				const FString RedisIp = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.redis_ip;
+				const int32 RedisPort = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.redis_port;
+				const FString RedisPassword = FGameTablesModule::Get().GetGameTables()->GameServicesConfig.redis_password;
 				RedisClient->ConnectToRedis(RedisIp, RedisPort, RedisPassword);
 			}
 		}

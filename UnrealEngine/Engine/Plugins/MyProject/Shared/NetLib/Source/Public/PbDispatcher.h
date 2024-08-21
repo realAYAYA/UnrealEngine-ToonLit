@@ -164,9 +164,9 @@ private:
 #define PB_MESSAGE_HANDLE_REGISTRANT_VAR_NAME PREPROCESSOR_JOIN(_PBVAR_,PREPROCESSOR_JOIN(PB_MODULE_NAME,PREPROCESSOR_JOIN(_,__LINE__)))
 
 #define PB_MESSAGE_HANDLE(SessionType, PbType, SessionVar, MessageVar) \
-    struct PB_MESSAGE_HANDLE_REGISTRANT_TYPENAME \
+    struct PB_MESSAGE_HANDLE_REGISTRANT_TYPE_NAME \
     { \
-        PB_MESSAGE_HANDLE_REGISTRANT_TYPENAME() \
+        PB_MESSAGE_HANDLE_REGISTRANT_TYPE_NAME() \
         { \
             SessionType::GetMessageDispatcher().Reg<PbType>([this](FPbMessageSupportBase* InSession, const TSharedPtr<PbType>& InMessage) \
             { \
@@ -176,8 +176,8 @@ private:
         } \
         void Handle(SessionType*, const TSharedPtr<PbType>&); \
     };    \
-    static PB_MESSAGE_HANDLE_REGISTRANT_TYPENAME PB_MESSAGE_HANDLE_REGISTRANT_VARNAME; \
-    void PB_MESSAGE_HANDLE_REGISTRANT_TYPENAME::Handle(SessionType* SessionVar, const TSharedPtr<PbType>& MessageVar)
+    static PB_MESSAGE_HANDLE_REGISTRANT_TYPE_NAME PB_MESSAGE_HANDLE_REGISTRANT_VAR_NAME; \
+    void PB_MESSAGE_HANDLE_REGISTRANT_TYPE_NAME::Handle(SessionType* SessionVar, const TSharedPtr<PbType>& MessageVar)
 
 #define PB_RPC_HANDLE(SessionType, RpcInterfaceName, RpcMethodName, GameSessionVar, ReqVar, RspVar) \
 	struct PREPROCESSOR_JOIN(FPbRpc_,PREPROCESSOR_JOIN(RpcInterfaceName,RpcMethodName)) \

@@ -5,6 +5,7 @@
 
 FMGameSession::FMGameSession(const FPbConnectionPtr& InConn): ConnId(InConn->GetId()), Connection(InConn)
 {
+	Player = nullptr;
 }
 
 FMGameSession::~FMGameSession()

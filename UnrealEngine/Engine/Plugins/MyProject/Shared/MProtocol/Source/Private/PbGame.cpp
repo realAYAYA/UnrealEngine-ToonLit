@@ -293,3 +293,82 @@ bool FPbLoginGameAck::operator!=(const FPbLoginGameAck& Right) const
 {
     return !operator==(Right);
 }
+
+FPbEnterLevelReq::FPbEnterLevelReq()
+{
+    Reset();        
+}
+
+FPbEnterLevelReq::FPbEnterLevelReq(const idlepb::EnterLevelReq& Right)
+{
+    this->FromPb(Right);
+}
+
+void FPbEnterLevelReq::FromPb(const idlepb::EnterLevelReq& Right)
+{
+}
+
+void FPbEnterLevelReq::ToPb(idlepb::EnterLevelReq* Out) const
+{    
+}
+
+void FPbEnterLevelReq::Reset()
+{    
+}
+
+void FPbEnterLevelReq::operator=(const idlepb::EnterLevelReq& Right)
+{
+    this->FromPb(Right);
+}
+
+bool FPbEnterLevelReq::operator==(const FPbEnterLevelReq& Right) const
+{
+    return true;
+}
+
+bool FPbEnterLevelReq::operator!=(const FPbEnterLevelReq& Right) const
+{
+    return !operator==(Right);
+}
+
+FPbEnterLevelAck::FPbEnterLevelAck()
+{
+    Reset();        
+}
+
+FPbEnterLevelAck::FPbEnterLevelAck(const idlepb::EnterLevelAck& Right)
+{
+    this->FromPb(Right);
+}
+
+void FPbEnterLevelAck::FromPb(const idlepb::EnterLevelAck& Right)
+{
+    ok = Right.ok();
+}
+
+void FPbEnterLevelAck::ToPb(idlepb::EnterLevelAck* Out) const
+{
+    Out->set_ok(ok);    
+}
+
+void FPbEnterLevelAck::Reset()
+{
+    ok = bool();    
+}
+
+void FPbEnterLevelAck::operator=(const idlepb::EnterLevelAck& Right)
+{
+    this->FromPb(Right);
+}
+
+bool FPbEnterLevelAck::operator==(const FPbEnterLevelAck& Right) const
+{
+    if (this->ok != Right.ok)
+        return false;
+    return true;
+}
+
+bool FPbEnterLevelAck::operator!=(const FPbEnterLevelAck& Right) const
+{
+    return !operator==(Right);
+}
