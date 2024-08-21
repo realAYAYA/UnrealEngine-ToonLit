@@ -89,3 +89,5 @@ Plugins/*/*/Intermediate/*
 Plugins/*/*/*/Binaries/*
 Plugins/*/*/*/Intermediate/*
 *.DS_Store
+!*.xlsx
+!Content/*
