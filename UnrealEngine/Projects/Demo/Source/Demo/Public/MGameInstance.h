@@ -3,10 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "Engine/GameInstance.h"
 #include "MGameInstance.generated.h"
 
+class UGameTables;
 class UMGameSession;
+
 /**
  * 
  */
@@ -20,7 +23,10 @@ public:
 
 	virtual void Init() override;
 
-	UFUNCTION(BlueprintCallable, Category = "ProjectM")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ProjectM")
 	UMGameSession* GetMGameSession();
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ProjectM")
+	UGameTables* GetGameTables();
 };
 

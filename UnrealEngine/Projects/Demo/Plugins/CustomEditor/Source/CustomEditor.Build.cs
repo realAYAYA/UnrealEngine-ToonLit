@@ -1,10 +1,10 @@
-// Some copyright should be here...
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
-public class MGameServices : ModuleRules
+public class CustomEditor : ModuleRules
 {
-	public MGameServices(ReadOnlyTargetRules Target) : base(Target)
+	public CustomEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
@@ -26,9 +26,7 @@ public class MGameServices : ModuleRules
 			new string[]
 			{
 				"Core",
-				
 				// ... add other public dependencies that you statically link with here ...
-				"NetLib"
 			}
 			);
 			
@@ -36,16 +34,22 @@ public class MGameServices : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"Projects",
+				"InputCore",
+				"EditorFramework",
+				"UnrealEd",
+				"ToolMenus",
 				"CoreUObject",
 				"Engine",
-				// ... add private dependencies that you statically link with here ...	
+				"Slate",
+				"SlateCore", 
 				
-				"ZRedisClient",
-				"MRpc",
-				"MProtocol",
-				"ZProtobuf",
-				"MCommon",
-				"GameTables"
+				"UMG",
+				
+				"GameTables", 
+				"MGameServices", 
+				//"DeclarationGenerator",
+				// ... add private dependencies that you statically link with here ...	
 			}
 			);
 		

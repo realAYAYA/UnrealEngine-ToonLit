@@ -1,16 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
-#include "Modules/ModuleManager.h"
+#include "GameServicesModuleInterface.h"
 
-#include "MGameSession.h"
-
-#include "RedisClient.h"
 #include "MyTcpServer.h"
+#include "MGameSession.h"
+#include "RedisClient.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogMGameServices, Log, All);
 
-class MGAMESERVICES_API FMGameServicesModule : public IModuleInterface
+class MGAMESERVICES_API FMGameServicesModule : public IGameServicesModule
 {
 	
 public:
@@ -22,9 +21,9 @@ public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 	
-	void Start();
-	void Shutdown();
-	bool IsRunning() const;
+	virtual void Start() override;
+	virtual void Shutdown() override;
+	virtual bool IsRunning() const override;
 
 	void HandleCorePreExit() { Shutdown(); }
 

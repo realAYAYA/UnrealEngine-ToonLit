@@ -7,6 +7,9 @@
 
 class UPbGameRpcStub;
 
+DECLARE_DYNAMIC_DELEGATE_OneParam(FOnMGameSessionReqResult, int32, ErrorCode);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnMGameSessionNotify);
+
 UCLASS(BlueprintType)
 class UMGameSession: public UObject, public FMyTcpClient
 {
@@ -17,22 +20,28 @@ public:
 
 	UMGameSession();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MGameClient")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ProjectM")
 	FString Url;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MGameClient")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ProjectM")
 	FString Protocol;
 
-	UPROPERTY(BlueprintReadOnly, Category = "MGameClient")
+	UPROPERTY(BlueprintReadOnly, Category = "ProjectM")
 	UPbGameRpcStub* Stub;
 
-	UFUNCTION(BlueprintCallable, Category = "MGameClient")
-	bool K2_Connect(const FString& ServerURL, const FString& ServerProtocol);
+	UPROPERTY()
+	FOnMGameSessionReqResult OnConnectCallback;
+	
+	UPROPERTY(BlueprintAssignable, Category = "ProjectM")
+	FOnMGameSessionNotify OnDisconnect;
+	
+	UFUNCTION(BlueprintCallable, Category = "ProjectM")
+	bool K2_Connect(FOnMGameSessionReqResult Callback);
 
-	UFUNCTION(BlueprintCallable, Category = "MGameClient")
+	UFUNCTION(BlueprintCallable, Category = "ProjectM")
 	void K2_Disconnect();
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MGameClient")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ProjectM")
 	bool K2_IsConnected() const;
 	
 	virtual void OnConnected() override;
@@ -47,4 +56,5 @@ private:
 	virtual void OnMessage(uint64 InPbTypeId, const FMyDataBufferPtr& InPackage) override;
 
 	FPbConnectionPtr Connection;
+	
 };

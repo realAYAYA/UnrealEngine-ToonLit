@@ -11,7 +11,7 @@ bool FMyTcpClient::Connect(const FString& ServerURL, const FString& ServerProtoc
 		return false;
 	}
 
-	auto Ptr = MakeShared<FPbConnection>(0);
+	const auto Ptr = MakeShared<FPbConnection>(0);
 	const auto SocketPtr = MakeShared<FMySocketClientSide>();
 	SocketPtr->Url = ServerURL;
 	SocketPtr->Protocol = ServerProtocol;

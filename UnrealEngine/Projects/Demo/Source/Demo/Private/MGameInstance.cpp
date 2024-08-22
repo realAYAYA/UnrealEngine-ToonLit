@@ -2,6 +2,7 @@
 
 
 #include "MGameInstance.h"
+#include "GameTablesModule.h"
 
 void UMGameInstance::Init()
 {
@@ -9,8 +10,12 @@ void UMGameInstance::Init()
 	
 }
 
-
 UMGameSession* UMGameInstance::GetMGameSession()
 {
 	return nullptr;
+}
+
+UGameTables* UMGameInstance::GetGameTables()
+{
+	return FGameTablesModule::Get().GetGameTables();
 }
