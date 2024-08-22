@@ -7,11 +7,11 @@
 
 DEFINE_LOG_CATEGORY(LogMGameServices);
 
-#define LOCTEXT_NAMESPACE "FMGameServicesModule"
+//#define LOCTEXT_NAMESPACE "FMGameServicesModule"
 
-IMPLEMENT_MODULE(FMGameServicesModule, MGameServices);
+//#undef LOCTEXT_NAMESPACE
 
-#undef LOCTEXT_NAMESPACE
+
 
 FMGameServicesModule* GGameServicesModule = nullptr;
 
@@ -220,3 +220,6 @@ void FMGameServicesModule::OnWeeklyRefresh()
 {
 	// Todo 周刷新
 }
+
+
+IMPLEMENT_MODULE(FMGameServicesModule, MGameServices);

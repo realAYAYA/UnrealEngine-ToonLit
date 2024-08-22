@@ -40,6 +40,10 @@
 			"Enabled":true
 		},
 		{
+			"Name":"ZRedisClient",
+			"Enabled":true
+		},
+		{
 			"Name":"ZProtobuf",
 			"Enabled":true
 		}

@@ -3,6 +3,7 @@
 
 #include "MGameInstance.h"
 #include "GameTablesModule.h"
+#include "Demo/Net/MGameClient.h"
 
 void UMGameInstance::Init()
 {
@@ -12,7 +13,10 @@ void UMGameInstance::Init()
 
 UMGameSession* UMGameInstance::GetMGameSession()
 {
-	return nullptr;
+	if (!GameSession)
+		GameSession = NewObject<UMGameSession>();
+	
+	return GameSession;
 }
 
 UGameTables* UMGameInstance::GetGameTables()

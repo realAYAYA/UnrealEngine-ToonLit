@@ -1,4 +1,4 @@
-﻿#define LOCTEXT_NAMESPACE "FNetLib"
+﻿#define LOCTEXT_NAMESPACE "FNetLibModule"
 
 class FNetLibModule : public IModuleInterface
 {

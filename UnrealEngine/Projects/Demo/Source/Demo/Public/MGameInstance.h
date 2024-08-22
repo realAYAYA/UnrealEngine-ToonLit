@@ -28,5 +28,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ProjectM")
 	UGameTables* GetGameTables();
+
+
+private:
+
+	UPROPERTY()
+	UMGameSession* GameSession;
 };
 
