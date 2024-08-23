@@ -1,0 +1,177 @@
+{
+	"MaxChatMessageNum": 200,
+	"___": "最大聊天记录缓存数（每个频道）",
+	"ShareItemExpireTime": 604800,
+	"___": "道具共享有效时间(单位：秒)",
+	"PlayerStateCoeff":{
+		"MaxDodge": 0.75,
+		"___": "闪避率上限",
+		"DefaultDodge": 0.048,
+		"___": "闪避率默认",
+		"MinDodge": 0.01,
+		"___": "闪避率下限",
+		"MaxCritical": 0.5,
+		"___": "会心率上限",
+		"DefaultCritical": 0.057,
+		"___": "会心率默认",
+		"MinCritical": 0.01,
+		"___": "会心率下限",
+		"MinCriticalcoeff": 1.5,
+		"___": "最低会心倍率",
+		"MaxBreak": 0.5,
+		"___": "破防减免上限",		
+		"BlockActiveRate": 0.3,
+		"___": "格挡触发概率",	
+		"MaxBlockReduce": 0.5,
+		"___": "格挡减免上限",	
+		"EachBreakReduce": 0.001,
+		"___": "破防单点减免",	
+		"EachBlockReduce": 0.001,
+		"___": "格挡单点减免"																	
+	},
+	"Leaderboard": {
+		"EnterRank": 6,
+		"___": "玩家实际进榜等级要求",
+		"ShowRank": 11,
+		"___": "功能入口出现等级要求",
+		"UnlockRank": 13,
+		"___": "功能解锁等级要求",
+		"MaxListNum": 100,
+		"___": "排行榜最大人数显示",
+		"MaxListSortNum": 10000,
+		"___": "排行榜最大实际参与排序人数",
+		"MaxClickLikeNum": 3,
+		"___": "每日点赞次数上限",
+		"ItemID": 20106,
+		"___": "点赞奖励道具ID",
+		"MinItemNum": 100,
+		"___": "点赞奖励道具数量下限",
+		"MaxItemNum": 200,
+		"___": "点赞奖励道具数量阈值"
+	},
+	"ShanHeTu": {
+        "EmptyBlockProgress": 0.005,
+        "___": "空地块进度",
+        "RowCoeffLeft": 0.4,
+        "___": "行系数左",
+        "RowCoeffRight": 0.8,
+        "___": "行系数右",
+        "ColumnMax": 3,
+        "___": "列最大值",
+        "ColumnMin": 1,
+        "___": "列最小值",
+		"ExploreLimit": 5,
+        "___": "批量探索单次上限",
+		"ExploreQ2Rank": 10,
+        "___": "绿色品质批量探索境界限制(Rank)",
+		"ExploreQ3Rank": 10,
+        "___": "蓝色品质批量探索境界限制(Rank)",
+		"ExploreQ4Rank": 10,
+        "___": "紫色色品质批量探索境界限制(Rank)",
+		"ExploreQ5Rank": 10,
+        "___": "橙色品质批量探索境界限制(Rank)",
+		"ExploreQ6Rank": 20,
+        "___": "红色品质批量探索境界限制(Rank)"
+	},
+	
+	"EquipmentJiLian": {
+	
+		"SkillEquipCombatPowerValueByJiLian": 0.015,
+		
+		"___": "法宝祭炼战力提升系数"
+		
+	},
+	
+	"EquipmentQiWen": {
+	
+		"QiWenNumByDegree": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3 ,3],
+		
+		"___": "根据Degree判断可解锁的器纹数量",
+		
+		
+		"QiWenUnlockGrade": [20, 40, 80],
+		
+		"___": "器纹解锁的祭炼等级",
+		
+		"GetExpByQ3Equipment": [1, 3, 10, 33, 100],
+		
+		"___": "消耗蓝色品质装备产提供的经验值",
+		
+		"GetExpByQ4Equipment": [5, 15, 50, 165, 500],
+		
+		"___": "消耗紫色品质装备产提供的经验值",
+		
+		"GetExpBySpecialItem": [1, 10, 100, 1000, 10000],
+		
+		"___": "消耗器灵或器纹晶石提供的经验值",
+		
+		"CostMoneyByEquipment": 80,
+		
+		"___": "消耗装备所需灵石数量(每1点经验)",
+		
+		"CostMoneyBySpecialItem": 540,
+		
+		"___": "消耗材料所需灵石数量(每1点经验)",
+		
+		"SkillEquipCombatPowerValueByQiWenUnlock": 0.26,
+		
+		"___": "法宝器纹激活战力提升系数",
+		
+		"SkillEquipCombatPowerValueByQiWenUpgrade": 0.052,
+		
+		"___": "法宝器纹升级战力提升系数",
+		
+		"SkillEquipCombatPowerValueByQiWenExtra": 0.208,
+		
+		"___": "法宝器纹额外属性战力提升系数",
+		
+		
+		"QiWenMaxGradeByDegree": [2, 4, 6, 8, 8],
+		
+		
+		"___": "不同器纹品阶对应最大等级"
+		
+	},
+	
+	
+	
+	"EquipmentJingLian": {
+
+	
+
+		"SkillEquipCombatPowerValueByJingLian": 0.15,
+
+		
+
+		"___": "法宝精炼战力提升系数"
+
+		
+
+	},
+	
+	"SeptLandNightProtection": {
+		"ProtectionStartHourOfDay" : 0,
+		"___": "夜间保护开启时间，夜间12点",
+		"ProtectionEndHourOfDay" : 8,
+		"___": "夜间保护关闭时间，早上8点",
+		"SafeTimeIncreaseRate" : 3.0,
+		"___": "夜间保护伤害增加倍率"
+	},
+	
+	"FuZeng": {
+		"FuZengInfo": [
+			{ "FuZengType": 1, "FuZengName": "战力", "FunctionModuleType": 0 },
+			{ "FuZengType": 2, "FuZengName": "镇妖塔", "FunctionModuleType": 7 },
+			{ "FuZengType": 3, "FuZengName": "神通", "FunctionModuleType": 9 },
+			{ "FuZengType": 4, "FuZengName": "秘药", "FunctionModuleType": 8 },
+			{ "FuZengType": 5, "FuZengName": "功法", "FunctionModuleType": 11 },
+			{ "FuZengType": 6, "FuZengName": "古宝收集", "FunctionModuleType": 10 },
+			{ "FuZengType": 7, "FuZengName": "古宝星级", "FunctionModuleType": 10 },
+			{ "FuZengType": 8, "FuZengName": "外域探宝", "FunctionModuleType": 0 },
+			{ "FuZengType": 9, "FuZengName": "神秘兽魂石", "FunctionModuleType": 0 },
+			{ "FuZengType": 10, "FuZengName": "造化至宝", "FunctionModuleType": 0 },
+			{ "FuZengType": 11, "FuZengName": "天命赐福", "FunctionModuleType": 0 }
+		],
+		"___": "福赠类型信息总览"
+	}
+}

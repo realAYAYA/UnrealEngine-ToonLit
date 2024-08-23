@@ -1,0 +1,112 @@
+[
+    {
+        "Id": 888,
+        "Name": "冥币",
+        "Type": 100,
+        "Quality": 2,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "异世界的通用货币",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Icon_Money2.T_UI_Icon_Money2'"
+    },
+    {
+        "Id": 889,
+        "Name": "神通要诀",
+        "Type": 100,
+        "Quality": 5,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "神通修炼心得以外的必要传授之法，需修学者以心相印证，才能领悟学习神通之法",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Icon_ActivePoint.T_UI_Icon_ActivePoint'"
+    },
+    {
+        "Id": 890,
+        "Name": "神通心得",
+        "Type": 100,
+        "Quality": 2,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "记载着前人修习神通时收获的心得感悟，可用于领悟法诀要义，提升神通等级",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Icon_UpgradePoint.T_UI_Icon_UpgradePoint'"
+    },
+    {
+        "Id": 891,
+        "Name": "机缘",
+        "Type": 100,
+        "Quality": 5,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "机缘，通过系统产出或等值天命兑换获得，用于在天机阁中购买物品等等",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Money3.T_UI_Money3'"
+    },
+    {
+        "Id": 892,
+        "Name": "天机令",
+        "Type": 100,
+        "Quality": 4,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "可用于天机阁刷新进货，使用此令刷新时不消耗刷新次数",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Ling.T_UI_Ling'"
+    },
+    {
+        "Id": 893,
+        "Name": "功法点",
+        "Type": 100,
+        "Quality": 4,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "修行者修炼过程中感悟天地灵气而得，是功法修炼的核心",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Icon_CultivationMethodPoint.T_UI_Icon_CultivationMethodPoint'"
+    },
+    {
+        "Id": 894,
+        "Name": "天机石",
+        "Type": 100,
+        "Quality": 4,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "天机石，古修商店特有的交易货币，可通过宝藏阁宝藏获取",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Icon/T_UI_Item_005.T_UI_Item_005'"
+    },
+    {
+        "Id": 895,
+        "Name": "龙涎香",
+        "Type": 100,
+        "Quality": 2,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "高阶灵兽的分泌物,散发着异常的香气,对灵植的生长大有帮助,可催熟灵植0.5小时",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Item/T_UI_Icon_LongXianXiang.T_UI_Icon_LongXianXiang'"
+    },
+    {
+        "Id": 896,
+        "Name": "地灵液",
+        "Type": 100,
+        "Quality": 3,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "地底灵脉留出的神秘液体,蕴含天地灵气,可催熟灵植1小时",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Item/T_UI_Item_060.T_UI_Item_060'"
+    },
+    {
+        "Id": 897,
+        "Name": "天灵液",
+        "Type": 100,
+        "Quality": 4,
+        "MaxNum": 0,
+        "SellingPrice": 0,
+        "Description": "极品灵脉留出的神秘液体,蕴含天地灵气,可催熟灵植3小时",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Item/T_UI_Item_060.T_UI_Item_060'"
+    },
+    {
+        "Id": 10001,
+        "Name": "风雷剑",
+        "Type": 2,
+        "Quality": 1,
+        "MaxNum": 1,
+        "SellingPrice": 95,
+        "Description": "武器",
+        "Icon": "Texture2D'/Game/Assets/UI/Texture/Xian/Item/T_UI_Item_033.T_UI_Item_033'"
+    }
+]
