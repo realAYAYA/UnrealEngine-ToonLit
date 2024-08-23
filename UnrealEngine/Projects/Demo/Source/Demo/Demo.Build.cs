@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class Demo : ModuleRules
@@ -32,5 +33,7 @@ public class Demo : ModuleRules
 		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
 
 		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
+		
+		RuntimeDependencies.Add(Path.Combine(ModuleDirectory, "../../Config", "GameClient.ini"));
 	}
 }

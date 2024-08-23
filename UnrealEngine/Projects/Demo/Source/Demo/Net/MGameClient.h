@@ -20,11 +20,14 @@ public:
 
 	UMGameSession();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ProjectM")
-	FString Url;
+	UPROPERTY(BlueprintReadWrite, Category = "ProjectM")
+	FString Address;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ProjectM")
+	UPROPERTY(BlueprintReadWrite, Category = "ProjectM")
 	FString Protocol;
+
+	UPROPERTY(BlueprintReadWrite, Category = "ProjectM")
+	int32 Port;
 
 	UPROPERTY(BlueprintReadOnly, Category = "ProjectM")
 	UPbGameRpcStub* Stub;

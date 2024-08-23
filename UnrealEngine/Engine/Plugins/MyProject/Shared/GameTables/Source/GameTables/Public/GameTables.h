@@ -24,17 +24,10 @@ public:
 	virtual bool Init(bool bLoadImmediately = false);
 
 	/** 道具表 */
-	UPROPERTY(BlueprintReadOnly, Category = "Excel | ")
+	UPROPERTY(BlueprintReadOnly, Category = "Excel")
 	UExcelItemTable* Item;
 	
 	/** Json常量配置: 服务器配置 */
 	FPbGameServicesConfig GameServicesConfig;
-
-	/** Json常量配置: 客户端配置 */
-	FPbGameClientConfig GameClientConfig;
-
-#if UE_SERVER
-
-#endif
 	
 };

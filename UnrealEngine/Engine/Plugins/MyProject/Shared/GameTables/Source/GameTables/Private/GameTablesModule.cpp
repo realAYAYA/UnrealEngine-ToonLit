@@ -17,6 +17,7 @@ UGameTables* FGameTablesModule::GetGameTables()
 	if (!GameTables)
 	{
 		GameTables = NewObject<UGameTables>();
+		GameTables->AddToRoot();// 保证不会被GC
 		GameTables->Init();
 	}
 

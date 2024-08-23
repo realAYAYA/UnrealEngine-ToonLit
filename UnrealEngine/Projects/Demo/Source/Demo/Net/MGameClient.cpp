@@ -14,11 +14,14 @@ UMGameSession::UMGameSession()
 
 bool UMGameSession::K2_Connect(const FOnMGameSessionReqResult Callback)
 {
+	const FString TitleName("Default");
+	const FString ConfigName("GameClient.ini");
+	const FString FilePath = FPaths::SourceConfigDir() + ConfigName;
+	GConfig->GetString(*TitleName, TEXT("ServerProtocol"), Protocol, FilePath);
+	GConfig->GetString(*TitleName, TEXT("ServerAddress"), Address, FilePath);
+	GConfig->GetInt(*TitleName, TEXT("ServerPort"), Port, FilePath);
 	
-	FString ServerURL = FGameTablesModule::Get().GetGameTables()->GameClientConfig.server_ip;
-	const int32 Port = FGameTablesModule::Get().GetGameTables()->GameClientConfig.server_port;
-	ServerURL = ServerURL + TEXT(":") + FString::FromInt(Port);
-
+	FString ServerURL = Protocol + TEXT("://") + Address + TEXT(":") + FString::FromInt(Port);
 	if (Connect(ServerURL, FString()))
 	{
 		OnConnectCallback = Callback;

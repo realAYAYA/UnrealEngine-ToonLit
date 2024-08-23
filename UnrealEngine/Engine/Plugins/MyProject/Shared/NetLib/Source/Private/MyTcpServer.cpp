@@ -66,6 +66,11 @@ bool FMyTcpServer::Start(const int32 ServerPort)
 
 void FMyTcpServer::Stop()
 {
+	if (ServerImpl->WebSocketServer)
+		ServerImpl->WebSocketServer.Reset();
+
+	Connections.Reset();
+	NextConnId = 1;
 }
 
 bool FMyTcpServer::IsRunning() const
@@ -75,7 +80,7 @@ bool FMyTcpServer::IsRunning() const
 
 void FMyTcpServer::Tick(float DeltaTime)
 {
-	
+	ServerImpl->WebSocketServer->Tick();
 }
 
 void FMyTcpServer::RemoveConnection(const FTcpConnectionPtr& InConn)

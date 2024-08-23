@@ -11,6 +11,8 @@
 Remembering: The code that was exchanged with days and nights, years and youth, but is no longer useful  
 缅怀：用日日夜夜岁月青春换来，却不再有用的代码  
 
+感谢入行以来遇到的所以大佬与同事，一直向他们模仿与学习 standing on the shoulders of giants  
+
 #### Rendering Features 渲染特性
     
 1.  ToonLit ShadingModel 着色模型
