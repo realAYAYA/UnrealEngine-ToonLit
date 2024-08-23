@@ -81,9 +81,9 @@ void FMySocketServerSide::Start()
 		FWebSocketPacketReceivedCallBack Callback;
 		Callback.BindLambda([Self](const void* Data, const int32 Size)
 		{
-			FMyDataBuffer DataBuffer(Data, Size);
+			const auto DataBuffer = MakeShared<FMyDataBuffer>(Data, Size);
 			if (const auto Ptr = Self.Pin())
-				Ptr->HandleReceived(&DataBuffer);
+				Ptr->HandleReceived(&DataBuffer.Get());
 		});
 		WebSocket->SetReceiveCallBack(Callback);
 	}
@@ -106,7 +106,7 @@ void FMySocketServerSide::Shutdown()
 
 void FMySocketServerSide::Send(const FMyDataBufferPtr& Buffer)
 {
-	WebSocket->Send(reinterpret_cast<uint8*>(const_cast<char*>(Buffer->Peek())), Buffer->ReadableBytes() * sizeof(char));
+	WebSocket->Send(reinterpret_cast<const uint8*>(Buffer->Peek()), Buffer->ReadableBytes());
 
 	LastSentTime = FMyTools::Now().GetTicks();
 }
@@ -125,10 +125,12 @@ void FMySocketClientSide::Start()
 			Ptr->HandleConnected();
 	});
 	
-	WebSocket->OnClosed().AddLambda([Self](int32 /* StatusCode */, const FString& /* Reason */, bool /* bWasClean */)
+	WebSocket->OnClosed().AddLambda([Self](int32 StatusCode, const FString& Reason, bool bWasClean)
 	{
 		if (const auto Ptr = Self.Pin())
 			Ptr->HandleClosed();
+
+		UE_LOG(LogNetLib, Warning, TEXT("Socket closed, Code=%d, Reason=%s, WasClean=%d"), StatusCode, *Reason, bWasClean);
 	});
 	
 	WebSocket->OnConnectionError().AddLambda([Self](const FString& Error)
@@ -142,8 +144,8 @@ void FMySocketClientSide::Start()
 	{
 		if (const auto Ptr = Self.Pin())
 		{
-			FMyDataBuffer DataBuffer(Data, Size);
-			Ptr->HandleReceived(&DataBuffer);
+			const auto DataBuffer = MakeShared<FMyDataBuffer>(Data, Size);
+			Ptr->HandleReceived(&DataBuffer.Get());
 		}
 	});
 	
@@ -168,4 +170,8 @@ bool FMySocketClientSide::IsOpen() const
 
 void FMySocketClientSide::Send(const FMyDataBufferPtr& Buffer)
 {
+	if (IsOpen())
+		WebSocket->Send(Buffer->Peek(), Buffer->ReadableBytes());
+
+	LastSentTime = FMyTools::Now().GetTicks();
 }

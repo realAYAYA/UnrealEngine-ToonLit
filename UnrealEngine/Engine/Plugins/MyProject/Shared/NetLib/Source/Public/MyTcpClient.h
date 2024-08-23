@@ -21,5 +21,5 @@ protected:
 	virtual void OnDisconnected() = 0;
 	virtual void OnError() = 0;
 	
-	FTcpConnectionPtr Connection;
+	FPbConnectionPtr Connection;
 };

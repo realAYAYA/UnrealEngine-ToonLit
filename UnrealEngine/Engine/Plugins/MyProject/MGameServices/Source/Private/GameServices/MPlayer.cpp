@@ -1,9 +1,10 @@
 #include "MPlayer.h"
 
 #include "MGameSession.h"
+#include "PlayerStatusManager.h"
 #include "RedisOp.h"
 
-FMPlayer::FMPlayer()
+FMPlayer::FMPlayer(): StatusModule(MakeUnique<FPlayerStatusManager>(this))
 {
 }
 
@@ -20,6 +21,11 @@ bool FMPlayer::Init(const uint64 InPlayerId, const FString& InAccount)
 
 void FMPlayer::Cleanup()
 {
+}
+
+void FMPlayer::Tick(float DeltaTime)
+{
+	StatusModule->Tick(DeltaTime);
 }
 
 void FMPlayer::Online(FMGameSession* InSession)
@@ -39,13 +45,15 @@ void FMPlayer::Online(FMGameSession* InSession)
 
 void FMPlayer::Offline(const FMGameSession* InSession)
 {
-	check(Session == nullptr);
+	check(Session == InSession);
 
 	Session = nullptr;
 
 	{
 		// Todo  各个功能模块下线逻辑
 	}
+
+	PlayerData.last_online_date = FMyTools::Now().GetTicks();
 
 	MarkNeedSave();
 }
@@ -106,6 +114,7 @@ void FMPlayer::Save()
 
 void FMPlayer::MarkNeedSave(bool bImmediately)
 {
+	StatusModule->MarkNeedSave(bImmediately);
 }
 
 bool FMPlayer::IsRecycle() const

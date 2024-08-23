@@ -57,7 +57,4 @@ public:
 private:
 
 	virtual void OnMessage(uint64 InPbTypeId, const FMyDataBufferPtr& InPackage) override;
-
-	FPbConnectionPtr Connection;
-	
 };

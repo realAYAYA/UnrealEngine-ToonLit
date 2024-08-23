@@ -23,7 +23,7 @@ void FMPlayerManager::Cleanup()
 		return true;
 	});
 
-	ProcessJunk();	
+	ProcessJunk();
 }
 
 void FMPlayerManager::Tick(float DeltaTime)
@@ -69,11 +69,6 @@ void FMPlayerManager::DeletePlayer(FMPlayer* InPlayer)
 {
 	if (!InPlayer)
 		return;
-
-	/*if (InPlayer->IsRecycle())
-		return;
-
-	InPlayer->MarkRecycle();*/
 	
 	const uint64 ID = InPlayer->GetPlayerID();
 	const auto Ret = IndexEntities.Find(ID);
@@ -92,6 +87,8 @@ void FMPlayerManager::DeletePlayer(FMPlayer* InPlayer)
 
 		Junks.Emplace(InPlayer);*/
 	}
+
+	IndexEntities.Remove(ID);
 }
 
 void FMPlayerManager::DeletePlayerById(const uint64 InPlayerId)
@@ -129,7 +126,7 @@ bool FMPlayerManager::AddPlayer(TSharedPtr<FMPlayer> InPlayer)
 	const int64 ID = InPlayer->GetPlayerID();
 
 	auto Ret = IndexEntities.Find(ID);
-	if (*Ret)
+	if (Ret)
 	{
 		return false;  // 该ID的角色已存在
 	}

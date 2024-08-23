@@ -1,15 +1,10 @@
 ﻿#include "MGameClient.h"
 #include "MyTcpConnection.h"
 #include "GameRpcStub.h"
-#include "GameTablesModule.h"
-#include "GameTables.h"
 
-
-UMGameSession::UMGameSession()
+UMGameSession::UMGameSession(): Port(0)
 {
 	Stub = NewObject<UPbGameRpcStub>();
-
-	
 }
 
 bool UMGameSession::K2_Connect(const FOnMGameSessionReqResult Callback)

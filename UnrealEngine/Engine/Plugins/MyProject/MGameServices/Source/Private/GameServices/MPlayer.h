@@ -2,6 +2,7 @@
 #include "MyNetFwd.h"
 #include "PbCommon.h"
 
+class FPlayerStatusManager;
 class FMGameSession;
 
 class FMPlayer
@@ -14,6 +15,8 @@ public:
 
 	bool Init(const uint64 InPlayerId, const FString& InAccount);
 	void Cleanup();
+
+	void Tick(float DeltaTime);
 
 	void Online(FMGameSession* InSession);
 	void Offline(const FMGameSession* InSession);
@@ -48,4 +51,15 @@ private:
 	FString Account;
 	
 	FPbPlayerData PlayerData;
+
+
+	// 功能模块
+
+public:
+
+	TUniquePtr<FPlayerStatusManager> StatusModule;  // 状态管理模块
+
+private:
+	
+	friend class FPlayerStatusManager;
 };

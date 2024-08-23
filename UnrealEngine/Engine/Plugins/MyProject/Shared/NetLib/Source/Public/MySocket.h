@@ -59,6 +59,8 @@ protected:
 	FMySocketErrorCallback ErrorCallback;  // 连接断开之回调 [**IO线程调用**]
 	FMySocketClosedCallback ClosedCallback;  // 连接断开之回调 [**IO线程调用**]
 	FMySocketTimerCallback TimerCallback;  // 连接定时器之回调 [**IO线程调用**]
+
+	bool ServerSide = false;
 };
 
 
@@ -68,7 +70,10 @@ class FMySocketServerSide : public FMySocket
 	
 public:
 
-	FMySocketServerSide(const uint64 InId): FMySocket(InId) {}
+	FMySocketServerSide(const uint64 InId): FMySocket(InId)
+	{
+		ServerSide = true;
+	}
 	virtual ~FMySocketServerSide() override {}
 
 	void Init(INetworkingWebSocket* Socket);

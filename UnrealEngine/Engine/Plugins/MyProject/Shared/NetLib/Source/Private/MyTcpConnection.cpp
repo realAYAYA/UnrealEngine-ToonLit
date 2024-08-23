@@ -199,7 +199,7 @@ void FPbConnection::HandleReceived(FMyDataBuffer* InBuffer)
 					this->GetId(), HeadPtr->SerialNum, HeadPtr->Code, BodyLength, MaxBodyLength);
 				
 				Shutdown();
-				return;		
+				return;
 			}
 		
 			const uint32 PackageLength = BodyLength + HeadLength;
@@ -215,7 +215,7 @@ void FPbConnection::HandleReceived(FMyDataBuffer* InBuffer)
 			PackageCode = HeadPtr->Code;
 			OriginalLength = HeadPtr->OriginalBodyLength;
 			
-			InBuffer->Retrieve(PackageLength);  // 移动数据指针			
+			InBuffer->Retrieve(PackageLength);  // 移动数据指针		
 		}
 		
 		if (PackagePtr)

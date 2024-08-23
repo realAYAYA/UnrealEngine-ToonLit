@@ -24,6 +24,10 @@
 	],
 	"Plugins": [
 		{
+			"Name":"GameTables",
+			"Enabled":true
+		},
+		{
 			"Name":"MRpc",
 			"Enabled":true
 		},
