@@ -106,7 +106,8 @@ void FMySocketServerSide::Shutdown()
 
 void FMySocketServerSide::Send(const FMyDataBufferPtr& Buffer)
 {
-	WebSocket->Send(reinterpret_cast<const uint8*>(Buffer->Peek()), Buffer->ReadableBytes());
+	// Todo 不理解参数bPrependSize, 如果为true, 则会在收到消息后大小错误导致数据解析失败
+	WebSocket->Send(reinterpret_cast<const uint8*>(Buffer->Peek()), Buffer->ReadableBytes(), false);
 
 	LastSentTime = FMyTools::Now().GetTicks();
 }
